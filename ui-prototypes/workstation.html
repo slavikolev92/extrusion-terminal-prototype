@@ -1,0 +1,1195 @@
+<!doctype html>
+<html lang="bg">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Работна станция - оперативна карта</title>
+  <style>
+    :root {
+      --bg: #f5f5f2;
+      --surface: #ffffff;
+      --surface-2: #ededeb;
+      --line: #d7d5cf;
+      --text: #20201d;
+      --muted: #68665f;
+      --green: #187a4a;
+      --green-soft: #dff1e6;
+      --amber: #a86500;
+      --amber-soft: #fff1cf;
+      --red: #b3261e;
+      --red-soft: #fde2df;
+      --blue: #245f9f;
+      --blue-soft: #e0edf8;
+      --focus: #111111;
+      --editable: #fff9dc;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--text);
+      min-height: 44px;
+      padding: 0 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 650;
+    }
+
+    button:hover {
+      border-color: #aaa69d;
+      background: #fafafa;
+    }
+
+    button:focus-visible,
+    input:focus,
+    textarea:focus {
+      outline: 3px solid var(--focus);
+      outline-offset: 1px;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: minmax(310px, 25vw) 1fr;
+      min-height: 100vh;
+    }
+
+    .queue {
+      background: var(--surface);
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .queue-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .queue-title {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.15;
+    }
+
+    .clock {
+      color: var(--muted);
+      font-size: 14px;
+      white-space: nowrap;
+    }
+
+    .queue-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #fafaf8;
+    }
+
+    .queue-tabs button {
+      min-height: 40px;
+      background: transparent;
+    }
+
+    .queue-tabs button.active {
+      background: var(--text);
+      color: white;
+      border-color: var(--text);
+    }
+
+    .card-list {
+      padding: 12px;
+      overflow: auto;
+      display: grid;
+      gap: 10px;
+      align-content: start;
+      flex: 1;
+    }
+
+    .order-card {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 12px;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+      display: grid;
+      gap: 8px;
+      min-height: 112px;
+    }
+
+    .order-card.selected {
+      border-color: var(--focus);
+      box-shadow: inset 0 0 0 2px var(--focus);
+    }
+
+    .order-card.running {
+      background: var(--green-soft);
+      border-color: #83bd9a;
+    }
+
+    .order-card.paused {
+      background: var(--amber-soft);
+      border-color: #ddb56a;
+    }
+
+    .order-card.cancelled {
+      background: var(--red-soft);
+      border-color: #e0a09b;
+    }
+
+    .order-card.completed {
+      background: var(--blue-soft);
+      border-color: #94b8d8;
+    }
+
+    .card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .order-no {
+      font-size: 18px;
+      font-weight: 750;
+      line-height: 1;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 88px;
+      min-height: 28px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 750;
+      border: 1px solid transparent;
+      background: var(--surface-2);
+    }
+
+    .status.pending { color: var(--blue); border-color: #b6cee8; background: #eef5fb; }
+    .status.running { color: var(--green); border-color: #a9d7b9; background: #eaf6ee; }
+    .status.paused { color: var(--amber); border-color: #e0bd78; background: #fff6dc; }
+    .status.completed { color: var(--blue); border-color: #b6cee8; background: #eef5fb; }
+    .status.cancelled { color: var(--red); border-color: #e4aaa6; background: #fff1ef; }
+
+    .customer {
+      font-weight: 650;
+      line-height: 1.2;
+    }
+
+    .product {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.25;
+    }
+
+    .qty-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .main {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-width: 0;
+    }
+
+    .toolbar {
+      min-height: 64px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 18px;
+    }
+
+    .toolbar-title {
+      min-width: 0;
+    }
+
+    .toolbar-title h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.15;
+    }
+
+    .toolbar-title p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.2;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .primary {
+      background: var(--green);
+      color: white;
+      border-color: var(--green);
+    }
+
+    .primary:hover {
+      background: #12693e;
+      border-color: #12693e;
+    }
+
+    .danger {
+      color: var(--red);
+      border-color: #d49a95;
+      background: #fff6f5;
+    }
+
+    .content {
+      min-height: 0;
+      overflow: auto;
+      padding: 18px;
+      display: grid;
+      gap: 16px;
+      grid-template-columns: minmax(390px, 0.95fr) minmax(430px, 1.05fr);
+      align-content: start;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      min-width: 0;
+    }
+
+    .panel-header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .panel-header h2 {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.1;
+    }
+
+    .panel-body {
+      padding: 14px;
+    }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .field-grid.one {
+      grid-template-columns: 1fr;
+    }
+
+    .field {
+      border-bottom: 1px solid #e3e1dc;
+      min-height: 48px;
+      padding: 2px 0 8px;
+    }
+
+    .label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.2;
+      margin-bottom: 4px;
+    }
+
+    .value {
+      font-size: 16px;
+      font-weight: 650;
+      line-height: 1.25;
+      word-break: break-word;
+    }
+
+    .notes {
+      min-height: 80px;
+      white-space: pre-wrap;
+      line-height: 1.35;
+      font-weight: 600;
+    }
+
+    .edit-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .edit-grid.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .edit-field label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 5px;
+    }
+
+    .edit-field input,
+    .edit-field textarea {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid #bdb8aa;
+      border-radius: 6px;
+      background: var(--editable);
+      padding: 8px 10px;
+      color: var(--text);
+      font-weight: 650;
+    }
+
+    .edit-field textarea {
+      min-height: 72px;
+      resize: vertical;
+      line-height: 1.3;
+    }
+
+    .timing {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .time-total {
+      font-size: 34px;
+      font-weight: 800;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .time-meta {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .time-buttons {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(86px, 1fr));
+      gap: 8px;
+      min-width: 190px;
+    }
+
+    .roll-shell {
+      display: grid;
+      gap: 12px;
+    }
+
+    .totals {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .total-box {
+      background: #fafaf8;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      min-height: 74px;
+    }
+
+    .total-box input {
+      width: 100%;
+      border: 1px solid #bdb8aa;
+      border-radius: 6px;
+      background: var(--editable);
+      min-height: 36px;
+      padding: 5px 8px;
+      font-size: 20px;
+      font-weight: 800;
+    }
+
+    .total-value {
+      font-size: 24px;
+      font-weight: 800;
+      line-height: 1.1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .roll-table {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--surface);
+    }
+
+    .roll-head,
+    .roll-row {
+      display: grid;
+      grid-template-columns: 78px 1fr;
+      align-items: center;
+    }
+
+    .roll-head {
+      min-height: 38px;
+      background: var(--surface-2);
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 750;
+    }
+
+    .roll-head div,
+    .roll-row div {
+      padding: 0 10px;
+    }
+
+    .roll-row {
+      min-height: 48px;
+      border-top: 1px solid #ebe9e3;
+    }
+
+    .roll-row input {
+      width: 100%;
+      min-height: 38px;
+      border: 1px solid transparent;
+      background: transparent;
+      border-radius: 6px;
+      padding: 5px 8px;
+      font-weight: 750;
+      font-size: 17px;
+    }
+
+    .roll-row.empty input {
+      border-color: #bdb8aa;
+      background: var(--editable);
+    }
+
+    .empty-state {
+      color: var(--muted);
+      padding: 20px;
+      text-align: center;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      background: #fbfbfa;
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      min-width: 260px;
+      max-width: min(460px, calc(100vw - 36px));
+      background: #1f1f1d;
+      color: white;
+      padding: 12px 14px;
+      border-radius: 8px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+      display: none;
+      font-weight: 650;
+      z-index: 10;
+    }
+
+    @media (max-width: 1050px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+
+      .queue {
+        min-height: 340px;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .card-list {
+        grid-template-columns: repeat(2, minmax(260px, 1fr));
+        max-height: 390px;
+      }
+
+      .content {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .toolbar,
+      .panel-header,
+      .timing {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .toolbar {
+        display: grid;
+      }
+
+      .toolbar-actions,
+      .time-buttons,
+      .field-grid,
+      .edit-grid.three,
+      .totals {
+        grid-template-columns: 1fr;
+      }
+
+      .card-list {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="queue">
+      <div class="queue-header">
+        <h1 class="queue-title">Работна станция</h1>
+        <div class="clock" id="clock">--:--</div>
+      </div>
+      <div class="queue-tabs">
+        <button type="button" id="tab-active" class="active">Активни</button>
+        <button type="button" id="tab-archive">Приключени</button>
+      </div>
+      <div class="card-list" id="card-list"></div>
+    </aside>
+
+    <main class="main">
+      <header class="toolbar">
+        <div class="toolbar-title">
+          <h1 id="detail-title">Поръчка</h1>
+          <p id="detail-subtitle">Изберете карта от списъка</p>
+        </div>
+        <div class="toolbar-actions">
+          <button type="button" id="cancel-btn" class="danger">Анулирай</button>
+          <button type="button" id="finish-btn">Приключи</button>
+          <button type="button" id="print-btn" class="primary">Печат</button>
+        </div>
+      </header>
+
+      <section class="content">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Данни от картата</h2>
+            <span class="status" id="detail-status">-</span>
+          </div>
+          <div class="panel-body">
+            <div class="field-grid">
+              <div class="field">
+                <span class="label">Поръчка №</span>
+                <div class="value" id="order-number"></div>
+              </div>
+              <div class="field">
+                <span class="label">Клиент</span>
+                <div class="value" id="customer"></div>
+              </div>
+              <div class="field">
+                <span class="label">Вид изделие</span>
+                <div class="value" id="product"></div>
+              </div>
+              <div class="field">
+                <span class="label">Количество</span>
+                <div class="value" id="quantity"></div>
+              </div>
+              <div class="field">
+                <span class="label">Материал</span>
+                <div class="value" id="material"></div>
+              </div>
+              <div class="field">
+                <span class="label">Размер/дебелина</span>
+                <div class="value" id="size"></div>
+              </div>
+            </div>
+
+            <div class="field" style="margin-top: 12px;">
+              <span class="label">Забележки</span>
+              <div class="value notes" id="notes"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Производство</h2>
+          </div>
+          <div class="panel-body">
+            <div class="timing">
+              <div>
+                <div class="label">Активно време</div>
+                <div class="time-total" id="active-time">00:00</div>
+                <div class="time-meta" id="time-meta">Таймерът не е стартиран</div>
+              </div>
+              <div class="time-buttons">
+                <button type="button" id="start-btn" class="primary">Старт</button>
+                <button type="button" id="pause-btn">Пауза</button>
+                <button type="button" id="resume-btn">Продължи</button>
+                <button type="button" id="stop-btn">Стоп</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Реално вложени материали</h2>
+          </div>
+          <div class="panel-body">
+            <div class="edit-grid">
+              <div class="edit-field">
+                <label for="actual-material">Материал</label>
+                <input id="actual-material" autocomplete="off">
+              </div>
+              <div class="edit-grid three">
+                <div class="edit-field">
+                  <label for="brand-a">Марка / клас A</label>
+                  <input id="brand-a" autocomplete="off">
+                </div>
+                <div class="edit-field">
+                  <label for="batch-a">Партида A</label>
+                  <input id="batch-a" autocomplete="off">
+                </div>
+                <div class="edit-field">
+                  <label for="used-a">Количество A</label>
+                  <input id="used-a" autocomplete="off">
+                </div>
+              </div>
+              <div class="edit-grid three">
+                <div class="edit-field">
+                  <label for="brand-b">Марка / клас B</label>
+                  <input id="brand-b" autocomplete="off">
+                </div>
+                <div class="edit-field">
+                  <label for="batch-b">Партида B</label>
+                  <input id="batch-b" autocomplete="off">
+                </div>
+                <div class="edit-field">
+                  <label for="used-b">Количество B</label>
+                  <input id="used-b" autocomplete="off">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Ролки</h2>
+          </div>
+          <div class="panel-body roll-shell">
+            <div class="totals">
+              <div class="total-box">
+                <label class="label" for="tare">Тара</label>
+                <input id="tare" inputmode="decimal" value="1.20">
+              </div>
+              <div class="total-box">
+                <span class="label">Бруто общо</span>
+                <div class="total-value" id="total-gross">0.0 кг</div>
+              </div>
+              <div class="total-box">
+                <span class="label">Нето общо</span>
+                <div class="total-value" id="total-net">0.0 кг</div>
+              </div>
+            </div>
+
+            <div class="roll-table">
+              <div class="roll-head">
+                <div>№</div>
+                <div>Бруто тегло, кг</div>
+              </div>
+              <div id="roll-rows"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const statusLabels = {
+      pending: "Чака",
+      running: "В работа",
+      paused: "Пауза",
+      completed: "Приключена",
+      cancelled: "Анулирана"
+    };
+
+    const orders = [
+      {
+        id: 1,
+        status: "running",
+        orderNumber: "25278",
+        customer: "Пелети Пирин PELLITO",
+        product: "ТСФ 890/0.082 - Пирин пелет PELLITO / 2026 /",
+        quantity: "500 кг. / 5 ролки",
+        material: "LDPE",
+        size: "890/0.082",
+        notes: "Екструдират се ролки по 4500 м. = 310 кг.\nРазмера се пуска с 2-3 см. изрезка.",
+        tare: 1.2,
+        rolls: [52.35, 51.9, 53.1],
+        seconds: 9120,
+        actualMaterial: "LDPE тв.- румънско B20/03",
+        brandA: "B20/03",
+        batchA: "",
+        usedA: "",
+        brandB: "",
+        batchB: "",
+        usedB: ""
+      },
+      {
+        id: 2,
+        status: "pending",
+        orderNumber: "25279",
+        customer: "Алфа Пак",
+        product: "ПЕ фолио 620/0.060",
+        quantity: "300 кг.",
+        material: "LDPE",
+        size: "620/0.060",
+        notes: "Проверка на дебелина при първа ролка.",
+        tare: "",
+        rolls: [],
+        seconds: 0,
+        actualMaterial: "",
+        brandA: "",
+        batchA: "",
+        usedA: "",
+        brandB: "",
+        batchB: "",
+        usedB: ""
+      },
+      {
+        id: 3,
+        status: "paused",
+        orderNumber: "25280",
+        customer: "Бета Трейд",
+        product: "Плик 310/750/0.035",
+        quantity: "800 кг.",
+        material: "LDPE",
+        size: "750/0.035",
+        notes: "Навиване отпред.",
+        tare: 0.95,
+        rolls: [48.4, 48.2],
+        seconds: 4680,
+        actualMaterial: "",
+        brandA: "",
+        batchA: "",
+        usedA: "",
+        brandB: "",
+        batchB: "",
+        usedB: ""
+      },
+      {
+        id: 4,
+        status: "completed",
+        orderNumber: "25261",
+        customer: "Гама",
+        product: "Фолио 460/0.055",
+        quantity: "600 кг.",
+        material: "LDPE",
+        size: "460/0.055",
+        notes: "Приключена карта.",
+        tare: 1.1,
+        rolls: [50.3, 50.0, 49.8],
+        seconds: 8400,
+        actualMaterial: "LDPE",
+        brandA: "",
+        batchA: "",
+        usedA: "",
+        brandB: "",
+        batchB: "",
+        usedB: ""
+      }
+    ];
+
+    let selectedId = 1;
+    let queueMode = "active";
+    let tickTimer = window.setInterval(() => {
+      const active = selected();
+      if (active && active.status === "running") {
+        active.seconds += 1;
+        renderTiming(active);
+      }
+      renderClock();
+    }, 1000);
+
+    function selected() {
+      return orders.find(order => order.id === selectedId) || orders[0];
+    }
+
+    function activeOrders() {
+      return orders.filter(order => ["pending", "running", "paused"].includes(order.status));
+    }
+
+    function archivedOrders() {
+      return orders.filter(order => ["completed", "cancelled"].includes(order.status));
+    }
+
+    function renderClock() {
+      const now = new Date();
+      document.getElementById("clock").textContent = now.toLocaleTimeString("bg-BG", {
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+
+    function renderQueue() {
+      const list = document.getElementById("card-list");
+      const source = queueMode === "active" ? activeOrders() : archivedOrders();
+      list.innerHTML = "";
+
+      if (!source.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.textContent = queueMode === "active" ? "Няма активни карти" : "Няма приключени карти";
+        list.appendChild(empty);
+        return;
+      }
+
+      source.forEach(order => {
+        const card = document.createElement("article");
+        card.className = `order-card ${order.status}${order.id === selectedId ? " selected" : ""}`;
+        card.tabIndex = 0;
+        card.innerHTML = `
+          <div class="card-top">
+            <div class="order-no">№ ${order.orderNumber}</div>
+            <span class="status ${order.status}">${statusLabels[order.status]}</span>
+          </div>
+          <div class="customer">${order.customer}</div>
+          <div class="product">${order.product}</div>
+          <div class="qty-row"><span>${order.quantity}</span><span>${formatTime(order.seconds)}</span></div>
+        `;
+        card.addEventListener("click", () => {
+          selectedId = order.id;
+          renderAll();
+        });
+        card.addEventListener("keydown", event => {
+          if (event.key === "Enter") {
+            selectedId = order.id;
+            renderAll();
+          }
+        });
+        list.appendChild(card);
+      });
+    }
+
+    function renderDetail(order) {
+      document.getElementById("detail-title").textContent = `Поръчка № ${order.orderNumber}`;
+      document.getElementById("detail-subtitle").textContent = `${order.customer} - ${order.product}`;
+      const status = document.getElementById("detail-status");
+      status.textContent = statusLabels[order.status];
+      status.className = `status ${order.status}`;
+
+      document.getElementById("order-number").textContent = order.orderNumber;
+      document.getElementById("customer").textContent = order.customer;
+      document.getElementById("product").textContent = order.product;
+      document.getElementById("quantity").textContent = order.quantity;
+      document.getElementById("material").textContent = order.material;
+      document.getElementById("size").textContent = order.size;
+      document.getElementById("notes").textContent = order.notes;
+
+      setInput("actual-material", order.actualMaterial);
+      setInput("brand-a", order.brandA);
+      setInput("batch-a", order.batchA);
+      setInput("used-a", order.usedA);
+      setInput("brand-b", order.brandB);
+      setInput("batch-b", order.batchB);
+      setInput("used-b", order.usedB);
+      setInput("tare", order.tare);
+
+      renderTiming(order);
+      renderRolls(order);
+      renderActions(order);
+    }
+
+    function setInput(id, value) {
+      const input = document.getElementById(id);
+      if (document.activeElement !== input) {
+        input.value = value ?? "";
+      }
+    }
+
+    function renderTiming(order) {
+      document.getElementById("active-time").textContent = formatTime(order.seconds);
+      const meta = document.getElementById("time-meta");
+      if (order.status === "running") {
+        meta.textContent = "Таймерът работи";
+      } else if (order.status === "paused") {
+        meta.textContent = "Таймерът е на пауза";
+      } else if (order.seconds > 0) {
+        meta.textContent = "Таймерът е спрян";
+      } else {
+        meta.textContent = "Таймерът не е стартиран";
+      }
+    }
+
+    function renderActions(order) {
+      document.getElementById("print-btn").disabled = order.status !== "completed";
+      document.getElementById("cancel-btn").textContent = order.status === "cancelled" ? "Върни" : "Анулирай";
+      document.getElementById("finish-btn").disabled = order.status === "completed" || order.status === "cancelled";
+      document.getElementById("start-btn").disabled = order.status === "running" || order.status === "completed" || order.status === "cancelled";
+      document.getElementById("pause-btn").disabled = order.status !== "running";
+      document.getElementById("resume-btn").disabled = order.status !== "paused";
+      document.getElementById("stop-btn").disabled = !["running", "paused"].includes(order.status);
+    }
+
+    function renderRolls(order) {
+      const rows = document.getElementById("roll-rows");
+      rows.innerHTML = "";
+      const editableCount = order.rolls.length + 1;
+
+      for (let index = 0; index < editableCount; index++) {
+        const row = document.createElement("div");
+        const isEmpty = index === order.rolls.length;
+        row.className = `roll-row${isEmpty ? " empty" : ""}`;
+        row.innerHTML = `
+          <div>${index + 1}</div>
+          <div><input inputmode="decimal" value="${isEmpty ? "" : order.rolls[index]}" aria-label="Бруто тегло ролка ${index + 1}"></div>
+        `;
+        const input = row.querySelector("input");
+        input.addEventListener("keydown", event => {
+          if (event.key === "Enter") {
+            handleRollInput(order, index, input.value);
+          }
+        });
+        input.addEventListener("blur", () => {
+          if (!isEmpty || input.value.trim() !== "") {
+            handleRollInput(order, index, input.value, false);
+          }
+        });
+        rows.appendChild(row);
+      }
+
+      const gross = totalGross(order);
+      const tare = parseNumber(order.tare);
+      const net = Math.max(0, gross - (order.rolls.length * tare));
+      document.getElementById("total-gross").textContent = `${formatNumber(gross, 1)} кг`;
+      document.getElementById("total-net").textContent = `${formatNumber(net, 1)} кг`;
+    }
+
+    function handleRollInput(order, index, value, focusNext = true) {
+      if (!["running"].includes(order.status)) {
+        toast("Първо стартирайте таймера за тази карта.");
+        return;
+      }
+
+      const cleaned = value.trim().replace(",", ".");
+      if (cleaned === "") {
+        if (index === order.rolls.length - 1) {
+          order.rolls.splice(index, 1);
+          toast("Ролката е изчистена.");
+        } else if (index < order.rolls.length) {
+          toast("Не оставяйте празни редове между попълнени ролки.");
+        }
+        renderAll();
+        return;
+      }
+
+      const parsed = Number(cleaned);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        toast("Въведете валидно бруто тегло.");
+        return;
+      }
+
+      order.rolls[index] = round2(parsed);
+      toast("Записано.");
+      renderAll();
+
+      if (focusNext) {
+        window.setTimeout(() => {
+          const inputs = document.querySelectorAll("#roll-rows input");
+          const next = inputs[Math.min(index + 1, inputs.length - 1)];
+          if (next) next.focus();
+        }, 0);
+      }
+    }
+
+    function bindEditableFields() {
+      const fieldMap = {
+        "actual-material": "actualMaterial",
+        "brand-a": "brandA",
+        "batch-a": "batchA",
+        "used-a": "usedA",
+        "brand-b": "brandB",
+        "batch-b": "batchB",
+        "used-b": "usedB",
+        "tare": "tare"
+      };
+      Object.entries(fieldMap).forEach(([id, key]) => {
+        document.getElementById(id).addEventListener("change", event => {
+          const order = selected();
+          order[key] = id === "tare" ? round2(parseNumber(event.target.value)) : event.target.value;
+          toast("Записано.");
+          renderAll();
+        });
+      });
+    }
+
+    function totalGross(order) {
+      return order.rolls.reduce((sum, value) => sum + parseNumber(value), 0);
+    }
+
+    function parseNumber(value) {
+      if (value === "" || value === null || value === undefined) return 0;
+      const parsed = Number(String(value).replace(",", "."));
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function round2(value) {
+      return Math.round((value + Number.EPSILON) * 100) / 100;
+    }
+
+    function formatNumber(value, decimals) {
+      return value.toLocaleString("bg-BG", {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+      });
+    }
+
+    function formatTime(totalSeconds) {
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+    }
+
+    function toast(message) {
+      const node = document.getElementById("toast");
+      node.textContent = message;
+      node.style.display = "block";
+      window.clearTimeout(node._timer);
+      node._timer = window.setTimeout(() => {
+        node.style.display = "none";
+      }, 2400);
+    }
+
+    function bindControls() {
+      document.getElementById("tab-active").addEventListener("click", () => {
+        queueMode = "active";
+        document.getElementById("tab-active").classList.add("active");
+        document.getElementById("tab-archive").classList.remove("active");
+        const active = activeOrders();
+        if (active.length && !active.some(order => order.id === selectedId)) selectedId = active[0].id;
+        renderAll();
+      });
+
+      document.getElementById("tab-archive").addEventListener("click", () => {
+        queueMode = "archive";
+        document.getElementById("tab-archive").classList.add("active");
+        document.getElementById("tab-active").classList.remove("active");
+        const archived = archivedOrders();
+        if (archived.length && !archived.some(order => order.id === selectedId)) selectedId = archived[0].id;
+        renderAll();
+      });
+
+      document.getElementById("start-btn").addEventListener("click", () => {
+        const order = selected();
+        order.status = "running";
+        toast("Таймерът е стартиран.");
+        renderAll();
+      });
+
+      document.getElementById("pause-btn").addEventListener("click", () => {
+        const order = selected();
+        order.status = "paused";
+        toast("Пауза.");
+        renderAll();
+      });
+
+      document.getElementById("resume-btn").addEventListener("click", () => {
+        const order = selected();
+        order.status = "running";
+        toast("Таймерът продължава.");
+        renderAll();
+      });
+
+      document.getElementById("stop-btn").addEventListener("click", () => {
+        const order = selected();
+        order.status = order.rolls.length ? "pending" : "pending";
+        toast("Таймерът е спрян.");
+        renderAll();
+      });
+
+      document.getElementById("finish-btn").addEventListener("click", () => {
+        const order = selected();
+        if (!parseNumber(order.tare)) return toast("Въведете тара.");
+        if (!order.seconds) return toast("Първо стартирайте таймера.");
+        if (["running", "paused"].includes(order.status)) return toast("Спрете таймера преди приключване.");
+        if (!order.rolls.length) return toast("Въведете поне една ролка.");
+        order.status = "completed";
+        queueMode = "archive";
+        document.getElementById("tab-archive").classList.add("active");
+        document.getElementById("tab-active").classList.remove("active");
+        toast("Картата е приключена.");
+        renderAll();
+      });
+
+      document.getElementById("cancel-btn").addEventListener("click", () => {
+        const order = selected();
+        if (order.status === "cancelled") {
+          order.status = "pending";
+          queueMode = "active";
+          document.getElementById("tab-active").classList.add("active");
+          document.getElementById("tab-archive").classList.remove("active");
+          toast("Картата е върната.");
+        } else {
+          order.status = "cancelled";
+          queueMode = "archive";
+          document.getElementById("tab-archive").classList.add("active");
+          document.getElementById("tab-active").classList.remove("active");
+          toast("Картата е анулирана.");
+        }
+        renderAll();
+      });
+
+      document.getElementById("print-btn").addEventListener("click", () => {
+        const order = selected();
+        if (order.status !== "completed") return toast("Печатът е възможен само след приключване.");
+        toast("Тук ще се отвори печат на двете страници.");
+      });
+    }
+
+    function renderAll() {
+      renderQueue();
+      renderDetail(selected());
+    }
+
+    bindControls();
+    bindEditableFields();
+    renderClock();
+    renderAll();
+  </script>
+</body>
+</html>

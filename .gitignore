@@ -1,0 +1,25 @@
+# Local source workbooks and Excel lock files.
+source-files/*
+!source-files/README.md
+
+# Runtime databases and local app state.
+*.db
+*.sqlite
+*.sqlite3
+data/
+backups/
+extracts/
+
+# Python/runtime noise.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Node/browser tooling noise if used for UI checks.
+node_modules/
+
+# OS/editor files.
+.DS_Store
+Thumbs.db

@@ -1,0 +1,686 @@
+# ERP Production Card Pilot
+
+This repository is for a pilot app that helps move the extrusion terminal from paper production cards to an app-driven workflow. This README is written for future agents. It should preserve the confirmed project facts, the inspected Excel workbook structure, and the current open decisions without turning discussion ideas into requirements.
+
+Source inspection date: 2026-06-10.
+
+This is not V1 of a product roadmap. This is the complete standalone pilot/prototype scope. After this pilot, the direction is to build the actual ERP on ERPNext, not to keep expanding this app.
+
+## Agent Rules
+
+- The Excel workbook structure is set in stone; automations may rely on that structure.
+- It is acceptable to add macros/automation to the workbook if they only read/export data and do not edit existing workbook data.
+- Do not add requirements unless the user confirms them.
+- Do not plan future functionality for this app. The pilot scope is the whole scope.
+- Treat the shift-manager workbook as the source of production-order information.
+- Treat terminal-entered production data as app data unless the user later confirms that it must be written back to Excel.
+- Pilot scope is extrusion only. Other workbook operations are context, not app scope.
+- Printed output must match the existing Excel front/back operational card one-to-one, except for mild confirmed additions such as start time, stop/finish time, total gross weight, and total net weight.
+
+## Confirmed Pilot Scope
+
+The pilot is part of an ERP transition. The immediate goal is to educate people at the production terminal to use an app instead of paper.
+
+This pilot is also a learning tool for the future ERPNext-based ERP: it tests how the workstation should look and how workers interact with digital operational cards. It is not intended to grow into the final ERP.
+
+Confirmed workflow facts:
+
+- There is one terminal.
+- The extrusion area should be represented as four fixed machines in the app. One of the machines may not be operational, but it should still exist in the app.
+- The app should model only simple machine assignment, sequencing, and navigation. It should not model detailed machine performance or downtime.
+- The terminal receives and executes extrusion operational cards assigned to those machines.
+- The shift manager continues using the existing Excel workbook.
+- The shift manager assigns each released card to a machine and gives it a simple numeric sequence.
+- Each row in the `Database` worksheet is one complete production order with all operational-card source data.
+- The app is for the extrusion operation only.
+- Operators should see the extrusion operational card front in the app.
+- Operators should have a back/input view for entering gross roll weights.
+- The terminal UI does not need to preserve a strict front-page/back-page split. It can combine the necessary operator-facing information into one compact working screen.
+- The printed output must still preserve the old front/back operational-card format.
+- The app needs one tare-weight field for the order.
+- Tare weight means the actual weight of the roll core.
+- The tare weight is the same for the whole order.
+- Operators input gross weight for each roll.
+- The app calculates net weight per roll from gross roll weight and order-level tare weight.
+- The app calculates total net weight for the order from the roll net weights.
+- At the end of the order, operators click `Finished`.
+- After finishing, operators should be able to click `Print`.
+- Printing should print the whole front and back.
+- Completed data should be stored in the app.
+
+The terminal UI can present information in whatever way is practical. The printed paper output has a stricter requirement: it must visually match the Excel front and back card layout as closely as possible.
+
+## Order Lifecycle And Access Model
+
+Confirmed model:
+
+- The shift manager decides which orders/cards are loaded into the app.
+- The shift manager decides which machine should produce each released card and the sequence within that machine queue.
+- Operators use the terminal to execute loaded operational cards.
+- The app should provide the simplest possible way to visualize several orders/cards.
+- The terminal should have a main active queue/list and a separate completed cards section/list.
+- The main terminal queue/list should make it clear which cards are pending, running, or paused.
+- The terminal should have a fixed four-machine quick navigation strip.
+- Each machine tile should show only key information: machine number, current or next order, customer, progress, and status color.
+- Clicking a machine tile should open the running/paused card for that machine if one exists; otherwise it should open the next pending card for that machine by sequence.
+- The completed section lets operators view previous completed cards, fix mistakes, and reprint when needed.
+- Users should be able to click an order/card from the list to view it.
+- `Finished` means the order/card is closed for workflow/status purposes, not locked for editing.
+- Finishing/completing an order moves it out of the active terminal queue/list and into the terminal completed section.
+- Finished/closed cards may still be changed, similar to how paper cards can be scratched out and overwritten.
+- The pilot should avoid lock/reopen exception logic.
+- The terminal may have multiple running cards at the same time.
+- A machine cannot have more than one running card at the same time.
+- A machine can have many pending cards.
+- If a card is paused, treat that machine as occupied until the card is completed, cancelled, or reassigned.
+- Operators should see machine queues in the shift-manager sequence. The app should keep corrections possible if real production changes.
+- Running cards should be visually obvious, for example highlighted green, so operators do not forget that time is being tracked.
+- There are no named users or logins for the pilot.
+- The terminal has no individual operator identity.
+- The shift manager has no app identity/login requirement.
+- Access separation is practical rather than permission-based: the terminal runs `/terminal` in kiosk mode, while the shift manager opens `/admin` directly.
+
+Lifecycle states:
+
+| State | Meaning |
+| --- | --- |
+| `imported` / `draft` | Order/card exists in the app database after CSV import. It can be reviewed in the app, but is not yet released to the terminal execution view. |
+| `pending` | Order/card has been released by the shift manager and is visible in the terminal queue, but production timing is not currently running. |
+| `running` | Operators started production timing for the card. Multiple cards may be running at once. |
+| `paused` | Production timing was paused for the card. |
+| `completed` / `finished` | Operators have finished the order/card. It moves from the active terminal queue to the terminal completed section and remains available in app history/details. |
+| `cancelled` | Operators or shift manager cancelled the card. It is no longer active, remains visible with completed/cancelled cards, and can be toggled back to `pending`. |
+
+The important distinction: CSV import should already create persistent app records. Submit/release should not be the first time the data is saved; it should change the order/card from an app-side draft into a terminal-visible card.
+
+Screen/access model:
+
+- Use one web app with separate pages/routes.
+- Pages/routes:
+  - `/terminal` for kiosk-mode operator workflow.
+  - `/admin` for shift-manager import, draft review, release, and app data review.
+- Do not build users, roles, or login permissions for the pilot.
+- The terminal should run in kiosk mode pointed at `/terminal`.
+- The terminal UI should not expose navigation to `/admin`.
+- The shift manager can access `/admin` directly by URL from the shift-manager PC.
+- This is practical segregation, not strong security.
+
+Admin page behavior:
+
+- The admin page is used by the shift manager.
+- CSV import should show imported orders as a simple draft list.
+- Each imported draft should show validation status.
+- Expected validation statuses include:
+  - `ready`
+  - `duplicate`
+  - `no extrusion step`
+- `ready` means the draft can be submitted/released to the terminal.
+- `duplicate` is based on order number.
+- The shift manager can edit any field on an imported card/order from the admin page.
+- Admin editing is broader than terminal editing; terminal editing is intentionally limited.
+- The admin page should provide a simple machine planning view split into four machine columns.
+- Each machine column should show active queued cards for that machine sorted by numeric sequence.
+- Machine assignment is mandatory before a card is released to the terminal.
+- Sequence should be a simple numeric field assigned by the shift manager.
+- Validate duplicate sequence numbers within the same machine queue and show visual validation immediately when a duplicate exists.
+- Release/submit can be one draft at a time. Do not add bulk release unless it becomes clearly necessary.
+
+## Explicitly Out Of Scope For Now
+
+- Printing / flexo operation workflow.
+- Rewinding and slitting workflow.
+- Confection workflow.
+- Detailed machine-level tracking beyond simple machine assignment, sequencing, and quick navigation.
+- Writing terminal-entered data back into the Excel workbook.
+- Public internet exposure of the app.
+- Persistent data or workflow features outside the confirmed app data model.
+- Future-product roadmap features for this app. After this pilot, the expected direction is ERPNext-based ERP work.
+
+## Source Workbook
+
+Canonical file:
+
+- `source-files/shift-manager-main-file.xlsm`
+
+Observed companion file:
+
+- `source-files/~$shift-manager-main-file.xlsm`
+- This is an Excel lock/temp file, not a source workbook.
+
+Workbook properties observed:
+
+- Macro-enabled Excel workbook (`.xlsm`).
+- Readable with `openpyxl`.
+- `Get-FileHash` could not read it during inspection because another process had the workbook locked.
+- Sheets:
+  - `Database`
+  - `Technology Cards`
+  - `Page Back`
+
+## Workbook Model
+
+The workbook has one source-data worksheet and two print/layout worksheets.
+
+| Worksheet | Role |
+| --- | --- |
+| `Database` | Durable source data. Each production order is one row. |
+| `Technology Cards` | Front-side print layout. It contains four side-by-side operational card blocks. |
+| `Page Back` | Back-side print layout. It contains the roll/weight grid. |
+
+The layout sheets are derived from `Database`. They should not be treated as source data.
+
+## `Database` Sheet
+
+Observed metadata:
+
+- Dimensions: `A1:BT12206`
+- Meaningful source columns observed through `AY`
+- Columns `AZ:BT` are within the worksheet dimension but appeared blank in inspected headers and data counts
+- Freeze panes: `B5`
+- Auto filter range: `A4:AX12206`
+- Hidden row: `1`
+- Actual production-order data rows: `5:12206`
+- Non-empty order numbers in `A5:A12206`: `12200`
+
+Important row roles:
+
+| Row | Role |
+| --- | --- |
+| `1` | Numeric lookup indexes used by formulas. `A1` is `1`; `B1:AY1` continue with formulas like `=A1+1`. |
+| `2` | Blank in the inspected range. |
+| `3` | Main column labels and merged operation group labels. |
+| `4` | Mixed selector/subheader row. `A4` is the currently selected order number; operation subheaders start at `V4`. |
+| `5+` | Actual production-order records. |
+
+The selected order during inspection was `Database!A4 = 25278`. The matching full data row was row `12205`.
+
+Duplicate order numbers exist in historical data, for example `3004` and `3012`. If the app reads by order number from the workbook, duplicate handling must be designed explicitly. A full-row copy/paste import avoids that ambiguity.
+
+## Database Column Groups
+
+The user described these stable column groups:
+
+| Columns | Group |
+| --- | --- |
+| `A:U` | General production-order fields |
+| `V:Y` | Operation flags |
+| `Z:AI` | Printing-specific fields |
+| `AJ:AT` | Extrusion-specific fields |
+| `AU:AV` | Rewinding/slitting-specific fields |
+| `AW:AY` | Confection-specific fields |
+
+The pilot needs the general fields plus the extrusion group.
+
+## Pilot-Relevant Database Fields
+
+These fields are the observed minimum needed to render the extrusion operational card front.
+
+| Column | Meaning |
+| --- | --- |
+| `A` | Order number |
+| `B` | Date |
+| `C` | Delivery date |
+| `D` | Company/customer |
+| `E` | City |
+| `F` | Product type |
+| `G` | Quantity 1 |
+| `H` | Unit 1 |
+| `I` | Quantity 2 |
+| `J` | Unit 2 |
+| `K` | Blank/product form |
+| `L` | Material |
+| `M` | Size/thickness |
+| `N` | Notes |
+| `W` | Extrusion operation flag |
+| `AJ` | Extrusion folding |
+| `AK` | Extrusion next operation |
+| `AL` | Extrusion treatment |
+| `AM` | Extrusion raw material A |
+| `AN` | Extrusion raw material B |
+| `AO` | Extrusion raw material C |
+| `AP` | Extrusion linear PE |
+| `AQ` | Extrusion antistatic |
+| `AR` | Extrusion masterbatch |
+| `AS` | Extrusion chalk |
+| `AT` | Extrusion packaging method |
+
+The app should preserve raw workbook values as much as possible. The workbook contains mixed human-entered content: dates, numbers, quantities embedded in text, units, notes, Bulgarian labels, and inconsistent text casing.
+
+## Operation Flags
+
+The workbook has four operation flag columns:
+
+| Operation | Flag column |
+| --- | --- |
+| Printing / flexo | `V` |
+| Extrusion | `W` |
+| Rewinding/slitting | `X` |
+| Confection | `Y` |
+
+The Excel formulas compare operation flags against `Да`. Inspected data also contained lowercase `да`, and Excel still displayed the matching cards. Treat operation flags case-insensitively.
+
+For the pilot app, only the extrusion flag in `W` matters.
+
+## Excel Formula Mechanism
+
+The print/layout sheets use the selected order number in `Database!A4`.
+
+General pattern:
+
+1. Read selected order number from `Database!A4`.
+2. Look up that order number in `Database!A5:CO1048576`.
+3. Return fields from the matching row using numeric indexes from `Database!1:1`.
+4. Show or hide each front-card block based on its operation flag.
+
+Implications:
+
+- The app does not need to reproduce the `A4` selector if it imports a full source row.
+- If the app reads directly from the workbook by order number, it must account for Excel-style lookup behavior and duplicate order numbers.
+- The formulas reference `A5:CO1048576`, but meaningful inspected source data stopped at `AY`.
+
+## `Technology Cards` Sheet
+
+Observed metadata:
+
+- Dimensions: `A1:AR56`
+- Formula cells: `78`
+- Print area: none defined
+- Page setup: portrait, scale `92`
+- Gridlines hidden
+
+This sheet contains four front-card blocks side by side:
+
+| Card | Cell range | Operation flag |
+| --- | --- | --- |
+| Printing / flexo | `A1:K56` | `Database!V` |
+| Extrusion | `L1:V56` | `Database!W` |
+| Rewinding/slitting | `W1:AG56` | `Database!X` |
+| Confection | `AH1:AR56` | `Database!Y` |
+
+Pilot app printing should reproduce the extrusion block, not the other three blocks.
+
+Extrusion front block uses:
+
+- Common order fields from `A:M`
+- Notes from `N`
+- Extrusion fields from `AJ:AT`
+
+For selected order `25278`, cached values showed that the printing and extrusion blocks displayed, while rewinding/slitting and confection did not. That matches the inspected operation flags for that row.
+
+## `Page Back` Sheet
+
+Observed metadata:
+
+- Dimensions: `A1:K48`
+- Formula cells: `3`
+- Print area: `'Page Back'!$A$1:$K$48`
+- Page setup: portrait, paper size `9`, fit-to-width `0`, fit-to-height `0`
+- Gridlines hidden
+
+Only three formula cells pull from `Database`:
+
+| Cell | Source |
+| --- | --- |
+| `A2` | Order number from `Database!A` |
+| `C2` | Company/customer from `Database!D` |
+| `F2` | Product type from `Database!F` |
+
+All other observed back-page content is fixed layout text, prefilled roll numbers, or blank input cells.
+
+The back page has three repeated roll-entry groups:
+
+| Group | Columns | Roll numbers |
+| --- | --- | --- |
+| Left | `A:C` | `1:40` |
+| Middle | `E:G` | `41:80` |
+| Right | `I:K` | `81:120` |
+
+Each group has a date/shift column, roll number column, and kg column. Rows `47:48` contain total labels but no total formulas were observed.
+
+## Back-Page App Model
+
+Confirmed for the app:
+
+- Operators enter gross roll weights.
+- The app stores one order-level tare weight.
+- Net roll weight is calculated from gross roll weight minus tare weight.
+- Total gross order weight is the sum of gross roll weights.
+- Total net order weight is the sum of net roll weights.
+
+Confirmed date/shift behavior:
+
+- Keep the existing `Дата / смяна` columns on the printed back page.
+- Do not require date/shift entry in the terminal UI.
+- Do not build shift tracking for the current prototype.
+- Date/shift columns are print-layout compatibility fields only for now.
+- If shift tracking becomes necessary during testing, the likely shape would be a simple `Change Shift` button that records a timestamp and short text marker, but this is explicitly not current scope.
+
+## App Data Model
+
+Use separate but related structures for imported operational-card data and terminal-entered roll data. These have different lifecycles:
+
+- Imported operational-card data comes from Excel/CSV and describes the order/card.
+- Roll data is created at the terminal while operators execute the order.
+
+Recommended conceptual schema:
+
+| Entity | Purpose |
+| --- | --- |
+| `orders` / `cards` | One row per imported extrusion operational card/order. Stores the structured fields imported from Excel, current status, order-level tare, and print/workflow timestamps. |
+| `roll_entries` | One row per produced roll. Linked to the parent order/card by internal ID and order number. Stores roll number, gross weight, and calculated net weight. |
+| `production_time_segments` | One row per production run segment. Stores each start/resume and pause/finish interval so total production time can exclude pauses. |
+| `imports` / `import_batches` | One row per CSV import event, so the app can show which file/import created drafts. |
+| `machines` | Four fixed machine records used for assignment, sequencing, and terminal quick navigation. |
+
+Confirmed storage behavior:
+
+- Imported orders remain in the app after import.
+- The user should be able to review imported orders later.
+- Imported orders should be visible in app data/history even before they are released to the terminal.
+- Submit/release makes an already-saved order/card visible at the terminal; it does not create the order for the first time.
+- Machine assignment must exist before release to the terminal.
+- Machine sequence is a simple numeric order within the assigned machine queue.
+- Duplicate sequence numbers within the same active machine queue should be visually flagged and blocked from release until corrected.
+- Completed orders remain available in the app for review.
+- Completed orders should clear from the terminal execution view.
+- Imported operational-card fields should be stored as readable structured fields in the app.
+- Roll weights entered at the terminal must be linked to the same order/card.
+- Roll number is an index starting at `1` and increasing upward for the order.
+- Gross weight is entered by workers after each roll is counted.
+- Net weight is calculated as `gross weight - order tare weight`.
+- Per-roll net weight formula: `roll_net_weight = roll_gross_weight - tare_weight`.
+- Total net weight formula: `total_net_weight = total_gross_weight - (number_of_rolls * tare_weight)`.
+- Tare weight is stored once on the order/card.
+- The same tare weight applies to every roll in the order.
+- Roll entries do not need notes for the pilot.
+- Keep only latest values; no change history is required for the pilot.
+- Every operator action that changes production data must persist immediately. There should not be a separate "save all" button for roll entries or timing actions.
+- Terminal roll entry should use one fixed gross-weight input for adding the next roll.
+- Pressing `Enter` in the fixed gross-weight input or clicking the add button should save the new roll immediately and clear/focus the input for the next roll.
+- Roll numbers are assigned automatically starting at `1`.
+- Previous gross weights should remain editable.
+- Clearing a gross-weight value is enough to remove/correct it for the pilot; a separate delete-row action is optional only if it stays very simple.
+- Net weight per roll should be stored or calculatable, but does not need to be shown to operators per roll.
+- Operators should see total gross weight so far and total net weight so far.
+- Weight inputs should support up to two decimal places.
+- Totals may be displayed rounded for readability, but storage/calculation should preserve the needed precision.
+
+Confirmed production timing behavior:
+
+- Operators need a button to record the start of production for an order.
+- Operators need pause functionality.
+- After pause, operators need to restart/resume production.
+- Finishing an order closes any active production time segment and completes the card. There is no separate stop button in the terminal workflow.
+- Total production time should be calculated from the sum of each start/resume to pause/finish interval.
+- Do not calculate total time as one naive `finish time - start time` if pauses exist.
+- Start, pause, resume, and finish actions must persist immediately when clicked.
+- If an operator tries to input a roll while no timer is active for that card, the app should warn them.
+- Printing is available only after the card is completed.
+
+Finish validation:
+
+- `Finished` should be blocked unless tare weight is entered.
+- `Finished` should be blocked unless the timer was started at least once.
+- `Finished` should be blocked unless at least one gross roll weight exists.
+- The app should not allow final finish when there are empty roll gaps between filled roll entries.
+- If `Finished` is clicked while the card is running, the app should close the active time segment and complete the card.
+
+Cancellation behavior:
+
+- Operators and shift manager/admin can cancel cards.
+- Cancellation does not require a reason.
+- Cancelling changes the card status to `cancelled`.
+- Cancelled cards are no longer active and should not appear in the main active queue.
+- Cancelled cards remain visible with completed/cancelled job cards.
+- Cancelling is reversible: clicking the cancel action again on a cancelled card changes it back to `pending`.
+- This reversible cancel behavior should be available both from the terminal and from the shift-manager/admin page.
+
+Terminal editable fields:
+
+- Most imported operational-card fields should be read-only on the terminal.
+- Operators should be able to edit fields that reflect actual machine-side material usage:
+  - actual raw material used
+  - raw material brand/grade/mark
+  - raw material batch/lot
+- These brand/batch fields are not present in the Excel database. In the current paper process, they are written directly on the operational card for auditability.
+- Operators should be able to edit tare weight.
+- Operators should be able to edit gross roll weights.
+- Operators should be able to correct start/pause/resume/finish timing data when needed.
+- Operators should be able to correct machine assignment if the real production machine changes.
+- Machine assignment correction should move the card to the other machine queue.
+- Reassignment should not allow a machine to end up with two running cards.
+- Shift manager/admin page may allow broader editing of imported card fields, but this is separate from the terminal editing rules.
+
+Implementation detail:
+
+- Even though duplicate detection uses order number alone, the database should still use an internal primary key for each order/card and link roll entries to that internal ID. This avoids brittle relations while preserving the order number as the business identifier.
+- Storing the raw imported CSV row as a backup is optional, but the app must store the imported fields in a readable structured form. Do not store only an opaque raw CSV blob.
+
+## Data Transfer Options
+
+Confirmed context:
+
+- The Excel workbook lives on the shift manager's PC.
+- The shift manager's PC is connected by LAN to the same network as the app server and terminal.
+- The app is expected to run on the server/VM and be accessed over LAN by both the shift manager and the terminal.
+- The shift manager may perform manual work to load orders if that keeps the pilot simple and safe.
+- The top priorities for transfer are:
+  - do not corrupt or modify the Excel source data
+  - keep the process simple enough for a fast pilot
+  - avoid excessive validation work
+  - allow the shift manager to verify transferred data before it appears on the terminal
+
+Current preferred direction:
+
+- Build an Excel-side export action for the shift manager.
+- The shift manager selects or marks the orders/cards to export.
+- Excel export should use the currently selected rows.
+- The export action creates a `.csv` file.
+- One CSV should be able to contain several selected orders, with one row per order, so the shift manager can prepare a small queue at once.
+- The app imports that `.csv` and shows imported orders as drafts.
+- The shift manager reviews each draft in the app and clicks `Submit`.
+- Submitted cards enter the terminal queue/list.
+
+Confirmed CSV scope:
+
+- Export only the fields needed for the extrusion pilot rather than the full `A:AY` source row.
+- Avoid carrying fields that the app will not read or use.
+- The CSV may contain multiple selected orders, one row per order.
+- Duplicate detection in the app should use order number alone.
+- CSV headers may use stable internal field names chosen by the implementation, for example `order_number` or `raw_material_a`.
+- The workbook structure is stable, so internal CSV headers can be mapped by fixed source columns.
+- User-facing labels in the app and print output must use the Bulgarian field names/operators expect from the operational card, not internal CSV names.
+- App-only fields that are not in Excel should start blank after import, including actual material used, brand/grade/mark, batch/lot, and tare weight.
+
+Confirmed export location convention:
+
+- The macro should create an export/extract folder in the same root directory as the `.xlsm` workbook.
+- Each export should create a new CSV file in that folder.
+- Use a simple folder name such as `extracts`.
+- Use timestamped filenames so exports do not overwrite each other, for example `extrusion_orders_YYYYMMDD_HHMMSS.csv`.
+
+Validation direction:
+
+- The export may export selected rows, but the app import must validate whether each imported row is usable for the extrusion pilot.
+- If a row has no extrusion flag or empty/missing extrusion data, the app should notify the shift manager with a message such as `no extrusion step`.
+- This validation belongs to CSV import/draft review so bad rows do not silently enter the terminal queue.
+- If an imported order number already exists, the app should warn and allow the shift manager to overwrite/re-import.
+- Overwrite/re-import should update only imported/front-card/order information.
+- Overwrite/re-import must not overwrite existing roll entries, gross weights, timing data, or other back-page/workstation-entered production data.
+
+Important caveat:
+
+- The user suggested building a small macro into Excel.
+- Clarification: "set in stone" means the workbook structure will not change. It does not prohibit adding read-only macros.
+- It is acceptable to modify the actual shift-manager `.xlsm` file to add export automation, as long as the automation only reads/exports and does not edit or write existing workbook data.
+
+Fallback options if CSV export becomes too risky or slow:
+
+- Shift manager copies a full row from `Database` and pastes it into the app.
+- Shift manager copies a narrower extrusion-relevant range and pastes it into the app.
+- App reads the workbook directly from a shared location.
+- App provides another import mechanism derived from the workbook.
+
+Observed copy/paste facts:
+
+- Excel row copy produces tab-separated text.
+- A full row through `AY` can be mapped positionally to the database columns.
+- Copy/paste should preserve raw values because many workbook cells are human-entered strings rather than clean typed data.
+
+Recommended pilot import flow:
+
+1. Shift manager opens an import/load screen in the app.
+2. Shift manager imports the `.csv` generated from Excel.
+3. App parses the CSV into one or more persistent app records with draft/imported status.
+4. App shows imported orders as drafts in the app.
+5. Shift manager opens/views a draft.
+6. Shift manager verifies that the data looks correct.
+7. Shift manager submits/releases the draft.
+8. Released card appears in the terminal execution list.
+
+This preview-before-submit step is confirmed as desirable because it prevents randomly bad transferred data from immediately appearing at the workstation.
+
+Queue behavior is confirmed as simple machine-based sequencing: active cards are assigned to one of four machines, sorted by numeric sequence within each machine, and shown without complex scheduling logic.
+
+Copy/paste remains acceptable as a fallback, but CSV export is preferred because it is less prone to manual paste/selection errors.
+
+Database-design direction:
+
+- The app database should respect how the Excel data is currently structured.
+- Imported order/card fields should remain differentiated rather than collapsed into one blob.
+- Roll weights entered at the terminal must be saved in the app database under the related order number.
+- The data model should separate imported order/card fields from roll-weight entries while linking them to the same order/card.
+- Imported CSV rows should create persistent draft/imported order/card records before terminal release.
+- On draft submission, the app must check whether the order has already been submitted/imported previously.
+- If submitting/importing would duplicate an existing order number, the app should prompt/warn the shift manager.
+- The shift manager may choose to overwrite/re-import the order data after warning.
+- Re-import overwrite must preserve existing roll/timing/workstation data.
+- Duplicate detection should use order number alone.
+- The exact database columns should be defined during implementation from the confirmed conceptual schema above.
+
+## Printing Constraint
+
+The terminal UI may be app-native, but the printed paper output must match the Excel operational card.
+
+Confirmed print requirements:
+
+- Printing implementation is flexible. Browser print, generated HTML/CSS, PDF generation, or another method is acceptable if it is simple, reliable, and produces the required paper output.
+- Print the extrusion front.
+- Print the back page.
+- Output is always exactly two pages: extrusion front page plus back page.
+- Paper size is A4.
+- The app should generate two pages. Duplex/front-back printing on one sheet can be handled by printer settings.
+- Printing must be possible from the workstation/terminal itself.
+- Printing/reprinting should be possible from completed cards so mistakes can be corrected and the card can be printed again.
+- Only completed cards can be printed.
+- Completion closes timing before print is allowed.
+- Printing should be impossible until the card/order is finished.
+- Preserve the Excel card layout one-to-one as much as possible.
+- The back page should keep the same 120-roll grid even if fewer rolls were produced.
+- Mild additions are acceptable:
+  - start time
+  - stop/finish time
+  - tare weight
+  - total gross weight
+  - total net weight
+
+The current Excel `Technology Cards` extrusion block and `Page Back` sheet are the visual source of truth for print layout. The final printed output should be effectively indistinguishable from the old paper operational card, except for the confirmed additions above. Place the additions on the page while preserving the familiar two-page/120-roll structure as much as possible. The exact placement of those additions is not decided.
+
+Print-layout follow-up:
+
+- Create/agree a printable card template before final print implementation.
+- The template should show where the added fields go, especially on the back page.
+- The added fields currently expected are start time, stop/finish time, tare weight, total gross weight, and total net weight.
+- This layout decision can happen after the captured data fields are final.
+
+## Deferred Functionality
+
+Do not build this in the current implementation unless the user explicitly reopens it:
+
+- Per-machine roll-change timer. Possible shape discussed: a simple timer or countdown related to when rolls are removed/changed, useful because one terminal services multiple extrusion machines. This is deferred until after the prototype is tested and the user confirms whether it is useful.
+
+## Infrastructure Context
+
+Confirmed infrastructure facts from the discussion:
+
+- The app will have a dedicated server.
+- The app will have its own Proxmox server and its own VM.
+- The Excel workbook lives on the shift manager's PC.
+- The shift manager's PC is on the same LAN as the app server and terminal.
+- The app is expected to be accessed over LAN by both the shift manager and terminal.
+- Remote access from outside the network should use Tailscale.
+- The app should not be exposed directly to the public internet.
+- Tailscale may be installed on the app VM for app/server access.
+- Tailscale may also be installed on the Proxmox host for remote administration, including access to the Proxmox web UI on port `8006` through the Tailscale IP.
+
+## Approved Technical Direction
+
+Use a simple local web app stack:
+
+| Layer | Choice |
+| --- | --- |
+| Backend | Python + FastAPI |
+| Database | SQLite |
+| Frontend | Simple server-rendered pages or light HTML/JS |
+| Printing | HTML/CSS print views tuned to match the Excel operational card |
+| Excel export | VBA macro writes CSV |
+| Deployment | One Linux VM on the Proxmox server |
+| Access | Browser over LAN |
+
+Rationale:
+
+- Keep moving parts minimal.
+- Avoid a separate database server.
+- Keep backup/restore straightforward.
+- Keep the system easy to inspect and repair.
+- SQLite is sufficient for one terminal and one shift-manager workflow.
+
+Backup approach:
+
+- Store the SQLite database on the app VM/server.
+- Create automatic timestamped backups.
+- A 10-minute backup interval is acceptable because the database will be small and storage space is available.
+- Backups should use SQLite-safe backup behavior rather than unsafe raw copying while writes may be active.
+- Retention policy can be simple, for example frequent backups for recent days and fewer older backups.
+
+Conflict handling:
+
+- Each order/card should have an `updated_at` timestamp or version number.
+- When admin or terminal opens a card, the app should remember the loaded version.
+- On save/action, if the card was changed elsewhere after it was loaded, the app should warn and require reload before continuing.
+- Admin edits after release/running should be allowed.
+- Terminal should show admin changes after refresh/reload.
+- Do not build complex merge tooling for this prototype.
+- The goal is to prevent silent overwrites when shift manager/admin and terminal are editing the same card.
+
+## Implementation Guardrails
+
+- Keep the app focused on extrusion until the user expands scope.
+- Do not implement non-extrusion card workflows.
+- Do not implement detailed machine tracking beyond the confirmed simple machine assignment, sequencing, and quick navigation.
+- Do not implement named-user authentication for the pilot.
+- Do not implement locked finished orders or reopen workflows.
+- Do not require cancellation reasons.
+- Cancelled cards should be reversible back to pending.
+- Do not treat submit/release as the first persistence point. Imported draft records should already be saved in the app.
+- Persist each roll/timing change immediately to reduce data loss if the terminal crashes.
+- Do not change the workbook's data structure. The user stated that the structure is set in stone.
+- Read-only export macros are acceptable in the actual shift-manager workbook.
+- Excel automation must not edit or write existing workbook data.
+- Do not use `Technology Cards` or `Page Back` as authoritative data sources; they are derived layouts.
+- Use `Database` rows as the source for order/card data.
+- Preserve workbook values without aggressive normalization.
+- Prefer a structured CSV import over manual paste if it can be built without endangering the Excel source workbook or delaying the pilot.
+- Use the approved simple stack unless there is a concrete blocker: Python/FastAPI, SQLite, simple HTML/JS, HTML/CSS print views.
+- Implement SQLite-safe backups.
+- Use simple optimistic conflict detection with `updated_at` or a version number.
+- Handle operation flags case-insensitively.
+- Do not assume every quantity is numeric.
+- Date/shift columns on the printed back page are retained visually but are not used as app inputs.
+- Do not assume terminal results must be synchronized back to Excel.
+- Keep confirmed facts separate from open decisions in future edits.
+- Treat this app as a bounded pilot/prototype, not as a foundation for future feature expansion.
+
+## Inspection Notes
+
+The workbook was inspected programmatically with `openpyxl`. The file was readable, but file hashing failed because another process had the workbook open. If future agents need a stronger workbook fingerprint, close Excel or copy the workbook to a temporary path before hashing.

@@ -1,0 +1,1203 @@
+<!doctype html>
+<html lang="bg">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Работна станция - V3</title>
+  <style>
+    :root {
+      --bg: #f3f2ee;
+      --surface: #ffffff;
+      --surface-soft: #f9f8f5;
+      --line: #d8d4ca;
+      --line-strong: #aaa396;
+      --text: #24231f;
+      --muted: #6c685f;
+      --green: #177245;
+      --green-soft: #e0f1e6;
+      --amber: #a66300;
+      --amber-soft: #fff0cd;
+      --red: #ad2b23;
+      --red-soft: #fde4e1;
+      --blue: #245f9f;
+      --blue-soft: #e3eff9;
+      --edit: #e8f3ff;
+      --shadow: 0 1px 2px rgba(30, 28, 24, 0.08), 0 8px 20px rgba(30, 28, 24, 0.05);
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      min-height: 42px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 7px;
+      padding: 0 14px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    button:hover { border-color: var(--line-strong); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    button:focus-visible,
+    input:focus,
+    textarea:focus {
+      outline: 3px solid #181714;
+      outline-offset: 1px;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 330px 1fr;
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      background: var(--surface);
+      border-right: 1px solid var(--line);
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .side-head {
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .side-head h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.05;
+    }
+
+    .clock {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .tabs {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfaf7;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .tabs button {
+      min-height: 38px;
+      background: transparent;
+    }
+
+    .tabs .active {
+      background: var(--text);
+      border-color: var(--text);
+      color: #fff;
+    }
+
+    .queue {
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+      align-content: start;
+      overflow: auto;
+      flex: 1;
+    }
+
+    .job {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      min-height: 94px;
+      padding: 10px;
+      display: grid;
+      gap: 7px;
+      cursor: pointer;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+
+    .job.selected {
+      border-color: #1f1d1a;
+      box-shadow: inset 0 0 0 2px #1f1d1a;
+    }
+
+    .job.running { background: var(--green-soft); border-color: #8cc8a2; }
+    .job.paused { background: var(--amber-soft); border-color: #d9b66f; }
+    .job.completed { background: var(--blue-soft); border-color: #a4c3df; }
+    .job.cancelled { background: var(--red-soft); border-color: #e1aaa5; }
+
+    .job-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: flex-start;
+    }
+
+    .job-no {
+      font-size: 18px;
+      font-weight: 850;
+      line-height: 1;
+    }
+
+    .pill {
+      border-radius: 999px;
+      min-height: 25px;
+      min-width: 76px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 850;
+      border: 1px solid transparent;
+      background: #eeeeea;
+      white-space: nowrap;
+    }
+
+    .pill.pending { color: var(--blue); border-color: #abc9e4; background: #edf6ff; }
+    .pill.running { color: var(--green); border-color: #9bcdaa; background: #eef8f1; }
+    .pill.paused { color: var(--amber); border-color: #dfbc72; background: #fff7df; }
+    .pill.completed { color: var(--blue); border-color: #abc9e4; background: #edf6ff; }
+    .pill.cancelled { color: var(--red); border-color: #e3aaa6; background: #fff1ef; }
+
+    .job-product {
+      font-size: 14px;
+      line-height: 1.22;
+      font-weight: 750;
+    }
+
+    .job-customer {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.15;
+    }
+
+    .progress {
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.11);
+      overflow: hidden;
+    }
+
+    .progress span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--green);
+    }
+
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .main {
+      min-width: 0;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .topbar {
+      min-height: 66px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .title h1 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.05;
+    }
+
+    .title .sub {
+      display: none;
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      position: relative;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .primary {
+      background: var(--green);
+      border-color: var(--green);
+      color: #fff;
+    }
+
+    .primary:hover { background: #12623b; border-color: #12623b; }
+    .finish { background: #1f1d1a; border-color: #1f1d1a; color: #fff; }
+    .pause { background: var(--amber-soft); border-color: #ddbd79; color: #6f4200; }
+    .menu-btn { width: 44px; padding: 0; font-size: 24px; line-height: 1; }
+
+    .menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      min-width: 170px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.18);
+      padding: 6px;
+      display: none;
+      z-index: 20;
+    }
+
+    .menu.open { display: grid; gap: 4px; }
+    .menu button { width: 100%; text-align: left; background: transparent; }
+    .menu .danger { color: var(--red); }
+
+    .work {
+      min-height: 0;
+      overflow: hidden;
+      padding: 12px;
+      display: grid;
+      gap: 12px;
+      grid-template-columns: minmax(660px, 1fr) minmax(420px, 0.62fr);
+      align-content: stretch;
+    }
+
+    .left-stack {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 12px;
+      min-height: 0;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel h2 {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.1;
+    }
+
+    .panel-head {
+      min-height: 45px;
+      padding: 11px 13px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .panel-body {
+      padding: 12px;
+      min-height: 0;
+    }
+
+    .panel-body.scroll {
+      overflow: auto;
+      flex: 1;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 14px;
+    }
+
+    .field {
+      min-height: 42px;
+      border-bottom: 1px solid #e2dfd7;
+      padding-bottom: 7px;
+    }
+
+    .label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.1;
+      margin-bottom: 4px;
+    }
+
+    .value {
+      font-size: 16px;
+      font-weight: 750;
+      line-height: 1.25;
+      word-break: break-word;
+    }
+
+    .notes {
+      margin-top: 10px;
+      border: 1px solid #e2dfd7;
+      border-radius: 7px;
+      background: var(--surface-soft);
+      padding: 10px;
+      min-height: 54px;
+      max-height: 180px;
+      overflow: auto;
+      white-space: pre-wrap;
+      line-height: 1.3;
+      font-weight: 650;
+    }
+
+    .recipe-table,
+    .roll-table {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--surface);
+    }
+
+    .recipe-head,
+    .recipe-row {
+      display: grid;
+      grid-template-columns: 118px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+      align-items: stretch;
+    }
+
+    .recipe-head {
+      background: #eceae4;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+      min-height: 32px;
+    }
+
+    .recipe-row {
+      min-height: 43px;
+      border-top: 1px solid #e8e5de;
+    }
+
+    .recipe-head div,
+    .recipe-row > div {
+      padding: 8px;
+      border-right: 1px solid #e8e5de;
+      min-width: 0;
+    }
+
+    .recipe-head div:last-child,
+    .recipe-row > div:last-child { border-right: 0; }
+
+    .component {
+      font-weight: 850;
+      background: #faf9f6;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .recipe-value {
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    input.cell {
+      width: 100%;
+      min-height: 30px;
+      border: 1px solid #bbb4a7;
+      border-radius: 6px;
+      background: var(--edit);
+      padding: 5px 7px;
+      font-weight: 750;
+    }
+
+    .side-stack {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 12px;
+      align-content: start;
+      min-height: 0;
+    }
+
+    .production-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-soft);
+      padding: 8px;
+      min-height: 62px;
+    }
+
+    .metric .big {
+      font-size: 22px;
+      line-height: 1;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metric input {
+      width: 100%;
+      min-height: 34px;
+      border: 1px solid #bbb4a7;
+      border-radius: 6px;
+      background: var(--edit);
+      padding: 5px 7px;
+      font-size: 20px;
+      font-weight: 900;
+    }
+
+    .roll-add {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: end;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfaf6;
+      padding: 10px;
+    }
+
+    .roll-add input {
+      width: 100%;
+      min-height: 46px;
+      border: 1px solid #aaa396;
+      border-radius: 7px;
+      background: var(--edit);
+      padding: 6px 10px;
+      font-size: 22px;
+      font-weight: 900;
+    }
+
+    .roll-scroll {
+      max-height: calc(100vh - 430px);
+      min-height: 210px;
+      overflow: auto;
+    }
+
+    .roll-head,
+    .roll-row {
+      display: grid;
+      grid-template-columns: 70px 1fr;
+      align-items: center;
+    }
+
+    .roll-head {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #eceae4;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+      min-height: 34px;
+    }
+
+    .roll-head div,
+    .roll-row div {
+      padding: 7px 10px;
+    }
+
+    .roll-row {
+      min-height: 45px;
+      border-top: 1px solid #e8e5de;
+    }
+
+    .roll-row input {
+      width: 100%;
+      min-height: 34px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      padding: 4px 8px;
+      font-size: 17px;
+      font-weight: 850;
+    }
+
+    .roll-row input:focus {
+      background: var(--edit);
+      border-color: #aaa396;
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      min-width: 280px;
+      max-width: min(460px, calc(100vw - 36px));
+      display: none;
+      z-index: 30;
+      border-radius: 8px;
+      background: #1f1d1a;
+      color: #fff;
+      padding: 12px 14px;
+      font-weight: 750;
+      box-shadow: 0 14px 38px rgba(0, 0, 0, 0.25);
+    }
+
+    @media (max-width: 1280px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar { border-right: 0; border-bottom: 1px solid var(--line); max-height: 420px; }
+      .queue { grid-template-columns: repeat(2, minmax(260px, 1fr)); }
+      .work {
+        overflow: auto;
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .topbar,
+      .actions,
+      .production-strip,
+      .info-grid,
+      .roll-add {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+
+      .queue { grid-template-columns: 1fr; }
+      .recipe-head,
+      .recipe-row {
+        grid-template-columns: 110px 1fr;
+      }
+
+      .recipe-head div:nth-child(n+3),
+      .recipe-row > div:nth-child(n+3) {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="side-head">
+        <h1>Карти</h1>
+        <div class="clock" id="clock">--:--</div>
+      </div>
+      <div class="tabs">
+        <button type="button" id="tab-active" class="active">Активни</button>
+        <button type="button" id="tab-done">Приключени</button>
+      </div>
+      <div class="queue" id="queue"></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="title">
+          <h1 id="page-title">Поръчка №</h1>
+          <div class="sub" id="page-sub">Работна карта</div>
+        </div>
+        <div class="actions">
+          <button type="button" id="start-btn" class="primary">Старт</button>
+          <button type="button" id="pause-btn" class="pause">Пауза</button>
+          <button type="button" id="finish-btn" class="finish">Приключи</button>
+          <button type="button" id="menu-btn" class="menu-btn" aria-label="Още действия">⋯</button>
+          <div class="menu" id="menu">
+            <button type="button" id="menu-print">Печат / повторен печат</button>
+            <button type="button" id="menu-cancel" class="danger">Анулирай</button>
+          </div>
+        </div>
+      </header>
+
+      <section class="work">
+        <div class="left-stack">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Карта</h2>
+            <span class="pill" id="status-pill">-</span>
+          </div>
+          <div class="panel-body">
+            <div class="info-grid">
+              <div class="field">
+                <span class="label">Вид изделие</span>
+                <div class="value" id="product"></div>
+              </div>
+              <div class="field">
+                <span class="label">Фирма</span>
+                <div class="value" id="customer"></div>
+              </div>
+              <div class="field">
+                <span class="label">Количество</span>
+                <div class="value" id="quantity"></div>
+              </div>
+              <div class="field">
+                <span class="label">Размер/дебелина</span>
+                <div class="value" id="size"></div>
+              </div>
+              <div class="field">
+                <span class="label">Вид заготовка</span>
+                <div class="value" id="blank-type"></div>
+              </div>
+              <div class="field">
+                <span class="label">Материал</span>
+                <div class="value" id="material"></div>
+              </div>
+            </div>
+            <div class="notes" id="notes"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Вложени суровини и добавки</h2>
+            <span class="label">Сините полета се попълват на машината</span>
+          </div>
+          <div class="panel-body scroll">
+            <div class="recipe-table">
+              <div class="recipe-head">
+                <div>Позиция</div>
+                <div>Вид суровина</div>
+                <div>Марка №</div>
+                <div>Партиден №</div>
+              </div>
+              <div id="recipe-rows"></div>
+            </div>
+          </div>
+        </div>
+
+
+        </div>
+
+        <div class="side-stack">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Производство</h2>
+            </div>
+            <div class="panel-body">
+              <div class="production-strip">
+                <div class="metric">
+                  <span class="label">Активно време</span>
+                  <div class="big" id="active-time">00:00</div>
+                </div>
+                <div class="metric">
+                  <label class="label" for="tare">Шпула</label>
+                  <input id="tare" inputmode="decimal">
+                </div>
+                <div class="metric">
+                  <span class="label">Ролки</span>
+                  <div class="big" id="roll-count">0</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Ролки</h2>
+            </div>
+            <div class="panel-body">
+              <div class="production-strip" style="margin-bottom: 10px;">
+                <div class="metric">
+                  <span class="label">Бруто общо</span>
+                  <div class="big" id="total-gross">0.0 кг</div>
+                </div>
+                <div class="metric">
+                  <span class="label">Нето общо</span>
+                  <div class="big" id="total-net">0.0 кг</div>
+                </div>
+                <div class="metric">
+                  <span class="label">Прогрес</span>
+                  <div class="big" id="detail-progress">0%</div>
+                </div>
+              </div>
+
+              <div class="roll-add">
+                <div>
+                  <label class="label" for="new-roll">Нова ролка - бруто, кг</label>
+                  <input id="new-roll" inputmode="decimal" autocomplete="off">
+                </div>
+                <button type="button" id="add-roll" class="primary">Добави</button>
+              </div>
+
+              <div class="roll-table" style="margin-top: 10px;">
+                <div class="roll-scroll" id="roll-scroll">
+                  <div class="roll-head">
+                    <div>№</div>
+                    <div>Бруто тегло, кг</div>
+                  </div>
+                  <div id="rolls"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const statusLabels = {
+      pending: "Чакаща",
+      running: "В работа",
+      paused: "Пауза",
+      completed: "Приключена",
+      cancelled: "Анулирана"
+    };
+
+    const orders = [
+      {
+        id: 1,
+        status: "running",
+        orderNumber: "25278",
+        customer: "Пелети Пирин PELLITO",
+        product: "ТСФ 890/0.082 - Пирин пелет PELLITO / 2026 /",
+        targetKg: 500,
+        quantity: "500 кг. / 5 ролки",
+        blankType: "плоско",
+        material: "LDPE",
+        size: "890/0.082",
+        notes: "Екструдират се ролки по 4500 м. = 310 кг.\nРазмера се пуска с 2-3 см. изрезка.",
+        tare: 1.2,
+        seconds: 9120,
+        rolls: [52.35, 51.9, 53.1],
+        recipe: [
+          { key: "A", label: "A", planned: "LDPE тв.- румънско B20/03", brand: "B20/03", batch: "", qty: "" },
+          { key: "B", label: "B", planned: "", brand: "", batch: "", qty: "" },
+          { key: "C", label: "C", planned: "", brand: "", batch: "", qty: "" },
+          { key: "linear", label: "Линеен", planned: "20% без добавки", brand: "", batch: "", qty: "" },
+          { key: "antistatic", label: "Антистатик", planned: "1%", brand: "", batch: "", qty: "" },
+          { key: "masterbatch", label: "Мастербач", planned: "", brand: "", batch: "", qty: "" },
+          { key: "chalk", label: "Креда", planned: "", brand: "", batch: "", qty: "" }
+        ]
+      },
+      {
+        id: 2,
+        status: "pending",
+        orderNumber: "25279",
+        customer: "Алфа Пак",
+        product: "ПЕ фолио 620/0.060",
+        targetKg: 300,
+        quantity: "300 кг.",
+        blankType: "полуръкав",
+        material: "LDPE",
+        size: "620/0.060",
+        notes: "Проверка на дебелина при първа ролка.",
+        tare: "",
+        seconds: 0,
+        rolls: [],
+        recipe: [
+          { key: "A", label: "A", planned: "LDPE", brand: "", batch: "", qty: "" },
+          { key: "B", label: "B", planned: "", brand: "", batch: "", qty: "" },
+          { key: "C", label: "C", planned: "", brand: "", batch: "", qty: "" },
+          { key: "linear", label: "Линеен", planned: "15%", brand: "", batch: "", qty: "" },
+          { key: "antistatic", label: "Антистатик", planned: "", brand: "", batch: "", qty: "" },
+          { key: "masterbatch", label: "Мастербач", planned: "", brand: "", batch: "", qty: "" },
+          { key: "chalk", label: "Креда", planned: "", brand: "", batch: "", qty: "" }
+        ]
+      },
+      {
+        id: 3,
+        status: "paused",
+        orderNumber: "25280",
+        customer: "Бета Трейд",
+        product: "Плик 310/750/0.035",
+        targetKg: 800,
+        quantity: "800 кг.",
+        blankType: "плоско",
+        material: "LDPE",
+        size: "750/0.035",
+        notes: "Навиване отпред.",
+        tare: 0.95,
+        seconds: 4680,
+        rolls: [48.4, 48.2],
+        recipe: [
+          { key: "A", label: "A", planned: "LDPE", brand: "", batch: "", qty: "" },
+          { key: "B", label: "B", planned: "", brand: "", batch: "", qty: "" },
+          { key: "C", label: "C", planned: "", brand: "", batch: "", qty: "" },
+          { key: "linear", label: "Линеен", planned: "10%", brand: "", batch: "", qty: "" },
+          { key: "antistatic", label: "Антистатик", planned: "2%", brand: "", batch: "", qty: "" },
+          { key: "masterbatch", label: "Мастербач", planned: "", brand: "", batch: "", qty: "" },
+          { key: "chalk", label: "Креда", planned: "", brand: "", batch: "", qty: "" }
+        ]
+      },
+      {
+        id: 4,
+        status: "completed",
+        orderNumber: "25261",
+        customer: "Гама",
+        product: "Фолио 460/0.055",
+        targetKg: 600,
+        quantity: "600 кг.",
+        blankType: "плоско",
+        material: "LDPE",
+        size: "460/0.055",
+        notes: "Приключена карта.",
+        tare: 1.1,
+        seconds: 8400,
+        rolls: [50.3, 50.0, 49.8],
+        recipe: [
+          { key: "A", label: "A", planned: "LDPE", brand: "LDPE", batch: "P-042", qty: "" },
+          { key: "B", label: "B", planned: "", brand: "", batch: "", qty: "" },
+          { key: "C", label: "C", planned: "", brand: "", batch: "", qty: "" },
+          { key: "linear", label: "Линеен", planned: "20%", brand: "", batch: "", qty: "" },
+          { key: "antistatic", label: "Антистатик", planned: "", brand: "", batch: "", qty: "" },
+          { key: "masterbatch", label: "Мастербач", planned: "", brand: "", batch: "", qty: "" },
+          { key: "chalk", label: "Креда", planned: "", brand: "", batch: "", qty: "" }
+        ]
+      }
+    ];
+
+    let selectedId = 1;
+    let queueMode = "active";
+
+    const ids = {
+      clock: document.getElementById("clock"),
+      queue: document.getElementById("queue"),
+      pageTitle: document.getElementById("page-title"),
+      pageSub: document.getElementById("page-sub"),
+      statusPill: document.getElementById("status-pill"),
+      product: document.getElementById("product"),
+      customer: document.getElementById("customer"),
+      quantity: document.getElementById("quantity"),
+      size: document.getElementById("size"),
+      blankType: document.getElementById("blank-type"),
+      material: document.getElementById("material"),
+      notes: document.getElementById("notes"),
+      activeTime: document.getElementById("active-time"),
+      tare: document.getElementById("tare"),
+      rollCount: document.getElementById("roll-count"),
+      totalGross: document.getElementById("total-gross"),
+      totalNet: document.getElementById("total-net"),
+      detailProgress: document.getElementById("detail-progress"),
+      rolls: document.getElementById("rolls"),
+      rollScroll: document.getElementById("roll-scroll"),
+      newRoll: document.getElementById("new-roll"),
+      recipeRows: document.getElementById("recipe-rows"),
+      menu: document.getElementById("menu"),
+      toast: document.getElementById("toast")
+    };
+
+    function selected() {
+      return orders.find(order => order.id === selectedId) || orders[0];
+    }
+
+    function activeOrders() {
+      return orders.filter(order => ["pending", "running", "paused"].includes(order.status));
+    }
+
+    function archiveOrders() {
+      return orders.filter(order => ["completed", "cancelled"].includes(order.status));
+    }
+
+    function formatNumber(value, decimals = 1) {
+      return value.toLocaleString("bg-BG", {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+      });
+    }
+
+    function parseNum(value) {
+      if (value === "" || value === undefined || value === null) return 0;
+      const n = Number(String(value).replace(",", "."));
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function round2(value) {
+      return Math.round((value + Number.EPSILON) * 100) / 100;
+    }
+
+    function gross(order) {
+      return order.rolls.reduce((sum, value) => sum + parseNum(value), 0);
+    }
+
+    function net(order) {
+      return gross(order) - order.rolls.length * parseNum(order.tare);
+    }
+
+    function progress(order) {
+      if (!order.targetKg) return 0;
+      return Math.max(0, Math.min(100, Math.round((gross(order) / order.targetKg) * 100)));
+    }
+
+    function formatTime(seconds) {
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    }
+
+    function renderClock() {
+      ids.clock.textContent = new Date().toLocaleTimeString("bg-BG", { hour: "2-digit", minute: "2-digit" });
+    }
+
+    function renderQueue() {
+      const source = queueMode === "active" ? activeOrders() : archiveOrders();
+      ids.queue.innerHTML = "";
+
+      source.forEach(order => {
+        const card = document.createElement("article");
+        card.className = `job ${order.status}${order.id === selectedId ? " selected" : ""}`;
+        const pct = progress(order);
+        card.innerHTML = `
+          <div class="job-line">
+            <div class="job-no">№ ${order.orderNumber}</div>
+            <span class="pill ${order.status}">${statusLabels[order.status]}</span>
+          </div>
+          <div class="job-product">${order.product}</div>
+          <div class="job-customer">${order.customer}</div>
+          <div class="progress"><span style="width: ${pct}%"></span></div>
+          <div class="progress-meta"><span>${formatNumber(gross(order), 1)} / ${formatNumber(order.targetKg, 0)} кг</span><span>${pct}%</span></div>
+        `;
+        card.addEventListener("click", () => {
+          selectedId = order.id;
+          render();
+        });
+        ids.queue.appendChild(card);
+      });
+    }
+
+    function renderDetail(order) {
+      ids.pageTitle.textContent = `Поръчка № ${order.orderNumber}`;
+      ids.statusPill.className = `pill ${order.status}`;
+      ids.statusPill.textContent = statusLabels[order.status];
+      ids.product.textContent = order.product;
+      ids.customer.textContent = order.customer;
+      ids.quantity.textContent = order.quantity;
+      ids.size.textContent = order.size;
+      ids.blankType.textContent = order.blankType;
+      ids.material.textContent = order.material;
+      ids.notes.textContent = order.notes;
+      if (document.activeElement !== ids.tare) ids.tare.value = order.tare;
+      ids.activeTime.textContent = formatTime(order.seconds);
+      ids.rollCount.textContent = order.rolls.length;
+      ids.totalGross.textContent = `${formatNumber(gross(order), 1)} кг`;
+      ids.totalNet.textContent = `${formatNumber(net(order), 1)} кг`;
+      ids.detailProgress.textContent = `${progress(order)}%`;
+      renderRolls(order);
+      renderRecipe(order);
+      renderButtons(order);
+    }
+
+    function renderButtons(order) {
+      const start = document.getElementById("start-btn");
+      const pause = document.getElementById("pause-btn");
+      const finish = document.getElementById("finish-btn");
+      start.textContent = order.status === "paused" ? "Продължи" : "Старт";
+      start.disabled = order.status === "running" || ["completed", "cancelled"].includes(order.status);
+      pause.disabled = order.status !== "running";
+      finish.disabled = ["completed", "cancelled"].includes(order.status);
+      document.getElementById("menu-print").disabled = order.status !== "completed";
+      document.getElementById("menu-cancel").textContent = order.status === "cancelled" ? "Върни като чакаща" : "Анулирай";
+    }
+
+    function renderRolls(order) {
+      ids.rolls.innerHTML = "";
+      order.rolls.forEach((weight, index) => {
+        const row = document.createElement("div");
+        row.className = "roll-row";
+        row.innerHTML = `
+          <div>${index + 1}</div>
+          <div><input value="${weight}" inputmode="decimal" aria-label="Ролка ${index + 1}"></div>
+        `;
+        const input = row.querySelector("input");
+        input.addEventListener("change", () => {
+          const value = input.value.trim();
+          if (value === "") {
+            if (index === order.rolls.length - 1) {
+              order.rolls.splice(index, 1);
+              toast("Последната ролка е изчистена.");
+            } else {
+              toast("Не оставяйте празни ролки между попълнени редове.");
+              input.value = weight;
+            }
+          } else {
+            order.rolls[index] = round2(parseNum(value));
+            toast("Записано.");
+          }
+          render();
+        });
+        ids.rolls.appendChild(row);
+      });
+    }
+
+    function renderRecipe(order) {
+      ids.recipeRows.innerHTML = "";
+      order.recipe.forEach((item, index) => {
+        const row = document.createElement("div");
+        row.className = "recipe-row";
+        row.innerHTML = `
+          <div class="component">${item.label}</div>
+          <div><input class="cell" value="${item.planned || ""}" aria-label="Вид суровина ${item.label}"></div>
+          <div><input class="cell" value="${item.brand || ""}" aria-label="Марка ${item.label}"></div>
+          <div><input class="cell" value="${item.batch || ""}" aria-label="Партиден номер ${item.label}"></div>
+        `;
+        const inputs = row.querySelectorAll("input");
+        inputs[0].addEventListener("change", () => { item.planned = inputs[0].value; toast("Записано."); });
+        inputs[1].addEventListener("change", () => { item.brand = inputs[1].value; toast("Записано."); });
+        inputs[2].addEventListener("change", () => { item.batch = inputs[2].value; toast("Записано."); });
+        ids.recipeRows.appendChild(row);
+      });
+    }
+
+    function addRoll() {
+      const order = selected();
+      if (order.status !== "running") {
+        toast("Първо стартирайте картата.");
+        return;
+      }
+      const value = ids.newRoll.value.trim();
+      if (!value) return toast("Въведете бруто тегло.");
+      const parsed = parseNum(value);
+      if (!parsed) return toast("Въведете валидно тегло.");
+      order.rolls.push(round2(parsed));
+      ids.newRoll.value = "";
+      toast("Ролката е добавена.");
+      render();
+      window.setTimeout(() => {
+        ids.rollScroll.scrollTop = ids.rollScroll.scrollHeight;
+        ids.newRoll.focus();
+      }, 0);
+    }
+
+    function toast(message) {
+      ids.toast.textContent = message;
+      ids.toast.style.display = "block";
+      window.clearTimeout(ids.toast._timer);
+      ids.toast._timer = window.setTimeout(() => {
+        ids.toast.style.display = "none";
+      }, 2400);
+    }
+
+    function render() {
+      renderQueue();
+      renderDetail(selected());
+    }
+
+    function bind() {
+      document.getElementById("tab-active").addEventListener("click", () => {
+        queueMode = "active";
+        document.getElementById("tab-active").classList.add("active");
+        document.getElementById("tab-done").classList.remove("active");
+        const first = activeOrders()[0];
+        if (first && !activeOrders().some(order => order.id === selectedId)) selectedId = first.id;
+        render();
+      });
+
+      document.getElementById("tab-done").addEventListener("click", () => {
+        queueMode = "done";
+        document.getElementById("tab-done").classList.add("active");
+        document.getElementById("tab-active").classList.remove("active");
+        const first = archiveOrders()[0];
+        if (first && !archiveOrders().some(order => order.id === selectedId)) selectedId = first.id;
+        render();
+      });
+
+      document.getElementById("start-btn").addEventListener("click", () => {
+        const order = selected();
+        order.status = "running";
+        toast(order.seconds ? "Производството продължава." : "Производството е стартирано.");
+        render();
+      });
+
+      document.getElementById("pause-btn").addEventListener("click", () => {
+        selected().status = "paused";
+        toast("Пауза.");
+        render();
+      });
+
+      document.getElementById("finish-btn").addEventListener("click", () => {
+        const order = selected();
+        if (!parseNum(order.tare)) return toast("Въведете тегло на шпула.");
+        if (!order.seconds) return toast("Първо стартирайте картата.");
+        if (!order.rolls.length) return toast("Въведете поне една ролка.");
+        order.status = "completed";
+        queueMode = "done";
+        document.getElementById("tab-done").classList.add("active");
+        document.getElementById("tab-active").classList.remove("active");
+        if (window.confirm("Картата е приключена. Искате ли да отпечатате оперативната карта?")) {
+          toast("Ще се отвори прозорец за печат.");
+        } else {
+          toast("Картата е приключена.");
+        }
+        render();
+      });
+
+      document.getElementById("menu-btn").addEventListener("click", () => {
+        ids.menu.classList.toggle("open");
+      });
+
+      document.getElementById("menu-print").addEventListener("click", () => {
+        if (selected().status !== "completed") return toast("Печат само след приключване.");
+        ids.menu.classList.remove("open");
+        toast("Ще се отвори прозорец за печат.");
+      });
+
+      document.getElementById("menu-cancel").addEventListener("click", () => {
+        const order = selected();
+        if (order.status === "cancelled") {
+          order.status = "pending";
+          queueMode = "active";
+          document.getElementById("tab-active").classList.add("active");
+          document.getElementById("tab-done").classList.remove("active");
+          toast("Картата е върната като чакаща.");
+        } else {
+          order.status = "cancelled";
+          queueMode = "done";
+          document.getElementById("tab-done").classList.add("active");
+          document.getElementById("tab-active").classList.remove("active");
+          toast("Картата е анулирана.");
+        }
+        ids.menu.classList.remove("open");
+        render();
+      });
+
+      document.getElementById("add-roll").addEventListener("click", addRoll);
+      ids.newRoll.addEventListener("keydown", event => {
+        if (event.key === "Enter") addRoll();
+      });
+      ids.tare.addEventListener("change", () => {
+        selected().tare = round2(parseNum(ids.tare.value));
+        toast("Теглото на шпулата е записано.");
+        render();
+      });
+    }
+
+    window.setInterval(() => {
+      const order = selected();
+      if (order.status === "running") {
+        order.seconds += 1;
+        renderDetail(order);
+        renderQueue();
+      }
+      renderClock();
+    }, 1000);
+
+    renderClock();
+    bind();
+    render();
+  </script>
+</body>
+</html>
