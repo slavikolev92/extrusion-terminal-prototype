@@ -126,6 +126,12 @@ Before each commit, run:
 - `git diff --check`
 - a focused manual app check when UI behavior changed
 
+Current baseline test command:
+
+- `.\.venv\Scripts\python.exe -m pytest`
+
+The automated tests live under `tests/` and must use temporary SQLite database paths. They must not mutate the real runtime database at `data/extrusion_terminal.sqlite3`.
+
 Commit messages should describe the milestone, not internal implementation noise.
 
 ## Operational Safety
