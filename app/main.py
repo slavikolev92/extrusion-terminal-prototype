@@ -13,11 +13,13 @@ from .constants import ACTIVE_TERMINAL_STATUSES, ARCHIVE_STATUSES, STATUS_DRAFT,
 from .db import (
     database_summary,
     fetch_cards_by_status,
+    fetch_terminal_card_detail,
     fetch_machine_queues,
     fetch_machines,
     fetch_recent_import_batches,
     init_db,
     release_card,
+    update_terminal_material_fields,
 )
 from .importer import csv_template, import_cards_from_csv
 from .rules import RuleResult
@@ -144,6 +146,49 @@ def parse_release_form(machine_id: str, machine_sequence: str) -> RuleResult:
 
 @app.get("/terminal")
 async def terminal(request: Request):
+    return terminal_response(request)
+
+
+@app.get("/terminal/cards/{card_id}")
+async def terminal_card(request: Request, card_id: int):
+    return terminal_response(request, selected_card_id=card_id)
+
+
+@app.post("/terminal/cards/{card_id}/materials")
+async def save_terminal_materials(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+    actual_raw_material_used: str = Form(""),
+    raw_material_brand_grade: str = Form(""),
+    raw_material_batch_lot: str = Form(""),
+):
+    try:
+        parsed_version = int(loaded_version)
+    except ValueError:
+        material_result = RuleResult(False, ("Loaded card version is invalid. Reload the card.",))
+    else:
+        material_result = update_terminal_material_fields(
+            card_id=card_id,
+            loaded_version=parsed_version,
+            actual_raw_material_used=actual_raw_material_used,
+            raw_material_brand_grade=raw_material_brand_grade,
+            raw_material_batch_lot=raw_material_batch_lot,
+        )
+
+    return terminal_response(
+        request,
+        selected_card_id=card_id,
+        material_result=material_result,
+    )
+
+
+def terminal_response(
+    request: Request,
+    selected_card_id: int | None = None,
+    **extra: Any,
+):
+    selected_card = fetch_terminal_card_detail(selected_card_id) if selected_card_id else None
     return templates.TemplateResponse(
         request,
         "terminal.html",
@@ -152,5 +197,7 @@ async def terminal(request: Request):
             "machine_queues": fetch_machine_queues(),
             "active_cards": fetch_cards_by_status(ACTIVE_TERMINAL_STATUSES),
             "archive_cards": fetch_cards_by_status(ARCHIVE_STATUSES),
+            "selected_card": selected_card,
+            **extra,
         },
     )

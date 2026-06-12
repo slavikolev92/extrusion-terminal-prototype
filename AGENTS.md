@@ -159,7 +159,9 @@ Completed and committed:
 - Excel read-only export macro module.
 - admin machine/sequence release.
 - terminal queue visibility for released cards.
+- automated baseline tests for import/release behavior.
+- terminal card detail view and first version-checked material-field edit.
 
 Next recommended milestone:
 
-- Add automated tests for the completed import/export/release behavior before implementing terminal execution actions.
+- Add production timing actions: start, pause, resume, one running card per machine, and timing segments.

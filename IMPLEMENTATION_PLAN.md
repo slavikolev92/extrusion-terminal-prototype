@@ -92,7 +92,7 @@ Review checkpoint:
 
 ## Milestone 4 - Terminal Card Detail And Conflict Guard
 
-Status: next
+Status: done
 
 Scope:
 
@@ -115,7 +115,7 @@ Review checkpoint:
 
 ## Milestone 5 - Production Timing
 
-Status: pending
+Status: next
 
 Scope:
 

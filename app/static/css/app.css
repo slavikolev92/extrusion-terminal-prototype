@@ -266,6 +266,8 @@ thead th {
   display: grid;
   align-content: start;
   gap: 5px;
+  color: inherit;
+  text-decoration: none;
 }
 
 .machine-tile strong {
@@ -281,6 +283,15 @@ thead th {
   margin-bottom: 8px;
   display: grid;
   gap: 4px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.queue-card.selected,
+.machine-tile:hover,
+.queue-card:hover {
+  border-color: var(--blue);
+  box-shadow: inset 0 0 0 1px var(--blue);
 }
 
 .queue-card.running {
@@ -337,6 +348,54 @@ thead th {
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   padding: 0 10px;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin: 0;
+}
+
+.detail-grid div {
+  min-width: 0;
+}
+
+.detail-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.detail-grid dt,
+.field-form label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.detail-grid dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.field-form {
+  display: grid;
+  gap: 12px;
+}
+
+.field-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.field-form input {
+  min-height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 0 10px;
+  color: var(--text);
+  font: inherit;
+  text-transform: none;
 }
 
 @media (max-width: 1080px) {

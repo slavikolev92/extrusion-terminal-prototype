@@ -12,17 +12,17 @@
 
     <div class="machine-strip">
       {% for queue in machine_queues %}
-        {% set first_card = queue.cards[0] if queue.cards else none %}
-        <article class="machine-tile">
+        {% set focus_card = queue.focus_card %}
+        <a class="machine-tile" href="{% if focus_card %}/terminal/cards/{{ focus_card.id }}{% else %}/terminal{% endif %}">
           <strong>{{ queue.machine.id }}</strong>
-          {% if first_card %}
-            <span>№ {{ first_card.order_number }}</span>
-            <small>{{ first_card.status }}</small>
+          {% if focus_card %}
+            <span>No. {{ focus_card.order_number }}</span>
+            <small>{{ focus_card.status }}</small>
           {% else %}
             <span>No card</span>
             <small>idle</small>
           {% endif %}
-        </article>
+        </a>
       {% endfor %}
     </div>
 
@@ -30,11 +30,11 @@
       <h2>Queue</h2>
       {% if active_cards %}
         {% for card in active_cards %}
-          <article class="queue-card {{ card.status }}">
-            <strong>№ {{ card.order_number }}</strong>
+          <a class="queue-card {{ card.status }} {% if selected_card and selected_card.id == card.id %}selected{% endif %}" href="/terminal/cards/{{ card.id }}">
+            <strong>No. {{ card.order_number }}</strong>
             <span>{{ card.customer or "No customer" }}</span>
             <small>Machine {{ card.machine_id or "-" }} / {{ card.machine_sequence or "-" }}</small>
-          </article>
+          </a>
         {% endfor %}
       {% else %}
         <p class="empty">No active cards released to the terminal.</p>
@@ -46,7 +46,11 @@
     <header class="work-header">
       <div>
         <p class="eyebrow">Current card</p>
-        <h2>Select a queued card</h2>
+        {% if selected_card %}
+          <h2>No. {{ selected_card.order_number }} - {{ selected_card.customer or "No customer" }}</h2>
+        {% else %}
+          <h2>Select a queued card</h2>
+        {% endif %}
       </div>
       <div class="actions">
         <button disabled>Start</button>
@@ -55,19 +59,128 @@
       </div>
     </header>
 
+    {% if material_result %}
+      <div class="notice {% if not material_result.ok %}error{% endif %}">
+        {% for message in material_result.messages %}
+          <div>{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
     <div class="placeholder-grid">
       <section class="section">
         <h3>Operational card</h3>
-        <p class="empty">Card detail, material fields, and timing controls will bind here after import and release endpoints are added.</p>
+        {% if selected_card %}
+          <dl class="detail-grid">
+            <div>
+              <dt>Status</dt>
+              <dd>{{ selected_card.status }}</dd>
+            </div>
+            <div>
+              <dt>Machine / sequence</dt>
+              <dd>{{ selected_card.machine_id or "-" }} / {{ selected_card.machine_sequence or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Customer</dt>
+              <dd>{{ selected_card.customer or "-" }}</dd>
+            </div>
+            <div>
+              <dt>City</dt>
+              <dd>{{ selected_card.city or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Product</dt>
+              <dd>{{ selected_card.product_type or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Quantity</dt>
+              <dd>{{ selected_card.quantity_1 or "-" }} {{ selected_card.unit_1 or "" }}</dd>
+            </div>
+            <div>
+              <dt>Material</dt>
+              <dd>{{ selected_card.material or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Size / thickness</dt>
+              <dd>{{ selected_card.size_thickness or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Folding</dt>
+              <dd>{{ selected_card.extrusion_folding or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Next operation</dt>
+              <dd>{{ selected_card.extrusion_next_operation or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Treatment</dt>
+              <dd>{{ selected_card.extrusion_treatment or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Raw material A</dt>
+              <dd>{{ selected_card.raw_material_a or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Raw material B</dt>
+              <dd>{{ selected_card.raw_material_b or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Raw material C</dt>
+              <dd>{{ selected_card.raw_material_c or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Linear PE</dt>
+              <dd>{{ selected_card.linear_pe or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Antistatic</dt>
+              <dd>{{ selected_card.antistatic or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Masterbatch</dt>
+              <dd>{{ selected_card.masterbatch or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Chalk</dt>
+              <dd>{{ selected_card.chalk or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Packaging</dt>
+              <dd>{{ selected_card.packaging_method or "-" }}</dd>
+            </div>
+            <div class="wide">
+              <dt>Notes</dt>
+              <dd>{{ selected_card.notes or "-" }}</dd>
+            </div>
+          </dl>
+        {% else %}
+          <p class="empty">Select a card from the machine strip or active queue.</p>
+        {% endif %}
       </section>
 
       <section class="section">
-        <h3>Roll entries</h3>
-        <div class="roll-entry">
-          <input disabled placeholder="Gross weight, kg">
-          <button disabled>Add roll</button>
-        </div>
-        <p class="empty">Roll entries persist immediately once card actions are wired.</p>
+        <h3>Machine-side material</h3>
+        {% if selected_card %}
+          <form class="field-form" action="/terminal/cards/{{ selected_card.id }}/materials" method="post">
+            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+            <label>
+              Actual raw material used
+              <input name="actual_raw_material_used" value="{{ selected_card.actual_raw_material_used or '' }}">
+            </label>
+            <label>
+              Brand / grade / mark
+              <input name="raw_material_brand_grade" value="{{ selected_card.raw_material_brand_grade or '' }}">
+            </label>
+            <label>
+              Batch / lot
+              <input name="raw_material_batch_lot" value="{{ selected_card.raw_material_batch_lot or '' }}">
+            </label>
+            <button type="submit">Save material fields</button>
+          </form>
+          <p class="empty">Version {{ selected_card.version }} loaded at {{ selected_card.updated_at }}.</p>
+        {% else %}
+          <p class="empty">Material fields appear after selecting a card.</p>
+        {% endif %}
       </section>
     </div>
 
@@ -75,10 +188,10 @@
       <h3>Completed / cancelled</h3>
       {% if archive_cards %}
         {% for card in archive_cards %}
-          <article class="queue-card {{ card.status }}">
-            <strong>№ {{ card.order_number }}</strong>
+          <a class="queue-card {{ card.status }} {% if selected_card and selected_card.id == card.id %}selected{% endif %}" href="/terminal/cards/{{ card.id }}">
+            <strong>No. {{ card.order_number }}</strong>
             <span>{{ card.status }}</span>
-          </article>
+          </a>
         {% endfor %}
       {% else %}
         <p class="empty">No completed or cancelled cards yet.</p>

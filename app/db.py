@@ -7,10 +7,13 @@ from typing import Any
 
 from .constants import (
     ACTIVE_TERMINAL_STATUSES,
+    ARCHIVE_STATUSES,
     CARD_STATUSES,
     STATUS_DRAFT,
     STATUS_IMPORTED,
+    STATUS_PAUSED,
     STATUS_PENDING,
+    STATUS_RUNNING,
     VALIDATION_READY,
     VALIDATION_STATUSES,
 )
@@ -219,6 +222,79 @@ def fetch_card_by_id(card_id: int) -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
+def fetch_terminal_card_detail(card_id: int) -> dict[str, Any] | None:
+    terminal_statuses = (*ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES)
+    placeholders = ", ".join("?" for _ in terminal_statuses)
+    with connect() as connection:
+        row = connection.execute(
+            f"""
+            SELECT id, order_number, status, validation_status, machine_id,
+                   machine_sequence, order_date, delivery_date, customer, city,
+                   product_type, quantity_1, unit_1, quantity_2, unit_2,
+                   product_form, material, size_thickness, notes,
+                   extrusion_folding, extrusion_next_operation,
+                   extrusion_treatment, raw_material_a, raw_material_b,
+                   raw_material_c, linear_pe, antistatic, masterbatch, chalk,
+                   packaging_method, actual_raw_material_used,
+                   raw_material_brand_grade, raw_material_batch_lot,
+                   tare_weight, version, updated_at
+            FROM cards
+            WHERE id = ?
+              AND status IN ({placeholders})
+            """,
+            (card_id, *terminal_statuses),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def update_terminal_material_fields(
+    card_id: int,
+    loaded_version: int,
+    actual_raw_material_used: str,
+    raw_material_brand_grade: str,
+    raw_material_batch_lot: str,
+) -> RuleResult:
+    with connect() as connection:
+        card = connection.execute(
+            """
+            SELECT id, version
+            FROM cards
+            WHERE id = ?
+              AND status IN (?, ?, ?, ?, ?)
+            """,
+            (card_id, *ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES),
+        ).fetchone()
+
+        if not card:
+            return RuleResult(False, ("Card was not found.",))
+
+        if int(card["version"]) != loaded_version:
+            return RuleResult(
+                False,
+                ("Card changed after this page was loaded. Reload the card and try again.",),
+            )
+
+        connection.execute(
+            """
+            UPDATE cards
+            SET actual_raw_material_used = ?,
+                raw_material_brand_grade = ?,
+                raw_material_batch_lot = ?,
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                actual_raw_material_used.strip(),
+                raw_material_brand_grade.strip(),
+                raw_material_batch_lot.strip(),
+                card_id,
+            ),
+        )
+
+    return RuleResult(True, ("Material fields saved.",))
+
+
 def release_card(card_id: int, machine_id: int, machine_sequence: int) -> RuleResult:
     messages: list[str] = []
 
@@ -308,9 +384,17 @@ def fetch_machine_queues() -> list[dict[str, Any]]:
         {
             "machine": machine,
             "cards": by_machine[machine["id"]],
+            "focus_card": select_machine_focus_card(by_machine[machine["id"]]),
         }
         for machine in machines
     ]
+
+
+def select_machine_focus_card(cards: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for card in cards:
+        if card["status"] in (STATUS_RUNNING, STATUS_PAUSED):
+            return card
+    return cards[0] if cards else None
 
 
 def fetch_recent_import_batches(limit: int = 8) -> list[dict[str, Any]]:
