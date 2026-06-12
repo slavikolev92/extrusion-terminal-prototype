@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}Terminal - Extrusion Terminal{% endblock %}
+
+{% block body %}
+<main class="terminal-shell">
+  <aside class="terminal-sidebar">
+    <header>
+      <h1>Terminal</h1>
+      <span>{{ active_cards|length }} active</span>
+    </header>
+
+    <div class="machine-strip">
+      {% for queue in machine_queues %}
+        {% set first_card = queue.cards[0] if queue.cards else none %}
+        <article class="machine-tile">
+          <strong>{{ queue.machine.id }}</strong>
+          {% if first_card %}
+            <span>№ {{ first_card.order_number }}</span>
+            <small>{{ first_card.status }}</small>
+          {% else %}
+            <span>No card</span>
+            <small>idle</small>
+          {% endif %}
+        </article>
+      {% endfor %}
+    </div>
+
+    <section>
+      <h2>Queue</h2>
+      {% if active_cards %}
+        {% for card in active_cards %}
+          <article class="queue-card {{ card.status }}">
+            <strong>№ {{ card.order_number }}</strong>
+            <span>{{ card.customer or "No customer" }}</span>
+            <small>Machine {{ card.machine_id or "-" }} / {{ card.machine_sequence or "-" }}</small>
+          </article>
+        {% endfor %}
+      {% else %}
+        <p class="empty">No active cards released to the terminal.</p>
+      {% endif %}
+    </section>
+  </aside>
+
+  <section class="work-surface">
+    <header class="work-header">
+      <div>
+        <p class="eyebrow">Current card</p>
+        <h2>Select a queued card</h2>
+      </div>
+      <div class="actions">
+        <button disabled>Start</button>
+        <button disabled>Pause</button>
+        <button disabled>Finished</button>
+      </div>
+    </header>
+
+    <div class="placeholder-grid">
+      <section class="section">
+        <h3>Operational card</h3>
+        <p class="empty">Card detail, material fields, and timing controls will bind here after import and release endpoints are added.</p>
+      </section>
+
+      <section class="section">
+        <h3>Roll entries</h3>
+        <div class="roll-entry">
+          <input disabled placeholder="Gross weight, kg">
+          <button disabled>Add roll</button>
+        </div>
+        <p class="empty">Roll entries persist immediately once card actions are wired.</p>
+      </section>
+    </div>
+
+    <section class="section archive">
+      <h3>Completed / cancelled</h3>
+      {% if archive_cards %}
+        {% for card in archive_cards %}
+          <article class="queue-card {{ card.status }}">
+            <strong>№ {{ card.order_number }}</strong>
+            <span>{{ card.status }}</span>
+          </article>
+        {% endfor %}
+      {% else %}
+        <p class="empty">No completed or cancelled cards yet.</p>
+      {% endif %}
+    </section>
+  </section>
+</main>
+{% endblock %}
