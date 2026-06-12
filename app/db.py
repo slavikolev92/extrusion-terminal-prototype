@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,8 @@ from .constants import (
     VALIDATION_STATUSES,
 )
 from .rules import RuleResult
+
+STALE_CARD_MESSAGE = "Card changed after this page was loaded. Reload the card and try again."
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv("EXTRUSION_DATA_DIR", BASE_DIR / "data"))
@@ -266,7 +269,47 @@ def fetch_terminal_card_detail(card_id: int) -> dict[str, Any] | None:
             ),
             None,
         )
+        roll_data = fetch_roll_entries_and_totals(connection, card_id, card["tare_weight"])
+        card.update(roll_data)
         return card
+
+
+def fetch_roll_entries_and_totals(
+    connection: sqlite3.Connection,
+    card_id: int,
+    tare_weight: Any,
+) -> dict[str, Any]:
+    rows = connection.execute(
+        """
+        SELECT id, roll_number, gross_weight, net_weight, updated_at
+        FROM roll_entries
+        WHERE card_id = ?
+        ORDER BY roll_number
+        """,
+        (card_id,),
+    ).fetchall()
+    roll_entries = rows_to_dicts(rows)
+    tare = decimal_from_database(tare_weight)
+    gross_values = [
+        decimal_from_database(entry["gross_weight"])
+        for entry in roll_entries
+        if entry["gross_weight"] is not None
+    ]
+    gross_values = [gross for gross in gross_values if gross is not None]
+    roll_count = len(gross_values)
+    total_gross = sum(gross_values, Decimal("0"))
+    total_net = None if tare is None else total_gross - (tare * roll_count)
+    next_roll_number = (
+        max((int(entry["roll_number"]) for entry in roll_entries), default=0) + 1
+    )
+
+    return {
+        "roll_entries": roll_entries,
+        "roll_count": roll_count,
+        "next_roll_number": next_roll_number,
+        "total_gross_weight": decimal_to_display(total_gross),
+        "total_net_weight": decimal_to_display(total_net) if total_net is not None else None,
+    }
 
 
 def fetch_timing_segments_for_card(
@@ -488,7 +531,7 @@ def validate_timing_action_card(
     if int(card["version"]) != loaded_version:
         return RuleResult(
             False,
-            ("Card changed after this page was loaded. Reload the card and try again.",),
+            (STALE_CARD_MESSAGE,),
         )
 
     if not card["machine_id"]:
@@ -544,6 +587,306 @@ def current_database_timestamp(connection: sqlite3.Connection) -> str:
     return str(connection.execute("SELECT CURRENT_TIMESTAMP").fetchone()[0])
 
 
+def decimal_from_database(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    return Decimal(str(value))
+
+
+def decimal_to_storage(value: Decimal) -> str:
+    return format(value, "f")
+
+
+def decimal_to_display(value: Decimal) -> str:
+    return format(value.quantize(Decimal("0.01")), "f")
+
+
+def parse_weight(value: str, field_name: str, *, allow_blank: bool) -> tuple[Decimal | None, str | None]:
+    cleaned = value.strip()
+    if not cleaned:
+        if allow_blank:
+            return None, None
+        return None, f"{field_name} is required."
+
+    try:
+        parsed = Decimal(cleaned)
+    except InvalidOperation:
+        return None, f"{field_name} must be a number."
+
+    if not parsed.is_finite():
+        return None, f"{field_name} must be a number."
+
+    if parsed < 0:
+        return None, f"{field_name} must be 0 or higher."
+
+    if parsed.as_tuple().exponent < -2:
+        return None, f"{field_name} supports at most two decimal places."
+
+    return parsed, None
+
+
+def validate_loaded_card_version(card: sqlite3.Row | None, loaded_version: int) -> RuleResult:
+    if not card:
+        return RuleResult(False, ("Card was not found.",))
+
+    if int(card["version"]) != loaded_version:
+        return RuleResult(False, (STALE_CARD_MESSAGE,))
+
+    return RuleResult(True)
+
+
+def net_weight_for_gross(gross_weight: Decimal, tare_weight: Decimal | None) -> Decimal | None:
+    if tare_weight is None:
+        return None
+
+    net_weight = gross_weight - tare_weight
+    if net_weight < 0:
+        return None
+    return net_weight
+
+
+def update_tare_weight(card_id: int, loaded_version: int, tare_weight: str) -> RuleResult:
+    parsed_tare, parse_error = parse_weight(
+        tare_weight,
+        "Tare weight",
+        allow_blank=True,
+    )
+    if parse_error:
+        return RuleResult(False, (parse_error,))
+
+    with connect() as connection:
+        card = connection.execute(
+            """
+            SELECT id, order_number, version
+            FROM cards
+            WHERE id = ?
+              AND status IN (?, ?, ?, ?, ?)
+            """,
+            (card_id, *ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES),
+        ).fetchone()
+
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        rolls = connection.execute(
+            """
+            SELECT id, gross_weight
+            FROM roll_entries
+            WHERE card_id = ?
+              AND gross_weight IS NOT NULL
+            ORDER BY roll_number
+            """,
+            (card_id,),
+        ).fetchall()
+        recalculated_rolls: list[tuple[str | None, int]] = []
+        for roll in rolls:
+            gross = decimal_from_database(roll["gross_weight"])
+            if gross is None:
+                continue
+            net = net_weight_for_gross(gross, parsed_tare)
+            if parsed_tare is not None and net is None:
+                return RuleResult(
+                    False,
+                    ("Tare weight cannot be greater than an existing gross roll weight.",),
+                )
+            recalculated_rolls.append(
+                (decimal_to_storage(net) if net is not None else None, int(roll["id"]))
+            )
+
+        connection.execute(
+            """
+            UPDATE cards
+            SET tare_weight = ?,
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                decimal_to_storage(parsed_tare) if parsed_tare is not None else None,
+                card_id,
+            ),
+        )
+        connection.executemany(
+            """
+            UPDATE roll_entries
+            SET net_weight = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            recalculated_rolls,
+        )
+
+    message = "Tare weight cleared." if parsed_tare is None else "Tare weight saved."
+    return RuleResult(True, (message,))
+
+
+def add_roll_gross_weight(card_id: int, loaded_version: int, gross_weight: str) -> RuleResult:
+    parsed_gross, parse_error = parse_weight(
+        gross_weight,
+        "Gross weight",
+        allow_blank=False,
+    )
+    if parse_error:
+        return RuleResult(False, (parse_error,))
+    assert parsed_gross is not None
+
+    with connect() as connection:
+        card = fetch_roll_action_card(connection, card_id)
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        running_result = validate_card_running_for_roll_entry(card)
+        if not running_result.ok:
+            return running_result
+
+        tare = decimal_from_database(card["tare_weight"])
+        net = net_weight_for_gross(parsed_gross, tare)
+        if tare is not None and net is None:
+            return RuleResult(
+                False,
+                ("Gross weight cannot be lower than the tare weight.",),
+            )
+
+        next_roll_number = int(
+            connection.execute(
+                """
+                SELECT COALESCE(MAX(roll_number), 0) + 1
+                FROM roll_entries
+                WHERE card_id = ?
+                """,
+                (card_id,),
+            ).fetchone()[0]
+        )
+        connection.execute(
+            """
+            INSERT INTO roll_entries (
+                card_id,
+                order_number,
+                roll_number,
+                gross_weight,
+                net_weight
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                card_id,
+                card["order_number"],
+                next_roll_number,
+                decimal_to_storage(parsed_gross),
+                decimal_to_storage(net) if net is not None else None,
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE cards
+            SET version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+
+    return RuleResult(True, (f"Roll {next_roll_number} saved.",))
+
+
+def update_roll_gross_weight(
+    card_id: int,
+    roll_id: int,
+    loaded_version: int,
+    gross_weight: str,
+) -> RuleResult:
+    parsed_gross, parse_error = parse_weight(
+        gross_weight,
+        "Gross weight",
+        allow_blank=True,
+    )
+    if parse_error:
+        return RuleResult(False, (parse_error,))
+
+    with connect() as connection:
+        card = fetch_roll_action_card(connection, card_id)
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        running_result = validate_card_running_for_roll_entry(card)
+        if not running_result.ok:
+            return running_result
+
+        roll = connection.execute(
+            """
+            SELECT id, roll_number
+            FROM roll_entries
+            WHERE id = ?
+              AND card_id = ?
+            """,
+            (roll_id, card_id),
+        ).fetchone()
+        if not roll:
+            return RuleResult(False, ("Roll entry was not found.",))
+
+        tare = decimal_from_database(card["tare_weight"])
+        net = net_weight_for_gross(parsed_gross, tare) if parsed_gross is not None else None
+        if tare is not None and parsed_gross is not None and net is None:
+            return RuleResult(
+                False,
+                ("Gross weight cannot be lower than the tare weight.",),
+            )
+
+        connection.execute(
+            """
+            UPDATE roll_entries
+            SET gross_weight = ?,
+                net_weight = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                decimal_to_storage(parsed_gross) if parsed_gross is not None else None,
+                decimal_to_storage(net) if net is not None else None,
+                roll_id,
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE cards
+            SET version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+
+    return RuleResult(True, (f"Roll {roll['roll_number']} saved.",))
+
+
+def fetch_roll_action_card(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> sqlite3.Row | None:
+    return connection.execute(
+        f"""
+        SELECT id, order_number, status, tare_weight, version
+        FROM cards
+        WHERE id = ?
+          AND status IN ({", ".join("?" for _ in ACTIVE_TERMINAL_STATUSES)})
+        """,
+        (card_id, *ACTIVE_TERMINAL_STATUSES),
+    ).fetchone()
+
+
+def validate_card_running_for_roll_entry(card: sqlite3.Row | None) -> RuleResult:
+    if not card:
+        return RuleResult(False, ("Card was not found in the active terminal queue.",))
+
+    if card["status"] != STATUS_RUNNING:
+        return RuleResult(False, ("Roll weights can only be changed while the card is running.",))
+
+    return RuleResult(True)
+
+
 def update_terminal_material_fields(
     card_id: int,
     loaded_version: int,
@@ -568,7 +911,7 @@ def update_terminal_material_fields(
         if int(card["version"]) != loaded_version:
             return RuleResult(
                 False,
-                ("Card changed after this page was loaded. Reload the card and try again.",),
+                (STALE_CARD_MESSAGE,),
             )
 
         connection.execute(

@@ -97,6 +97,14 @@
       </div>
     {% endif %}
 
+    {% if roll_result %}
+      <div class="notice {% if not roll_result.ok %}error{% endif %}">
+        {% for message in roll_result.messages %}
+          <div>{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
     <section class="section timing-panel">
       <h3>Production timing</h3>
       {% if selected_card %}
@@ -142,6 +150,88 @@
         {% endif %}
       {% else %}
         <p class="empty">Timing controls appear after selecting a card.</p>
+      {% endif %}
+    </section>
+
+    <section class="section roll-panel">
+      <div class="section-head">
+        <h3>Tare and rolls</h3>
+        {% if selected_card %}
+          <span>Next roll {{ selected_card.next_roll_number }}</span>
+        {% endif %}
+      </div>
+      {% if selected_card %}
+        <div class="roll-controls">
+          <form class="field-form tare-form" action="/terminal/cards/{{ selected_card.id }}/tare" method="post">
+            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+            <label>
+              Order tare weight
+              <input type="number" name="tare_weight" min="0" step="0.01" value="{{ selected_card.tare_weight if selected_card.tare_weight is not none else '' }}">
+            </label>
+            <button type="submit">Save tare</button>
+          </form>
+
+          <form class="roll-entry" action="/terminal/cards/{{ selected_card.id }}/rolls" method="post">
+            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+            <label>
+              Gross weight for roll {{ selected_card.next_roll_number }}
+              <input type="number" name="gross_weight" min="0" step="0.01" {% if selected_card.status == "running" %}autofocus{% else %}disabled{% endif %}>
+            </label>
+            <button type="submit" {% if selected_card.status != "running" %}disabled{% endif %}>Add</button>
+          </form>
+        </div>
+
+        <dl class="total-grid">
+          <div>
+            <dt>Rolls</dt>
+            <dd>{{ selected_card.roll_count }}</dd>
+          </div>
+          <div>
+            <dt>Total gross</dt>
+            <dd>{{ selected_card.total_gross_weight }}</dd>
+          </div>
+          <div>
+            <dt>Total net</dt>
+            <dd>{{ selected_card.total_net_weight if selected_card.total_net_weight is not none else "Pending tare" }}</dd>
+          </div>
+        </dl>
+
+        {% if selected_card.status != "running" %}
+          <p class="empty">Roll weights can only be changed while the card is running.</p>
+        {% endif %}
+
+        {% if selected_card.roll_entries %}
+          <table class="compact-table roll-table">
+            <thead>
+              <tr>
+                <th>Roll</th>
+                <th>Gross weight</th>
+                <th>Net weight</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for roll in selected_card.roll_entries %}
+                <tr>
+                  <td>{{ roll.roll_number }}</td>
+                  <td>
+                    <form class="inline-roll-form" action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}" method="post">
+                      <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                      <input type="number" name="gross_weight" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" {% if selected_card.status != "running" %}disabled{% endif %}>
+                      <button type="submit" {% if selected_card.status != "running" %}disabled{% endif %}>Save</button>
+                    </form>
+                  </td>
+                  <td>{{ roll.net_weight if roll.net_weight is not none else "-" }}</td>
+                  <td><small>{{ roll.updated_at }}</small></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="empty">No roll weights yet.</p>
+        {% endif %}
+      {% else %}
+        <p class="empty">Tare and roll controls appear after selecting a card.</p>
       {% endif %}
     </section>
 

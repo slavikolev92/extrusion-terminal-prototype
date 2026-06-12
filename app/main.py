@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 
 from .constants import ACTIVE_TERMINAL_STATUSES, ARCHIVE_STATUSES, STATUS_DRAFT, STATUS_IMPORTED
 from .db import (
+    add_roll_gross_weight,
     database_summary,
     fetch_cards_by_status,
     fetch_terminal_card_detail,
@@ -22,6 +23,8 @@ from .db import (
     release_card,
     resume_production_timing,
     start_production_timing,
+    update_roll_gross_weight,
+    update_tare_weight,
     update_terminal_material_fields,
 )
 from .importer import csv_template, import_cards_from_csv
@@ -183,6 +186,66 @@ async def save_terminal_materials(
         request,
         selected_card_id=card_id,
         material_result=material_result,
+    )
+
+
+@app.post("/terminal/cards/{card_id}/tare")
+async def save_tare_weight(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+    tare_weight: str = Form(""),
+):
+    parsed_version, roll_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        roll_result = update_tare_weight(card_id, parsed_version, tare_weight)
+
+    return terminal_response(
+        request,
+        selected_card_id=card_id,
+        roll_result=roll_result,
+    )
+
+
+@app.post("/terminal/cards/{card_id}/rolls")
+async def add_roll_weight(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+    gross_weight: str = Form(""),
+):
+    parsed_version, roll_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        roll_result = add_roll_gross_weight(card_id, parsed_version, gross_weight)
+
+    return terminal_response(
+        request,
+        selected_card_id=card_id,
+        roll_result=roll_result,
+    )
+
+
+@app.post("/terminal/cards/{card_id}/rolls/{roll_id}")
+async def save_roll_weight(
+    request: Request,
+    card_id: int,
+    roll_id: int,
+    loaded_version: str = Form(...),
+    gross_weight: str = Form(""),
+):
+    parsed_version, roll_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        roll_result = update_roll_gross_weight(
+            card_id=card_id,
+            roll_id=roll_id,
+            loaded_version=parsed_version,
+            gross_weight=gross_weight,
+        )
+
+    return terminal_response(
+        request,
+        selected_card_id=card_id,
+        roll_result=roll_result,
     )
 
 

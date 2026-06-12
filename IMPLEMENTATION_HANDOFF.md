@@ -12,9 +12,11 @@ Completed and committed:
 - Milestone 3 - Automated baseline tests.
 - Milestone 4 - Terminal card detail and first conflict guard.
 - Milestone 5 - Production timing.
+- Milestone 6 - Tare and roll entry.
 
 Latest relevant commits:
 
+- `910627c Add production timing milestone`
 - `8c8fd39 Add terminal card detail and conflict guard`
 - `4a6018b Document baseline test command`
 - `a735396 Add automated baseline tests`
@@ -23,13 +25,13 @@ Latest relevant commits:
 
 Current next milestone:
 
-- Milestone 6 - Tare And Roll Entry.
+- Milestone 7 - Finish, Cancel, And History.
 
 ## First Read In A New Session
 
 1. Read `README.md` fully enough to refresh the confirmed scope.
 2. Read `AGENTS.md` for process, validation, test, and commit rules.
-3. Read `IMPLEMENTATION_PLAN.md` and confirm Milestone 5 is still `next`.
+3. Read `IMPLEMENTATION_PLAN.md` and confirm Milestone 7 is still `next`.
 4. Inspect current source under `app/` and tests under `tests/` before editing.
 
 ## Implemented App Shape
@@ -42,19 +44,22 @@ Current next milestone:
 - `/terminal/cards/{card_id}` opens terminal card detail for released/completed/cancelled cards.
 - Terminal machine tiles link to a running/paused card first, otherwise the next pending card.
 - Terminal material fields are editable with a loaded `version` guard to block stale saves.
+- Terminal tare and roll fields are editable with a loaded `version` guard to block stale saves.
+- Roll entries are allowed only while a card is `running`.
+- Roll numbers are assigned automatically per card; clearing an existing gross value stores it as blank and removes it from gross/net totals.
 - Excel export macro lives under `excel-macros/` and is read-only with respect to workbook data.
 
 ## Test And Verification Commands
 
 Use the local virtualenv:
 
-- `.\.venv\Scripts\python.exe -m compileall app tests`
-- `.\.venv\Scripts\python.exe -m pytest`
+- `.\.test-runtime\codex-venv\Scripts\python.exe -m compileall app tests`
+- `.\.test-runtime\codex-venv\Scripts\python.exe -m pytest`
 - `git diff --check`
 
 Current automated suite:
 
-- `19 passed` after Milestone 5.
+- `26 passed` after Milestone 6.
 - Tests use temporary SQLite databases and must not mutate `data/extrusion_terminal.sqlite3`.
 
 When UI behavior changes, also run a focused manual app check with a temporary database. The previous Milestone 4 manual checks verified:
@@ -63,6 +68,16 @@ When UI behavior changes, also run a focused manual app check with a temporary d
 - material fields save,
 - stale material save is blocked,
 - in-app browser view shows the terminal detail page and form correctly.
+
+Milestone 6 manual check used a temporary SQLite database and verified:
+
+- import and release a sample card,
+- start timing,
+- save order-level tare,
+- add two gross rolls,
+- clear one previous gross value,
+- render/reload the terminal detail template,
+- verify persisted totals after reload.
 
 ## Runtime And Ignored Files
 
@@ -95,16 +110,17 @@ Keep future slices separate from this timing work.
 
 ## Next Milestone Notes
 
-Milestone 6 should add tare and roll entry only:
+Milestone 7 should add finish, cancel, and history behavior only:
 
-- order-level tare input,
-- fixed gross-weight input for the next roll,
-- immediate save on Enter or Add,
-- automatic roll numbers starting at `1`,
-- editable previous gross weights,
-- total gross and total net display.
+- finish validation,
+- finish closes any active timing segment,
+- completed cards leave the active terminal queue,
+- completed/cancelled cards remain available in history,
+- cancellation without reason,
+- cancelled cards reversible back to `pending`,
+- completed cards remain editable as confirmed.
 
-Keep this slice separate from finish/cancel/history, backup/recovery, and printing. Add focused tests before or alongside implementation, then run the required checks and commit the milestone.
+Keep this slice separate from backup/recovery and printing. Add focused tests before or alongside implementation, then run the required checks and commit the milestone.
 
 ## Guardrails
 

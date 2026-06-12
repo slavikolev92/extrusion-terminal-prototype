@@ -128,7 +128,7 @@ Before each commit, run:
 
 Current baseline test command:
 
-- `.\.venv\Scripts\python.exe -m pytest`
+- `.\.test-runtime\codex-venv\Scripts\python.exe -m pytest`
 
 The automated tests live under `tests/` and must use temporary SQLite database paths. They must not mutate the real runtime database at `data/extrusion_terminal.sqlite3`.
 
@@ -162,7 +162,8 @@ Completed and committed:
 - automated baseline tests for import/release behavior.
 - terminal card detail view and first version-checked material-field edit.
 - production timing actions: start, pause, resume, one running/occupied card per machine, and timing segments.
+- tare and roll entry: order-level tare, gross roll entry, roll corrections, and gross/net totals.
 
 Next recommended milestone:
 
-- Add tare and roll entry: order-level tare, gross roll entry, roll corrections, and gross/net totals.
+- Add finish, cancel, and history behavior: finish validation, completed/cancelled queue behavior, reversible cancellation, and completed-card editability.

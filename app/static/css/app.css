@@ -342,16 +342,72 @@ thead th {
 
 .roll-entry {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(220px, 1fr) auto;
   gap: 8px;
-  margin-bottom: 10px;
+  align-items: end;
 }
 
-.roll-entry input {
+.roll-entry label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.roll-entry input,
+.inline-roll-form input {
   min-height: 42px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   padding: 0 10px;
+}
+
+.roll-controls {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.55fr) minmax(320px, 1fr);
+  gap: 14px;
+  align-items: end;
+}
+
+.tare-form {
+  grid-template-columns: minmax(180px, 1fr) auto;
+  align-items: end;
+}
+
+.total-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.total-grid div {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-soft);
+  padding: 10px;
+}
+
+.total-grid dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.total-grid dd {
+  margin: 3px 0 0;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.inline-roll-form {
+  display: grid;
+  grid-template-columns: minmax(110px, 160px) auto;
+  gap: 8px;
+  align-items: center;
 }
 
 .detail-grid {
@@ -413,6 +469,9 @@ thead th {
 @media (max-width: 1080px) {
   .terminal-shell,
   .placeholder-grid,
+  .roll-controls,
+  .tare-form,
+  .total-grid,
   .machine-grid {
     grid-template-columns: 1fr;
   }

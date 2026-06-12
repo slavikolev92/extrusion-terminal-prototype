@@ -138,7 +138,7 @@ Review checkpoint:
 
 ## Milestone 6 - Tare And Roll Entry
 
-Status: next
+Status: done
 
 Scope:
 
@@ -161,7 +161,7 @@ Review checkpoint:
 
 ## Milestone 7 - Finish, Cancel, And History
 
-Status: pending
+Status: next
 
 Scope:
 
