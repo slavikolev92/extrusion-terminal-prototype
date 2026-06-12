@@ -16,6 +16,9 @@ __pycache__/
 .venv/
 venv/
 .env
+.test-runtime/
+.pytest_cache/
+pytest-cache-files-*/
 
 # Node/browser tooling noise if used for UI checks.
 node_modules/

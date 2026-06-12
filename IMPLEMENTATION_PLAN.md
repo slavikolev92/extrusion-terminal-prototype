@@ -69,7 +69,7 @@ Review checkpoint:
 
 ## Milestone 3 - Automated Baseline Tests
 
-Status: next
+Status: done
 
 Scope:
 
@@ -92,7 +92,7 @@ Review checkpoint:
 
 ## Milestone 4 - Terminal Card Detail And Conflict Guard
 
-Status: pending
+Status: next
 
 Scope:
 
