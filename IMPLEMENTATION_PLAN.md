@@ -115,7 +115,7 @@ Review checkpoint:
 
 ## Milestone 5 - Production Timing
 
-Status: next
+Status: done
 
 Scope:
 
@@ -138,7 +138,7 @@ Review checkpoint:
 
 ## Milestone 6 - Tare And Roll Entry
 
-Status: pending
+Status: next
 
 Scope:
 

@@ -139,6 +139,10 @@ ON roll_entries(card_id, roll_number);
 
 CREATE INDEX IF NOT EXISTS idx_time_segments_card_started
 ON production_time_segments(card_id, started_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_time_segments_one_open_per_card
+ON production_time_segments(card_id)
+WHERE ended_at IS NULL;
 """
 
 
@@ -237,14 +241,307 @@ def fetch_terminal_card_detail(card_id: int) -> dict[str, Any] | None:
                    raw_material_c, linear_pe, antistatic, masterbatch, chalk,
                    packaging_method, actual_raw_material_used,
                    raw_material_brand_grade, raw_material_batch_lot,
-                   tare_weight, version, updated_at
+                   tare_weight, first_started_at, finished_at, version,
+                   updated_at
             FROM cards
             WHERE id = ?
               AND status IN ({placeholders})
             """,
             (card_id, *terminal_statuses),
         ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+
+        card = dict(row)
+        card["timing_segments"] = fetch_timing_segments_for_card(connection, card_id)
+        card["total_production_seconds"] = calculate_total_production_seconds(
+            connection,
+            card_id,
+        )
+        card["active_segment_started_at"] = next(
+            (
+                segment["started_at"]
+                for segment in card["timing_segments"]
+                if segment["ended_at"] is None
+            ),
+            None,
+        )
+        return card
+
+
+def fetch_timing_segments_for_card(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT id, started_at, ended_at, end_reason
+        FROM production_time_segments
+        WHERE card_id = ?
+        ORDER BY started_at, id
+        """,
+        (card_id,),
+    ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def calculate_total_production_seconds(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> int:
+    total = connection.execute(
+        """
+        SELECT COALESCE(
+            SUM(
+                CAST(strftime('%s', COALESCE(ended_at, CURRENT_TIMESTAMP)) AS INTEGER)
+                - CAST(strftime('%s', started_at) AS INTEGER)
+            ),
+            0
+        )
+        FROM production_time_segments
+        WHERE card_id = ?
+        """,
+        (card_id,),
+    ).fetchone()[0]
+    return int(total or 0)
+
+
+def fetch_total_production_seconds(card_id: int) -> int:
+    with connect() as connection:
+        return calculate_total_production_seconds(connection, card_id)
+
+
+def start_production_timing(card_id: int, loaded_version: int) -> RuleResult:
+    with connect() as connection:
+        card = fetch_timing_action_card(connection, card_id)
+        result = validate_timing_action_card(
+            card=card,
+            loaded_version=loaded_version,
+            expected_status=STATUS_PENDING,
+            expected_status_message="Only pending cards can be started.",
+        )
+        if not result.ok:
+            return result
+
+        occupied_card = fetch_occupied_machine_card(connection, card_id, int(card["machine_id"]))
+        if occupied_card:
+            return RuleResult(
+                False,
+                (
+                    f"Machine {card['machine_id']} is occupied by order "
+                    f"{occupied_card['order_number']}.",
+                ),
+            )
+
+        if has_open_timing_segment(connection, card_id):
+            return RuleResult(False, ("Card already has an active timing segment.",))
+
+        now = current_database_timestamp(connection)
+        try:
+            connection.execute(
+                """
+                UPDATE cards
+                SET status = ?,
+                    first_started_at = COALESCE(first_started_at, ?),
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (STATUS_RUNNING, now, card_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO production_time_segments (card_id, started_at)
+                VALUES (?, ?)
+                """,
+                (card_id, now),
+            )
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return RuleResult(
+                False,
+                (f"Machine {card['machine_id']} already has a running card.",),
+            )
+
+    return RuleResult(True, (f"Production timing started for order {card['order_number']}.",))
+
+
+def pause_production_timing(card_id: int, loaded_version: int) -> RuleResult:
+    with connect() as connection:
+        card = fetch_timing_action_card(connection, card_id)
+        result = validate_timing_action_card(
+            card=card,
+            loaded_version=loaded_version,
+            expected_status=STATUS_RUNNING,
+            expected_status_message="Only running cards can be paused.",
+        )
+        if not result.ok:
+            return result
+
+        open_segment = fetch_open_timing_segment(connection, card_id)
+        if not open_segment:
+            return RuleResult(False, ("Card has no active timing segment to pause.",))
+
+        now = current_database_timestamp(connection)
+        connection.execute(
+            """
+            UPDATE production_time_segments
+            SET ended_at = ?,
+                end_reason = 'pause',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (now, open_segment["id"]),
+        )
+        connection.execute(
+            """
+            UPDATE cards
+            SET status = ?,
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (STATUS_PAUSED, card_id),
+        )
+
+    return RuleResult(True, (f"Production timing paused for order {card['order_number']}.",))
+
+
+def resume_production_timing(card_id: int, loaded_version: int) -> RuleResult:
+    with connect() as connection:
+        card = fetch_timing_action_card(connection, card_id)
+        result = validate_timing_action_card(
+            card=card,
+            loaded_version=loaded_version,
+            expected_status=STATUS_PAUSED,
+            expected_status_message="Only paused cards can be resumed.",
+        )
+        if not result.ok:
+            return result
+
+        occupied_card = fetch_occupied_machine_card(connection, card_id, int(card["machine_id"]))
+        if occupied_card:
+            return RuleResult(
+                False,
+                (
+                    f"Machine {card['machine_id']} is occupied by order "
+                    f"{occupied_card['order_number']}.",
+                ),
+            )
+
+        if has_open_timing_segment(connection, card_id):
+            return RuleResult(False, ("Card already has an active timing segment.",))
+
+        now = current_database_timestamp(connection)
+        try:
+            connection.execute(
+                """
+                UPDATE cards
+                SET status = ?,
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (STATUS_RUNNING, card_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO production_time_segments (card_id, started_at)
+                VALUES (?, ?)
+                """,
+                (card_id, now),
+            )
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return RuleResult(
+                False,
+                (f"Machine {card['machine_id']} already has a running card.",),
+            )
+
+    return RuleResult(True, (f"Production timing resumed for order {card['order_number']}.",))
+
+
+def fetch_timing_action_card(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> sqlite3.Row | None:
+    return connection.execute(
+        f"""
+        SELECT id, order_number, status, machine_id, version
+        FROM cards
+        WHERE id = ?
+          AND status IN ({", ".join("?" for _ in ACTIVE_TERMINAL_STATUSES)})
+        """,
+        (card_id, *ACTIVE_TERMINAL_STATUSES),
+    ).fetchone()
+
+
+def validate_timing_action_card(
+    card: sqlite3.Row | None,
+    loaded_version: int,
+    expected_status: str,
+    expected_status_message: str,
+) -> RuleResult:
+    if not card:
+        return RuleResult(False, ("Card was not found in the active terminal queue.",))
+
+    if int(card["version"]) != loaded_version:
+        return RuleResult(
+            False,
+            ("Card changed after this page was loaded. Reload the card and try again.",),
+        )
+
+    if not card["machine_id"]:
+        return RuleResult(False, ("Card must be assigned to a machine before timing starts.",))
+
+    if card["status"] != expected_status:
+        return RuleResult(False, (expected_status_message,))
+
+    return RuleResult(True)
+
+
+def fetch_open_timing_segment(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> sqlite3.Row | None:
+    return connection.execute(
+        """
+        SELECT id, started_at
+        FROM production_time_segments
+        WHERE card_id = ?
+          AND ended_at IS NULL
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (card_id,),
+    ).fetchone()
+
+
+def fetch_occupied_machine_card(
+    connection: sqlite3.Connection,
+    card_id: int,
+    machine_id: int,
+) -> sqlite3.Row | None:
+    return connection.execute(
+        """
+        SELECT id, order_number, status
+        FROM cards
+        WHERE id <> ?
+          AND machine_id = ?
+          AND status IN (?, ?)
+        ORDER BY machine_sequence IS NULL, machine_sequence, id
+        LIMIT 1
+        """,
+        (card_id, machine_id, STATUS_RUNNING, STATUS_PAUSED),
+    ).fetchone()
+
+
+def has_open_timing_segment(connection: sqlite3.Connection, card_id: int) -> bool:
+    return fetch_open_timing_segment(connection, card_id) is not None
+
+
+def current_database_timestamp(connection: sqlite3.Connection) -> str:
+    return str(connection.execute("SELECT CURRENT_TIMESTAMP").fetchone()[0])
 
 
 def update_terminal_material_fields(

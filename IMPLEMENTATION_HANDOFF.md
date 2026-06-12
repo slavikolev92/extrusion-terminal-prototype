@@ -11,6 +11,7 @@ Completed and committed:
 - Milestone 2 - Admin release to terminal queues.
 - Milestone 3 - Automated baseline tests.
 - Milestone 4 - Terminal card detail and first conflict guard.
+- Milestone 5 - Production timing.
 
 Latest relevant commits:
 
@@ -22,7 +23,7 @@ Latest relevant commits:
 
 Current next milestone:
 
-- Milestone 5 - Production Timing.
+- Milestone 6 - Tare And Roll Entry.
 
 ## First Read In A New Session
 
@@ -53,7 +54,7 @@ Use the local virtualenv:
 
 Current automated suite:
 
-- `13 passed` after Milestone 4.
+- `19 passed` after Milestone 5.
 - Tests use temporary SQLite databases and must not mutate `data/extrusion_terminal.sqlite3`.
 
 When UI behavior changes, also run a focused manual app check with a temporary database. The previous Milestone 4 manual checks verified:
@@ -79,18 +80,31 @@ The local workbook, if present, belongs at:
 
 - `source-files/shift-manager-main-file.xlsm`
 
-## Next Milestone Notes
+## Completed Timing Notes
 
-Milestone 5 should add production timing only:
+Milestone 5 added production timing only:
 
 - start production timing,
 - pause timing,
 - resume timing,
 - store timing in `production_time_segments`,
-- enforce one running card per machine,
+- enforce one running/paused occupied card per machine,
 - calculate total production time from segments.
 
-Keep this slice separate from tare/roll entry, finish/cancel/history, backup/recovery, and printing. Add focused tests before or alongside implementation, then run the required checks and commit the milestone.
+Keep future slices separate from this timing work.
+
+## Next Milestone Notes
+
+Milestone 6 should add tare and roll entry only:
+
+- order-level tare input,
+- fixed gross-weight input for the next roll,
+- immediate save on Enter or Add,
+- automatic roll numbers starting at `1`,
+- editable previous gross weights,
+- total gross and total net display.
+
+Keep this slice separate from finish/cancel/history, backup/recovery, and printing. Add focused tests before or alongside implementation, then run the required checks and commit the milestone.
 
 ## Guardrails
 

@@ -18,7 +18,10 @@ from .db import (
     fetch_machines,
     fetch_recent_import_batches,
     init_db,
+    pause_production_timing,
     release_card,
+    resume_production_timing,
+    start_production_timing,
     update_terminal_material_fields,
 )
 from .importer import csv_template, import_cards_from_csv
@@ -183,12 +186,74 @@ async def save_terminal_materials(
     )
 
 
+@app.post("/terminal/cards/{card_id}/timing/start")
+async def start_timing(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+):
+    parsed_version, timing_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        timing_result = start_production_timing(card_id, parsed_version)
+
+    return terminal_response(
+        request,
+        selected_card_id=card_id,
+        timing_result=timing_result,
+    )
+
+
+@app.post("/terminal/cards/{card_id}/timing/pause")
+async def pause_timing(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+):
+    parsed_version, timing_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        timing_result = pause_production_timing(card_id, parsed_version)
+
+    return terminal_response(
+        request,
+        selected_card_id=card_id,
+        timing_result=timing_result,
+    )
+
+
+@app.post("/terminal/cards/{card_id}/timing/resume")
+async def resume_timing(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+):
+    parsed_version, timing_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        timing_result = resume_production_timing(card_id, parsed_version)
+
+    return terminal_response(
+        request,
+        selected_card_id=card_id,
+        timing_result=timing_result,
+    )
+
+
+def parse_loaded_version(loaded_version: str) -> tuple[int | None, RuleResult]:
+    try:
+        return int(loaded_version), RuleResult(True)
+    except ValueError:
+        return None, RuleResult(False, ("Loaded card version is invalid. Reload the card.",))
+
+
 def terminal_response(
     request: Request,
     selected_card_id: int | None = None,
     **extra: Any,
 ):
     selected_card = fetch_terminal_card_detail(selected_card_id) if selected_card_id else None
+    if selected_card:
+        selected_card["total_production_duration"] = format_duration(
+            selected_card["total_production_seconds"],
+        )
     return templates.TemplateResponse(
         request,
         "terminal.html",
@@ -201,3 +266,9 @@ def terminal_response(
             **extra,
         },
     )
+
+
+def format_duration(total_seconds: int) -> str:
+    hours, remainder = divmod(max(total_seconds, 0), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"

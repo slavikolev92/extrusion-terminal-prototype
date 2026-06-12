@@ -53,11 +53,41 @@
         {% endif %}
       </div>
       <div class="actions">
-        <button disabled>Start</button>
-        <button disabled>Pause</button>
+        {% if selected_card and selected_card.status == "pending" %}
+          <form action="/terminal/cards/{{ selected_card.id }}/timing/start" method="post">
+            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+            <button type="submit">Start</button>
+          </form>
+        {% else %}
+          <button disabled>Start</button>
+        {% endif %}
+        {% if selected_card and selected_card.status == "running" %}
+          <form action="/terminal/cards/{{ selected_card.id }}/timing/pause" method="post">
+            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+            <button type="submit">Pause</button>
+          </form>
+        {% else %}
+          <button disabled>Pause</button>
+        {% endif %}
+        {% if selected_card and selected_card.status == "paused" %}
+          <form action="/terminal/cards/{{ selected_card.id }}/timing/resume" method="post">
+            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+            <button type="submit">Resume</button>
+          </form>
+        {% else %}
+          <button disabled>Resume</button>
+        {% endif %}
         <button disabled>Finished</button>
       </div>
     </header>
+
+    {% if timing_result %}
+      <div class="notice {% if not timing_result.ok %}error{% endif %}">
+        {% for message in timing_result.messages %}
+          <div>{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
 
     {% if material_result %}
       <div class="notice {% if not material_result.ok %}error{% endif %}">
@@ -66,6 +96,54 @@
         {% endfor %}
       </div>
     {% endif %}
+
+    <section class="section timing-panel">
+      <h3>Production timing</h3>
+      {% if selected_card %}
+        <dl class="detail-grid">
+          <div>
+            <dt>Status</dt>
+            <dd>{{ selected_card.status }}</dd>
+          </div>
+          <div>
+            <dt>Total time</dt>
+            <dd>{{ selected_card.total_production_duration }}</dd>
+          </div>
+          <div>
+            <dt>First started</dt>
+            <dd>{{ selected_card.first_started_at or "-" }}</dd>
+          </div>
+          <div>
+            <dt>Active segment</dt>
+            <dd>{{ selected_card.active_segment_started_at or "-" }}</dd>
+          </div>
+        </dl>
+        {% if selected_card.timing_segments %}
+          <table class="compact-table">
+            <thead>
+              <tr>
+                <th>Started</th>
+                <th>Ended</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for segment in selected_card.timing_segments %}
+                <tr>
+                  <td>{{ segment.started_at }}</td>
+                  <td>{{ segment.ended_at or "Running" }}</td>
+                  <td>{{ segment.end_reason or "-" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="empty">No timing segments yet.</p>
+        {% endif %}
+      {% else %}
+        <p class="empty">Timing controls appear after selecting a card.</p>
+      {% endif %}
+    </section>
 
     <div class="placeholder-grid">
       <section class="section">

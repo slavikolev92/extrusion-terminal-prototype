@@ -161,7 +161,8 @@ Completed and committed:
 - terminal queue visibility for released cards.
 - automated baseline tests for import/release behavior.
 - terminal card detail view and first version-checked material-field edit.
+- production timing actions: start, pause, resume, one running/occupied card per machine, and timing segments.
 
 Next recommended milestone:
 
-- Add production timing actions: start, pause, resume, one running card per machine, and timing segments.
+- Add tare and roll entry: order-level tare, gross roll entry, roll corrections, and gross/net totals.

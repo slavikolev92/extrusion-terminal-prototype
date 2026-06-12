@@ -330,6 +330,10 @@ thead th {
   flex-wrap: wrap;
 }
 
+.actions form {
+  margin: 0;
+}
+
 .placeholder-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
@@ -396,6 +400,14 @@ thead th {
   color: var(--text);
   font: inherit;
   text-transform: none;
+}
+
+.timing-panel .detail-grid {
+  margin-bottom: 12px;
+}
+
+.compact-table {
+  font-size: 13px;
 }
 
 @media (max-width: 1080px) {
