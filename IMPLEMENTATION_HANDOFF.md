@@ -18,6 +18,8 @@ Completed and committed:
 
 Latest relevant commits:
 
+- `4788338 Add roll delete renumber correction`
+- `f5ccbd3 Add backup and recovery milestone`
 - `3f53dde Add finish cancel and history milestone`
 - `d0ad54e Add tare and roll entry milestone`
 - `910627c Add production timing milestone`
@@ -29,13 +31,13 @@ Latest relevant commits:
 
 Current next milestone:
 
-- Milestone 9 - Print Output.
+- Milestone 9 - Pre-Print Workflow Completion.
 
 ## First Read In A New Session
 
 1. Read `README.md` fully enough to refresh the confirmed scope.
 2. Read `AGENTS.md` for process, validation, test, and commit rules.
-3. Read `IMPLEMENTATION_PLAN.md` and confirm Milestone 9 is still `next`.
+3. Read `IMPLEMENTATION_PLAN.md` and confirm Milestone 9 - Pre-Print Workflow Completion is still `next`.
 4. Inspect current source under `app/` and tests under `tests/` before editing.
 
 ## Implemented App Shape
@@ -180,7 +182,18 @@ Keep future slices separate from print output.
 
 ## Next Milestone Notes
 
-Milestone 9 should add print output only:
+Milestone 9 should complete non-print workflow functionality before print output:
+
+- walk through the shift-manager and terminal workflows with realistic exception cases,
+- implement or explicitly confirm simplifications for admin card review/edit,
+- implement or explicitly confirm simplifications for timing correction,
+- implement or explicitly confirm simplifications for machine/sequence reassignment after release,
+- implement or explicitly confirm simplifications for admin-side cancel/restore,
+- resolve duplicate import and duplicate sequence UX expectations.
+
+Keep Milestone 9 separate from print output.
+
+Milestone 10 should add print output only:
 
 - create and agree the printable card template before final print implementation,
 - completed-card print route,
@@ -189,7 +202,7 @@ Milestone 9 should add print output only:
 - include start time, stop/finish time, tare weight, total gross weight, and total net weight,
 - print only allowed after completion.
 
-Do not expand backup/recovery or add unrelated workflow changes in Milestone 9.
+Do not expand backup/recovery or add unrelated workflow changes in Milestone 10.
 
 ## Guardrails
 

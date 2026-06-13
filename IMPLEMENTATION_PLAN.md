@@ -202,9 +202,69 @@ Review checkpoint:
 - docs are clear enough for non-developer recovery.
 - commit.
 
-## Milestone 9 - Print Output
+## Milestone 9 - Pre-Print Workflow Completion
 
 Status: next
+
+Purpose:
+
+- Before building print output, walk through the complete shift-manager and terminal workflows as the real users would use them.
+- Confirm which documented non-print requirements are still needed for the prototype and which are acceptable pilot simplifications.
+- Implement the missing non-print functionality that affects operational correctness or print readiness.
+- Keep this milestone scoped to workflow completion; do not implement print output here.
+
+Known missing or unresolved items to review and bundle:
+
+- Admin card review/edit:
+  - imported drafts should be reviewable beyond the table row summary.
+  - shift manager should be able to correct imported/front-card fields in-app when re-import is not the right tool.
+  - edits should use simple conflict/version checks and preserve terminal-entered production data.
+- Timing correction:
+  - existing timing segments are currently read-only.
+  - decide and implement the simplest correction workflow needed before printed start/finish/time values become official.
+- Machine and sequence correction after release:
+  - released cards currently show machine/sequence as read-only in the terminal detail.
+  - implement reassignment/resequencing if it is needed for real production changes.
+  - preserve backend protection against duplicate active machine sequence and invalid running-card conflicts.
+- Admin-side cancel/restore:
+  - terminal supports cancel/restore, but admin currently does not.
+  - decide whether shift manager needs the same reversible cancellation controls before printing.
+- Duplicate import and duplicate sequence UX:
+  - current duplicate order imports are skipped unless overwrite is selected.
+  - current duplicate active machine sequences are backend-blocked on release.
+  - decide whether the README expectation for visible `duplicate` draft status or immediate duplicate sequence flagging should be implemented or documented as a pilot simplification.
+- Workflow walkthrough:
+  - run through expected shift-manager actions and terminal actions, including exception cases.
+  - use findings to update this milestone before implementation if more non-print gaps are discovered.
+
+Suggested implementation bundles:
+
+1. Admin review/edit bundle:
+   - card detail/review route for imported and released cards.
+   - editable imported/front-card fields with version guard.
+   - tests for preserving roll/timing/tare/status data.
+2. Queue correction bundle:
+   - machine/sequence reassignment for released active cards.
+   - admin cancel/restore if confirmed.
+   - tests for duplicate sequence, occupied machine, stale edits, and archive behavior.
+3. Timing correction bundle:
+   - minimal segment correction controls.
+   - tests for recalculated total time, stale edits, and completed-card print-readiness.
+4. Duplicate UX/documentation bundle:
+   - implement duplicate draft/visual flag behavior if still required, or explicitly document current skip/overwrite behavior as the accepted pilot behavior.
+
+Review checkpoint:
+
+- walkthrough completed with the user or with user-confirmed scenarios.
+- every remaining non-print README requirement is either implemented, moved into this milestone's implementation list, or explicitly documented as a pilot simplification after user confirmation.
+- tests cover new backend validation and conflict behavior.
+- focused manual workflow passes with temporary data.
+- implementation stays separate from print output.
+- commit.
+
+## Milestone 10 - Print Output
+
+Status: pending
 
 Scope:
 
@@ -223,7 +283,7 @@ Review checkpoint:
 - tests/manual print rehearsal pass.
 - commit.
 
-## Milestone 10 - Pilot Rehearsal
+## Milestone 11 - Pilot Rehearsal
 
 Status: pending
 

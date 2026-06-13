@@ -168,4 +168,4 @@ Completed and committed:
 
 Next recommended milestone:
 
-- Add print output: completed-card print route and two-page A4 output matching the Excel operational card front/back as closely as possible.
+- Complete pre-print workflow functionality: walk through shift-manager and terminal exception cases, then implement or explicitly confirm simplifications for admin card review/edit, timing correction, machine/sequence reassignment, admin-side cancel/restore, and duplicate UX before starting print output.
