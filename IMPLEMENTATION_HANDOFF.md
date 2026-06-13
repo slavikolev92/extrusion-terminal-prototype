@@ -14,9 +14,11 @@ Completed and committed:
 - Milestone 5 - Production timing.
 - Milestone 6 - Tare and roll entry.
 - Milestone 7 - Finish, cancel, and history.
+- Milestone 8 - Backup and recovery.
 
 Latest relevant commits:
 
+- `3f53dde Add finish cancel and history milestone`
 - `d0ad54e Add tare and roll entry milestone`
 - `910627c Add production timing milestone`
 - `8c8fd39 Add terminal card detail and conflict guard`
@@ -27,13 +29,13 @@ Latest relevant commits:
 
 Current next milestone:
 
-- Milestone 8 - Backup And Recovery.
+- Milestone 9 - Print Output.
 
 ## First Read In A New Session
 
 1. Read `README.md` fully enough to refresh the confirmed scope.
 2. Read `AGENTS.md` for process, validation, test, and commit rules.
-3. Read `IMPLEMENTATION_PLAN.md` and confirm Milestone 8 is still `next`.
+3. Read `IMPLEMENTATION_PLAN.md` and confirm Milestone 9 is still `next`.
 4. Inspect current source under `app/` and tests under `tests/` before editing.
 
 ## Implemented App Shape
@@ -41,6 +43,8 @@ Current next milestone:
 - One FastAPI app under `app/`.
 - SQLite database initialized by `app.db`.
 - Runtime database defaults to `data/extrusion_terminal.sqlite3`.
+- Backup files default to `backups/extrusion_terminal_YYYYMMDD_HHMMSS_microseconds.sqlite3`.
+- Backup and restore commands live in `app.backups` and use SQLite's backup API.
 - `/admin` supports CSV import and release of ready imported cards to machine queues.
 - `/terminal` shows the active queue and completed/cancelled section.
 - `/terminal/cards/{card_id}` opens terminal card detail for released/completed/cancelled cards.
@@ -65,7 +69,7 @@ Use the local virtualenv:
 
 Current automated suite:
 
-- `38 passed` after Milestone 7.
+- `47 passed` after Milestone 8.
 - Tests use temporary SQLite databases and must not mutate `data/extrusion_terminal.sqlite3`.
 
 When UI behavior changes, also run a focused manual app check with a temporary database. The previous Milestone 4 manual checks verified:
@@ -98,6 +102,15 @@ Milestone 7 manual check used a temporary SQLite database and real HTTP routes o
 - cancel it,
 - restore it to `pending`,
 - verify persistence after reload/render.
+
+Milestone 8 manual check used a temporary SQLite database and verified:
+
+- initialize a temp database,
+- import/release a sample card,
+- create a SQLite-safe timestamped backup,
+- restore that backup into a different temp database path,
+- query the restored database for the sample card,
+- verify the real runtime database path was not the backup or restore target.
 
 ## Runtime And Ignored Files
 
@@ -140,20 +153,33 @@ Milestone 7 added finish, cancel, and history behavior only:
 - cancelled cards reversible back to `pending`,
 - completed cards remain editable as confirmed.
 
-Keep future slices separate from backup/recovery and printing.
+Keep future slices separate from printing.
+
+## Completed Backup/Recovery Notes
+
+Milestone 8 added backup and recovery behavior only:
+
+- `python -m app.backups backup` creates a SQLite-safe timestamped backup.
+- `python -m app.backups restore --backup <path> --target <path>` restores through SQLite's backup API.
+- default database path is `data/extrusion_terminal.sqlite3`.
+- default backup directory is `backups/`.
+- default retention keeps the newest `144` matching backup files.
+- no scheduler, Windows Task Scheduler job, cron job, service, cloud backup, or UI was installed.
+
+Keep future slices separate from print output.
 
 ## Next Milestone Notes
 
-Milestone 8 should add backup and recovery behavior only:
+Milestone 9 should add print output only:
 
-- SQLite-safe backup behavior,
-- timestamped backups,
-- simple retention policy,
-- documented restore procedure,
-- documented startup/restart procedure,
-- basic troubleshooting notes for failed imports, duplicate releases, and server restart.
+- create and agree the printable card template before final print implementation,
+- completed-card print route,
+- two A4 pages: extrusion front and back page,
+- back page keeps the 120-roll grid,
+- include start time, stop/finish time, tare weight, total gross weight, and total net weight,
+- print only allowed after completion.
 
-Do not implement print output in Milestone 8.
+Do not expand backup/recovery or add unrelated workflow changes in Milestone 9.
 
 ## Guardrails
 

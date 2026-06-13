@@ -184,7 +184,7 @@ Review checkpoint:
 
 ## Milestone 8 - Backup And Recovery
 
-Status: next
+Status: done
 
 Scope:
 
@@ -203,7 +203,7 @@ Review checkpoint:
 
 ## Milestone 9 - Print Output
 
-Status: pending
+Status: next
 
 Scope:
 

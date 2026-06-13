@@ -142,7 +142,7 @@ Before pilot use, this repository must include:
 - documented shutdown/restart procedure
 - database location
 - backup location
-- SQLite-safe backup job
+- SQLite-safe backup command and approved backup job if scheduling is later confirmed
 - restore procedure
 - basic troubleshooting notes for failed imports, duplicate releases, and server restart
 
@@ -164,7 +164,8 @@ Completed and committed:
 - production timing actions: start, pause, resume, one running/occupied card per machine, and timing segments.
 - tare and roll entry: order-level tare, gross roll entry, roll corrections, and gross/net totals.
 - finish, cancel, and history behavior: finish validation, active segment closure, completed/cancelled archive visibility, and reversible cancellation.
+- backup and recovery behavior: SQLite-safe timestamped backups, restore helper, retention, startup/restart documentation, and troubleshooting notes.
 
 Next recommended milestone:
 
-- Add backup and recovery behavior: SQLite-safe backups, restore procedure, startup/restart documentation, and basic troubleshooting notes.
+- Add print output: completed-card print route and two-page A4 output matching the Excel operational card front/back as closely as possible.

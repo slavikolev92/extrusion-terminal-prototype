@@ -638,10 +638,84 @@ Rationale:
 Backup approach:
 
 - Store the SQLite database on the app VM/server.
-- Create automatic timestamped backups.
+- Support timestamped backups through the documented SQLite-safe backup command.
 - A 10-minute backup interval is acceptable because the database will be small and storage space is available.
 - Backups should use SQLite-safe backup behavior rather than unsafe raw copying while writes may be active.
 - Retention policy can be simple, for example frequent backups for recent days and fewer older backups.
+
+## Operational Backup And Recovery
+
+Current local startup command:
+
+```powershell
+.\.test-runtime\codex-venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Open the terminal at:
+
+- `http://127.0.0.1:8000/terminal`
+
+Open shift-manager admin at:
+
+- `http://127.0.0.1:8000/admin`
+
+Health check:
+
+```powershell
+Invoke-WebRequest -Uri http://127.0.0.1:8000/health -UseBasicParsing -TimeoutSec 5
+```
+
+Shutdown and restart:
+
+1. In the server terminal window, press `Ctrl+C`.
+2. Wait until the server process exits.
+3. Start it again with the startup command above.
+4. Run the health check and reopen `/terminal`.
+
+Runtime database location:
+
+- default: `data/extrusion_terminal.sqlite3`
+- override: set `EXTRUSION_DB_PATH` before starting the app
+
+Backup location:
+
+- default: `backups/`
+- override: set `EXTRUSION_BACKUP_DIR`
+- backup filenames: `extrusion_terminal_YYYYMMDD_HHMMSS_microseconds.sqlite3`
+
+Create a SQLite-safe backup:
+
+```powershell
+.\.test-runtime\codex-venv\Scripts\python.exe -m app.backups backup
+```
+
+The backup command uses SQLite's backup API, creates the backup directory if needed, and keeps the newest `144` matching backup files by default. Milestone 8 does not install a scheduler; if recurring 10-minute backups are needed before pilot use, run this command from the deployment's approved scheduler. To change retention for a run:
+
+```powershell
+.\.test-runtime\codex-venv\Scripts\python.exe -m app.backups backup --keep 288
+```
+
+Restore procedure:
+
+1. Stop the app with `Ctrl+C`.
+2. Choose the backup file to restore from `backups/`.
+3. Restore into the runtime database path:
+
+```powershell
+.\.test-runtime\codex-venv\Scripts\python.exe -m app.backups restore --backup backups\extrusion_terminal_YYYYMMDD_HHMMSS_microseconds.sqlite3 --target data\extrusion_terminal.sqlite3
+```
+
+4. Start the app again.
+5. Run the health check.
+6. Open `/admin` and `/terminal` and verify the expected orders are present.
+
+Do not restore over `data/extrusion_terminal.sqlite3` while the app is running. Do not copy the database file with normal file-copy commands as the backup method while the app may be writing.
+
+Troubleshooting:
+
+- Failed imports: confirm the uploaded file is CSV, has headers including `order_number` and `extrusion_flag`, and shows extrusion data. Rows without an extrusion step remain imported for review but cannot be released.
+- Duplicate releases: if release says a machine sequence is already active, pick another sequence or finish, cancel, or reassign the conflicting active card first.
+- Server restart: stop with `Ctrl+C`, start with the documented startup command, run `/health`, then refresh the terminal browser. Data should persist because it is stored in SQLite, not browser memory.
 
 Conflict handling:
 
