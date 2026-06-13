@@ -148,6 +148,7 @@ Scope:
 - roll numbers assigned automatically from `1`.
 - previous gross weights editable.
 - clearing/correcting roll weights behaves according to the confirmed pilot rules.
+- roll deletion renumbers remaining rolls automatically.
 - total gross and total net shown.
 
 Review checkpoint:

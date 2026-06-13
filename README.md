@@ -399,7 +399,8 @@ Confirmed storage behavior:
 - Pressing `Enter` in the fixed gross-weight input or clicking the add button should save the new roll immediately and clear/focus the input for the next roll.
 - Roll numbers are assigned automatically starting at `1`.
 - Previous gross weights should remain editable.
-- Clearing a gross-weight value is enough to remove/correct it for the pilot; a separate delete-row action is optional only if it stays very simple.
+- Clearing a gross-weight value removes it from totals while keeping the row visible for correction.
+- Deleting a roll removes that row and automatically renumbers later rolls so the printed roll list remains continuous.
 - Net weight per roll should be stored or calculatable, but does not need to be shown to operators per roll.
 - Operators should see total gross weight so far and total net weight so far.
 - Weight inputs should support up to two decimal places.

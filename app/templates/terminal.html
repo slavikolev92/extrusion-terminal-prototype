@@ -243,7 +243,7 @@
                 <th>Roll</th>
                 <th>Gross weight</th>
                 <th>Net weight</th>
-                <th></th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -258,7 +258,13 @@
                     </form>
                   </td>
                   <td>{{ roll.net_weight if roll.net_weight is not none else "-" }}</td>
-                  <td><small>{{ roll.updated_at }}</small></td>
+                  <td>
+                    <form class="roll-delete-form" action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}/delete" method="post">
+                      <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                      <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Delete</button>
+                    </form>
+                    <small>{{ roll.updated_at }}</small>
+                  </td>
                 </tr>
               {% endfor %}
             </tbody>

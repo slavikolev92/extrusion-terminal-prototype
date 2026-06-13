@@ -1027,7 +1027,7 @@ def update_roll_gross_weight(
 
         roll = connection.execute(
             """
-            SELECT id, roll_number
+            SELECT id, roll_number, gross_weight
             FROM roll_entries
             WHERE id = ?
               AND card_id = ?
@@ -1036,6 +1036,28 @@ def update_roll_gross_weight(
         ).fetchone()
         if not roll:
             return RuleResult(False, ("Roll entry was not found.",))
+
+        if (
+            card["status"] == STATUS_COMPLETED
+            and parsed_gross is None
+            and roll["gross_weight"] is not None
+        ):
+            gross_roll_count = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM roll_entries
+                    WHERE card_id = ?
+                      AND gross_weight IS NOT NULL
+                    """,
+                    (card_id,),
+                ).fetchone()[0]
+            )
+            if gross_roll_count <= 1:
+                return RuleResult(
+                    False,
+                    ("Completed cards must keep at least one gross roll weight.",),
+                )
 
         tare = decimal_from_database(card["tare_weight"])
         net = net_weight_for_gross(parsed_gross, tare) if parsed_gross is not None else None
@@ -1070,6 +1092,101 @@ def update_roll_gross_weight(
         )
 
     return RuleResult(True, (f"Roll {roll['roll_number']} saved.",))
+
+
+def delete_roll_entry(card_id: int, roll_id: int, loaded_version: int) -> RuleResult:
+    with connect() as connection:
+        card = fetch_roll_action_card(connection, card_id)
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        roll_entry_result = validate_card_allows_roll_entry(card)
+        if not roll_entry_result.ok:
+            return roll_entry_result
+
+        roll = connection.execute(
+            """
+            SELECT id, roll_number, gross_weight
+            FROM roll_entries
+            WHERE id = ?
+              AND card_id = ?
+            """,
+            (roll_id, card_id),
+        ).fetchone()
+        if not roll:
+            return RuleResult(False, ("Roll entry was not found.",))
+
+        if card["status"] == STATUS_COMPLETED and roll["gross_weight"] is not None:
+            gross_roll_count = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM roll_entries
+                    WHERE card_id = ?
+                      AND gross_weight IS NOT NULL
+                    """,
+                    (card_id,),
+                ).fetchone()[0]
+            )
+            if gross_roll_count <= 1:
+                return RuleResult(
+                    False,
+                    ("Completed cards must keep at least one gross roll weight.",),
+                )
+
+        deleted_roll_number = int(roll["roll_number"])
+        max_roll_number = int(
+            connection.execute(
+                """
+                SELECT COALESCE(MAX(roll_number), 0)
+                FROM roll_entries
+                WHERE card_id = ?
+                """,
+                (card_id,),
+            ).fetchone()[0]
+        )
+        renumber_offset = max_roll_number + 1
+
+        connection.execute(
+            """
+            DELETE FROM roll_entries
+            WHERE id = ?
+              AND card_id = ?
+            """,
+            (roll_id, card_id),
+        )
+        connection.execute(
+            """
+            UPDATE roll_entries
+            SET roll_number = roll_number + ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE card_id = ?
+              AND roll_number > ?
+            """,
+            (renumber_offset, card_id, deleted_roll_number),
+        )
+        connection.execute(
+            """
+            UPDATE roll_entries
+            SET roll_number = roll_number - ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE card_id = ?
+              AND roll_number > ?
+            """,
+            (renumber_offset + 1, card_id, renumber_offset),
+        )
+        connection.execute(
+            """
+            UPDATE cards
+            SET version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+
+    return RuleResult(True, (f"Roll {deleted_roll_number} deleted. Remaining rolls renumbered.",))
 
 
 def fetch_roll_action_card(

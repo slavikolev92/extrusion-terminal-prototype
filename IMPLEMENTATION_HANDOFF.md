@@ -52,7 +52,9 @@ Current next milestone:
 - Terminal material fields are editable with a loaded `version` guard to block stale saves.
 - Terminal tare and roll fields are editable with a loaded `version` guard to block stale saves.
 - Roll entries are allowed only while a card is `running`.
-- Roll numbers are assigned automatically per card; clearing an existing gross value stores it as blank and removes it from gross/net totals.
+- Roll numbers are assigned automatically per card.
+- Clearing an existing gross value stores it as blank and removes it from gross/net totals.
+- Deleting a roll removes the row and automatically renumbers later rolls so the sequence remains continuous.
 - Finish validates tare, at least one timing segment, at least one gross roll, and no empty roll gaps before filled rolls.
 - Finish closes an active running segment with `finish`, sets `completed`, and moves the card to archive/history.
 - Terminal cancellation sets `cancelled`, closes any open segment with `correction`, and moves the card to archive/history.
@@ -69,7 +71,7 @@ Use the local virtualenv:
 
 Current automated suite:
 
-- `47 passed` after Milestone 8.
+- `53 passed` after roll delete/renumbering correction after Milestone 8.
 - Tests use temporary SQLite databases and must not mutate `data/extrusion_terminal.sqlite3`.
 
 When UI behavior changes, also run a focused manual app check with a temporary database. The previous Milestone 4 manual checks verified:
@@ -88,6 +90,14 @@ Milestone 6 manual check used a temporary SQLite database and verified:
 - clear one previous gross value,
 - render/reload the terminal detail template,
 - verify persisted totals after reload.
+
+Post-Milestone 8 roll correction added:
+
+- delete a roll from the terminal roll table,
+- backend deletes the selected roll and renumbers later rolls in one transaction,
+- stale delete requests are blocked by the loaded `version` guard,
+- delete is allowed only where roll edits are allowed: `running` and `completed`,
+- completed cards cannot delete or clear their final gross roll because completed cards must remain print-eligible.
 
 Milestone 7 manual check used a temporary SQLite database and real HTTP routes on an in-process Uvicorn server. It verified:
 

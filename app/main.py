@@ -14,6 +14,7 @@ from .db import (
     add_roll_gross_weight,
     cancel_card,
     database_summary,
+    delete_roll_entry,
     fetch_cards_by_status,
     fetch_terminal_card_detail,
     fetch_machine_queues,
@@ -243,6 +244,28 @@ async def save_roll_weight(
             roll_id=roll_id,
             loaded_version=parsed_version,
             gross_weight=gross_weight,
+        )
+
+    return terminal_response(
+        request,
+        selected_card_id=card_id,
+        roll_result=roll_result,
+    )
+
+
+@app.post("/terminal/cards/{card_id}/rolls/{roll_id}/delete")
+async def delete_roll_weight(
+    request: Request,
+    card_id: int,
+    roll_id: int,
+    loaded_version: str = Form(...),
+):
+    parsed_version, roll_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        roll_result = delete_roll_entry(
+            card_id=card_id,
+            roll_id=roll_id,
+            loaded_version=parsed_version,
         )
 
     return terminal_response(

@@ -256,3 +256,171 @@ def test_clearing_existing_gross_weight_removes_it_from_totals(connection):
     assert cleared_card["roll_count"] == 0
     assert cleared_card["total_gross_weight"] == "0.00"
     assert cleared_card["total_net_weight"] == "0.00"
+
+
+def test_delete_middle_roll_renumbers_remaining_rolls_and_recalculates_totals(connection):
+    card_id = import_and_release_card("25508")
+    start_card(card_id)
+    assert db.update_tare_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "1.00",
+    ).ok
+    for gross_weight in ("10.00", "20.00", "30.00"):
+        assert db.add_roll_gross_weight(
+            card_id,
+            db.fetch_terminal_card_detail(card_id)["version"],
+            gross_weight,
+        ).ok
+
+    card = db.fetch_terminal_card_detail(card_id)
+    middle_roll_id = card["roll_entries"][1]["id"]
+    loaded_version = card["version"]
+
+    result = db.delete_roll_entry(card_id, middle_roll_id, loaded_version)
+    updated_card = db.fetch_terminal_card_detail(card_id)
+    updated_rolls = updated_card["roll_entries"]
+
+    assert result.ok
+    assert result.messages == ("Roll 2 deleted. Remaining rolls renumbered.",)
+    assert updated_card["version"] == loaded_version + 1
+    assert updated_card["roll_count"] == 2
+    assert updated_card["next_roll_number"] == 3
+    assert updated_card["total_gross_weight"] == "40.00"
+    assert updated_card["total_net_weight"] == "38.00"
+    assert [
+        (roll["roll_number"], roll["gross_weight"], roll["net_weight"])
+        for roll in updated_rolls
+    ] == [
+        (1, 10, 9),
+        (2, 30, 29),
+    ]
+
+
+def test_delete_roll_is_blocked_when_card_is_not_running_or_completed(connection):
+    card_id = import_and_release_card("25509")
+    connection.execute(
+        """
+        INSERT INTO roll_entries (card_id, order_number, roll_number, gross_weight, net_weight)
+        VALUES (?, '25509', 1, 25.00, NULL)
+        """,
+        (card_id,),
+    )
+    connection.commit()
+    roll_id = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]["id"]
+
+    result = db.delete_roll_entry(
+        card_id,
+        roll_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+    )
+
+    assert not result.ok
+    assert result.messages == (
+        "Roll weights can only be changed while the card is running or completed.",
+    )
+    assert db.fetch_terminal_card_detail(card_id)["roll_count"] == 1
+
+
+def test_delete_roll_checks_loaded_version(connection):
+    card_id = import_and_release_card("25510")
+    start_card(card_id)
+    loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
+    assert db.add_roll_gross_weight(card_id, loaded_version, "20.00").ok
+    roll_id = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]["id"]
+
+    stale_result = db.delete_roll_entry(card_id, roll_id, loaded_version)
+
+    assert not stale_result.ok
+    assert stale_result.messages == (
+        "Card changed after this page was loaded. Reload the card and try again.",
+    )
+    assert db.fetch_terminal_card_detail(card_id)["roll_count"] == 1
+
+
+def test_completed_card_roll_delete_remains_editable_and_renumbers(connection):
+    card_id = import_and_release_card("25511")
+    start_card(card_id)
+    assert db.update_tare_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "1.00",
+    ).ok
+    for gross_weight in ("25.00", "30.00"):
+        assert db.add_roll_gross_weight(
+            card_id,
+            db.fetch_terminal_card_detail(card_id)["version"],
+            gross_weight,
+        ).ok
+    assert db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"]).ok
+
+    completed_card = db.fetch_terminal_card_detail(card_id)
+    first_roll_id = completed_card["roll_entries"][0]["id"]
+    result = db.delete_roll_entry(card_id, first_roll_id, completed_card["version"])
+    updated_card = db.fetch_terminal_card_detail(card_id)
+
+    assert result.ok
+    assert updated_card["status"] == "completed"
+    assert updated_card["roll_count"] == 1
+    assert updated_card["roll_entries"][0]["roll_number"] == 1
+    assert updated_card["roll_entries"][0]["gross_weight"] == 30
+
+
+def test_completed_card_cannot_delete_final_gross_roll(connection):
+    card_id = import_and_release_card("25512")
+    start_card(card_id)
+    assert db.update_tare_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "1.00",
+    ).ok
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "25.00",
+    ).ok
+    assert db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"]).ok
+
+    completed_card = db.fetch_terminal_card_detail(card_id)
+    only_roll_id = completed_card["roll_entries"][0]["id"]
+    result = db.delete_roll_entry(card_id, only_roll_id, completed_card["version"])
+    updated_card = db.fetch_terminal_card_detail(card_id)
+
+    assert not result.ok
+    assert result.messages == ("Completed cards must keep at least one gross roll weight.",)
+    assert updated_card["status"] == "completed"
+    assert updated_card["roll_count"] == 1
+    assert updated_card["roll_entries"][0]["roll_number"] == 1
+    assert updated_card["roll_entries"][0]["gross_weight"] == 25
+
+
+def test_completed_card_cannot_clear_final_gross_roll(connection):
+    card_id = import_and_release_card("25513")
+    start_card(card_id)
+    assert db.update_tare_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "1.00",
+    ).ok
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "25.00",
+    ).ok
+    assert db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"]).ok
+
+    completed_card = db.fetch_terminal_card_detail(card_id)
+    only_roll_id = completed_card["roll_entries"][0]["id"]
+    result = db.update_roll_gross_weight(
+        card_id,
+        only_roll_id,
+        completed_card["version"],
+        "",
+    )
+    updated_card = db.fetch_terminal_card_detail(card_id)
+
+    assert not result.ok
+    assert result.messages == ("Completed cards must keep at least one gross roll weight.",)
+    assert updated_card["status"] == "completed"
+    assert updated_card["roll_count"] == 1
+    assert updated_card["roll_entries"][0]["gross_weight"] == 25

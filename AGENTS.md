@@ -162,7 +162,7 @@ Completed and committed:
 - automated baseline tests for import/release behavior.
 - terminal card detail view and first version-checked material-field edit.
 - production timing actions: start, pause, resume, one running/occupied card per machine, and timing segments.
-- tare and roll entry: order-level tare, gross roll entry, roll corrections, and gross/net totals.
+- tare and roll entry: order-level tare, gross roll entry, roll corrections, roll deletion with automatic renumbering, and gross/net totals.
 - finish, cancel, and history behavior: finish validation, active segment closure, completed/cancelled archive visibility, and reversible cancellation.
 - backup and recovery behavior: SQLite-safe timestamped backups, restore helper, retention, startup/restart documentation, and troubleshooting notes.
 
