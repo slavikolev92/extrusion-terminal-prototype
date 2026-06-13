@@ -12,16 +12,19 @@ from fastapi.templating import Jinja2Templates
 from .constants import ACTIVE_TERMINAL_STATUSES, ARCHIVE_STATUSES, STATUS_DRAFT, STATUS_IMPORTED
 from .db import (
     add_roll_gross_weight,
+    cancel_card,
     database_summary,
     fetch_cards_by_status,
     fetch_terminal_card_detail,
     fetch_machine_queues,
     fetch_machines,
     fetch_recent_import_batches,
+    finish_card,
     init_db,
     pause_production_timing,
     release_card,
     resume_production_timing,
+    restore_cancelled_card,
     start_production_timing,
     update_roll_gross_weight,
     update_tare_weight,
@@ -297,6 +300,57 @@ async def resume_timing(
         request,
         selected_card_id=card_id,
         timing_result=timing_result,
+    )
+
+
+@app.post("/terminal/cards/{card_id}/finish")
+async def finish_terminal_card(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+):
+    parsed_version, workflow_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        workflow_result = finish_card(card_id, parsed_version)
+
+    return terminal_response(
+        request,
+        selected_card_id=card_id,
+        workflow_result=workflow_result,
+    )
+
+
+@app.post("/terminal/cards/{card_id}/cancel")
+async def cancel_terminal_card(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+):
+    parsed_version, workflow_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        workflow_result = cancel_card(card_id, parsed_version)
+
+    return terminal_response(
+        request,
+        selected_card_id=card_id,
+        workflow_result=workflow_result,
+    )
+
+
+@app.post("/terminal/cards/{card_id}/restore")
+async def restore_terminal_card(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+):
+    parsed_version, workflow_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        workflow_result = restore_cancelled_card(card_id, parsed_version)
+
+    return terminal_response(
+        request,
+        selected_card_id=card_id,
+        workflow_result=workflow_result,
     )
 
 

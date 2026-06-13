@@ -138,11 +138,11 @@ def test_add_roll_is_blocked_when_card_is_not_running(connection):
     assert db.fetch_terminal_card_detail(paused_card_id)["status"] == STATUS_PAUSED
     assert not pending_result.ok
     assert pending_result.messages == (
-        "Roll weights can only be changed while the card is running.",
+        "Roll weights can only be changed while the card is running or completed.",
     )
     assert not paused_result.ok
     assert paused_result.messages == (
-        "Roll weights can only be changed while the card is running.",
+        "Roll weights can only be changed while the card is running or completed.",
     )
 
 

@@ -77,9 +77,36 @@
         {% else %}
           <button disabled>Resume</button>
         {% endif %}
-        <button disabled>Finished</button>
+        {% if selected_card and selected_card.status in ["pending", "running", "paused"] %}
+          <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post">
+            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+            <button type="submit">Finished</button>
+          </form>
+          <form action="/terminal/cards/{{ selected_card.id }}/cancel" method="post">
+            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+            <button type="submit">Cancel</button>
+          </form>
+        {% else %}
+          <button disabled>Finished</button>
+          {% if selected_card and selected_card.status == "cancelled" %}
+            <form action="/terminal/cards/{{ selected_card.id }}/restore" method="post">
+              <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+              <button type="submit">Restore</button>
+            </form>
+          {% else %}
+            <button disabled>Cancel</button>
+          {% endif %}
+        {% endif %}
       </div>
     </header>
+
+    {% if workflow_result %}
+      <div class="notice {% if not workflow_result.ok %}error{% endif %}">
+        {% for message in workflow_result.messages %}
+          <div>{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
 
     {% if timing_result %}
       <div class="notice {% if not timing_result.ok %}error{% endif %}">
@@ -122,6 +149,14 @@
             <dd>{{ selected_card.first_started_at or "-" }}</dd>
           </div>
           <div>
+            <dt>Finished</dt>
+            <dd>{{ selected_card.finished_at or "-" }}</dd>
+          </div>
+          <div>
+            <dt>Cancelled</dt>
+            <dd>{{ selected_card.cancelled_at or "-" }}</dd>
+          </div>
+          <div>
             <dt>Active segment</dt>
             <dd>{{ selected_card.active_segment_started_at or "-" }}</dd>
           </div>
@@ -161,6 +196,7 @@
         {% endif %}
       </div>
       {% if selected_card %}
+        {% set can_edit_rolls = selected_card.status in ["running", "completed"] %}
         <div class="roll-controls">
           <form class="field-form tare-form" action="/terminal/cards/{{ selected_card.id }}/tare" method="post">
             <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
@@ -175,9 +211,9 @@
             <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
             <label>
               Gross weight for roll {{ selected_card.next_roll_number }}
-              <input type="number" name="gross_weight" min="0" step="0.01" {% if selected_card.status == "running" %}autofocus{% else %}disabled{% endif %}>
+              <input type="number" name="gross_weight" min="0" step="0.01" {% if can_edit_rolls %}autofocus{% else %}disabled{% endif %}>
             </label>
-            <button type="submit" {% if selected_card.status != "running" %}disabled{% endif %}>Add</button>
+            <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Add</button>
           </form>
         </div>
 
@@ -196,8 +232,8 @@
           </div>
         </dl>
 
-        {% if selected_card.status != "running" %}
-          <p class="empty">Roll weights can only be changed while the card is running.</p>
+        {% if not can_edit_rolls %}
+          <p class="empty">Roll weights can only be changed while the card is running or completed.</p>
         {% endif %}
 
         {% if selected_card.roll_entries %}
@@ -217,8 +253,8 @@
                   <td>
                     <form class="inline-roll-form" action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}" method="post">
                       <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                      <input type="number" name="gross_weight" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" {% if selected_card.status != "running" %}disabled{% endif %}>
-                      <button type="submit" {% if selected_card.status != "running" %}disabled{% endif %}>Save</button>
+                      <input type="number" name="gross_weight" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %}>
+                      <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Save</button>
                     </form>
                   </td>
                   <td>{{ roll.net_weight if roll.net_weight is not none else "-" }}</td>

@@ -163,7 +163,8 @@ Completed and committed:
 - terminal card detail view and first version-checked material-field edit.
 - production timing actions: start, pause, resume, one running/occupied card per machine, and timing segments.
 - tare and roll entry: order-level tare, gross roll entry, roll corrections, and gross/net totals.
+- finish, cancel, and history behavior: finish validation, active segment closure, completed/cancelled archive visibility, and reversible cancellation.
 
 Next recommended milestone:
 
-- Add finish, cancel, and history behavior: finish validation, completed/cancelled queue behavior, reversible cancellation, and completed-card editability.
+- Add backup and recovery behavior: SQLite-safe backups, restore procedure, startup/restart documentation, and basic troubleshooting notes.

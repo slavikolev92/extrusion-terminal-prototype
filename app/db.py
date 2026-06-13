@@ -10,6 +10,8 @@ from .constants import (
     ACTIVE_TERMINAL_STATUSES,
     ARCHIVE_STATUSES,
     CARD_STATUSES,
+    STATUS_CANCELLED,
+    STATUS_COMPLETED,
     STATUS_DRAFT,
     STATUS_IMPORTED,
     STATUS_PAUSED,
@@ -244,7 +246,7 @@ def fetch_terminal_card_detail(card_id: int) -> dict[str, Any] | None:
                    raw_material_c, linear_pe, antistatic, masterbatch, chalk,
                    packaging_method, actual_raw_material_used,
                    raw_material_brand_grade, raw_material_batch_lot,
-                   tare_weight, first_started_at, finished_at, version,
+                   tare_weight, first_started_at, finished_at, cancelled_at, version,
                    updated_at
             FROM cards
             WHERE id = ?
@@ -504,6 +506,214 @@ def resume_production_timing(card_id: int, loaded_version: int) -> RuleResult:
     return RuleResult(True, (f"Production timing resumed for order {card['order_number']}.",))
 
 
+def finish_card(card_id: int, loaded_version: int) -> RuleResult:
+    with connect() as connection:
+        card = fetch_active_terminal_action_card(connection, card_id)
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        finish_result = validate_card_ready_to_finish(connection, card_id, card)
+        if not finish_result.ok:
+            return finish_result
+
+        now = current_database_timestamp(connection)
+        open_segment = fetch_open_timing_segment(connection, card_id)
+        if open_segment:
+            if card["status"] != STATUS_RUNNING:
+                return RuleResult(
+                    False,
+                    ("Paused cards should not have an active timing segment. Reload the card.",),
+                )
+            connection.execute(
+                """
+                UPDATE production_time_segments
+                SET ended_at = ?,
+                    end_reason = 'finish',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (now, open_segment["id"]),
+            )
+
+        connection.execute(
+            """
+            UPDATE cards
+            SET status = ?,
+                finished_at = ?,
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (STATUS_COMPLETED, now, card_id),
+        )
+
+    return RuleResult(True, (f"Order {card['order_number']} finished.",))
+
+
+def cancel_card(card_id: int, loaded_version: int) -> RuleResult:
+    with connect() as connection:
+        card = fetch_active_terminal_action_card(connection, card_id)
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        now = current_database_timestamp(connection)
+        open_segment = fetch_open_timing_segment(connection, card_id)
+        if open_segment:
+            connection.execute(
+                """
+                UPDATE production_time_segments
+                SET ended_at = ?,
+                    end_reason = 'correction',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (now, open_segment["id"]),
+            )
+
+        connection.execute(
+            """
+            UPDATE cards
+            SET status = ?,
+                cancelled_at = ?,
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (STATUS_CANCELLED, now, card_id),
+        )
+
+    return RuleResult(True, (f"Order {card['order_number']} cancelled.",))
+
+
+def restore_cancelled_card(card_id: int, loaded_version: int) -> RuleResult:
+    with connect() as connection:
+        card = connection.execute(
+            """
+            SELECT id, order_number, status, machine_id, machine_sequence, version
+            FROM cards
+            WHERE id = ?
+              AND status = ?
+            """,
+            (card_id, STATUS_CANCELLED),
+        ).fetchone()
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        if card["machine_id"] is not None and card["machine_sequence"] is not None:
+            duplicate = connection.execute(
+                f"""
+                SELECT order_number
+                FROM cards
+                WHERE id <> ?
+                  AND machine_id = ?
+                  AND machine_sequence = ?
+                  AND status IN ({", ".join("?" for _ in ACTIVE_TERMINAL_STATUSES)})
+                LIMIT 1
+                """,
+                (
+                    card_id,
+                    card["machine_id"],
+                    card["machine_sequence"],
+                    *ACTIVE_TERMINAL_STATUSES,
+                ),
+            ).fetchone()
+            if duplicate:
+                return RuleResult(
+                    False,
+                    (
+                        f"Machine {card['machine_id']} already has active sequence "
+                        f"{card['machine_sequence']} on order {duplicate['order_number']}.",
+                    ),
+                )
+
+        try:
+            connection.execute(
+                """
+                UPDATE cards
+                SET status = ?,
+                    cancelled_at = NULL,
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (STATUS_PENDING, card_id),
+            )
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return RuleResult(
+                False,
+                ("Restore failed because the machine/sequence is already active.",),
+            )
+
+    return RuleResult(True, (f"Order {card['order_number']} restored to pending.",))
+
+
+def fetch_active_terminal_action_card(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> sqlite3.Row | None:
+    return connection.execute(
+        f"""
+        SELECT id, order_number, status, tare_weight, version
+        FROM cards
+        WHERE id = ?
+          AND status IN ({", ".join("?" for _ in ACTIVE_TERMINAL_STATUSES)})
+        """,
+        (card_id, *ACTIVE_TERMINAL_STATUSES),
+    ).fetchone()
+
+
+def validate_card_ready_to_finish(
+    connection: sqlite3.Connection,
+    card_id: int,
+    card: sqlite3.Row | None,
+) -> RuleResult:
+    if not card:
+        return RuleResult(False, ("Card was not found in the active terminal queue.",))
+
+    if card["tare_weight"] is None:
+        return RuleResult(False, ("Tare weight is required before finishing.",))
+
+    segment_count = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM production_time_segments
+        WHERE card_id = ?
+        """,
+        (card_id,),
+    ).fetchone()[0]
+    if int(segment_count or 0) == 0:
+        return RuleResult(False, ("Production timing must be started before finishing.",))
+
+    roll_rows = connection.execute(
+        """
+        SELECT roll_number, gross_weight
+        FROM roll_entries
+        WHERE card_id = ?
+        ORDER BY roll_number
+        """,
+        (card_id,),
+    ).fetchall()
+    gross_rolls = [roll for roll in roll_rows if roll["gross_weight"] is not None]
+    if not gross_rolls:
+        return RuleResult(False, ("At least one gross roll weight is required before finishing.",))
+
+    found_empty_roll = False
+    for roll in roll_rows:
+        if roll["gross_weight"] is None:
+            found_empty_roll = True
+        elif found_empty_roll:
+            return RuleResult(
+                False,
+                ("Empty roll gaps must be corrected before finishing.",),
+            )
+
+    return RuleResult(True)
+
+
 def fetch_timing_action_card(
     connection: sqlite3.Connection,
     card_id: int,
@@ -737,9 +947,9 @@ def add_roll_gross_weight(card_id: int, loaded_version: int, gross_weight: str) 
         if not version_result.ok:
             return version_result
 
-        running_result = validate_card_running_for_roll_entry(card)
-        if not running_result.ok:
-            return running_result
+        roll_entry_result = validate_card_allows_roll_entry(card)
+        if not roll_entry_result.ok:
+            return roll_entry_result
 
         tare = decimal_from_database(card["tare_weight"])
         net = net_weight_for_gross(parsed_gross, tare)
@@ -811,9 +1021,9 @@ def update_roll_gross_weight(
         if not version_result.ok:
             return version_result
 
-        running_result = validate_card_running_for_roll_entry(card)
-        if not running_result.ok:
-            return running_result
+        roll_entry_result = validate_card_allows_roll_entry(card)
+        if not roll_entry_result.ok:
+            return roll_entry_result
 
         roll = connection.execute(
             """
@@ -866,23 +1076,27 @@ def fetch_roll_action_card(
     connection: sqlite3.Connection,
     card_id: int,
 ) -> sqlite3.Row | None:
+    roll_edit_statuses = (*ACTIVE_TERMINAL_STATUSES, STATUS_COMPLETED)
     return connection.execute(
         f"""
         SELECT id, order_number, status, tare_weight, version
         FROM cards
         WHERE id = ?
-          AND status IN ({", ".join("?" for _ in ACTIVE_TERMINAL_STATUSES)})
+          AND status IN ({", ".join("?" for _ in roll_edit_statuses)})
         """,
-        (card_id, *ACTIVE_TERMINAL_STATUSES),
+        (card_id, *roll_edit_statuses),
     ).fetchone()
 
 
-def validate_card_running_for_roll_entry(card: sqlite3.Row | None) -> RuleResult:
+def validate_card_allows_roll_entry(card: sqlite3.Row | None) -> RuleResult:
     if not card:
-        return RuleResult(False, ("Card was not found in the active terminal queue.",))
+        return RuleResult(False, ("Card was not found for roll entry.",))
 
-    if card["status"] != STATUS_RUNNING:
-        return RuleResult(False, ("Roll weights can only be changed while the card is running.",))
+    if card["status"] not in (STATUS_RUNNING, STATUS_COMPLETED):
+        return RuleResult(
+            False,
+            ("Roll weights can only be changed while the card is running or completed.",),
+        )
 
     return RuleResult(True)
 

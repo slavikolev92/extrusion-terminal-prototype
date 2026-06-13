@@ -161,7 +161,7 @@ Review checkpoint:
 
 ## Milestone 7 - Finish, Cancel, And History
 
-Status: next
+Status: done
 
 Scope:
 
@@ -184,7 +184,7 @@ Review checkpoint:
 
 ## Milestone 8 - Backup And Recovery
 
-Status: pending
+Status: next
 
 Scope:
 
