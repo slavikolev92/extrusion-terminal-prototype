@@ -167,7 +167,8 @@ Completed and committed:
 - tare and roll entry: order-level tare, gross roll entry, roll corrections, roll deletion with automatic renumbering, and gross/net totals.
 - finish, cancel, and history behavior: finish validation, active segment closure, completed/cancelled archive visibility, and reversible cancellation.
 - backup and recovery behavior: SQLite-safe timestamped backups, restore helper, retention, startup/restart documentation, and troubleshooting notes.
+- admin production corrections: admin-side cancel/restore, terminal material corrections, tare and roll corrections, and timing segment corrections with loaded-version conflict checks.
 
 Next recommended milestone:
 
-- Complete pre-print workflow functionality: walk through shift-manager and terminal exception cases, then implement or explicitly confirm simplifications for admin card review/edit, timing correction, machine/sequence reassignment, admin-side cancel/restore, and duplicate UX before starting print output.
+- Complete the final pre-print workflow walkthrough across shift-manager and terminal exception cases, then explicitly confirm any simplifications before starting print output.

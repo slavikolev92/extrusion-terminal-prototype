@@ -24,6 +24,17 @@
     <div class="actions">
       <a class="nav-link" href="/admin/cards">Карти</a>
       <a class="nav-link" href="/terminal">Терминал</a>
+      {% if card.status in ["pending", "running", "paused"] %}
+        <form action="/admin/cards/{{ card.id }}/cancel" method="post">
+          <input type="hidden" name="loaded_version" value="{{ card.version }}">
+          <button type="submit">Cancel</button>
+        </form>
+      {% elif card.status == "cancelled" %}
+        <form action="/admin/cards/{{ card.id }}/restore" method="post">
+          <input type="hidden" name="loaded_version" value="{{ card.version }}">
+          <button type="submit">Restore</button>
+        </form>
+      {% endif %}
     </div>
   </header>
 
@@ -54,6 +65,25 @@
       </div>
     </section>
   {% endif %}
+
+  {% for result_block in [
+    ("workflow_result", workflow_result, "Workflow saved:", "Workflow blocked:"),
+    ("material_result", material_result, "Material saved:", "Material blocked:"),
+    ("roll_result", roll_result, "Roll data saved:", "Roll data blocked:"),
+    ("timing_result", timing_result, "Timing saved:", "Timing blocked:")
+  ] %}
+    {% set result = result_block[1] %}
+    {% if result %}
+      <section class="section">
+        <div class="notice {% if not result.ok %}error{% endif %}">
+          <strong>{{ result_block[2] if result.ok else result_block[3] }}</strong>
+          {% for message in result.messages %}
+            <div>{{ message }}</div>
+          {% endfor %}
+        </div>
+      </section>
+    {% endif %}
+  {% endfor %}
 
   <form class="admin-operational-form" action="/admin/cards/{{ card.id }}/imported-fields" method="post">
     <input type="hidden" name="loaded_version" value="{{ card.version }}">
@@ -189,6 +219,29 @@
     </section>
   </form>
 
+  <section class="section operational-panel">
+    <div class="section-head">
+      <h2>Machine-side material</h2>
+      <span>Terminal correction fields</span>
+    </div>
+    <form class="field-form admin-correction-form" action="/admin/cards/{{ card.id }}/production-materials" method="post">
+      <input type="hidden" name="loaded_version" value="{{ card.version }}">
+      <label>
+        Actual raw material used
+        <input name="actual_raw_material_used" value="{{ card.actual_raw_material_used or '' }}">
+      </label>
+      <label>
+        Brand / grade / mark
+        <input name="raw_material_brand_grade" value="{{ card.raw_material_brand_grade or '' }}">
+      </label>
+      <label>
+        Batch / lot
+        <input name="raw_material_batch_lot" value="{{ card.raw_material_batch_lot or '' }}">
+      </label>
+      <button type="submit">Save material fields</button>
+    </form>
+  </section>
+
   <div class="admin-review-grid">
     <section class="section operational-panel">
       <div class="section-head">
@@ -228,6 +281,25 @@
           <dd>{{ card.tare_weight if card.tare_weight is not none else "-" }}</dd>
         </div>
       </dl>
+      {% set can_edit_rolls = card.status in ["running", "completed"] %}
+      <form class="field-form tare-form admin-inline-form" action="/admin/cards/{{ card.id }}/tare" method="post">
+        <input type="hidden" name="loaded_version" value="{{ card.version }}">
+        <label>
+          Tare weight
+          <input type="number" name="tare_weight" min="0" step="0.01" value="{{ card.tare_weight if card.tare_weight is not none else '' }}">
+        </label>
+        <button type="submit">Save tare</button>
+      </form>
+
+      <form class="roll-entry admin-inline-form" action="/admin/cards/{{ card.id }}/rolls" method="post">
+        <input type="hidden" name="loaded_version" value="{{ card.version }}">
+        <label>
+          Gross weight for roll {{ card.next_roll_number }}
+          <input type="number" name="gross_weight" min="0" step="0.01" {% if not can_edit_rolls %}disabled{% endif %}>
+        </label>
+        <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Add roll</button>
+      </form>
+
       {% if card.roll_entries %}
         <table class="compact-table">
           <thead>
@@ -247,6 +319,22 @@
             {% endfor %}
           </tbody>
         </table>
+        <div class="admin-roll-corrections">
+          {% for roll in card.roll_entries %}
+            <div class="admin-roll-correction-row">
+              <span>Roll {{ roll.roll_number }}</span>
+              <form class="inline-roll-form" action="/admin/cards/{{ card.id }}/rolls/{{ roll.id }}" method="post">
+                <input type="hidden" name="loaded_version" value="{{ card.version }}">
+                <input type="number" name="gross_weight" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %}>
+                <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Save</button>
+              </form>
+              <form class="roll-delete-form" action="/admin/cards/{{ card.id }}/rolls/{{ roll.id }}/delete" method="post">
+                <input type="hidden" name="loaded_version" value="{{ card.version }}">
+                <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Delete</button>
+              </form>
+            </div>
+          {% endfor %}
+        </div>
       {% else %}
         <p class="empty">Няма въведени ролки.</p>
       {% endif %}
@@ -299,9 +387,62 @@
           {% endfor %}
         </tbody>
       </table>
+      <div class="admin-timing-corrections">
+        {% for segment in card.timing_segments %}
+          <div class="admin-timing-correction-row">
+            <form class="timing-correction-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}" method="post">
+              <input type="hidden" name="loaded_version" value="{{ card.version }}">
+              <label>
+                Started
+                <input name="started_at" value="{{ segment.started_at }}">
+              </label>
+              <label>
+                Ended
+                <input name="ended_at" value="{{ segment.ended_at or '' }}">
+              </label>
+              <label>
+                Reason
+                <select name="end_reason">
+                  <option value="" {% if not segment.end_reason %}selected{% endif %}>Open</option>
+                  <option value="pause" {% if segment.end_reason == "pause" %}selected{% endif %}>pause</option>
+                  <option value="finish" {% if segment.end_reason == "finish" %}selected{% endif %}>finish</option>
+                  <option value="correction" {% if segment.end_reason == "correction" %}selected{% endif %}>correction</option>
+                </select>
+              </label>
+              <button type="submit">Save</button>
+            </form>
+            <form class="roll-delete-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}/delete" method="post">
+              <input type="hidden" name="loaded_version" value="{{ card.version }}">
+              <button type="submit">Delete</button>
+            </form>
+          </div>
+        {% endfor %}
+      </div>
     {% else %}
       <p class="empty">Няма времеви сегменти.</p>
     {% endif %}
+
+    <form class="timing-correction-form add-timing-form" action="/admin/cards/{{ card.id }}/timing-segments" method="post">
+      <input type="hidden" name="loaded_version" value="{{ card.version }}">
+      <label>
+        Started
+        <input name="started_at" placeholder="YYYY-MM-DD HH:MM:SS">
+      </label>
+      <label>
+        Ended
+        <input name="ended_at" placeholder="YYYY-MM-DD HH:MM:SS">
+      </label>
+      <label>
+        Reason
+        <select name="end_reason">
+          <option value="">Open</option>
+          <option value="pause">pause</option>
+          <option value="finish">finish</option>
+          <option value="correction">correction</option>
+        </select>
+      </label>
+      <button type="submit">Add segment</button>
+    </form>
   </section>
 
   <section class="section admin-system-section">

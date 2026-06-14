@@ -263,14 +263,14 @@ Implementation bundles:
    - If updates arrive while the operator is typing, the terminal shows an updates-available banner with a manual refresh button.
    - Existing `loaded_version` conflict checks remain the authoritative stale-write protection.
 
-4. Admin workflow controls and production-data correction
+4. Admin workflow controls and production-data correction - done
    - Add admin-side reversible cancel/restore using the same business rules as terminal cancel/restore.
    - Add admin editing for production-side correction fields needed before print: tare, roll gross weights, terminal material fields, and timing segments.
    - Keep completed cards editable, but preserve finish validation invariants needed for print readiness.
    - Implement the simplest timing correction workflow: edit segment start/end values, end reason, and recalculate totals; prevent invalid intervals and multiple open segments.
    - Use loaded `version` conflict checks for all correction forms.
    - Add tests for admin cancel/restore, roll/tare correction, timing correction, recalculated total time, invalid timing rejection, and stale edit blocking.
-   - Manual check: correct a completed card's rolls and timing, then verify it remains ready for later print.
+   - Manual check complete with a temporary database: corrected terminal material fields, tare, roll gross weight, timing segment data, and admin cancel/restore behavior from the admin detail page.
 
 5. Pre-print workflow walkthrough and documentation update
    - Run a focused shift-manager workflow using temporary data: import, review, edit, plan, release, reassign/resequence, cancel/restore, correct production data.

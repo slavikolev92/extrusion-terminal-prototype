@@ -4,6 +4,7 @@ import os
 import sqlite3
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from datetime import datetime
 from typing import Any
 
 from .constants import (
@@ -20,6 +21,8 @@ from .constants import (
 from .rules import RuleResult
 
 STALE_CARD_MESSAGE = "Card changed after this page was loaded. Reload the card and try again."
+TIMING_END_REASONS = ("pause", "finish", "correction")
+TIMING_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv("EXTRUSION_DATA_DIR", BASE_DIR / "data"))
@@ -808,6 +811,298 @@ def restore_cancelled_card(card_id: int, loaded_version: int) -> RuleResult:
             )
 
     return RuleResult(True, (f"Order {card['order_number']} restored to pending.",))
+
+
+def add_timing_segment(
+    card_id: int,
+    loaded_version: int,
+    started_at: str,
+    ended_at: str,
+    end_reason: str,
+) -> RuleResult:
+    parsed, parse_result = parse_timing_segment_values(started_at, ended_at, end_reason)
+    if not parse_result.ok:
+        return parse_result
+
+    with connect() as connection:
+        card = fetch_admin_production_action_card(connection, card_id)
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        invariant_result = validate_timing_segment_change(
+            connection=connection,
+            card=card,
+            ended_at=parsed["ended_at"],
+        )
+        if not invariant_result.ok:
+            return invariant_result
+
+        try:
+            connection.execute(
+                """
+                INSERT INTO production_time_segments (card_id, started_at, ended_at, end_reason)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    card_id,
+                    parsed["started_at"],
+                    parsed["ended_at"],
+                    parsed["end_reason"],
+                ),
+            )
+            refresh_card_timing_markers(connection, card_id)
+            touch_card(connection, card_id)
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return RuleResult(False, ("Card already has an open timing segment.",))
+
+    return RuleResult(True, (f"Timing segment added for order {card['order_number']}.",))
+
+
+def update_timing_segment(
+    card_id: int,
+    segment_id: int,
+    loaded_version: int,
+    started_at: str,
+    ended_at: str,
+    end_reason: str,
+) -> RuleResult:
+    parsed, parse_result = parse_timing_segment_values(started_at, ended_at, end_reason)
+    if not parse_result.ok:
+        return parse_result
+
+    with connect() as connection:
+        card = fetch_admin_production_action_card(connection, card_id)
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        segment = connection.execute(
+            """
+            SELECT id
+            FROM production_time_segments
+            WHERE id = ?
+              AND card_id = ?
+            """,
+            (segment_id, card_id),
+        ).fetchone()
+        if not segment:
+            return RuleResult(False, ("Timing segment was not found.",))
+
+        invariant_result = validate_timing_segment_change(
+            connection=connection,
+            card=card,
+            ended_at=parsed["ended_at"],
+            segment_id=segment_id,
+        )
+        if not invariant_result.ok:
+            return invariant_result
+
+        try:
+            connection.execute(
+                """
+                UPDATE production_time_segments
+                SET started_at = ?,
+                    ended_at = ?,
+                    end_reason = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                  AND card_id = ?
+                """,
+                (
+                    parsed["started_at"],
+                    parsed["ended_at"],
+                    parsed["end_reason"],
+                    segment_id,
+                    card_id,
+                ),
+            )
+            refresh_card_timing_markers(connection, card_id)
+            touch_card(connection, card_id)
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return RuleResult(False, ("Card already has an open timing segment.",))
+
+    return RuleResult(True, ("Timing segment saved.",))
+
+
+def delete_timing_segment(card_id: int, segment_id: int, loaded_version: int) -> RuleResult:
+    with connect() as connection:
+        card = fetch_admin_production_action_card(connection, card_id)
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        segment = connection.execute(
+            """
+            SELECT id
+            FROM production_time_segments
+            WHERE id = ?
+              AND card_id = ?
+            """,
+            (segment_id, card_id),
+        ).fetchone()
+        if not segment:
+            return RuleResult(False, ("Timing segment was not found.",))
+
+        if card["status"] == STATUS_COMPLETED:
+            segment_count = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM production_time_segments
+                    WHERE card_id = ?
+                    """,
+                    (card_id,),
+                ).fetchone()[0]
+            )
+            if segment_count <= 1:
+                return RuleResult(
+                    False,
+                    ("Completed cards must keep at least one timing segment.",),
+                )
+
+        connection.execute(
+            """
+            DELETE FROM production_time_segments
+            WHERE id = ?
+              AND card_id = ?
+            """,
+            (segment_id, card_id),
+        )
+        refresh_card_timing_markers(connection, card_id)
+        touch_card(connection, card_id)
+
+    return RuleResult(True, ("Timing segment deleted.",))
+
+
+def parse_timing_segment_values(
+    started_at: str,
+    ended_at: str,
+    end_reason: str,
+) -> tuple[dict[str, str | None], RuleResult]:
+    messages: list[str] = []
+    cleaned_start = started_at.strip()
+    cleaned_end = ended_at.strip()
+    cleaned_reason = end_reason.strip()
+
+    parsed_start = parse_timing_timestamp(cleaned_start, "Started at", messages)
+    parsed_end = None
+    if cleaned_end:
+        parsed_end = parse_timing_timestamp(cleaned_end, "Ended at", messages)
+
+    if parsed_start and parsed_end and parsed_end < parsed_start:
+        messages.append("Ended at cannot be earlier than started at.")
+
+    if cleaned_end:
+        if not cleaned_reason:
+            messages.append("End reason is required when ended at is set.")
+        elif cleaned_reason not in TIMING_END_REASONS:
+            messages.append("End reason must be pause, finish, or correction.")
+    elif cleaned_reason:
+        messages.append("End reason must be blank for an open segment.")
+
+    result = RuleResult(not messages, tuple(messages))
+    if not result.ok:
+        return {}, result
+
+    assert parsed_start is not None
+    return {
+        "started_at": parsed_start.strftime(TIMING_TIMESTAMP_FORMAT),
+        "ended_at": parsed_end.strftime(TIMING_TIMESTAMP_FORMAT) if parsed_end else None,
+        "end_reason": cleaned_reason if cleaned_end else None,
+    }, result
+
+
+def parse_timing_timestamp(
+    value: str,
+    label: str,
+    messages: list[str],
+) -> datetime | None:
+    if not value:
+        messages.append(f"{label} is required.")
+        return None
+
+    try:
+        return datetime.strptime(value, TIMING_TIMESTAMP_FORMAT)
+    except ValueError:
+        messages.append(f"{label} must use YYYY-MM-DD HH:MM:SS.")
+        return None
+
+
+def validate_timing_segment_change(
+    connection: sqlite3.Connection,
+    card: sqlite3.Row,
+    ended_at: str | None,
+    segment_id: int | None = None,
+) -> RuleResult:
+    if card["status"] == STATUS_COMPLETED and ended_at is None:
+        return RuleResult(False, ("Completed cards cannot have an open timing segment.",))
+
+    if ended_at is None:
+        query = """
+            SELECT id
+            FROM production_time_segments
+            WHERE card_id = ?
+              AND ended_at IS NULL
+        """
+        values: list[Any] = [card["id"]]
+        if segment_id is not None:
+            query += " AND id <> ?"
+            values.append(segment_id)
+        existing_open = connection.execute(query, values).fetchone()
+        if existing_open:
+            return RuleResult(False, ("Card already has an open timing segment.",))
+
+    return RuleResult(True)
+
+
+def fetch_admin_production_action_card(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> sqlite3.Row | None:
+    terminal_visible_statuses = (*ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES)
+    return connection.execute(
+        f"""
+        SELECT id, order_number, status, version
+        FROM cards
+        WHERE id = ?
+          AND status IN ({", ".join("?" for _ in terminal_visible_statuses)})
+        """,
+        (card_id, *terminal_visible_statuses),
+    ).fetchone()
+
+
+def refresh_card_timing_markers(connection: sqlite3.Connection, card_id: int) -> None:
+    first_started_at = connection.execute(
+        """
+        SELECT MIN(started_at)
+        FROM production_time_segments
+        WHERE card_id = ?
+        """,
+        (card_id,),
+    ).fetchone()[0]
+    connection.execute(
+        """
+        UPDATE cards
+        SET first_started_at = ?
+        WHERE id = ?
+        """,
+        (first_started_at, card_id),
+    )
+
+
+def touch_card(connection: sqlite3.Connection, card_id: int) -> None:
+    connection.execute(
+        """
+        UPDATE cards
+        SET version = version + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (card_id,),
+    )
 
 
 def fetch_active_terminal_action_card(

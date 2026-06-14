@@ -16,9 +16,11 @@ from .constants import (
     STATUS_IMPORTED,
 )
 from .db import (
+    add_timing_segment,
     add_roll_gross_weight,
     cancel_card,
     database_summary,
+    delete_timing_segment,
     delete_roll_entry,
     delete_admin_imported_card,
     fetch_cards_by_status,
@@ -36,6 +38,7 @@ from .db import (
     restore_cancelled_card,
     start_production_timing,
     terminal_snapshot as fetch_terminal_snapshot,
+    update_timing_segment,
     update_admin_imported_fields,
     update_card_planning,
     update_roll_gross_weight,
@@ -380,6 +383,214 @@ async def update_admin_card_planning(
         "admin_planning.html",
         admin_planning_context(planning_result=planning_result),
     )
+
+
+@app.post("/admin/cards/{card_id}/cancel")
+async def cancel_admin_card(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+):
+    parsed_version, workflow_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        workflow_result = cancel_card(card_id, parsed_version)
+
+    context = admin_card_detail_context(card_id, workflow_result=workflow_result)
+    if context is None:
+        return PlainTextResponse("Card was not found.", status_code=404)
+    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+
+
+@app.post("/admin/cards/{card_id}/restore")
+async def restore_admin_card(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+):
+    parsed_version, workflow_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        workflow_result = restore_cancelled_card(card_id, parsed_version)
+
+    context = admin_card_detail_context(card_id, workflow_result=workflow_result)
+    if context is None:
+        return PlainTextResponse("Card was not found.", status_code=404)
+    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+
+
+@app.post("/admin/cards/{card_id}/production-materials")
+async def save_admin_production_materials(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+    actual_raw_material_used: str = Form(""),
+    raw_material_brand_grade: str = Form(""),
+    raw_material_batch_lot: str = Form(""),
+):
+    parsed_version, material_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        material_result = update_terminal_material_fields(
+            card_id=card_id,
+            loaded_version=parsed_version,
+            actual_raw_material_used=actual_raw_material_used,
+            raw_material_brand_grade=raw_material_brand_grade,
+            raw_material_batch_lot=raw_material_batch_lot,
+        )
+
+    context = admin_card_detail_context(card_id, material_result=material_result)
+    if context is None:
+        return PlainTextResponse("Card was not found.", status_code=404)
+    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+
+
+@app.post("/admin/cards/{card_id}/tare")
+async def save_admin_tare_weight(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+    tare_weight: str = Form(""),
+):
+    parsed_version, roll_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        roll_result = update_tare_weight(card_id, parsed_version, tare_weight)
+
+    context = admin_card_detail_context(card_id, roll_result=roll_result)
+    if context is None:
+        return PlainTextResponse("Card was not found.", status_code=404)
+    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+
+
+@app.post("/admin/cards/{card_id}/rolls")
+async def add_admin_roll_weight(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+    gross_weight: str = Form(""),
+):
+    parsed_version, roll_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        roll_result = add_roll_gross_weight(card_id, parsed_version, gross_weight)
+
+    context = admin_card_detail_context(card_id, roll_result=roll_result)
+    if context is None:
+        return PlainTextResponse("Card was not found.", status_code=404)
+    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+
+
+@app.post("/admin/cards/{card_id}/rolls/{roll_id}")
+async def save_admin_roll_weight(
+    request: Request,
+    card_id: int,
+    roll_id: int,
+    loaded_version: str = Form(...),
+    gross_weight: str = Form(""),
+):
+    parsed_version, roll_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        roll_result = update_roll_gross_weight(
+            card_id=card_id,
+            roll_id=roll_id,
+            loaded_version=parsed_version,
+            gross_weight=gross_weight,
+        )
+
+    context = admin_card_detail_context(card_id, roll_result=roll_result)
+    if context is None:
+        return PlainTextResponse("Card was not found.", status_code=404)
+    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+
+
+@app.post("/admin/cards/{card_id}/rolls/{roll_id}/delete")
+async def delete_admin_roll_weight(
+    request: Request,
+    card_id: int,
+    roll_id: int,
+    loaded_version: str = Form(...),
+):
+    parsed_version, roll_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        roll_result = delete_roll_entry(
+            card_id=card_id,
+            roll_id=roll_id,
+            loaded_version=parsed_version,
+        )
+
+    context = admin_card_detail_context(card_id, roll_result=roll_result)
+    if context is None:
+        return PlainTextResponse("Card was not found.", status_code=404)
+    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+
+
+@app.post("/admin/cards/{card_id}/timing-segments")
+async def add_admin_timing_segment(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+    started_at: str = Form(""),
+    ended_at: str = Form(""),
+    end_reason: str = Form(""),
+):
+    parsed_version, timing_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        timing_result = add_timing_segment(
+            card_id=card_id,
+            loaded_version=parsed_version,
+            started_at=started_at,
+            ended_at=ended_at,
+            end_reason=end_reason,
+        )
+
+    context = admin_card_detail_context(card_id, timing_result=timing_result)
+    if context is None:
+        return PlainTextResponse("Card was not found.", status_code=404)
+    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+
+
+@app.post("/admin/cards/{card_id}/timing-segments/{segment_id}")
+async def save_admin_timing_segment(
+    request: Request,
+    card_id: int,
+    segment_id: int,
+    loaded_version: str = Form(...),
+    started_at: str = Form(""),
+    ended_at: str = Form(""),
+    end_reason: str = Form(""),
+):
+    parsed_version, timing_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        timing_result = update_timing_segment(
+            card_id=card_id,
+            segment_id=segment_id,
+            loaded_version=parsed_version,
+            started_at=started_at,
+            ended_at=ended_at,
+            end_reason=end_reason,
+        )
+
+    context = admin_card_detail_context(card_id, timing_result=timing_result)
+    if context is None:
+        return PlainTextResponse("Card was not found.", status_code=404)
+    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+
+
+@app.post("/admin/cards/{card_id}/timing-segments/{segment_id}/delete")
+async def delete_admin_timing_segment(
+    request: Request,
+    card_id: int,
+    segment_id: int,
+    loaded_version: str = Form(...),
+):
+    parsed_version, timing_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        timing_result = delete_timing_segment(
+            card_id=card_id,
+            segment_id=segment_id,
+            loaded_version=parsed_version,
+        )
+
+    context = admin_card_detail_context(card_id, timing_result=timing_result)
+    if context is None:
+        return PlainTextResponse("Card was not found.", status_code=404)
+    return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
 def parse_planning_form(

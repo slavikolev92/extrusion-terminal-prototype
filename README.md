@@ -115,6 +115,9 @@ Admin page behavior:
 - Rows with `no extrusion step` should be reported in the import result and skipped. They should not create cards because they cannot be used by the extrusion workstation.
 - The shift manager can edit any field on an imported card/order from the admin page.
 - Admin editing is broader than terminal editing; terminal editing is intentionally limited.
+- The shift manager can cancel and restore terminal-visible cards from the admin card detail page.
+- The shift manager can correct terminal-side material fields, tare weight, roll gross weights, and timing segments from the admin card detail page.
+- Admin production corrections use the same loaded-version conflict checks as terminal edits, so stale correction forms are blocked and require reload.
 - The admin page should provide a simple machine planning view split into four machine columns.
 - Each machine column should show active queued cards for that machine sorted by numeric queue position.
 - Machine assignment is mandatory before a card is released to the terminal.

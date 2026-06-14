@@ -512,6 +512,58 @@ select {
   margin-bottom: 10px;
 }
 
+.admin-inline-form {
+  margin-bottom: 12px;
+}
+
+.admin-roll-corrections,
+.admin-timing-corrections {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.admin-roll-correction-row,
+.admin-timing-correction-row {
+  display: grid;
+  grid-template-columns: minmax(70px, 0.25fr) minmax(260px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.timing-correction-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(120px, 0.5fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.timing-correction-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.timing-correction-form input,
+.timing-correction-form select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 0 9px;
+  color: var(--text);
+  font: inherit;
+}
+
+.add-timing-form {
+  margin-top: 12px;
+}
+
 .timing-summary {
   margin-bottom: 12px;
 }
@@ -866,7 +918,10 @@ thead th {
   .admin-card-form,
   .admin-review-grid,
   .operational-info-grid,
-  .quantity-edit-grid {
+  .quantity-edit-grid,
+  .admin-roll-correction-row,
+  .admin-timing-correction-row,
+  .timing-correction-form {
     grid-template-columns: 1fr;
   }
 
