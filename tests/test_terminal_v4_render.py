@@ -113,9 +113,15 @@ def test_terminal_renders_v4_shell_with_live_selected_card(connection):
     assert "data-terminal-v4-shell" in html
     assert "data-terminal-active-panel" in html
     assert "data-terminal-archive-panel" in html
-    assert "No. 26000" in html
+    assert "Поръчка № 26000" in html
     assert "Render Customer" in html
     assert "LDPE A" in html
+    assert "terminal-v4-machines" not in html
+    assert "Machine 1 / 1" not in html
+    assert "Actual raw material used" not in html
+    assert "data-terminal-material-form" not in html
+    assert "data-terminal-recipe-form" in html
+    assert f'action="/terminal/cards/{card_id}/recipe/a"' in html
     assert f'action="/terminal/cards/{card_id}/timing/start"' in html
     assert f'name="loaded_version" value="{card["version"]}"' in html
     assert "const orders" not in html
@@ -137,9 +143,9 @@ def test_terminal_v4_archive_tab_renders_completed_and_cancelled_cards(connectio
 
     html = render_terminal_card(completed_id)
 
-    assert "No. 26001" in html
+    assert "№ 26001" in html
     assert "completed" in html
-    assert "No. 26002" in html
+    assert "№ 26002" in html
     assert "cancelled" in html
     archive_tag = 'id="terminal-archive-panel" data-terminal-archive-panel'
     assert archive_tag in html
@@ -169,3 +175,54 @@ def test_terminal_v4_status_controls_use_live_forms_and_loaded_versions(connecti
     assert f'name="loaded_version" value="{paused["version"]}"' in paused_html
     assert "data-terminal-resume-form" in paused_html
     assert 'name="gross_weight" min="0" step="0.01" inputmode="decimal" autocomplete="off" disabled' in paused_html
+
+
+def test_terminal_recipe_row_update_persists_separately_from_imported_material(connection):
+    card_id = import_and_release_card("26005", machine_id=1, machine_sequence=1)
+    loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
+
+    result = db.update_terminal_recipe_material(
+        card_id=card_id,
+        loaded_version=loaded_version,
+        component_key="a",
+        material="Actual LDPE terminal",
+        brand="B20/03",
+        batch="P-042",
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert result.ok
+    assert card["raw_material_a"] == "LDPE A"
+    assert card["recipe_entries"]["a"]["material"] == "Actual LDPE terminal"
+    assert card["recipe_entries"]["a"]["brand"] == "B20/03"
+    assert card["recipe_entries"]["a"]["batch"] == "P-042"
+    assert card["version"] == loaded_version + 1
+
+
+def test_terminal_recipe_row_update_blocks_stale_loaded_version(connection):
+    card_id = import_and_release_card("26006", machine_id=1, machine_sequence=1)
+    loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
+    assert db.update_terminal_recipe_material(
+        card_id=card_id,
+        loaded_version=loaded_version,
+        component_key="linear_pe",
+        material="20% terminal",
+        brand="",
+        batch="",
+    ).ok
+
+    stale_result = db.update_terminal_recipe_material(
+        card_id=card_id,
+        loaded_version=loaded_version,
+        component_key="linear_pe",
+        material="stale",
+        brand="stale",
+        batch="stale",
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert not stale_result.ok
+    assert stale_result.messages == (
+        "Card changed after this page was loaded. Reload the card and try again.",
+    )
+    assert card["recipe_entries"]["linear_pe"]["material"] == "20% terminal"

@@ -44,6 +44,7 @@ from .db import (
     update_roll_gross_weight,
     update_tare_weight,
     update_terminal_material_fields,
+    update_terminal_recipe_material,
 )
 from .importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
 from .rules import RuleResult
@@ -170,29 +171,90 @@ def build_quantity_lines(card: dict[str, Any]) -> list[dict[str, str]]:
 
 def build_recipe_rows(card: dict[str, Any]) -> list[dict[str, str | bool]]:
     rows: list[dict[str, str | bool]] = []
+    key_by_field = {
+        "raw_material_a": "a",
+        "raw_material_b": "b",
+        "raw_material_c": "c",
+        "linear_pe": "linear_pe",
+        "antistatic": "antistatic",
+        "masterbatch": "masterbatch",
+        "chalk": "chalk",
+    }
+    recipe_entries = card.get("recipe_entries") or {}
     for label, field in RECIPE_FIELD_ROWS:
-        is_actual_row = field == "raw_material_a"
+        key = key_by_field[field]
+        entry = recipe_entries.get(key) or {}
+        has_entry = key in recipe_entries
+        imported_material = str(card.get(field) or "")
+        old_single_material = key == "a" and (
+            card.get("actual_raw_material_used")
+            or card.get("raw_material_brand_grade")
+            or card.get("raw_material_batch_lot")
+        )
+        material = str(entry.get("material") or "") if has_entry else imported_material
+        brand = str(entry.get("brand") or "") if has_entry else ""
+        batch = str(entry.get("batch") or "") if has_entry else ""
+        if old_single_material and not has_entry:
+            material = str(card.get("actual_raw_material_used") or imported_material)
+            brand = str(card.get("raw_material_brand_grade") or "")
+            batch = str(card.get("raw_material_batch_lot") or "")
         rows.append(
             {
                 "label": label,
+                "key": key,
                 "field": field,
-                "planned": str(card.get(field) or ""),
-                "actual_material": str(card.get("actual_raw_material_used") or "")
-                if is_actual_row
-                else "",
-                "brand": str(card.get("raw_material_brand_grade") or "") if is_actual_row else "",
-                "batch": str(card.get("raw_material_batch_lot") or "") if is_actual_row else "",
-                "has_actual": bool(
-                    is_actual_row
-                    and (
-                        card.get("actual_raw_material_used")
-                        or card.get("raw_material_brand_grade")
-                        or card.get("raw_material_batch_lot")
-                    )
-                ),
+                "planned": imported_material,
+                "material": material,
+                "actual_material": material if has_entry or old_single_material else "",
+                "brand": brand,
+                "batch": batch,
+                "has_actual": has_entry or bool(old_single_material),
             }
         )
     return rows
+
+
+def parse_quantity_for_progress(value: Any) -> float | None:
+    text = str(value or "").strip().replace(",", ".")
+    number_chars: list[str] = []
+    decimal_seen = False
+    for char in text:
+        if char.isdigit():
+            number_chars.append(char)
+        elif char == "." and number_chars and not decimal_seen:
+            number_chars.append(char)
+            decimal_seen = True
+        elif number_chars:
+            break
+    if not number_chars:
+        return None
+    try:
+        return float("".join(number_chars))
+    except ValueError:
+        return None
+
+
+def decorate_terminal_card_summary(card: dict[str, Any]) -> dict[str, Any]:
+    detail = fetch_terminal_card_detail(int(card["id"]))
+    gross = 0.0
+    if detail:
+        try:
+            gross = float(str(detail["total_gross_weight"]).replace(",", "."))
+        except ValueError:
+            gross = 0.0
+    target = parse_quantity_for_progress(card.get("quantity_1"))
+    progress = 0
+    if target and target > 0:
+        progress = max(0, min(100, round((gross / target) * 100)))
+    decorated = dict(card)
+    decorated["total_gross_display"] = f"{gross:g}"
+    decorated["target_quantity"] = target
+    decorated["progress_percent"] = progress
+    return decorated
+
+
+def decorate_terminal_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [decorate_terminal_card_summary(card) for card in cards]
 
 
 @app.get("/")
@@ -671,6 +733,34 @@ async def save_terminal_materials(
     )
 
 
+@app.post("/terminal/cards/{card_id}/recipe/{component_key}")
+async def save_terminal_recipe_material(
+    request: Request,
+    card_id: int,
+    component_key: str,
+    loaded_version: str = Form(...),
+    material: str = Form(""),
+    brand: str = Form(""),
+    batch: str = Form(""),
+):
+    parsed_version, material_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        material_result = update_terminal_recipe_material(
+            card_id=card_id,
+            loaded_version=parsed_version,
+            component_key=component_key,
+            material=material,
+            brand=brand,
+            batch=batch,
+        )
+
+    return terminal_response(
+        request,
+        selected_card_id=card_id,
+        material_result=material_result,
+    )
+
+
 @app.post("/terminal/cards/{card_id}/tare")
 async def save_tare_weight(
     request: Request,
@@ -872,15 +962,22 @@ def terminal_response(
         selected_card["total_production_duration"] = format_duration(
             selected_card["total_production_seconds"],
         )
+        selected_target = parse_quantity_for_progress(selected_card.get("quantity_1"))
+        selected_gross = float(str(selected_card["total_gross_weight"]).replace(",", "."))
+        selected_card["progress_percent"] = (
+            max(0, min(100, round((selected_gross / selected_target) * 100)))
+            if selected_target
+            else 0
+        )
     return templates.TemplateResponse(
         request,
         "terminal.html",
         {
-            "machines": fetch_machines(),
-            "machine_queues": fetch_machine_queues(),
-            "active_cards": fetch_cards_by_status(ACTIVE_TERMINAL_STATUSES),
-            "archive_cards": fetch_cards_by_status(ARCHIVE_STATUSES),
+            "active_cards": decorate_terminal_cards(fetch_cards_by_status(ACTIVE_TERMINAL_STATUSES)),
+            "archive_cards": decorate_terminal_cards(fetch_cards_by_status(ARCHIVE_STATUSES)),
             "selected_card": selected_card,
+            "recipe_rows": build_recipe_rows(selected_card) if selected_card else [],
+            "status_labels": STATUS_LABELS,
             "terminal_snapshot": fetch_terminal_snapshot(selected_card_id),
             **extra,
         },

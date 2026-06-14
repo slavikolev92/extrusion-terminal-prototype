@@ -169,7 +169,7 @@ Completed and committed:
 - backup and recovery behavior: SQLite-safe timestamped backups, restore helper, retention, startup/restart documentation, and troubleshooting notes.
 - admin production corrections: admin-side cancel/restore, terminal material corrections, tare and roll corrections, and timing segment corrections with loaded-version conflict checks.
 - pre-print workflow walkthrough: temporary-database pass through import, admin review/edit, planning/resequence, terminal timing/tare/roll/finish, archive visibility, stale-write blocking, admin correction, admin cancel/restore, and running-card timing invariant checks.
-- Workstation V4 terminal UI connection: `/terminal` now uses the V4 workstation shell with live active/archive queues, machine quick navigation, selected-card actions, material/tare/roll forms, production metrics, and terminal sync awareness.
+- Workstation V4 terminal UI connection: `/terminal` now uses the V4 workstation shell with live active/archive queues, selected-card actions, editable recipe/material table rows, tare/roll forms, production metrics, and terminal sync awareness.
 
 Next recommended milestone:
 

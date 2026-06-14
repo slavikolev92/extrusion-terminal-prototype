@@ -286,7 +286,7 @@ Implementation bundles:
    - Add/update focused tests for route rendering and required controls.
    - Run syntax/import checks, automated tests, `git diff --check`, and a focused browser/manual check with a temporary database.
    - Commit before starting print output.
-   - Live V4 workstation shell, active/archive tabs, machine quick navigation, top action bar, operational/recipe/material panels, production metrics, roll controls, and sync update banner are connected to existing server-rendered terminal data and forms.
+   - Live V4 workstation shell, active/archive tabs, top action bar, operational card panel, editable recipe/material table, production metrics, roll controls, and sync update banner are connected to server-rendered terminal data and forms.
 
 Milestone 9 commit strategy:
 
