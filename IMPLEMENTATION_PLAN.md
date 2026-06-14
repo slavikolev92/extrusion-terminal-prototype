@@ -279,13 +279,14 @@ Implementation bundles:
    - Run syntax/import checks, relevant automated tests, `git diff --check`, and a focused manual app check.
    - Technical walkthrough complete with a temporary database: import, admin review/edit, planning/resequence, terminal timing/tare/roll/finish, archive visibility, stale-write blocking, admin production correction, admin cancel/restore, and running-card timing invariant checks passed.
 
-6. Workstation V4 terminal UI connection
+6. Workstation V4 terminal UI connection - done
    - Replace the current temporary `/terminal` layout with a live implementation based on `ui-prototypes/workstation-v4.html`.
    - Preserve existing backend routes, database rules, loaded-version conflict checks, terminal sync awareness, and production invariants.
    - Remove prototype demo data/client-only state and wire the UI to live server-rendered cards, forms, queue/archive lists, timing actions, material fields, tare, rolls, finish/cancel/restore, and update banner behavior.
    - Add/update focused tests for route rendering and required controls.
    - Run syntax/import checks, automated tests, `git diff --check`, and a focused browser/manual check with a temporary database.
    - Commit before starting print output.
+   - Live V4 workstation shell, active/archive tabs, machine quick navigation, top action bar, operational/recipe/material panels, production metrics, roll controls, and sync update banner are connected to existing server-rendered terminal data and forms.
 
 Milestone 9 commit strategy:
 
