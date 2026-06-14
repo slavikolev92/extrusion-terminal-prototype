@@ -168,7 +168,8 @@ Completed and committed:
 - finish, cancel, and history behavior: finish validation, active segment closure, completed/cancelled archive visibility, and reversible cancellation.
 - backup and recovery behavior: SQLite-safe timestamped backups, restore helper, retention, startup/restart documentation, and troubleshooting notes.
 - admin production corrections: admin-side cancel/restore, terminal material corrections, tare and roll corrections, and timing segment corrections with loaded-version conflict checks.
+- pre-print workflow walkthrough: temporary-database pass through import, admin review/edit, planning/resequence, terminal timing/tare/roll/finish, archive visibility, stale-write blocking, admin correction, admin cancel/restore, and running-card timing invariant checks.
 
 Next recommended milestone:
 
-- Complete the final pre-print workflow walkthrough across shift-manager and terminal exception cases, then explicitly confirm any simplifications before starting print output.
+- Connect `ui-prototypes/workstation-v4.html` to the live `/terminal` workstation route before starting print output.

@@ -272,12 +272,20 @@ Implementation bundles:
    - Add tests for admin cancel/restore, roll/tare correction, timing correction, recalculated total time, invalid timing rejection, and stale edit blocking.
    - Manual check complete with a temporary database: corrected terminal material fields, tare, roll gross weight, timing segment data, and admin cancel/restore behavior from the admin detail page.
 
-5. Pre-print workflow walkthrough and documentation update
+5. Pre-print workflow walkthrough and documentation update - done
    - Run a focused shift-manager workflow using temporary data: import, review, edit, plan, release, reassign/resequence, cancel/restore, correct production data.
    - Run a focused terminal workflow against those cards: queue selection, timing, rolls, finish, archive visibility.
    - Update `README.md`, `AGENTS.md`, and this plan if any accepted simplifications or changed behaviors are confirmed.
    - Run syntax/import checks, relevant automated tests, `git diff --check`, and a focused manual app check.
-   - Commit Milestone 9 only after the non-print workflow is coherent and print-ready.
+   - Technical walkthrough complete with a temporary database: import, admin review/edit, planning/resequence, terminal timing/tare/roll/finish, archive visibility, stale-write blocking, admin production correction, admin cancel/restore, and running-card timing invariant checks passed.
+
+6. Workstation V4 terminal UI connection
+   - Replace the current temporary `/terminal` layout with a live implementation based on `ui-prototypes/workstation-v4.html`.
+   - Preserve existing backend routes, database rules, loaded-version conflict checks, terminal sync awareness, and production invariants.
+   - Remove prototype demo data/client-only state and wire the UI to live server-rendered cards, forms, queue/archive lists, timing actions, material fields, tare, rolls, finish/cancel/restore, and update banner behavior.
+   - Add/update focused tests for route rendering and required controls.
+   - Run syntax/import checks, automated tests, `git diff --check`, and a focused browser/manual check with a temporary database.
+   - Commit before starting print output.
 
 Milestone 9 commit strategy:
 
