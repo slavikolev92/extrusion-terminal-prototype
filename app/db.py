@@ -946,6 +946,10 @@ def delete_timing_segment(card_id: int, segment_id: int, loaded_version: int) ->
         if not segment:
             return RuleResult(False, ("Timing segment was not found.",))
 
+        delete_result = validate_timing_segment_delete(connection, card, segment_id)
+        if not delete_result.ok:
+            return delete_result
+
         if card["status"] == STATUS_COMPLETED:
             segment_count = int(
                 connection.execute(
@@ -1037,8 +1041,8 @@ def validate_timing_segment_change(
     ended_at: str | None,
     segment_id: int | None = None,
 ) -> RuleResult:
-    if card["status"] == STATUS_COMPLETED and ended_at is None:
-        return RuleResult(False, ("Completed cards cannot have an open timing segment.",))
+    if ended_at is None and card["status"] != STATUS_RUNNING:
+        return RuleResult(False, ("Only running cards can have an open timing segment.",))
 
     if ended_at is None:
         query = """
@@ -1054,8 +1058,61 @@ def validate_timing_segment_change(
         existing_open = connection.execute(query, values).fetchone()
         if existing_open:
             return RuleResult(False, ("Card already has an open timing segment.",))
+    elif card["status"] == STATUS_RUNNING:
+        open_segment_count = count_open_timing_segments(
+            connection,
+            int(card["id"]),
+            exclude_segment_id=segment_id,
+        )
+        if open_segment_count == 0:
+            return RuleResult(False, ("Running cards must keep an open timing segment.",))
 
     return RuleResult(True)
+
+
+def validate_timing_segment_delete(
+    connection: sqlite3.Connection,
+    card: sqlite3.Row,
+    segment_id: int,
+) -> RuleResult:
+    if card["status"] == STATUS_RUNNING:
+        segment = connection.execute(
+            """
+            SELECT ended_at
+            FROM production_time_segments
+            WHERE id = ?
+              AND card_id = ?
+            """,
+            (segment_id, card["id"]),
+        ).fetchone()
+        if segment and segment["ended_at"] is None:
+            open_segment_count = count_open_timing_segments(
+                connection,
+                int(card["id"]),
+                exclude_segment_id=segment_id,
+            )
+            if open_segment_count == 0:
+                return RuleResult(False, ("Running cards must keep an open timing segment.",))
+
+    return RuleResult(True)
+
+
+def count_open_timing_segments(
+    connection: sqlite3.Connection,
+    card_id: int,
+    exclude_segment_id: int | None = None,
+) -> int:
+    query = """
+        SELECT COUNT(*)
+        FROM production_time_segments
+        WHERE card_id = ?
+          AND ended_at IS NULL
+    """
+    values: list[Any] = [card_id]
+    if exclude_segment_id is not None:
+        query += " AND id <> ?"
+        values.append(exclude_segment_id)
+    return int(connection.execute(query, values).fetchone()[0] or 0)
 
 
 def fetch_admin_production_action_card(

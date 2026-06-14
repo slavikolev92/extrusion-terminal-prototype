@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import datetime, timedelta
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -247,26 +248,28 @@ def test_admin_timing_correction_rejects_invalid_intervals_and_multiple_open_seg
         "2026-06-14 09:00:00",
         "pause",
     )
+    running_card_id = release_ready_card("26014", machine_id=2, sequence=1)
+    start_card(running_card_id)
     open_result = db.add_timing_segment(
+        running_card_id,
+        card_version(running_card_id),
+        "2026-06-14 10:00:00",
+        "",
+        "",
+    )
+    non_running_open_result = db.add_timing_segment(
         card_id,
         card_version(card_id),
         "2026-06-14 10:00:00",
         "",
         "",
     )
-    second_open = db.add_timing_segment(
-        card_id,
-        card_version(card_id),
-        "2026-06-14 11:00:00",
-        "",
-        "",
-    )
-
     assert not invalid_interval.ok
     assert invalid_interval.messages == ("Ended at cannot be earlier than started at.",)
-    assert open_result.ok
-    assert not second_open.ok
-    assert second_open.messages == ("Card already has an open timing segment.",)
+    assert not open_result.ok
+    assert open_result.messages == ("Card already has an open timing segment.",)
+    assert not non_running_open_result.ok
+    assert non_running_open_result.messages == ("Only running cards can have an open timing segment.",)
 
 
 def test_admin_timing_correction_blocks_deleting_all_timing_from_completed_card(connection):
@@ -287,7 +290,48 @@ def test_admin_timing_correction_blocks_deleting_all_timing_from_completed_card(
     assert not delete_result.ok
     assert delete_result.messages == ("Completed cards must keep at least one timing segment.",)
     assert not open_update_result.ok
-    assert open_update_result.messages == ("Completed cards cannot have an open timing segment.",)
+    assert open_update_result.messages == ("Only running cards can have an open timing segment.",)
+
+
+def test_admin_timing_correction_preserves_running_open_segment(connection):
+    card_id = release_ready_card("26012")
+    start_card(card_id)
+    card = db.fetch_admin_card_detail(card_id)
+    segment_id = card["timing_segments"][0]["id"]
+    started_at = card["timing_segments"][0]["started_at"]
+    ended_at = (
+        datetime.strptime(started_at, "%Y-%m-%d %H:%M:%S") + timedelta(minutes=5)
+    ).strftime("%Y-%m-%d %H:%M:%S")
+
+    close_result = db.update_timing_segment(
+        card_id,
+        segment_id,
+        card["version"],
+        started_at,
+        ended_at,
+        "correction",
+    )
+    delete_result = db.delete_timing_segment(card_id, segment_id, card["version"])
+
+    assert not close_result.ok
+    assert close_result.messages == ("Running cards must keep an open timing segment.",)
+    assert not delete_result.ok
+    assert delete_result.messages == ("Running cards must keep an open timing segment.",)
+
+
+def test_admin_timing_correction_blocks_open_segment_on_non_running_card(connection):
+    card_id = release_ready_card("26013")
+
+    result = db.add_timing_segment(
+        card_id,
+        card_version(card_id),
+        "2026-06-14 08:00:00",
+        "",
+        "",
+    )
+
+    assert not result.ok
+    assert result.messages == ("Only running cards can have an open timing segment.",)
 
 
 def test_admin_timing_correction_blocks_stale_loaded_version(connection):
