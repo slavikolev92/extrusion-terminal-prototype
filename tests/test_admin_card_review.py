@@ -95,7 +95,7 @@ def test_admin_card_index_text_filters_are_case_insensitive(connection):
 
 def test_admin_card_detail_includes_full_review_data(connection):
     card_id = import_ready_card("25704")
-    assert db.release_card(card_id, machine_id=2, machine_sequence=4).ok
+    assert db.release_card(card_id, machine_id=2, machine_sequence=1).ok
     assert db.update_terminal_material_fields(
         card_id,
         db.fetch_admin_card_detail(card_id)["version"],
@@ -113,7 +113,7 @@ def test_admin_card_detail_includes_full_review_data(connection):
     assert card["order_number"] == "25704"
     assert card["status"] == "paused"
     assert card["machine_id"] == 2
-    assert card["machine_sequence"] == 4
+    assert card["machine_sequence"] == 1
     assert card["customer"] == "Admin Customer"
     assert card["actual_raw_material_used"] == "Actual LDPE"
     assert card["raw_material_brand_grade"] == "Grade A"
@@ -204,7 +204,7 @@ def test_admin_imported_field_edit_blocks_stale_version(connection):
 
 def test_admin_imported_field_edit_preserves_production_data(connection):
     card_id = import_ready_card("25707")
-    assert db.release_card(card_id, machine_id=3, machine_sequence=8).ok
+    assert db.release_card(card_id, machine_id=3, machine_sequence=1).ok
     assert db.update_terminal_material_fields(
         card_id,
         db.fetch_admin_card_detail(card_id)["version"],
@@ -233,7 +233,7 @@ def test_admin_imported_field_edit_preserves_production_data(connection):
     assert after["customer"] == "Preserved Customer"
     assert after["status"] == STATUS_PAUSED
     assert after["machine_id"] == 3
-    assert after["machine_sequence"] == 8
+    assert after["machine_sequence"] == 1
     assert after["tare_weight"] == 1
     assert after["actual_raw_material_used"] == "Actual material"
     assert after["raw_material_brand_grade"] == "Grade B"

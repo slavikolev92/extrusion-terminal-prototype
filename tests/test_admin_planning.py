@@ -61,7 +61,7 @@ def card_version(card_id: int) -> int:
     return int(db.fetch_admin_card_detail(card_id)["version"])
 
 
-def test_release_accepts_loaded_version_and_sets_pending_assignment(connection):
+def test_release_accepts_loaded_version_and_clamps_empty_machine_to_first_position(connection):
     card_id = import_ready_card("25800")
     loaded_version = card_version(card_id)
 
@@ -71,7 +71,7 @@ def test_release_accepts_loaded_version_and_sets_pending_assignment(connection):
     assert result.ok
     assert card["status"] == STATUS_PENDING
     assert card["machine_id"] == 1
-    assert card["machine_sequence"] == 3
+    assert card["machine_sequence"] == 1
     assert card["version"] == loaded_version + 1
 
 
@@ -103,14 +103,41 @@ def test_planning_reassignment_moves_pending_card_between_machines(connection):
     assert result.ok
     assert card["status"] == STATUS_PENDING
     assert card["machine_id"] == 3
-    assert card["machine_sequence"] == 4
+    assert card["machine_sequence"] == 1
+
+
+def test_planning_move_closes_old_gap_and_inserts_into_target_queue(connection):
+    moving_id = release_ready_card("25813", machine_id=1, machine_sequence=1)
+    staying_id = release_ready_card("25814", machine_id=1, machine_sequence=2)
+    target_id = release_ready_card("25815", machine_id=4, machine_sequence=1)
+
+    result = db.update_card_planning(moving_id, card_version(moving_id), 4, 2)
+    queues = db.fetch_machine_queues()
+    machine_1_cards = [
+        (card["order_number"], card["machine_sequence"])
+        for queue in queues
+        if queue["machine"]["id"] == 1
+        for card in queue["cards"]
+    ]
+    machine_4_cards = [
+        (card["order_number"], card["machine_sequence"])
+        for queue in queues
+        if queue["machine"]["id"] == 4
+        for card in queue["cards"]
+    ]
+
+    assert result.ok
+    assert db.fetch_admin_card_detail(staying_id)["machine_sequence"] == 1
+    assert db.fetch_admin_card_detail(target_id)["machine_sequence"] == 1
+    assert machine_1_cards == [("25814", 1)]
+    assert machine_4_cards == [("25815", 1), ("25813", 2)]
 
 
 def test_planning_resequencing_changes_machine_queue_order(connection):
     first_id = release_ready_card("25803", machine_id=2, machine_sequence=1)
     second_id = release_ready_card("25804", machine_id=2, machine_sequence=3)
 
-    result = db.update_card_planning(second_id, card_version(second_id), 2, 2)
+    result = db.update_card_planning(second_id, card_version(second_id), 2, 1)
     queues = db.fetch_machine_queues()
     machine_2_orders = [
         card["order_number"]
@@ -120,22 +147,26 @@ def test_planning_resequencing_changes_machine_queue_order(connection):
     ]
 
     assert result.ok
-    assert db.fetch_admin_card_detail(first_id)["machine_sequence"] == 1
-    assert machine_2_orders == ["25803", "25804"]
+    assert db.fetch_admin_card_detail(first_id)["machine_sequence"] == 2
+    assert db.fetch_admin_card_detail(second_id)["machine_sequence"] == 1
+    assert machine_2_orders == ["25804", "25803"]
 
 
-def test_planning_blocks_duplicate_active_machine_sequence(connection):
+def test_planning_inserts_at_existing_position_and_shifts_queue(connection):
     release_ready_card("25805", machine_id=4, machine_sequence=7)
     second_id = release_ready_card("25806", machine_id=4, machine_sequence=8)
 
-    result = db.update_card_planning(second_id, card_version(second_id), 4, 7)
-    card = db.fetch_admin_card_detail(second_id)
+    result = db.update_card_planning(second_id, card_version(second_id), 4, 1)
+    queues = db.fetch_machine_queues()
+    machine_4_cards = [
+        (card["order_number"], card["machine_sequence"])
+        for queue in queues
+        if queue["machine"]["id"] == 4
+        for card in queue["cards"]
+    ]
 
-    assert not result.ok
-    assert result.messages == (
-        "Machine 4 already has active sequence 7 on order 25805.",
-    )
-    assert card["machine_sequence"] == 8
+    assert result.ok
+    assert machine_4_cards == [("25806", 1), ("25805", 2)]
 
 
 def test_planning_blocks_running_card_into_occupied_machine(connection):
@@ -203,7 +234,7 @@ def test_planning_preserves_production_data(connection):
     assert result.ok
     assert after["status"] == STATUS_RUNNING
     assert after["machine_id"] == 4
-    assert after["machine_sequence"] == 6
+    assert after["machine_sequence"] == 1
     assert after["tare_weight"] == 1
     assert after["actual_raw_material_used"] == "Actual LDPE"
     assert after["raw_material_brand_grade"] == "Grade A"

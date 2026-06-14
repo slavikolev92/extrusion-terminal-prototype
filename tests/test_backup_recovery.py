@@ -95,7 +95,7 @@ def test_backup_does_not_overwrite_existing_backup_with_same_timestamp(temp_db_p
 def test_backup_restores_database_contents_to_separate_temp_database(temp_db_path: Path):
     backup_dir = temp_db_path.parent / "backups"
     card_id = import_sample_card("25702")
-    assert db.release_card(card_id, machine_id=2, machine_sequence=3).ok
+    assert db.release_card(card_id, machine_id=2, machine_sequence=1).ok
 
     backup_result = create_backup(temp_db_path, backup_dir, keep_count=10)
     restore_path = temp_db_path.parent / "restored" / "restored.sqlite3"
@@ -116,7 +116,7 @@ def test_backup_restores_database_contents_to_separate_temp_database(temp_db_pat
     assert card["customer"] == "Backup Customer"
     assert card["status"] == "pending"
     assert card["machine_id"] == 2
-    assert card["machine_sequence"] == 3
+    assert card["machine_sequence"] == 1
 
 
 def test_backup_runs_while_source_database_connection_is_open(

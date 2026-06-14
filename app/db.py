@@ -1509,47 +1509,38 @@ def release_card(
         if machine_sequence < 1:
             messages.append("Sequence must be 1 or higher.")
 
-        duplicate = connection.execute(
-            f"""
-            SELECT order_number
-            FROM cards
-            WHERE id <> ?
-              AND machine_id = ?
-              AND machine_sequence = ?
-              AND status IN ({", ".join("?" for _ in ACTIVE_TERMINAL_STATUSES)})
-            LIMIT 1
-            """,
-            (card_id, machine_id, machine_sequence, *ACTIVE_TERMINAL_STATUSES),
-        ).fetchone()
-        if duplicate:
-            messages.append(
-                f"Machine {machine_id} already has active sequence {machine_sequence} "
-                f"on order {duplicate['order_number']}."
-            )
-
         if messages:
             return RuleResult(False, tuple(messages))
 
         try:
+            temporary_sequence = -int(card["id"])
             connection.execute(
                 """
                 UPDATE cards
                 SET status = ?,
                     machine_id = ?,
-                    machine_sequence = ?,
-                    version = version + 1,
-                    updated_at = CURRENT_TIMESTAMP
+                    machine_sequence = ?
                 WHERE id = ?
                 """,
-                (STATUS_PENDING, machine_id, machine_sequence, card_id),
+                (STATUS_PENDING, machine_id, temporary_sequence, card_id),
+            )
+            final_sequence = normalize_machine_queue(
+                connection,
+                machine_id=machine_id,
+                moving_card_id=card_id,
+                target_position=machine_sequence,
             )
         except sqlite3.IntegrityError:
+            connection.rollback()
             return RuleResult(
                 False,
                 ("Release failed because the machine/sequence is already active.",),
             )
 
-    return RuleResult(True, (f"Order {card['order_number']} released to machine {machine_id}.",))
+    return RuleResult(
+        True,
+        (f"Order {card['order_number']} released to machine {machine_id}, position {final_sequence}.",),
+    )
 
 
 def update_card_planning(
@@ -1580,6 +1571,9 @@ def update_card_planning(
             )
 
         messages: list[str] = []
+        if card["machine_id"] is None:
+            messages.append("Card must already be assigned to a machine before replanning.")
+
         machine_exists = connection.execute(
             "SELECT 1 FROM machines WHERE id = ?",
             (machine_id,),
@@ -1590,19 +1584,11 @@ def update_card_planning(
         if machine_sequence < 1:
             messages.append("Sequence must be 1 or higher.")
 
-        duplicate = fetch_duplicate_active_sequence_card(
-            connection,
-            card_id=card_id,
-            machine_id=machine_id,
-            machine_sequence=machine_sequence,
-        )
-        if duplicate:
-            messages.append(
-                f"Machine {machine_id} already has active sequence {machine_sequence} "
-                f"on order {duplicate['order_number']}."
-            )
-
-        if card["status"] in (STATUS_RUNNING, STATUS_PAUSED):
+        if (
+            card["status"] in (STATUS_RUNNING, STATUS_PAUSED)
+            and card["machine_id"] is not None
+            and int(card["machine_id"]) != machine_id
+        ):
             occupied_card = fetch_occupied_machine_card(connection, card_id, machine_id)
             if occupied_card:
                 messages.append(
@@ -1614,16 +1600,25 @@ def update_card_planning(
             return RuleResult(False, tuple(messages))
 
         try:
+            assert card["machine_id"] is not None
+            old_machine_id = int(card["machine_id"])
+            temporary_sequence = -int(card["id"])
             connection.execute(
                 """
                 UPDATE cards
                 SET machine_id = ?,
-                    machine_sequence = ?,
-                    version = version + 1,
-                    updated_at = CURRENT_TIMESTAMP
+                    machine_sequence = ?
                 WHERE id = ?
                 """,
-                (machine_id, machine_sequence, card_id),
+                (machine_id, temporary_sequence, card_id),
+            )
+            if old_machine_id != machine_id:
+                normalize_machine_queue(connection, machine_id=old_machine_id)
+            final_sequence = normalize_machine_queue(
+                connection,
+                machine_id=machine_id,
+                moving_card_id=card_id,
+                target_position=machine_sequence,
             )
         except sqlite3.IntegrityError:
             connection.rollback()
@@ -1634,28 +1629,87 @@ def update_card_planning(
 
     return RuleResult(
         True,
-        (f"Order {card['order_number']} moved to machine {machine_id}, sequence {machine_sequence}.",),
+        (f"Order {card['order_number']} moved to machine {machine_id}, position {final_sequence}.",),
     )
 
 
-def fetch_duplicate_active_sequence_card(
+def normalize_machine_queue(
     connection: sqlite3.Connection,
-    card_id: int,
     machine_id: int,
-    machine_sequence: int,
-) -> sqlite3.Row | None:
-    return connection.execute(
+    moving_card_id: int | None = None,
+    target_position: int | None = None,
+) -> int | None:
+    rows = connection.execute(
         f"""
-        SELECT order_number
+        SELECT id, machine_sequence
         FROM cards
-        WHERE id <> ?
-          AND machine_id = ?
-          AND machine_sequence = ?
+        WHERE machine_id = ?
           AND status IN ({", ".join("?" for _ in ACTIVE_TERMINAL_STATUSES)})
-        LIMIT 1
+        ORDER BY machine_sequence IS NULL, machine_sequence, id
         """,
-        (card_id, machine_id, machine_sequence, *ACTIVE_TERMINAL_STATUSES),
-    ).fetchone()
+        (machine_id, *ACTIVE_TERMINAL_STATUSES),
+    ).fetchall()
+
+    moving_row = None
+    queue_rows = []
+    for row in rows:
+        if moving_card_id is not None and int(row["id"]) == moving_card_id:
+            moving_row = row
+        else:
+            queue_rows.append(row)
+
+    if moving_card_id is not None and moving_row is not None:
+        assert target_position is not None
+        insert_position = min(max(target_position, 1), len(queue_rows) + 1)
+        queue_rows.insert(insert_position - 1, moving_row)
+    else:
+        insert_position = None
+
+    rewrite_machine_queue_sequences(connection, machine_id, queue_rows)
+    return insert_position
+
+
+def rewrite_machine_queue_sequences(
+    connection: sqlite3.Connection,
+    machine_id: int,
+    queue_rows: list[sqlite3.Row],
+) -> None:
+    for row in queue_rows:
+        connection.execute(
+            """
+            UPDATE cards
+            SET machine_sequence = ?
+            WHERE id = ?
+              AND machine_id = ?
+            """,
+            (-int(row["id"]), row["id"], machine_id),
+        )
+
+    for index, row in enumerate(queue_rows, start=1):
+        original_sequence = row["machine_sequence"]
+        sequence_changed = original_sequence is None or int(original_sequence) != index
+        if sequence_changed:
+            connection.execute(
+                """
+                UPDATE cards
+                SET machine_sequence = ?,
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                  AND machine_id = ?
+                """,
+                (index, row["id"], machine_id),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE cards
+                SET machine_sequence = ?
+                WHERE id = ?
+                  AND machine_id = ?
+                """,
+                (index, row["id"], machine_id),
+            )
 
 
 def fetch_machine_queues() -> list[dict[str, Any]]:

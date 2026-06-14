@@ -200,7 +200,7 @@ def test_missing_required_columns_are_reported_as_file_level_blocker(connection)
 
 def test_overwrite_import_updates_imported_fields_and_preserves_production_data(connection):
     card_id = import_one_ready_card("25281")
-    db.release_card(card_id, machine_id=2, machine_sequence=7)
+    db.release_card(card_id, machine_id=2, machine_sequence=1)
 
     connection.execute(
         """
@@ -267,7 +267,7 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
     assert result.row_results[0].order_number == "25281"
     assert card["status"] == STATUS_PENDING
     assert card["machine_id"] == 2
-    assert card["machine_sequence"] == 7
+    assert card["machine_sequence"] == 1
     assert card["customer"] == "Updated Customer"
     assert card["raw_material_a"] == "Updated LDPE"
     assert card["tare_weight"] == 1.25
@@ -330,25 +330,28 @@ def test_release_blocks_cards_without_usable_extrusion_fields(connection):
     assert card["machine_sequence"] is None
 
 
-def test_release_blocks_duplicate_active_machine_sequence(connection):
+def test_release_inserts_at_existing_position_and_normalizes_machine_sequence(connection):
     first_card_id = import_one_ready_card("25284")
     second_card_id = import_one_ready_card("25285")
-    assert db.release_card(first_card_id, machine_id=3, machine_sequence=4).ok
+    assert db.release_card(first_card_id, machine_id=3, machine_sequence=1).ok
 
-    duplicate_result = db.release_card(second_card_id, machine_id=3, machine_sequence=4)
+    insert_result = db.release_card(second_card_id, machine_id=3, machine_sequence=1)
 
-    second_card = connection.execute(
-        "SELECT status, machine_id, machine_sequence FROM cards WHERE id = ?",
-        (second_card_id,),
-    ).fetchone()
+    cards = connection.execute(
+        """
+        SELECT order_number, status, machine_id, machine_sequence
+        FROM cards
+        WHERE id IN (?, ?)
+        ORDER BY machine_sequence
+        """,
+        (first_card_id, second_card_id),
+    ).fetchall()
 
-    assert not duplicate_result.ok
-    assert duplicate_result.messages == (
-        "Machine 3 already has active sequence 4 on order 25284.",
-    )
-    assert second_card["status"] == STATUS_IMPORTED
-    assert second_card["machine_id"] is None
-    assert second_card["machine_sequence"] is None
+    assert insert_result.ok
+    assert [(card["order_number"], card["status"], card["machine_id"], card["machine_sequence"]) for card in cards] == [
+        ("25285", STATUS_PENDING, 3, 1),
+        ("25284", STATUS_PENDING, 3, 2),
+    ]
 
 
 def test_released_cards_appear_in_machine_queues(connection):

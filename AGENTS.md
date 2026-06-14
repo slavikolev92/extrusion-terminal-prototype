@@ -68,7 +68,9 @@ Important rules must be enforced in backend code and, where practical, SQLite co
 - Imported cards must persist before release.
 - Machine assignment is required before release.
 - Machine sequence is required before release.
-- Duplicate active sequence numbers within the same machine queue must be blocked.
+- Active machine queues must be normalized to contiguous sequence positions starting at `1`.
+- Release, reassignment, and resequencing treat the entered sequence as a target position and shift other active cards instead of leaving gaps.
+- Duplicate active sequence numbers within the same machine queue must still be impossible after saving.
 - A machine cannot have more than one running card.
 - Re-import must update imported/front-card fields only.
 - Re-import must preserve roll entries, timing segments, tare weight, status, machine-side fields, and other production data.
@@ -91,7 +93,7 @@ Before continuing beyond the current import/release milestone, add automated tes
 - duplicate imports are skipped by default
 - overwrite import preserves production data
 - release requires current fields that represent usable extrusion work
-- release blocks duplicate active machine sequence
+- release inserts at the requested target position and normalizes active machine sequence
 - released cards appear in machine queues
 - version/conflict checks block stale edits once editable card forms exist
 

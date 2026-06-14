@@ -30,7 +30,7 @@ Confirmed workflow facts:
 - The app should model only simple machine assignment, sequencing, and navigation. It should not model detailed machine performance or downtime.
 - The terminal receives and executes extrusion operational cards assigned to those machines.
 - The shift manager continues using the existing Excel workbook.
-- The shift manager assigns each released card to a machine and gives it a simple numeric sequence.
+- The shift manager assigns each released card to a machine and gives it a simple numeric queue position.
 - Each row in the `Database` worksheet is one complete production order with all operational-card source data.
 - The app is for the extrusion operation only.
 - Operators should see the extrusion operational card front in the app.
@@ -116,10 +116,11 @@ Admin page behavior:
 - The shift manager can edit any field on an imported card/order from the admin page.
 - Admin editing is broader than terminal editing; terminal editing is intentionally limited.
 - The admin page should provide a simple machine planning view split into four machine columns.
-- Each machine column should show active queued cards for that machine sorted by numeric sequence.
+- Each machine column should show active queued cards for that machine sorted by numeric queue position.
 - Machine assignment is mandatory before a card is released to the terminal.
-- Sequence should be a simple numeric field assigned by the shift manager.
-- Validate duplicate sequence numbers within the same machine queue and show visual validation immediately when a duplicate exists.
+- Sequence is a target display position assigned by the shift manager, not a production lock.
+- Release, reassignment, and resequencing normalize each affected active machine queue to contiguous positions starting at `1`.
+- Entering a position already used by another active card inserts the card there and shifts the other active cards.
 - Release/submit can be one draft at a time. Do not add bulk release unless it becomes clearly necessary.
 
 ## Explicitly Out Of Scope For Now
@@ -376,8 +377,9 @@ Confirmed storage behavior:
 - Imported orders should be visible in app data/history even before they are released to the terminal.
 - Submit/release makes an already-saved order/card visible at the terminal; it does not create the order for the first time.
 - Machine assignment must exist before release to the terminal.
-- Machine sequence is a simple numeric order within the assigned machine queue.
-- Duplicate sequence numbers within the same active machine queue should be visually flagged and blocked from release until corrected.
+- Machine sequence is a simple display order within the assigned machine queue.
+- Machine sequence inputs are treated as target positions. The app inserts the card at that position, clamps too-high values to the end of the queue, and normalizes active cards to `1..N`.
+- Duplicate sequence numbers within the same active machine queue must not persist after save.
 - Completed orders remain available in the app for review.
 - Completed orders should clear from the terminal execution view.
 - Imported operational-card fields should be stored as readable structured fields in the app.
@@ -538,7 +540,7 @@ Recommended pilot import flow:
 
 This preview-before-submit step is confirmed as desirable because it prevents randomly bad transferred data from immediately appearing at the workstation.
 
-Queue behavior is confirmed as simple machine-based sequencing: active cards are assigned to one of four machines, sorted by numeric sequence within each machine, and shown without complex scheduling logic.
+Queue behavior is confirmed as simple machine-based sequencing: active cards are assigned to one of four machines, sorted by normalized numeric position within each machine, and shown without complex scheduling logic. The sequence only affects display order; operators can still open and run any active card when the shift manager permits it.
 
 Copy/paste remains acceptable as a fallback, but CSV export is preferred because it is less prone to manual paste/selection errors.
 
@@ -712,7 +714,7 @@ Do not restore over `data/extrusion_terminal.sqlite3` while the app is running. 
 Troubleshooting:
 
 - Failed imports: confirm the uploaded file is CSV, has headers including `order_number` and `extrusion_flag`, and shows extrusion data. Rows without an extrusion step are reported in the import result and skipped.
-- Duplicate releases: if release says a machine sequence is already active, pick another sequence or finish, cancel, or reassign the conflicting active card first.
+- Planning sequence looks wrong: release, reassignment, and resequencing should normalize each active machine queue to `1..N`; refresh `/admin/planning` and report the affected order if a gap or duplicate remains.
 - Server restart: stop with `Ctrl+C`, start with the documented startup command, run `/health`, then refresh the terminal browser. Data should persist because it is stored in SQLite, not browser memory.
 
 Conflict handling:

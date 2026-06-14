@@ -56,7 +56,7 @@ Scope:
 - release one card at a time.
 - block release unless the current card fields represent usable extrusion work.
 - block invalid machine/sequence.
-- block duplicate active sequence on the same machine.
+- prevent persisted duplicate active sequence on the same machine.
 - released card becomes `pending`.
 - released card appears in terminal active queue.
 
@@ -64,7 +64,7 @@ Review checkpoint:
 
 - release tested manually from `/admin`.
 - released card visible in `/terminal`.
-- duplicate sequence blocked in backend check.
+- duplicate active sequence prevented by backend check.
 - commit completed with Milestones 0-2.
 
 ## Milestone 3 - Automated Baseline Tests
@@ -248,13 +248,14 @@ Implementation bundles:
 
 3. Planning, release, reassignment, and resequencing - done
    - Build `/admin/planning` around two views: unreleased ready card pool and four machine queues.
-   - Release imported ready cards by assigning machine and sequence.
-   - Allow shift manager to change machine and sequence after release for active cards.
-   - Preserve backend protection against duplicate active machine sequence.
+   - Release imported ready cards by assigning machine and target queue position.
+   - Allow shift manager to change machine and target queue position after release for active cards.
+   - Normalize affected active machine queues to contiguous positions starting at `1`.
+   - Preserve backend protection against persisted duplicate active machine sequence.
    - Preserve backend protection against assigning a running/paused card into an occupied machine conflict.
    - Show validation errors clearly near the affected card/queue action.
-   - Add tests for release, reassignment, resequencing, duplicate sequence blocking, occupied machine blocking, and stale edit blocking.
-   - Manual check complete with a temporary database: release multiple cards, resequence a queue, move a pending card between machines, and verify terminal queue order.
+   - Add tests for release, reassignment, resequencing, sequence normalization, occupied machine blocking, and stale edit blocking.
+   - Manual check complete with a temporary database: release multiple cards, resequence a queue, move a pending card between machines, normalize sequence gaps, and verify terminal queue order.
 
 4. Admin workflow controls and production-data correction
    - Add admin-side reversible cancel/restore using the same business rules as terminal cancel/restore.
