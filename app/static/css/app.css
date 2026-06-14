@@ -523,14 +523,26 @@ select {
   margin-top: 12px;
 }
 
-.admin-roll-correction-row,
-.admin-timing-correction-row {
+.admin-roll-correction-row {
   display: grid;
   grid-template-columns: minmax(70px, 0.25fr) minmax(260px, 1fr) auto;
   gap: 8px;
   align-items: center;
   border-top: 1px solid var(--line);
   padding-top: 8px;
+}
+
+.admin-timing-correction-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.timing-delete-form {
+  align-self: end;
 }
 
 .timing-correction-form {

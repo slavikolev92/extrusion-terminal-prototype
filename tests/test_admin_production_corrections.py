@@ -3,10 +3,12 @@ from __future__ import annotations
 import csv
 import io
 
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+
 from app import db
 from app.constants import STATUS_CANCELLED, STATUS_COMPLETED, STATUS_PENDING, STATUS_RUNNING
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
-from app.main import app
+from app.main import admin_card_detail_context, app
 
 
 def csv_bytes(*rows: dict[str, str]) -> bytes:
@@ -311,6 +313,24 @@ def test_admin_timing_correction_blocks_stale_loaded_version(connection):
     assert stale_result.messages == (
         "Card changed after this page was loaded. Reload the card and try again.",
     )
+
+
+def test_completed_admin_detail_hides_unsafe_delete_controls(connection):
+    card_id = prepare_completed_card("26011")
+    card = db.fetch_admin_card_detail(card_id)
+    roll_id = card["roll_entries"][0]["id"]
+    segment_id = card["timing_segments"][0]["id"]
+
+    env = Environment(
+        loader=FileSystemLoader("app/templates"),
+        autoescape=select_autoescape(["html"]),
+    )
+    env.globals["url_for"] = lambda name, **kwargs: "/static/css/app.css"
+    context = admin_card_detail_context(card_id)
+    html = env.get_template("admin_card_detail.html").render(**context)
+
+    assert f"/admin/cards/{card_id}/rolls/{roll_id}/delete" not in html
+    assert f"/admin/cards/{card_id}/timing-segments/{segment_id}/delete" not in html
 
 
 def test_admin_production_correction_routes_are_registered():

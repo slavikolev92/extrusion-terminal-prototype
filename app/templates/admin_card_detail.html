@@ -328,10 +328,12 @@
                 <input type="number" name="gross_weight" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %}>
                 <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Save</button>
               </form>
-              <form class="roll-delete-form" action="/admin/cards/{{ card.id }}/rolls/{{ roll.id }}/delete" method="post">
-                <input type="hidden" name="loaded_version" value="{{ card.version }}">
-                <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Delete</button>
-              </form>
+              {% if can_edit_rolls and not (card.status == "completed" and card.roll_count <= 1 and roll.gross_weight is not none) %}
+                <form class="roll-delete-form" action="/admin/cards/{{ card.id }}/rolls/{{ roll.id }}/delete" method="post">
+                  <input type="hidden" name="loaded_version" value="{{ card.version }}">
+                  <button type="submit">Delete</button>
+                </form>
+              {% endif %}
             </div>
           {% endfor %}
         </div>
@@ -411,10 +413,12 @@
               </label>
               <button type="submit">Save</button>
             </form>
-            <form class="roll-delete-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}/delete" method="post">
-              <input type="hidden" name="loaded_version" value="{{ card.version }}">
-              <button type="submit">Delete</button>
-            </form>
+            {% if card.status != "completed" or card.timing_segments|length > 1 %}
+              <form class="timing-delete-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}/delete" method="post">
+                <input type="hidden" name="loaded_version" value="{{ card.version }}">
+                <button type="submit">Delete</button>
+              </form>
+            {% endif %}
           </div>
         {% endfor %}
       </div>
