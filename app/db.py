@@ -23,16 +23,6 @@ from .rules import RuleResult
 STALE_CARD_MESSAGE = "Card changed after this page was loaded. Reload the card and try again."
 TIMING_END_REASONS = ("pause", "finish", "correction")
 TIMING_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
-RECIPE_COMPONENT_FIELDS = (
-    ("a", "raw_material_a"),
-    ("b", "raw_material_b"),
-    ("c", "raw_material_c"),
-    ("linear_pe", "linear_pe"),
-    ("antistatic", "antistatic"),
-    ("masterbatch", "masterbatch"),
-    ("chalk", "chalk"),
-)
-RECIPE_COMPONENT_KEYS = tuple(key for key, _field in RECIPE_COMPONENT_FIELDS)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv("EXTRUSION_DATA_DIR", BASE_DIR / "data"))
@@ -124,18 +114,6 @@ CREATE TABLE IF NOT EXISTS roll_entries (
     UNIQUE (card_id, roll_number)
 );
 
-CREATE TABLE IF NOT EXISTS recipe_material_entries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
-    component_key TEXT NOT NULL CHECK (component_key IN ({_sql_list(RECIPE_COMPONENT_KEYS)})),
-    material TEXT,
-    brand TEXT,
-    batch TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (card_id, component_key)
-);
-
 CREATE TABLE IF NOT EXISTS production_time_segments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
@@ -162,9 +140,6 @@ ON cards(status, machine_id, machine_sequence);
 
 CREATE INDEX IF NOT EXISTS idx_roll_entries_card_roll
 ON roll_entries(card_id, roll_number);
-
-CREATE INDEX IF NOT EXISTS idx_recipe_material_entries_card
-ON recipe_material_entries(card_id, component_key);
 
 CREATE INDEX IF NOT EXISTS idx_time_segments_card_started
 ON production_time_segments(card_id, started_at);
@@ -401,7 +376,6 @@ def fetch_admin_card_detail(card_id: int) -> dict[str, Any] | None:
 
         card = dict(row)
         card["timing_segments"] = fetch_timing_segments_for_card(connection, card_id)
-        card["recipe_entries"] = fetch_recipe_material_entries_for_card(connection, card_id)
         card["total_production_seconds"] = calculate_total_production_seconds(
             connection,
             card_id,
@@ -447,7 +421,6 @@ def fetch_terminal_card_detail(card_id: int) -> dict[str, Any] | None:
 
         card = dict(row)
         card["timing_segments"] = fetch_timing_segments_for_card(connection, card_id)
-        card["recipe_entries"] = fetch_recipe_material_entries_for_card(connection, card_id)
         card["total_production_seconds"] = calculate_total_production_seconds(
             connection,
             card_id,
@@ -501,21 +474,6 @@ def fetch_roll_entries_and_totals(
         "total_gross_weight": decimal_to_display(total_gross),
         "total_net_weight": decimal_to_display(total_net) if total_net is not None else None,
     }
-
-
-def fetch_recipe_material_entries_for_card(
-    connection: sqlite3.Connection,
-    card_id: int,
-) -> dict[str, dict[str, Any]]:
-    rows = connection.execute(
-        """
-        SELECT component_key, material, brand, batch, updated_at
-        FROM recipe_material_entries
-        WHERE card_id = ?
-        """,
-        (card_id,),
-    ).fetchall()
-    return {str(row["component_key"]): dict(row) for row in rows}
 
 
 def fetch_timing_segments_for_card(
@@ -1932,70 +1890,6 @@ def update_terminal_material_fields(
         )
 
     return RuleResult(True, ("Material fields saved.",))
-
-
-def update_terminal_recipe_material(
-    card_id: int,
-    loaded_version: int,
-    component_key: str,
-    material: str,
-    brand: str,
-    batch: str,
-) -> RuleResult:
-    cleaned_key = component_key.strip()
-    if cleaned_key not in RECIPE_COMPONENT_KEYS:
-        return RuleResult(False, ("Recipe row was not found.",))
-
-    with connect() as connection:
-        card = connection.execute(
-            """
-            SELECT id, version
-            FROM cards
-            WHERE id = ?
-              AND status IN (?, ?, ?, ?, ?)
-            """,
-            (card_id, *ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES),
-        ).fetchone()
-
-        version_result = validate_loaded_card_version(card, loaded_version)
-        if not version_result.ok:
-            return version_result
-
-        connection.execute(
-            """
-            INSERT INTO recipe_material_entries (
-                card_id,
-                component_key,
-                material,
-                brand,
-                batch
-            )
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(card_id, component_key) DO UPDATE SET
-                material = excluded.material,
-                brand = excluded.brand,
-                batch = excluded.batch,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            (
-                card_id,
-                cleaned_key,
-                material.strip(),
-                brand.strip(),
-                batch.strip(),
-            ),
-        )
-        connection.execute(
-            """
-            UPDATE cards
-            SET version = version + 1,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (card_id,),
-        )
-
-    return RuleResult(True, ("Recipe row saved.",))
 
 
 def release_card(

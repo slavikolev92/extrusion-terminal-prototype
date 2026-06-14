@@ -3,134 +3,100 @@
 {% block title %}Terminal - Extrusion Terminal{% endblock %}
 
 {% block body %}
-{% set selected_status = selected_card.status if selected_card else "" %}
-{% set selected_is_archive = selected_status in ["completed", "cancelled"] %}
-{% set can_edit_rolls = selected_card and selected_status in ["running", "completed"] %}
-<main class="terminal-v4" data-terminal-v4-shell>
-  <aside class="terminal-v4-sidebar">
-    <div class="terminal-v4-side-head">
-      <h1>Карти</h1>
-      <div class="terminal-v4-clock" id="terminal-clock">--:--</div>
+<main class="terminal-shell">
+  <aside class="terminal-sidebar">
+    <header>
+      <h1>Terminal</h1>
+      <span>{{ active_cards|length }} active</span>
+    </header>
+
+    <div class="machine-strip">
+      {% for queue in machine_queues %}
+        {% set focus_card = queue.focus_card %}
+        <a class="machine-tile" href="{% if focus_card %}/terminal/cards/{{ focus_card.id }}{% else %}/terminal{% endif %}">
+          <strong>{{ queue.machine.id }}</strong>
+          {% if focus_card %}
+            <span>No. {{ focus_card.order_number }}</span>
+            <small>{{ focus_card.status }}</small>
+          {% else %}
+            <span>No card</span>
+            <small>idle</small>
+          {% endif %}
+        </a>
+      {% endfor %}
     </div>
 
-    <div class="terminal-v4-tabs" role="tablist" aria-label="Card lists">
-      <button type="button" id="terminal-tab-active" class="{% if not selected_is_archive %}active{% endif %}" aria-controls="terminal-active-panel">
-        Активни
-      </button>
-      <button type="button" id="terminal-tab-archive" class="{% if selected_is_archive %}active{% endif %}" aria-controls="terminal-archive-panel">
-        Приключени
-      </button>
-    </div>
-
-    <section class="terminal-v4-queue {% if selected_is_archive %}hidden{% endif %}" id="terminal-active-panel" data-terminal-active-panel>
+    <section>
+      <h2>Queue</h2>
       {% if active_cards %}
         {% for card in active_cards %}
-          <a class="terminal-v4-job {{ card.status }} {% if selected_card and selected_card.id == card.id %}selected{% endif %}"
-             href="/terminal/cards/{{ card.id }}">
-            <div class="terminal-v4-job-line">
-              <strong>№ {{ card.order_number }}</strong>
-              <span class="pill {{ card.status }}">{{ status_labels.get(card.status, card.status) }}</span>
-            </div>
-            <div class="terminal-v4-job-product">{{ card.product_type or "Няма изделие" }}</div>
-            <div class="terminal-v4-job-customer">{{ card.customer or "Няма фирма" }}</div>
-            <div class="terminal-v4-progress"><span style="width: {{ card.progress_percent }}%"></span></div>
-            <div class="terminal-v4-job-meta">
-              <span>{{ card.total_gross_display }} / {{ card.quantity_1 or "-" }} {{ card.unit_1 or "" }}</span>
-              <span>{{ card.progress_percent }}%</span>
-            </div>
+          <a class="queue-card {{ card.status }} {% if selected_card and selected_card.id == card.id %}selected{% endif %}" href="/terminal/cards/{{ card.id }}">
+            <strong>No. {{ card.order_number }}</strong>
+            <span>{{ card.customer or "No customer" }}</span>
+            <small>Machine {{ card.machine_id or "-" }} / {{ card.machine_sequence or "-" }}</small>
           </a>
         {% endfor %}
       {% else %}
-        <p class="terminal-v4-empty">Няма активни карти.</p>
-      {% endif %}
-    </section>
-
-    <section class="terminal-v4-queue {% if not selected_is_archive %}hidden{% endif %}" id="terminal-archive-panel" data-terminal-archive-panel>
-      {% if archive_cards %}
-        {% for card in archive_cards %}
-          <a class="terminal-v4-job {{ card.status }} {% if selected_card and selected_card.id == card.id %}selected{% endif %}"
-             href="/terminal/cards/{{ card.id }}">
-            <div class="terminal-v4-job-line">
-              <strong>№ {{ card.order_number }}</strong>
-              <span class="pill {{ card.status }}">{{ status_labels.get(card.status, card.status) }}</span>
-            </div>
-            <div class="terminal-v4-job-product">{{ card.product_type or "Няма изделие" }}</div>
-            <div class="terminal-v4-job-customer">{{ card.customer or "Няма фирма" }}</div>
-            <div class="terminal-v4-progress"><span style="width: {{ card.progress_percent }}%"></span></div>
-            <div class="terminal-v4-job-meta">
-              <span>{{ card.total_gross_display }} / {{ card.quantity_1 or "-" }} {{ card.unit_1 or "" }}</span>
-              <span>{{ card.progress_percent }}%</span>
-            </div>
-          </a>
-        {% endfor %}
-      {% else %}
-        <p class="terminal-v4-empty">Няма приключени или анулирани карти.</p>
+        <p class="empty">No active cards released to the terminal.</p>
       {% endif %}
     </section>
   </aside>
 
-  <section class="terminal-v4-main">
-    <header class="terminal-v4-topbar">
-      <div class="terminal-v4-title">
+  <section class="work-surface">
+    <header class="work-header">
+      <div>
+        <p class="eyebrow">Current card</p>
         {% if selected_card %}
-          <h1>Поръчка № {{ selected_card.order_number }}</h1>
-          <span class="terminal-v4-order-time">({{ selected_card.total_production_duration }})</span>
+          <h2>No. {{ selected_card.order_number }} - {{ selected_card.customer or "No customer" }}</h2>
         {% else %}
-          <h1>Изберете карта</h1>
-          <span class="terminal-v4-order-time">(00h 00m)</span>
+          <h2>Select a queued card</h2>
         {% endif %}
       </div>
-
-      <div class="terminal-v4-actions">
-        {% if selected_card and selected_status == "pending" %}
-          <form action="/terminal/cards/{{ selected_card.id }}/timing/start" method="post" data-terminal-start-form>
+      <div class="actions">
+        {% if selected_card and selected_card.status == "pending" %}
+          <form action="/terminal/cards/{{ selected_card.id }}/timing/start" method="post">
             <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-            <button type="submit" class="terminal-v4-primary">Старт</button>
-          </form>
-        {% elif selected_card and selected_status == "paused" %}
-          <form action="/terminal/cards/{{ selected_card.id }}/timing/resume" method="post" data-terminal-resume-form>
-            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-            <button type="submit" class="terminal-v4-primary">Старт</button>
+            <button type="submit">Start</button>
           </form>
         {% else %}
-          <button type="button" class="terminal-v4-primary" disabled>Старт</button>
+          <button disabled>Start</button>
         {% endif %}
-
-        {% if selected_card and selected_status == "running" %}
-          <form action="/terminal/cards/{{ selected_card.id }}/timing/pause" method="post" data-terminal-pause-form>
+        {% if selected_card and selected_card.status == "running" %}
+          <form action="/terminal/cards/{{ selected_card.id }}/timing/pause" method="post">
             <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-            <button type="submit" class="terminal-v4-pause">Пауза</button>
+            <button type="submit">Pause</button>
           </form>
         {% else %}
-          <button type="button" class="terminal-v4-pause" disabled>Пауза</button>
+          <button disabled>Pause</button>
         {% endif %}
-
-        {% if selected_card and selected_status in ["pending", "running", "paused"] %}
-          <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post" data-terminal-finish-form>
+        {% if selected_card and selected_card.status == "paused" %}
+          <form action="/terminal/cards/{{ selected_card.id }}/timing/resume" method="post">
             <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-            <button type="submit" class="terminal-v4-finish">Приключи</button>
+            <button type="submit">Resume</button>
           </form>
         {% else %}
-          <button type="button" class="terminal-v4-finish" disabled>Приключи</button>
+          <button disabled>Resume</button>
         {% endif %}
-
-        <button type="button" class="terminal-v4-menu-btn" id="terminal-menu-button" aria-label="Още действия" aria-expanded="false">...</button>
-        <div class="terminal-v4-menu" id="terminal-menu">
-          <button type="button" disabled>Печат</button>
-          {% if selected_card and selected_status in ["pending", "running", "paused"] %}
-            <form action="/terminal/cards/{{ selected_card.id }}/cancel" method="post">
+        {% if selected_card and selected_card.status in ["pending", "running", "paused"] %}
+          <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post">
+            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+            <button type="submit">Finished</button>
+          </form>
+          <form action="/terminal/cards/{{ selected_card.id }}/cancel" method="post">
+            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+            <button type="submit">Cancel</button>
+          </form>
+        {% else %}
+          <button disabled>Finished</button>
+          {% if selected_card and selected_card.status == "cancelled" %}
+            <form action="/terminal/cards/{{ selected_card.id }}/restore" method="post">
               <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-              <button type="submit" class="terminal-v4-danger">Анулирай</button>
-            </form>
-          {% elif selected_card and selected_status == "cancelled" %}
-            <form action="/terminal/cards/{{ selected_card.id }}/restore" method="post" data-terminal-restore-form>
-              <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-              <button type="submit">Върни</button>
+              <button type="submit">Restore</button>
             </form>
           {% else %}
-            <button type="button" class="terminal-v4-danger" disabled>Анулирай</button>
+            <button disabled>Cancel</button>
           {% endif %}
-        </div>
+        {% endif %}
       </div>
     </header>
 
@@ -139,259 +105,317 @@
       <button type="button" id="terminal-sync-refresh">Refresh</button>
     </div>
 
-    {% for result in [workflow_result, timing_result, material_result, roll_result] if result %}
-      <div class="notice {% if not result.ok %}error{% endif %}">
-        {% for message in result.messages %}
+    {% if workflow_result %}
+      <div class="notice {% if not workflow_result.ok %}error{% endif %}">
+        {% for message in workflow_result.messages %}
           <div>{{ message }}</div>
         {% endfor %}
       </div>
-    {% endfor %}
-
-    {% if selected_card %}
-      <section class="terminal-v4-work">
-        <div class="terminal-v4-left-stack">
-          <section class="terminal-v4-panel">
-            <div class="terminal-v4-panel-head">
-              <h2>Карта</h2>
-              <span class="pill {{ selected_card.status }}">{{ status_labels.get(selected_card.status, selected_card.status) }}</span>
-            </div>
-            <div class="terminal-v4-panel-body">
-              <div class="terminal-v4-info-grid">
-                <div class="terminal-v4-field">
-                  <span class="terminal-v4-label">Вид изделие</span>
-                  <div class="terminal-v4-value">{{ selected_card.product_type or "-" }}</div>
-                </div>
-                <div class="terminal-v4-field">
-                  <span class="terminal-v4-label">Фирма</span>
-                  <div class="terminal-v4-value">{{ selected_card.customer or "-" }}</div>
-                </div>
-                <div class="terminal-v4-field">
-                  <span class="terminal-v4-label">Количество</span>
-                  <div class="terminal-v4-value">{{ selected_card.quantity_1 or "-" }} {{ selected_card.unit_1 or "" }}</div>
-                </div>
-                <div class="terminal-v4-field">
-                  <span class="terminal-v4-label">Размер/дебелина</span>
-                  <div class="terminal-v4-value">{{ selected_card.size_thickness or "-" }}</div>
-                </div>
-                <div class="terminal-v4-field">
-                  <span class="terminal-v4-label">Вид заготовка</span>
-                  <div class="terminal-v4-value">{{ selected_card.product_form or "-" }}</div>
-                </div>
-                <div class="terminal-v4-field">
-                  <span class="terminal-v4-label">Материал</span>
-                  <div class="terminal-v4-value">{{ selected_card.material or "-" }}</div>
-                </div>
-              </div>
-              <div class="terminal-v4-notes">{{ selected_card.notes or "-" }}</div>
-            </div>
-          </section>
-
-          <section class="terminal-v4-panel">
-            <div class="terminal-v4-panel-head">
-              <h2>Рецепта</h2>
-            </div>
-            <div class="terminal-v4-panel-body scroll">
-              <div class="terminal-v4-recipe-table">
-                <div class="terminal-v4-recipe-head">
-                  <div>Позиция</div>
-                  <div>Вид суровина</div>
-                  <div>Марка №</div>
-                  <div>Партиден №</div>
-                </div>
-                {% for row in recipe_rows %}
-                  <form class="terminal-v4-recipe-row terminal-v4-recipe-form"
-                        action="/terminal/cards/{{ selected_card.id }}/recipe/{{ row.key }}"
-                        method="post"
-                        data-terminal-recipe-form>
-                    <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                    <div class="terminal-v4-component">{{ row.label }}</div>
-                    <div>
-                      <input class="terminal-v4-cell" name="material" value="{{ row.material }}" aria-label="{{ row.label }} вид суровина">
-                    </div>
-                    <div>
-                      <input class="terminal-v4-cell" name="brand" value="{{ row.brand }}" aria-label="{{ row.label }} марка">
-                    </div>
-                    <div>
-                      <input class="terminal-v4-cell" name="batch" value="{{ row.batch }}" aria-label="{{ row.label }} партиден номер">
-                    </div>
-                  </form>
-                {% endfor %}
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <div class="terminal-v4-side-stack">
-          <section class="terminal-v4-panel">
-            <div class="terminal-v4-panel-head">
-              <h2>Произведено количество</h2>
-            </div>
-            <div class="terminal-v4-panel-body">
-              <div class="terminal-v4-production-strip">
-                <div class="terminal-v4-metric">
-                  <span class="terminal-v4-label">Бруто общо</span>
-                  <div class="terminal-v4-big">{{ selected_card.total_gross_weight }} kg</div>
-                </div>
-                <div class="terminal-v4-metric">
-                  <span class="terminal-v4-label">Нето общо</span>
-                  <div class="terminal-v4-big">{{ selected_card.total_net_weight if selected_card.total_net_weight is not none else "Pending tare" }}</div>
-                </div>
-                <div class="terminal-v4-metric">
-                  <span class="terminal-v4-label">Прогрес</span>
-                  <div class="terminal-v4-big">{{ selected_card.progress_percent }}%</div>
-                </div>
-              </div>
-              <dl class="terminal-v4-timing">
-                <div>
-                  <dt>Общо време</dt>
-                  <dd>{{ selected_card.total_production_duration }}</dd>
-                </div>
-                <div>
-                  <dt>Първи старт</dt>
-                  <dd>{{ selected_card.first_started_at or "-" }}</dd>
-                </div>
-                <div>
-                  <dt>Приключена</dt>
-                  <dd>{{ selected_card.finished_at or "-" }}</dd>
-                </div>
-                <div>
-                  <dt>Активен сегмент</dt>
-                  <dd>{{ selected_card.active_segment_started_at or "-" }}</dd>
-                </div>
-              </dl>
-            </div>
-          </section>
-
-          <section class="terminal-v4-panel">
-            <div class="terminal-v4-panel-head">
-              <h2>Ролки</h2>
-              <span>Next {{ selected_card.next_roll_number }}</span>
-            </div>
-            <div class="terminal-v4-panel-body">
-              <form class="terminal-v4-tare-form" action="/terminal/cards/{{ selected_card.id }}/tare" method="post" data-terminal-tare-form>
-                <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                <label>
-                  Шпула
-                  <input type="number" name="tare_weight" min="0" step="0.01" value="{{ selected_card.tare_weight if selected_card.tare_weight is not none else '' }}">
-                </label>
-                <button type="submit">Запази</button>
-              </form>
-
-              <form class="terminal-v4-roll-add" action="/terminal/cards/{{ selected_card.id }}/rolls" method="post" data-terminal-roll-add-form>
-                <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                <label>
-                  Нова ролка - бруто, кг
-                  <input type="number" name="gross_weight" min="0" step="0.01" inputmode="decimal" autocomplete="off" {% if can_edit_rolls %}autofocus{% else %}disabled{% endif %}>
-                </label>
-                <button type="submit" class="terminal-v4-primary" {% if not can_edit_rolls %}disabled{% endif %}>Добави</button>
-              </form>
-
-              {% if not can_edit_rolls %}
-                <p class="terminal-v4-empty">Ролките могат да се променят само при карта в работа или приключена карта.</p>
-              {% endif %}
-
-              <div class="terminal-v4-roll-table">
-                <div class="terminal-v4-roll-scroll">
-                  <div class="terminal-v4-roll-head">
-                    <div>№</div>
-                    <div>Бруто тегло, кг</div>
-                    <div>Нетно, кг</div>
-                    <div></div>
-                  </div>
-                  {% if selected_card.roll_entries %}
-                    {% for roll in selected_card.roll_entries %}
-                      <div class="terminal-v4-roll-row">
-                        <div>{{ roll.roll_number }}</div>
-                        <form action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}" method="post">
-                          <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                          <input type="number" name="gross_weight" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %} aria-label="Roll {{ roll.roll_number }} gross weight">
-                          <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Запази</button>
-                        </form>
-                        <div>{{ roll.net_weight if roll.net_weight is not none else "-" }}</div>
-                        <form action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}/delete" method="post">
-                          <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                          <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Изтрий</button>
-                        </form>
-                      </div>
-                    {% endfor %}
-                  {% else %}
-                    <p class="terminal-v4-empty">Няма въведени ролки.</p>
-                  {% endif %}
-                </div>
-              </div>
-            </div>
-          </section>
-        </div>
-      </section>
-    {% else %}
-      <section class="terminal-v4-empty-state">
-        <h2>Няма избрана карта</h2>
-        <p>Изберете карта от списъка.</p>
-      </section>
     {% endif %}
+
+    {% if timing_result %}
+      <div class="notice {% if not timing_result.ok %}error{% endif %}">
+        {% for message in timing_result.messages %}
+          <div>{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if material_result %}
+      <div class="notice {% if not material_result.ok %}error{% endif %}">
+        {% for message in material_result.messages %}
+          <div>{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if roll_result %}
+      <div class="notice {% if not roll_result.ok %}error{% endif %}">
+        {% for message in roll_result.messages %}
+          <div>{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <section class="section timing-panel">
+      <h3>Production timing</h3>
+      {% if selected_card %}
+        <dl class="detail-grid">
+          <div>
+            <dt>Status</dt>
+            <dd>{{ selected_card.status }}</dd>
+          </div>
+          <div>
+            <dt>Total time</dt>
+            <dd>{{ selected_card.total_production_duration }}</dd>
+          </div>
+          <div>
+            <dt>First started</dt>
+            <dd>{{ selected_card.first_started_at or "-" }}</dd>
+          </div>
+          <div>
+            <dt>Finished</dt>
+            <dd>{{ selected_card.finished_at or "-" }}</dd>
+          </div>
+          <div>
+            <dt>Cancelled</dt>
+            <dd>{{ selected_card.cancelled_at or "-" }}</dd>
+          </div>
+          <div>
+            <dt>Active segment</dt>
+            <dd>{{ selected_card.active_segment_started_at or "-" }}</dd>
+          </div>
+        </dl>
+        {% if selected_card.timing_segments %}
+          <table class="compact-table">
+            <thead>
+              <tr>
+                <th>Started</th>
+                <th>Ended</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for segment in selected_card.timing_segments %}
+                <tr>
+                  <td>{{ segment.started_at }}</td>
+                  <td>{{ segment.ended_at or "Running" }}</td>
+                  <td>{{ segment.end_reason or "-" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="empty">No timing segments yet.</p>
+        {% endif %}
+      {% else %}
+        <p class="empty">Timing controls appear after selecting a card.</p>
+      {% endif %}
+    </section>
+
+    <section class="section roll-panel">
+      <div class="section-head">
+        <h3>Tare and rolls</h3>
+        {% if selected_card %}
+          <span>Next roll {{ selected_card.next_roll_number }}</span>
+        {% endif %}
+      </div>
+      {% if selected_card %}
+        {% set can_edit_rolls = selected_card.status in ["running", "completed"] %}
+        <div class="roll-controls">
+          <form class="field-form tare-form" action="/terminal/cards/{{ selected_card.id }}/tare" method="post">
+            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+            <label>
+              Order tare weight
+              <input type="number" name="tare_weight" min="0" step="0.01" value="{{ selected_card.tare_weight if selected_card.tare_weight is not none else '' }}">
+            </label>
+            <button type="submit">Save tare</button>
+          </form>
+
+          <form class="roll-entry" action="/terminal/cards/{{ selected_card.id }}/rolls" method="post">
+            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+            <label>
+              Gross weight for roll {{ selected_card.next_roll_number }}
+              <input type="number" name="gross_weight" min="0" step="0.01" {% if can_edit_rolls %}autofocus{% else %}disabled{% endif %}>
+            </label>
+            <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Add</button>
+          </form>
+        </div>
+
+        <dl class="total-grid">
+          <div>
+            <dt>Rolls</dt>
+            <dd>{{ selected_card.roll_count }}</dd>
+          </div>
+          <div>
+            <dt>Total gross</dt>
+            <dd>{{ selected_card.total_gross_weight }}</dd>
+          </div>
+          <div>
+            <dt>Total net</dt>
+            <dd>{{ selected_card.total_net_weight if selected_card.total_net_weight is not none else "Pending tare" }}</dd>
+          </div>
+        </dl>
+
+        {% if not can_edit_rolls %}
+          <p class="empty">Roll weights can only be changed while the card is running or completed.</p>
+        {% endif %}
+
+        {% if selected_card.roll_entries %}
+          <table class="compact-table roll-table">
+            <thead>
+              <tr>
+                <th>Roll</th>
+                <th>Gross weight</th>
+                <th>Net weight</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for roll in selected_card.roll_entries %}
+                <tr>
+                  <td>{{ roll.roll_number }}</td>
+                  <td>
+                    <form class="inline-roll-form" action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}" method="post">
+                      <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                      <input type="number" name="gross_weight" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %}>
+                      <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Save</button>
+                    </form>
+                  </td>
+                  <td>{{ roll.net_weight if roll.net_weight is not none else "-" }}</td>
+                  <td>
+                    <form class="roll-delete-form" action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}/delete" method="post">
+                      <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                      <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Delete</button>
+                    </form>
+                    <small>{{ roll.updated_at }}</small>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="empty">No roll weights yet.</p>
+        {% endif %}
+      {% else %}
+        <p class="empty">Tare and roll controls appear after selecting a card.</p>
+      {% endif %}
+    </section>
+
+    <div class="placeholder-grid">
+      <section class="section">
+        <h3>Operational card</h3>
+        {% if selected_card %}
+          <dl class="detail-grid">
+            <div>
+              <dt>Status</dt>
+              <dd>{{ selected_card.status }}</dd>
+            </div>
+            <div>
+              <dt>Machine / sequence</dt>
+              <dd>{{ selected_card.machine_id or "-" }} / {{ selected_card.machine_sequence or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Customer</dt>
+              <dd>{{ selected_card.customer or "-" }}</dd>
+            </div>
+            <div>
+              <dt>City</dt>
+              <dd>{{ selected_card.city or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Product</dt>
+              <dd>{{ selected_card.product_type or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Quantity</dt>
+              <dd>{{ selected_card.quantity_1 or "-" }} {{ selected_card.unit_1 or "" }}</dd>
+            </div>
+            <div>
+              <dt>Material</dt>
+              <dd>{{ selected_card.material or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Size / thickness</dt>
+              <dd>{{ selected_card.size_thickness or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Folding</dt>
+              <dd>{{ selected_card.extrusion_folding or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Next operation</dt>
+              <dd>{{ selected_card.extrusion_next_operation or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Treatment</dt>
+              <dd>{{ selected_card.extrusion_treatment or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Raw material A</dt>
+              <dd>{{ selected_card.raw_material_a or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Raw material B</dt>
+              <dd>{{ selected_card.raw_material_b or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Raw material C</dt>
+              <dd>{{ selected_card.raw_material_c or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Linear PE</dt>
+              <dd>{{ selected_card.linear_pe or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Antistatic</dt>
+              <dd>{{ selected_card.antistatic or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Masterbatch</dt>
+              <dd>{{ selected_card.masterbatch or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Chalk</dt>
+              <dd>{{ selected_card.chalk or "-" }}</dd>
+            </div>
+            <div>
+              <dt>Packaging</dt>
+              <dd>{{ selected_card.packaging_method or "-" }}</dd>
+            </div>
+            <div class="wide">
+              <dt>Notes</dt>
+              <dd>{{ selected_card.notes or "-" }}</dd>
+            </div>
+          </dl>
+        {% else %}
+          <p class="empty">Select a card from the machine strip or active queue.</p>
+        {% endif %}
+      </section>
+
+      <section class="section">
+        <h3>Machine-side material</h3>
+        {% if selected_card %}
+          <form class="field-form" action="/terminal/cards/{{ selected_card.id }}/materials" method="post">
+            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+            <label>
+              Actual raw material used
+              <input name="actual_raw_material_used" value="{{ selected_card.actual_raw_material_used or '' }}">
+            </label>
+            <label>
+              Brand / grade / mark
+              <input name="raw_material_brand_grade" value="{{ selected_card.raw_material_brand_grade or '' }}">
+            </label>
+            <label>
+              Batch / lot
+              <input name="raw_material_batch_lot" value="{{ selected_card.raw_material_batch_lot or '' }}">
+            </label>
+            <button type="submit">Save material fields</button>
+          </form>
+          <p class="empty">Version {{ selected_card.version }} loaded at {{ selected_card.updated_at }}.</p>
+        {% else %}
+          <p class="empty">Material fields appear after selecting a card.</p>
+        {% endif %}
+      </section>
+    </div>
+
+    <section class="section archive">
+      <h3>Completed / cancelled</h3>
+      {% if archive_cards %}
+        {% for card in archive_cards %}
+          <a class="queue-card {{ card.status }} {% if selected_card and selected_card.id == card.id %}selected{% endif %}" href="/terminal/cards/{{ card.id }}">
+            <strong>No. {{ card.order_number }}</strong>
+            <span>{{ card.status }}</span>
+          </a>
+        {% endfor %}
+      {% else %}
+        <p class="empty">No completed or cancelled cards yet.</p>
+      {% endif %}
+    </section>
   </section>
 </main>
 
 <script>
-  (() => {
-    const clock = document.getElementById("terminal-clock");
-    const activeTab = document.getElementById("terminal-tab-active");
-    const archiveTab = document.getElementById("terminal-tab-archive");
-    const activePanel = document.getElementById("terminal-active-panel");
-    const archivePanel = document.getElementById("terminal-archive-panel");
-    const menuButton = document.getElementById("terminal-menu-button");
-    const menu = document.getElementById("terminal-menu");
-
-    const renderClock = () => {
-      if (clock) {
-        clock.textContent = new Date().toLocaleTimeString("bg-BG", {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-      }
-    };
-
-    const showPanel = (panelName) => {
-      const showArchive = panelName === "archive";
-      activePanel?.classList.toggle("hidden", showArchive);
-      archivePanel?.classList.toggle("hidden", !showArchive);
-      activeTab?.classList.toggle("active", !showArchive);
-      archiveTab?.classList.toggle("active", showArchive);
-    };
-
-    renderClock();
-    window.setInterval(renderClock, 30000);
-
-    activeTab?.addEventListener("click", () => showPanel("active"));
-    archiveTab?.addEventListener("click", () => showPanel("archive"));
-
-    menuButton?.addEventListener("click", () => {
-      const isOpen = menu?.classList.toggle("open");
-      menuButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
-    });
-
-    document.addEventListener("click", (event) => {
-      if (!menu || !menuButton) {
-        return;
-      }
-      if (!menu.contains(event.target) && !menuButton.contains(event.target)) {
-        menu.classList.remove("open");
-        menuButton.setAttribute("aria-expanded", "false");
-      }
-    });
-
-    document.addEventListener("change", (event) => {
-      const input = event.target;
-      if (!(input instanceof HTMLInputElement)) {
-        return;
-      }
-      const form = input.closest("form[data-terminal-recipe-form]");
-      if (form) {
-        form.requestSubmit();
-      }
-    });
-  })();
-
   (() => {
     const initialSnapshot = {{ terminal_snapshot | tojson }};
     const selectedCardId = {% if selected_card %}{{ selected_card.id }}{% else %}null{% endif %};
