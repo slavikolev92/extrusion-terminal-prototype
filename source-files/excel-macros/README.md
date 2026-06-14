@@ -15,7 +15,7 @@ This folder contains the read-only CSV export macro for the shift-manager workbo
 1. Open `source-files/shift-manager-main-file.xlsm` in Excel.
 2. Press `Alt+F11`.
 3. In the VBA editor, choose `File > Import File...`.
-4. Select `excel-macros/ExportExtrusionOrders.bas`.
+4. Select `source-files/excel-macros/ExportExtrusionOrders.bas`.
 5. Save the workbook as macro-enabled `.xlsm`.
 
 ## Run

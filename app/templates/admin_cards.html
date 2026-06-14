@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Cards - Extrusion Terminal{% endblock %}
+
+{% block body %}
+<main class="page">
+  <header class="page-header">
+    <div>
+      <p class="eyebrow">Shift manager</p>
+      <h1>Cards</h1>
+    </div>
+    <a class="nav-link" href="/terminal">Terminal</a>
+  </header>
+
+  {% include "_admin_nav.html" %}
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Find cards</h2>
+      <span>Showing up to 100</span>
+    </div>
+    <form class="filter-form" action="/admin/cards" method="get">
+      <label>
+        Order
+        <input name="order_number" value="{{ filters.order_number }}">
+      </label>
+      <label>
+        Customer
+        <input name="customer" value="{{ filters.customer }}">
+      </label>
+      <label>
+        Product
+        <input name="product" value="{{ filters.product }}">
+      </label>
+      <label>
+        Status
+        <select name="status">
+          <option value="">Any</option>
+          {% for status in card_statuses %}
+            <option value="{{ status }}" {% if filters.status == status %}selected{% endif %}>{{ status }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit">Filter</button>
+      <a class="nav-link" href="/admin/cards">Clear</a>
+    </form>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Card index</h2>
+      <span>{{ cards|length }} cards</span>
+    </div>
+    {% if cards %}
+      <table class="compact-table">
+        <thead>
+          <tr>
+            <th>Order</th>
+            <th>Status</th>
+            <th>Customer</th>
+            <th>Product</th>
+            <th>Machine / seq.</th>
+            <th>Updated</th>
+            <th>Review</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for card in cards %}
+            <tr>
+              <td>{{ card.order_number }}</td>
+              <td><span class="pill status-{{ card.status }}">{{ card.status }}</span></td>
+              <td>{{ card.customer or "-" }}</td>
+              <td>{{ card.product_type or "-" }}</td>
+              <td>{{ card.machine_id or "-" }} / {{ card.machine_sequence or "-" }}</td>
+              <td>{{ card.updated_at }}</td>
+              <td><a href="/admin/cards/{{ card.id }}">Open</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty">No cards match these filters.</p>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

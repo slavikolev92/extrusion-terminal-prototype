@@ -5,11 +5,7 @@ import io
 from dataclasses import dataclass, field
 from typing import Any
 
-from .constants import (
-    STATUS_IMPORTED,
-    VALIDATION_NO_EXTRUSION_STEP,
-    VALIDATION_READY,
-)
+from .constants import STATUS_IMPORTED
 from .db import connect
 
 
@@ -102,7 +98,6 @@ class ImportRowResult:
     row_number: int | None
     order_number: str
     action: str
-    validation_status: str
     message: str
 
 
@@ -153,7 +148,6 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                 row_number=None,
                 order_number="",
                 action="blocked",
-                validation_status="",
                 message=message,
             )
         )
@@ -169,7 +163,6 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                 row_number=None,
                 order_number="",
                 action="blocked",
-                validation_status="",
                 message=message,
             )
         )
@@ -200,15 +193,12 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                         row_number=row_number,
                         order_number="",
                         action="skipped",
-                        validation_status="",
                         message=message,
                     )
                 )
                 continue
 
-            card["validation_status"] = validate_card(card)
-
-            if card["validation_status"] == VALIDATION_NO_EXTRUSION_STEP:
+            if not card_has_usable_extrusion_step(card):
                 message = "Skipped because this row has no extrusion step."
                 result.skipped += 1
                 result.row_errors.append(f"Row {row_number}: {message}")
@@ -217,7 +207,6 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                         row_number=row_number,
                         order_number=order_number,
                         action="skipped",
-                        validation_status=card["validation_status"],
                         message=message,
                     )
                 )
@@ -233,7 +222,6 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                         row_number=row_number,
                         order_number=order_number,
                         action="skipped",
-                        validation_status=card["validation_status"],
                         message=message,
                     )
                 )
@@ -255,7 +243,6 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                         row_number=row_number,
                         order_number=order_number,
                         action="skipped",
-                        validation_status=card["validation_status"],
                         message=message,
                     )
                 )
@@ -265,12 +252,12 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                 update_imported_card_fields(connection, int(existing["id"]), int(result.batch_id), card)
                 result.updated += 1
                 action = "updated"
-                message = import_success_message(card["validation_status"], updated=True)
+                message = import_success_message(updated=True)
             else:
                 insert_imported_card(connection, int(result.batch_id), card)
                 result.created += 1
                 action = "created"
-                message = import_success_message(card["validation_status"], updated=False)
+                message = import_success_message(updated=False)
 
             result.rows_imported += 1
             result.row_results.append(
@@ -278,7 +265,6 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                     row_number=row_number,
                     order_number=order_number,
                     action=action,
-                    validation_status=card["validation_status"],
                     message=message,
                 )
             )
@@ -295,7 +281,7 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
     return result
 
 
-def import_success_message(validation_status: str, *, updated: bool) -> str:
+def import_success_message(*, updated: bool) -> str:
     action = "Updated existing card" if updated else "Created new card"
     return f"{action}; ready for planning."
 
@@ -343,14 +329,11 @@ def clean_cell(value: Any) -> str:
     return str(value).strip()
 
 
-def validate_card(card: dict[str, str]) -> str:
+def card_has_usable_extrusion_step(card: dict[str, str]) -> bool:
     extrusion_flag = normalize_flag(card["extrusion_flag"])
     has_extrusion_details = any(card[field] for field in EXTRUSION_DETAIL_FIELDS)
 
-    if extrusion_flag not in TRUE_EXTRUSION_FLAGS or not has_extrusion_details:
-        return VALIDATION_NO_EXTRUSION_STEP
-
-    return VALIDATION_READY
+    return extrusion_flag in TRUE_EXTRUSION_FLAGS and has_extrusion_details
 
 
 def normalize_flag(value: str) -> str:
@@ -361,13 +344,11 @@ def insert_imported_card(connection, batch_id: int, card: dict[str, str]) -> Non
     columns = (
         "import_batch_id",
         "status",
-        "validation_status",
         *IMPORT_FIELDS,
     )
     values = [
         batch_id,
         STATUS_IMPORTED,
-        card["validation_status"],
         *(card[field] for field in IMPORT_FIELDS),
     ]
     placeholders = ", ".join("?" for _ in columns)
@@ -384,14 +365,12 @@ def insert_imported_card(connection, batch_id: int, card: dict[str, str]) -> Non
 def update_imported_card_fields(connection, card_id: int, batch_id: int, card: dict[str, str]) -> None:
     assignments = [
         "import_batch_id = ?",
-        "validation_status = ?",
         *(f"{field} = ?" for field in IMPORT_FIELDS),
         "version = version + 1",
         "updated_at = CURRENT_TIMESTAMP",
     ]
     values = [
         batch_id,
-        card["validation_status"],
         *(card[field] for field in IMPORT_FIELDS),
         card_id,
     ]

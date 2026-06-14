@@ -13,6 +13,24 @@
   --red-soft: #ffebe9;
   --blue: #0969da;
   --blue-soft: #ddf4ff;
+  --status-imported-bg: #ddf4ff;
+  --status-imported-border: #8bb8e8;
+  --status-imported-text: #0969da;
+  --status-pending-bg: #ddf4ff;
+  --status-pending-border: #8bb8e8;
+  --status-pending-text: #0969da;
+  --status-running-bg: #ddf4ff;
+  --status-running-border: #8bb8e8;
+  --status-running-text: #0969da;
+  --status-paused-bg: #ffedd5;
+  --status-paused-border: #fb923c;
+  --status-paused-text: #9a3412;
+  --status-completed-bg: #dcfce7;
+  --status-completed-border: #22c55e;
+  --status-completed-text: #166534;
+  --status-cancelled-bg: #fee2e2;
+  --status-cancelled-border: #ef4444;
+  --status-cancelled-text: #991b1b;
   font-family: "Segoe UI", Arial, sans-serif;
 }
 
@@ -33,6 +51,10 @@ a {
 
 button,
 input {
+  font: inherit;
+}
+
+textarea {
   font: inherit;
 }
 
@@ -67,6 +89,10 @@ button:disabled {
   width: min(1180px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 24px 0;
+}
+
+.wide-page {
+  width: min(1360px, calc(100vw - 32px));
 }
 
 .page-header,
@@ -215,6 +241,242 @@ select {
   padding: 0 9px;
 }
 
+.filter-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.filter-form label,
+.admin-card-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.filter-form input,
+.admin-card-form input,
+.admin-card-form textarea {
+  min-height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text);
+  font: inherit;
+  text-transform: none;
+}
+
+.admin-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(360px, 0.7fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.admin-card-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.admin-card-form .wide,
+.admin-card-form button {
+  grid-column: 1 / -1;
+}
+
+.danger-form {
+  margin-top: 14px;
+}
+
+.danger-form button {
+  border-color: #f0a3a8;
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.admin-review-page {
+  padding-bottom: 36px;
+}
+
+.admin-card-header {
+  align-items: flex-start;
+}
+
+.admin-card-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.admin-operational-form {
+  display: grid;
+  gap: 16px;
+}
+
+.operational-panel .section-head {
+  align-items: flex-start;
+}
+
+.operational-info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.operational-info-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.operational-info-grid label,
+.quantity-group {
+  min-width: 0;
+}
+
+.operational-info-grid label,
+.quantity-edit-grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.operational-info-grid span,
+.quantity-edit-grid span,
+.field-label,
+.secondary-note {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.operational-info-grid span,
+.quantity-edit-grid span,
+.field-label {
+  text-transform: uppercase;
+}
+
+.operational-info-grid input,
+.operational-info-grid textarea,
+.quantity-edit-grid input,
+.admin-recipe-table .cell {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text);
+  font: inherit;
+}
+
+.operational-info-grid textarea {
+  resize: vertical;
+}
+
+.operational-info-grid .wide,
+.quantity-group {
+  grid-column: 1 / -1;
+}
+
+.quantity-edit-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(120px, 0.5fr) minmax(0, 1.2fr) minmax(120px, 0.5fr);
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.recipe-table {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.recipe-head,
+.recipe-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1.25fr) minmax(0, 0.9fr) minmax(0, 0.9fr);
+  align-items: stretch;
+}
+
+.recipe-head {
+  min-height: 34px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.recipe-row {
+  min-height: 46px;
+  border-top: 1px solid var(--line);
+}
+
+.recipe-head div,
+.recipe-row > div {
+  min-width: 0;
+  border-right: 1px solid var(--line);
+  padding: 8px;
+}
+
+.recipe-head div:last-child,
+.recipe-row > div:last-child {
+  border-right: 0;
+}
+
+.component {
+  background: var(--surface-soft);
+  font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-recipe-table small {
+  display: block;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+
+.readonly-cell {
+  color: var(--muted);
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.secondary-note {
+  margin: 10px 0 0;
+  line-height: 1.35;
+  text-transform: none;
+}
+
+.admin-review-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 16px;
+  align-items: start;
+  margin-top: 16px;
+}
+
+.roll-tare {
+  margin-bottom: 10px;
+}
+
+.timing-summary {
+  margin-bottom: 12px;
+}
+
+.admin-system-section {
+  background: var(--surface-soft);
+}
+
 thead th {
   border-top: 0;
   color: var(--muted);
@@ -227,8 +489,52 @@ thead th {
   border-radius: 999px;
   background: var(--surface-soft);
   padding: 2px 8px;
+  display: inline-flex;
   font-size: 12px;
   font-weight: 800;
+  white-space: nowrap;
+}
+
+.pill.imported,
+.pill.status-imported {
+  border-color: var(--status-imported-border);
+  background: var(--status-imported-bg);
+  color: var(--status-imported-text);
+}
+
+.pill.pending,
+.pill.status-pending {
+  border-color: var(--status-pending-border);
+  background: var(--status-pending-bg);
+  color: var(--status-pending-text);
+}
+
+.pill.running,
+.pill.status-running {
+  border-color: var(--status-running-border);
+  background: var(--status-running-bg);
+  color: var(--status-running-text);
+}
+
+.pill.paused,
+.pill.status-paused {
+  border-color: var(--status-paused-border);
+  background: var(--status-paused-bg);
+  color: var(--status-paused-text);
+}
+
+.pill.completed,
+.pill.status-completed {
+  border-color: var(--status-completed-border);
+  background: var(--status-completed-bg);
+  color: var(--status-completed-text);
+}
+
+.pill.cancelled,
+.pill.status-cancelled {
+  border-color: var(--status-cancelled-border);
+  background: var(--status-cancelled-bg);
+  color: var(--status-cancelled-text);
 }
 
 .action-created,
@@ -320,24 +626,29 @@ thead th {
   box-shadow: inset 0 0 0 1px var(--blue);
 }
 
+.queue-card.pending {
+  background: var(--status-pending-bg);
+  border-color: var(--status-pending-border);
+}
+
 .queue-card.running {
-  background: var(--green-soft);
-  border-color: #79c990;
+  background: var(--status-running-bg);
+  border-color: var(--status-running-border);
 }
 
 .queue-card.paused {
-  background: var(--surface-soft);
-  border-color: var(--line-strong);
+  background: var(--status-paused-bg);
+  border-color: var(--status-paused-border);
 }
 
 .queue-card.completed {
-  background: var(--blue-soft);
-  border-color: #8bb8e8;
+  background: var(--status-completed-bg);
+  border-color: var(--status-completed-border);
 }
 
 .queue-card.cancelled {
-  background: var(--red-soft);
-  border-color: #f0a3a8;
+  background: var(--status-cancelled-bg);
+  border-color: var(--status-cancelled-border);
 }
 
 .work-surface {
@@ -455,6 +766,10 @@ thead th {
   grid-column: 1 / -1;
 }
 
+.detail-grid.single-column {
+  grid-template-columns: 1fr;
+}
+
 .detail-grid dt,
 .field-form label {
   color: var(--muted);
@@ -502,12 +817,30 @@ thead th {
   .roll-controls,
   .tare-form,
   .total-grid,
-  .machine-grid {
+  .machine-grid,
+  .filter-form,
+  .admin-detail-grid,
+  .admin-card-form,
+  .admin-review-grid,
+  .operational-info-grid,
+  .quantity-edit-grid {
     grid-template-columns: 1fr;
   }
 
   .terminal-sidebar {
     border-right: 0;
     border-bottom: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 760px) {
+  .recipe-head,
+  .recipe-row {
+    grid-template-columns: 92px minmax(0, 1fr);
+  }
+
+  .recipe-head div:nth-child(n+3),
+  .recipe-row > div:nth-child(n+3) {
+    display: none;
   }
 }

@@ -40,7 +40,6 @@
         <thead>
           <tr>
             <th>Order</th>
-            <th>Validation</th>
             <th>Customer</th>
             <th>Product</th>
             <th>Machine</th>
@@ -52,19 +51,18 @@
           {% for card in draft_cards %}
             <tr>
               <td>{{ card.order_number }}</td>
-              <td><span class="pill">{{ card.validation_status }}</span></td>
               <td>{{ card.customer or "-" }}</td>
               <td>{{ card.product_type or "-" }}</td>
               <td colspan="3">
                 <form class="release-form" action="/admin/cards/{{ card.id }}/release" method="post">
-                  <select name="machine_id" aria-label="Machine for order {{ card.order_number }}" {% if card.validation_status != "ready" %}disabled{% endif %}>
+                  <select name="machine_id" aria-label="Machine for order {{ card.order_number }}">
                     <option value="">Machine</option>
                     {% for machine in machines %}
                       <option value="{{ machine.id }}" {% if card.machine_id == machine.id %}selected{% endif %}>{{ machine.id }}</option>
                     {% endfor %}
                   </select>
-                  <input name="machine_sequence" inputmode="numeric" pattern="[0-9]*" placeholder="Sequence" value="{{ card.machine_sequence or '' }}" aria-label="Sequence for order {{ card.order_number }}" {% if card.validation_status != "ready" %}disabled{% endif %}>
-                  <button type="submit" {% if card.validation_status != "ready" %}disabled{% endif %}>Release</button>
+                  <input name="machine_sequence" inputmode="numeric" pattern="[0-9]*" placeholder="Sequence" value="{{ card.machine_sequence or '' }}" aria-label="Sequence for order {{ card.order_number }}">
+                  <button type="submit">Release</button>
                 </form>
               </td>
             </tr>
@@ -90,7 +88,7 @@
               <div class="queue-card {{ card.status }}">
                 <strong>{{ card.machine_sequence }}. No. {{ card.order_number }}</strong>
                 <span>{{ card.customer or "No customer" }}</span>
-                <span>{{ card.status }}</span>
+                <span class="pill status-{{ card.status }}">{{ card.status }}</span>
               </div>
             {% endfor %}
           {% else %}

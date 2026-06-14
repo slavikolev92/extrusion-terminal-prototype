@@ -31,7 +31,7 @@ Scope:
 - admin CSV upload.
 - app-ready CSV template.
 - imported cards persist with `imported` status.
-- validation status `ready` for saved cards; no-extrusion rows are reported and skipped.
+- saved cards are checked directly for usable extrusion data; no-extrusion rows are reported and skipped.
 - duplicate order numbers skipped by default.
 - overwrite option updates imported fields only.
 - read-only Excel `.bas` export macro.
@@ -54,7 +54,7 @@ Scope:
 - machine selection on imported draft rows.
 - numeric machine sequence input.
 - release one card at a time.
-- block release unless card is `ready`.
+- block release unless the current card fields represent usable extrusion work.
 - block invalid machine/sequence.
 - block duplicate active sequence on the same machine.
 - released card becomes `pending`.
@@ -235,14 +235,16 @@ Implementation bundles:
    - Add or update tests for duplicate skip/overwrite result reporting and production-data preservation.
    - Manual check: import a CSV with new, duplicate, overwrite, and skipped no-extrusion rows.
 
-2. Admin card index and full card detail/review
+2. Admin card index and full card detail/review - implementation, admin detail redesign correction, and automated checks complete; manual UI check pending
    - Add `/admin/cards` with basic filters: order number, customer, product, order/delivery date, and status.
    - Add `/admin/cards/{card_id}` showing the full operational card data, status, machine/sequence, timing, tare, rolls, and terminal material fields.
    - Make imported/front-card fields editable from the admin detail page.
    - Use loaded `version` conflict checks for admin edits.
    - Preserve production data when editing imported/front-card fields.
    - Add tests for admin detail fetch, imported-field editing, stale edit blocking, and preservation of rolls/timing/tare/status.
-   - Manual check: find a card, edit imported fields, verify terminal-entered data remains intact.
+   - Manual check still pending: find a card, edit imported fields, verify terminal-entered data remains intact.
+
+   Cleanup note: removed the redundant validation-status UI/product concept from Import, Planning, Cards, and admin card detail. Import outcomes now rely on Action/Message, while import, admin edit, and release still validate current extrusion fields server-side.
 
 3. Planning, release, reassignment, and resequencing
    - Build `/admin/planning` around two views: unreleased ready card pool and four machine queues.

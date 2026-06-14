@@ -5,14 +5,13 @@ from dataclasses import dataclass
 from .constants import (
     ACTIVE_TERMINAL_STATUSES,
     STATUS_IMPORTED,
-    STATUS_DRAFT,
     STATUS_PENDING,
     STATUS_PAUSED,
     STATUS_RUNNING,
 )
 
 
-RELEASABLE_STATUSES = (STATUS_IMPORTED, STATUS_DRAFT)
+RELEASABLE_STATUSES = (STATUS_IMPORTED,)
 
 
 @dataclass(frozen=True)
@@ -25,7 +24,7 @@ def validate_release_fields(card: dict) -> RuleResult:
     messages: list[str] = []
 
     if card.get("status") not in RELEASABLE_STATUSES:
-        messages.append("Only draft/imported cards can be released.")
+        messages.append("Only imported cards can be released.")
     if not card.get("machine_id"):
         messages.append("Machine assignment is required before release.")
     if card.get("machine_sequence") in (None, ""):

@@ -56,7 +56,6 @@
               <th>CSV row</th>
               <th>Order</th>
               <th>Action</th>
-              <th>Validation</th>
               <th>Message</th>
             </tr>
           </thead>
@@ -66,13 +65,6 @@
                 <td>{{ row.row_number or "File" }}</td>
                 <td>{{ row.order_number or "-" }}</td>
                 <td><span class="pill action-{{ row.action }}">{{ row.action }}</span></td>
-                <td>
-                  {% if row.validation_status %}
-                    <span class="pill">{{ row.validation_status }}</span>
-                  {% else %}
-                    -
-                  {% endif %}
-                </td>
                 <td>{{ row.message }}</td>
               </tr>
             {% endfor %}

@@ -1,6 +1,5 @@
-"""Shared status and validation constants for the extrusion pilot."""
+"""Shared workflow status constants for the extrusion pilot."""
 
-STATUS_DRAFT = "draft"
 STATUS_IMPORTED = "imported"
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
@@ -9,7 +8,6 @@ STATUS_COMPLETED = "completed"
 STATUS_CANCELLED = "cancelled"
 
 CARD_STATUSES = (
-    STATUS_DRAFT,
     STATUS_IMPORTED,
     STATUS_PENDING,
     STATUS_RUNNING,
@@ -27,14 +25,4 @@ ACTIVE_TERMINAL_STATUSES = (
 ARCHIVE_STATUSES = (
     STATUS_COMPLETED,
     STATUS_CANCELLED,
-)
-
-VALIDATION_READY = "ready"
-VALIDATION_DUPLICATE = "duplicate"
-VALIDATION_NO_EXTRUSION_STEP = "no extrusion step"
-
-VALIDATION_STATUSES = (
-    VALIDATION_READY,
-    VALIDATION_DUPLICATE,
-    VALIDATION_NO_EXTRUSION_STEP,
 )

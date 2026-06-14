@@ -90,7 +90,7 @@ Before continuing beyond the current import/release milestone, add automated tes
 - no-extrusion rows are reported and skipped without creating cards
 - duplicate imports are skipped by default
 - overwrite import preserves production data
-- release requires `ready` validation
+- release requires current fields that represent usable extrusion work
 - release blocks duplicate active machine sequence
 - released cards appear in machine queues
 - version/conflict checks block stale edits once editable card forms exist

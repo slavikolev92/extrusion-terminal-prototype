@@ -7,8 +7,6 @@ from app import db
 from app.constants import (
     STATUS_IMPORTED,
     STATUS_PENDING,
-    VALIDATION_NO_EXTRUSION_STEP,
-    VALIDATION_READY,
 )
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 
@@ -71,9 +69,7 @@ def test_csv_import_creates_imported_ready_cards(connection):
         overwrite_existing=False,
     )
 
-    card = connection.execute(
-        "SELECT order_number, status, validation_status, customer FROM cards"
-    ).fetchone()
+    card = connection.execute("SELECT order_number, status, customer FROM cards").fetchone()
 
     assert result.rows_seen == 1
     assert result.rows_imported == 1
@@ -82,10 +78,9 @@ def test_csv_import_creates_imported_ready_cards(connection):
     assert result.row_results[0].row_number == 2
     assert result.row_results[0].order_number == "25278"
     assert result.row_results[0].action == "created"
-    assert result.row_results[0].validation_status == VALIDATION_READY
+    assert result.row_results[0].message == "Created new card; ready for planning."
     assert card["order_number"] == "25278"
     assert card["status"] == STATUS_IMPORTED
-    assert card["validation_status"] == VALIDATION_READY
     assert card["customer"] == "Test Customer"
 
 
@@ -104,13 +99,12 @@ def test_csv_import_skips_rows_without_extrusion_step(connection):
     )
 
     card = connection.execute(
-        "SELECT order_number, status, validation_status FROM cards WHERE order_number = '25279'"
+        "SELECT order_number, status FROM cards WHERE order_number = '25279'"
     ).fetchone()
 
     assert result.rows_imported == 0
     assert result.skipped == 1
     assert result.row_results[0].action == "skipped"
-    assert result.row_results[0].validation_status == VALIDATION_NO_EXTRUSION_STEP
     assert "no extrusion step" in result.row_results[0].message
     assert card is None
 
@@ -164,7 +158,6 @@ def test_duplicate_row_inside_same_csv_is_reported_and_skipped(connection):
     assert result.duplicate_rows == ["25288"]
     assert [row.action for row in result.row_results] == ["created", "skipped"]
     assert result.row_results[1].row_number == 3
-    assert result.row_results[1].validation_status == VALIDATION_READY
     assert "inside this CSV" in result.row_results[1].message
     assert card["customer"] == "First Customer"
 
@@ -302,22 +295,20 @@ def test_release_succeeds_for_ready_cards(connection):
     assert card["machine_sequence"] == 1
 
 
-def test_release_blocks_invalid_non_ready_cards(connection):
+def test_release_blocks_cards_without_usable_extrusion_fields(connection):
     cursor = connection.execute(
         """
         INSERT INTO cards (
             order_number,
             status,
-            validation_status,
             customer,
             product_type
         )
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?)
         """,
         (
             "25283",
             STATUS_IMPORTED,
-            VALIDATION_NO_EXTRUSION_STEP,
             "Invalid Customer",
             "PE film",
         ),
@@ -333,7 +324,7 @@ def test_release_blocks_invalid_non_ready_cards(connection):
     ).fetchone()
 
     assert not release_result.ok
-    assert "Only ready cards can be released." in release_result.messages
+    assert "Card must have a usable extrusion step before release." in release_result.messages
     assert card["status"] == STATUS_IMPORTED
     assert card["machine_id"] is None
     assert card["machine_sequence"] is None

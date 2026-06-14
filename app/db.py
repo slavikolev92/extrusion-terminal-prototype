@@ -12,13 +12,10 @@ from .constants import (
     CARD_STATUSES,
     STATUS_CANCELLED,
     STATUS_COMPLETED,
-    STATUS_DRAFT,
     STATUS_IMPORTED,
     STATUS_PAUSED,
     STATUS_PENDING,
     STATUS_RUNNING,
-    VALIDATION_READY,
-    VALIDATION_STATUSES,
 )
 from .rules import RuleResult
 
@@ -58,7 +55,6 @@ CREATE TABLE IF NOT EXISTS cards (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_number TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL DEFAULT 'imported' CHECK (status IN ({_sql_list(CARD_STATUSES)})),
-    validation_status TEXT NOT NULL DEFAULT 'ready' CHECK (validation_status IN ({_sql_list(VALIDATION_STATUSES)})),
     import_batch_id INTEGER REFERENCES import_batches(id) ON DELETE SET NULL,
     machine_id INTEGER REFERENCES machines(id) ON DELETE RESTRICT,
     machine_sequence INTEGER,
@@ -170,6 +166,8 @@ def connect() -> sqlite3.Connection:
 def init_db() -> None:
     with connect() as connection:
         connection.executescript(SCHEMA_SQL)
+        # Existing pilot databases may still have legacy cards.validation_status;
+        # current code ignores it and validates current card fields directly.
         connection.executemany(
             """
             INSERT INTO machines (id, name, is_operational, display_order)
@@ -204,9 +202,9 @@ def fetch_cards_by_status(statuses: tuple[str, ...]) -> list[dict[str, Any]]:
     with connect() as connection:
         rows = connection.execute(
             f"""
-            SELECT id, order_number, status, validation_status, machine_id,
-                   machine_sequence, customer, product_type, quantity_1,
-                   unit_1, tare_weight, updated_at
+            SELECT id, order_number, status, machine_id, machine_sequence,
+                   customer, product_type, quantity_1, unit_1, tare_weight,
+                   updated_at
             FROM cards
             WHERE status IN ({placeholders})
             ORDER BY machine_id IS NULL, machine_id, machine_sequence IS NULL,
@@ -221,8 +219,8 @@ def fetch_card_by_id(card_id: int) -> dict[str, Any] | None:
     with connect() as connection:
         row = connection.execute(
             """
-            SELECT id, order_number, status, validation_status, machine_id,
-                   machine_sequence, customer, product_type
+            SELECT id, order_number, status, machine_id, machine_sequence,
+                   customer, product_type
             FROM cards
             WHERE id = ?
             """,
@@ -231,14 +229,98 @@ def fetch_card_by_id(card_id: int) -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
+def fetch_admin_cards(filters: dict[str, str] | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    filters = filters or {}
+    clauses: list[str] = []
+    values: list[Any] = []
+
+    text_filters = {
+        "order_number": "order_number",
+        "customer": "customer",
+        "product": "product_type",
+    }
+    for filter_name, column_name in text_filters.items():
+        value = filters.get(filter_name, "").strip()
+        if value:
+            clauses.append(f"LOWER({column_name}) LIKE LOWER(?)")
+            values.append(f"%{value}%")
+
+    exact_filters = {"status": "status"}
+    for filter_name, column_name in exact_filters.items():
+        value = filters.get(filter_name, "").strip()
+        if value:
+            clauses.append(f"{column_name} = ?")
+            values.append(value)
+
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    values.append(limit)
+
+    with connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT id, order_number, status, customer, product_type,
+                   machine_id, machine_sequence, updated_at
+            FROM cards
+            {where_sql}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            values,
+        ).fetchall()
+        return rows_to_dicts(rows)
+
+
+def fetch_admin_card_detail(card_id: int) -> dict[str, Any] | None:
+    with connect() as connection:
+        row = connection.execute(
+            """
+            SELECT id, order_number, status, import_batch_id, machine_id,
+                   machine_sequence, order_date, delivery_date,
+                   customer, city, product_type, quantity_1, unit_1,
+                   quantity_2, unit_2, product_form, material,
+                   size_thickness, notes, extrusion_flag, extrusion_folding,
+                   extrusion_next_operation, extrusion_treatment,
+                   raw_material_a, raw_material_b, raw_material_c,
+                   linear_pe, antistatic, masterbatch, chalk,
+                   packaging_method, actual_raw_material_used,
+                   raw_material_brand_grade, raw_material_batch_lot,
+                   tare_weight, first_started_at, finished_at, cancelled_at,
+                   version, created_at, updated_at
+            FROM cards
+            WHERE id = ?
+            """,
+            (card_id,),
+        ).fetchone()
+        if not row:
+            return None
+
+        card = dict(row)
+        card["timing_segments"] = fetch_timing_segments_for_card(connection, card_id)
+        card["total_production_seconds"] = calculate_total_production_seconds(
+            connection,
+            card_id,
+        )
+        card["active_segment_started_at"] = next(
+            (
+                segment["started_at"]
+                for segment in card["timing_segments"]
+                if segment["ended_at"] is None
+            ),
+            None,
+        )
+        roll_data = fetch_roll_entries_and_totals(connection, card_id, card["tare_weight"])
+        card.update(roll_data)
+        return card
+
+
 def fetch_terminal_card_detail(card_id: int) -> dict[str, Any] | None:
     terminal_statuses = (*ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES)
     placeholders = ", ".join("?" for _ in terminal_statuses)
     with connect() as connection:
         row = connection.execute(
             f"""
-            SELECT id, order_number, status, validation_status, machine_id,
-                   machine_sequence, order_date, delivery_date, customer, city,
+            SELECT id, order_number, status, machine_id, machine_sequence,
+                   order_date, delivery_date, customer, city,
                    product_type, quantity_1, unit_1, quantity_2, unit_2,
                    product_form, material, size_thickness, notes,
                    extrusion_folding, extrusion_next_operation,
@@ -1218,6 +1300,121 @@ def validate_card_allows_roll_entry(card: sqlite3.Row | None) -> RuleResult:
     return RuleResult(True)
 
 
+def update_admin_imported_fields(
+    card_id: int,
+    loaded_version: int,
+    fields: dict[str, str],
+) -> RuleResult:
+    from .importer import IMPORT_FIELDS, card_has_usable_extrusion_step
+
+    cleaned_fields = {field: str(fields.get(field, "")).strip() for field in IMPORT_FIELDS}
+    if not cleaned_fields["order_number"]:
+        return RuleResult(False, ("Order number is required.",))
+
+    if not card_has_usable_extrusion_step(cleaned_fields):
+        return RuleResult(
+            False,
+            ("Imported fields must keep a usable extrusion step before saving.",),
+        )
+
+    with connect() as connection:
+        card = connection.execute(
+            """
+            SELECT id, order_number, version
+            FROM cards
+            WHERE id = ?
+            """,
+            (card_id,),
+        ).fetchone()
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        duplicate = connection.execute(
+            """
+            SELECT id
+            FROM cards
+            WHERE order_number = ?
+              AND id <> ?
+            """,
+            (cleaned_fields["order_number"], card_id),
+        ).fetchone()
+        if duplicate:
+            return RuleResult(False, ("Order number already exists on another card.",))
+
+        assignments = [
+            *(f"{field} = ?" for field in IMPORT_FIELDS),
+            "version = version + 1",
+            "updated_at = CURRENT_TIMESTAMP",
+        ]
+        values: list[Any] = [
+            *(cleaned_fields[field] for field in IMPORT_FIELDS),
+            card_id,
+        ]
+
+        try:
+            connection.execute(
+                f"""
+                UPDATE cards
+                SET {", ".join(assignments)}
+                WHERE id = ?
+                """,
+                values,
+            )
+            if cleaned_fields["order_number"] != card["order_number"]:
+                connection.execute(
+                    """
+                    UPDATE roll_entries
+                    SET order_number = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE card_id = ?
+                    """,
+                    (cleaned_fields["order_number"], card_id),
+                )
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return RuleResult(False, ("Order number already exists on another card.",))
+
+    return RuleResult(True, ("Imported card fields saved.",))
+
+
+def delete_admin_imported_card(card_id: int, loaded_version: int) -> RuleResult:
+    with connect() as connection:
+        card = connection.execute(
+            """
+            SELECT id, order_number, status, version
+            FROM cards
+            WHERE id = ?
+            """,
+            (card_id,),
+        ).fetchone()
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        if card["status"] != STATUS_IMPORTED:
+            return RuleResult(False, ("Only unreleased imported cards can be deleted.",))
+
+        roll_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM roll_entries WHERE card_id = ?",
+                (card_id,),
+            ).fetchone()[0]
+        )
+        segment_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM production_time_segments WHERE card_id = ?",
+                (card_id,),
+            ).fetchone()[0]
+        )
+        if roll_count or segment_count:
+            return RuleResult(False, ("Cards with production data cannot be deleted.",))
+
+        connection.execute("DELETE FROM cards WHERE id = ?", (card_id,))
+
+    return RuleResult(True, (f"Order {card['order_number']} deleted.",))
+
+
 def update_terminal_material_fields(
     card_id: int,
     loaded_version: int,
@@ -1267,12 +1464,15 @@ def update_terminal_material_fields(
 
 
 def release_card(card_id: int, machine_id: int, machine_sequence: int) -> RuleResult:
+    from .importer import IMPORT_FIELDS, card_has_usable_extrusion_step
+
     messages: list[str] = []
+    import_columns = ", ".join(IMPORT_FIELDS)
 
     with connect() as connection:
         card = connection.execute(
-            """
-            SELECT id, order_number, status, validation_status
+            f"""
+            SELECT id, status, {import_columns}
             FROM cards
             WHERE id = ?
             """,
@@ -1282,11 +1482,12 @@ def release_card(card_id: int, machine_id: int, machine_sequence: int) -> RuleRe
         if not card:
             return RuleResult(False, ("Card was not found.",))
 
-        if card["status"] not in (STATUS_DRAFT, STATUS_IMPORTED):
-            messages.append("Only draft/imported cards can be released.")
+        if card["status"] != STATUS_IMPORTED:
+            messages.append("Only imported cards can be released.")
 
-        if card["validation_status"] != VALIDATION_READY:
-            messages.append("Only ready cards can be released.")
+        card_fields = {field: str(card[field] or "") for field in IMPORT_FIELDS}
+        if not card_has_usable_extrusion_step(card_fields):
+            messages.append("Card must have a usable extrusion step before release.")
 
         machine_exists = connection.execute(
             "SELECT 1 FROM machines WHERE id = ?",

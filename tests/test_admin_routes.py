@@ -11,6 +11,10 @@ def test_admin_routes_are_registered():
     assert "/admin" in route_paths
     assert "/admin/import" in route_paths
     assert "/admin/planning" in route_paths
+    assert "/admin/cards" in route_paths
+    assert "/admin/cards/{card_id}" in route_paths
+    assert "/admin/cards/{card_id}/imported-fields" in route_paths
+    assert "/admin/cards/{card_id}/delete" in route_paths
 
 
 def test_admin_redirects_to_import():

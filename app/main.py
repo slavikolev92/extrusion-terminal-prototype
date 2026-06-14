@@ -9,13 +9,21 @@ from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .constants import ACTIVE_TERMINAL_STATUSES, ARCHIVE_STATUSES, STATUS_DRAFT, STATUS_IMPORTED
+from .constants import (
+    ACTIVE_TERMINAL_STATUSES,
+    ARCHIVE_STATUSES,
+    CARD_STATUSES,
+    STATUS_IMPORTED,
+)
 from .db import (
     add_roll_gross_weight,
     cancel_card,
     database_summary,
     delete_roll_entry,
+    delete_admin_imported_card,
     fetch_cards_by_status,
+    fetch_admin_card_detail,
+    fetch_admin_cards,
     fetch_terminal_card_detail,
     fetch_machine_queues,
     fetch_machines,
@@ -27,15 +35,64 @@ from .db import (
     resume_production_timing,
     restore_cancelled_card,
     start_production_timing,
+    update_admin_imported_fields,
     update_roll_gross_weight,
     update_tare_weight,
     update_terminal_material_fields,
 )
-from .importer import csv_template, import_cards_from_csv
+from .importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
 from .rules import RuleResult
 
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+
+STATUS_LABELS = {
+    "imported": "Импортирана",
+    "pending": "Чакаща",
+    "running": "В производство",
+    "paused": "Пауза",
+    "completed": "Приключена",
+    "cancelled": "Анулирана",
+}
+
+IMPORT_FIELD_LABELS = {
+    "order_number": "№ поръчка",
+    "order_date": "Дата",
+    "delivery_date": "Дата доставка",
+    "customer": "Фирма",
+    "city": "Град",
+    "product_type": "Вид изделие",
+    "quantity_1": "Количество",
+    "unit_1": "Мярка",
+    "quantity_2": "Допълнително количество",
+    "unit_2": "Мярка",
+    "product_form": "Вид заготовка",
+    "material": "Материал",
+    "size_thickness": "Размер/дебелина",
+    "notes": "Забележки",
+    "extrusion_flag": "Екструзия",
+    "extrusion_folding": "Фалцоване",
+    "extrusion_next_operation": "Следваща операция",
+    "extrusion_treatment": "Третиране",
+    "raw_material_a": "A",
+    "raw_material_b": "B",
+    "raw_material_c": "C",
+    "linear_pe": "Линеен",
+    "antistatic": "Антистатик",
+    "masterbatch": "Мастербач",
+    "chalk": "Креда",
+    "packaging_method": "Опаковка",
+}
+
+RECIPE_FIELD_ROWS = (
+    ("A", "raw_material_a"),
+    ("B", "raw_material_b"),
+    ("C", "raw_material_c"),
+    ("Линеен", "linear_pe"),
+    ("Антистатик", "antistatic"),
+    ("Мастербач", "masterbatch"),
+    ("Креда", "chalk"),
+)
 
 
 @asynccontextmanager
@@ -59,13 +116,77 @@ def admin_import_context(**extra: Any) -> dict[str, Any]:
 
 def admin_planning_context(**extra: Any) -> dict[str, Any]:
     context: dict[str, Any] = {
-        "draft_cards": fetch_cards_by_status((STATUS_DRAFT, STATUS_IMPORTED)),
+        "draft_cards": fetch_cards_by_status((STATUS_IMPORTED,)),
         "machine_queues": fetch_machine_queues(),
         "machines": fetch_machines(),
         "summary": database_summary(),
     }
     context.update(extra)
     return context
+
+
+def admin_card_detail_context(card_id: int, **extra: Any) -> dict[str, Any] | None:
+    card = fetch_admin_card_detail(card_id)
+    if not card:
+        return None
+    card["total_production_duration"] = format_duration(
+        card["total_production_seconds"],
+    )
+    context: dict[str, Any] = {
+        "card": card,
+        "import_fields": IMPORT_FIELDS,
+        "import_field_labels": IMPORT_FIELD_LABELS,
+        "status_labels": STATUS_LABELS,
+        "quantity_lines": build_quantity_lines(card),
+        "recipe_rows": build_recipe_rows(card),
+    }
+    context.update(extra)
+    return context
+
+
+def build_quantity_lines(card: dict[str, Any]) -> list[dict[str, str]]:
+    lines: list[dict[str, str]] = []
+    for index in (1, 2):
+        quantity = str(card.get(f"quantity_{index}") or "").strip()
+        unit = str(card.get(f"unit_{index}") or "").strip()
+        if quantity or unit:
+            lines.append(
+                {
+                    "quantity_field": f"quantity_{index}",
+                    "unit_field": f"unit_{index}",
+                    "quantity": quantity,
+                    "unit": unit,
+                    "display": " ".join(part for part in (quantity, unit) if part),
+                }
+            )
+    return lines
+
+
+def build_recipe_rows(card: dict[str, Any]) -> list[dict[str, str | bool]]:
+    rows: list[dict[str, str | bool]] = []
+    for label, field in RECIPE_FIELD_ROWS:
+        is_actual_row = field == "raw_material_a"
+        rows.append(
+            {
+                "label": label,
+                "field": field,
+                "planned": str(card.get(field) or ""),
+                "actual_material": str(card.get("actual_raw_material_used") or "")
+                if is_actual_row
+                else "",
+                "brand": str(card.get("raw_material_brand_grade") or "") if is_actual_row else "",
+                "batch": str(card.get("raw_material_batch_lot") or "") if is_actual_row else "",
+                "has_actual": bool(
+                    is_actual_row
+                    and (
+                        card.get("actual_raw_material_used")
+                        or card.get("raw_material_brand_grade")
+                        or card.get("raw_material_batch_lot")
+                    )
+                ),
+            }
+        )
+    return rows
 
 
 @app.get("/")
@@ -132,6 +253,78 @@ async def admin_planning(request: Request):
         "admin_planning.html",
         admin_planning_context(),
     )
+
+
+@app.get("/admin/cards")
+async def admin_cards(
+    request: Request,
+    order_number: str = "",
+    customer: str = "",
+    product: str = "",
+    status: str = "",
+):
+    filters = {
+        "order_number": order_number,
+        "customer": customer,
+        "product": product,
+        "status": status,
+    }
+    return templates.TemplateResponse(
+        request,
+        "admin_cards.html",
+        {
+            "cards": fetch_admin_cards(filters),
+            "filters": filters,
+            "card_statuses": CARD_STATUSES,
+            "summary": database_summary(),
+        },
+    )
+
+
+@app.get("/admin/cards/{card_id}")
+async def admin_card_detail(request: Request, card_id: int):
+    context = admin_card_detail_context(card_id)
+    if context is None:
+        return PlainTextResponse("Card was not found.", status_code=404)
+    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+
+
+@app.post("/admin/cards/{card_id}/imported-fields")
+async def save_admin_imported_fields(request: Request, card_id: int):
+    form = await request.form()
+    parsed_version, imported_field_result = parse_loaded_version(
+        str(form.get("loaded_version", ""))
+    )
+    if parsed_version is not None:
+        imported_field_result = update_admin_imported_fields(
+            card_id=card_id,
+            loaded_version=parsed_version,
+            fields={field: str(form.get(field, "")) for field in IMPORT_FIELDS},
+        )
+
+    context = admin_card_detail_context(card_id, imported_field_result=imported_field_result)
+    if context is None:
+        return PlainTextResponse("Card was not found.", status_code=404)
+    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+
+
+@app.post("/admin/cards/{card_id}/delete")
+async def delete_admin_card(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+):
+    parsed_version, delete_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        delete_result = delete_admin_imported_card(card_id, parsed_version)
+
+    if delete_result.ok:
+        return RedirectResponse(url="/admin/cards", status_code=303)
+
+    context = admin_card_detail_context(card_id, delete_result=delete_result)
+    if context is None:
+        return PlainTextResponse("Card was not found.", status_code=404)
+    return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
 @app.post("/admin/cards/{card_id}/release")

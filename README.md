@@ -109,12 +109,9 @@ Admin page behavior:
 
 - The admin page is used by the shift manager.
 - CSV import should show imported orders as a simple draft list.
-- Each imported draft should show validation status.
-- Expected validation statuses include:
-  - `ready`
-  - `duplicate`
-- `ready` means the draft can be submitted/released to the terminal.
-- `duplicate` is based on order number.
+- Each imported draft should be reviewable before release.
+- Duplicate and overwrite outcomes should be shown through import actions/messages.
+- Release should validate the current card fields directly before sending the card to the terminal.
 - Rows with `no extrusion step` should be reported in the import result and skipped. They should not create cards because they cannot be used by the extrusion workstation.
 - The shift manager can edit any field on an imported card/order from the admin page.
 - Admin editing is broader than terminal editing; terminal editing is intentionally limited.
@@ -714,7 +711,7 @@ Do not restore over `data/extrusion_terminal.sqlite3` while the app is running. 
 
 Troubleshooting:
 
-- Failed imports: confirm the uploaded file is CSV, has headers including `order_number` and `extrusion_flag`, and shows extrusion data. Rows without an extrusion step remain imported for review but cannot be released.
+- Failed imports: confirm the uploaded file is CSV, has headers including `order_number` and `extrusion_flag`, and shows extrusion data. Rows without an extrusion step are reported in the import result and skipped.
 - Duplicate releases: if release says a machine sequence is already active, pick another sequence or finish, cancel, or reassign the conflicting active card first.
 - Server restart: stop with `Ctrl+C`, start with the documented startup command, run `/health`, then refresh the terminal browser. Data should persist because it is stored in SQLite, not browser memory.
 
