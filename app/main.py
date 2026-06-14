@@ -36,6 +36,7 @@ from .db import (
     restore_cancelled_card,
     start_production_timing,
     update_admin_imported_fields,
+    update_card_planning,
     update_roll_gross_weight,
     update_tare_weight,
     update_terminal_material_fields,
@@ -120,6 +121,7 @@ def admin_planning_context(**extra: Any) -> dict[str, Any]:
         "machine_queues": fetch_machine_queues(),
         "machines": fetch_machines(),
         "summary": database_summary(),
+        "status_labels": STATUS_LABELS,
     }
     context.update(extra)
     return context
@@ -331,12 +333,20 @@ async def delete_admin_card(
 async def release_card_to_terminal(
     request: Request,
     card_id: int,
+    loaded_version: str = Form(...),
     machine_id: str = Form(...),
     machine_sequence: str = Form(...),
 ):
-    release_result = parse_release_form(machine_id, machine_sequence)
-    if release_result.ok:
-        release_result = release_card(card_id, int(machine_id), int(machine_sequence))
+    parsed_version, release_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        parsed_planning, release_result = parse_planning_form(machine_id, machine_sequence)
+        if parsed_planning is not None:
+            release_result = release_card(
+                card_id,
+                parsed_planning["machine_id"],
+                parsed_planning["machine_sequence"],
+                loaded_version=parsed_version,
+            )
 
     return templates.TemplateResponse(
         request,
@@ -345,7 +355,36 @@ async def release_card_to_terminal(
     )
 
 
-def parse_release_form(machine_id: str, machine_sequence: str) -> RuleResult:
+@app.post("/admin/cards/{card_id}/planning")
+async def update_admin_card_planning(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+    machine_id: str = Form(...),
+    machine_sequence: str = Form(...),
+):
+    parsed_version, planning_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        parsed_planning, planning_result = parse_planning_form(machine_id, machine_sequence)
+        if parsed_planning is not None:
+            planning_result = update_card_planning(
+                card_id=card_id,
+                loaded_version=parsed_version,
+                machine_id=parsed_planning["machine_id"],
+                machine_sequence=parsed_planning["machine_sequence"],
+            )
+
+    return templates.TemplateResponse(
+        request,
+        "admin_planning.html",
+        admin_planning_context(planning_result=planning_result),
+    )
+
+
+def parse_planning_form(
+    machine_id: str,
+    machine_sequence: str,
+) -> tuple[dict[str, int] | None, RuleResult]:
     messages: list[str] = []
 
     try:
@@ -366,7 +405,14 @@ def parse_release_form(machine_id: str, machine_sequence: str) -> RuleResult:
     if parsed_sequence < 1:
         messages.append("Sequence must be 1 or higher.")
 
-    return RuleResult(not messages, tuple(messages))
+    result = RuleResult(not messages, tuple(messages))
+    if not result.ok:
+        return None, result
+
+    return {
+        "machine_id": parsed_machine_id,
+        "machine_sequence": parsed_sequence,
+    }, result
 
 
 @app.get("/terminal")

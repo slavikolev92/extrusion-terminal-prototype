@@ -14,6 +14,7 @@ def test_admin_routes_are_registered():
     assert "/admin/cards" in route_paths
     assert "/admin/cards/{card_id}" in route_paths
     assert "/admin/cards/{card_id}/imported-fields" in route_paths
+    assert "/admin/cards/{card_id}/planning" in route_paths
     assert "/admin/cards/{card_id}/delete" in route_paths
 
 

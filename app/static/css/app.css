@@ -241,6 +241,32 @@ select {
   padding: 0 9px;
 }
 
+.planning-form {
+  display: grid;
+  grid-template-columns: 72px minmax(72px, 1fr) auto;
+  gap: 7px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.planning-form input {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 0 9px;
+}
+
+.planning-form button {
+  min-height: 38px;
+  padding: 0 10px;
+}
+
+.queue-card-main {
+  display: grid;
+  gap: 4px;
+}
+
 .filter-form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));

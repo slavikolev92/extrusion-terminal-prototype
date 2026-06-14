@@ -246,7 +246,7 @@ Implementation bundles:
 
    Cleanup note: removed the redundant validation-status UI/product concept from Import, Planning, Cards, and admin card detail. Import outcomes now rely on Action/Message, while import, admin edit, and release still validate current extrusion fields server-side.
 
-3. Planning, release, reassignment, and resequencing
+3. Planning, release, reassignment, and resequencing - done
    - Build `/admin/planning` around two views: unreleased ready card pool and four machine queues.
    - Release imported ready cards by assigning machine and sequence.
    - Allow shift manager to change machine and sequence after release for active cards.
@@ -254,7 +254,7 @@ Implementation bundles:
    - Preserve backend protection against assigning a running/paused card into an occupied machine conflict.
    - Show validation errors clearly near the affected card/queue action.
    - Add tests for release, reassignment, resequencing, duplicate sequence blocking, occupied machine blocking, and stale edit blocking.
-   - Manual check: release multiple cards, reorder queues, move a card between machines, and verify terminal queue order.
+   - Manual check complete with a temporary database: release multiple cards, resequence a queue, move a pending card between machines, and verify terminal queue order.
 
 4. Admin workflow controls and production-data correction
    - Add admin-side reversible cancel/restore using the same business rules as terminal cancel/restore.

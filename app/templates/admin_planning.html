@@ -29,6 +29,21 @@
     </section>
   {% endif %}
 
+  {% if planning_result %}
+    <section class="section">
+      <div class="notice {% if not planning_result.ok %}error{% endif %}">
+        {% if planning_result.ok %}
+          <strong>Planning saved:</strong>
+        {% else %}
+          <strong>Planning blocked:</strong>
+        {% endif %}
+        {% for message in planning_result.messages %}
+          <div>{{ message }}</div>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+
   <section class="section">
     <div class="section-head">
       <h2>Unreleased cards</h2>
@@ -50,11 +65,12 @@
         <tbody>
           {% for card in draft_cards %}
             <tr>
-              <td>{{ card.order_number }}</td>
+              <td><a href="/admin/cards/{{ card.id }}">{{ card.order_number }}</a></td>
               <td>{{ card.customer or "-" }}</td>
               <td>{{ card.product_type or "-" }}</td>
               <td colspan="3">
                 <form class="release-form" action="/admin/cards/{{ card.id }}/release" method="post">
+                  <input type="hidden" name="loaded_version" value="{{ card.version }}">
                   <select name="machine_id" aria-label="Machine for order {{ card.order_number }}">
                     <option value="">Machine</option>
                     {% for machine in machines %}
@@ -86,9 +102,22 @@
           {% if queue.cards %}
             {% for card in queue.cards %}
               <div class="queue-card {{ card.status }}">
-                <strong>{{ card.machine_sequence }}. No. {{ card.order_number }}</strong>
-                <span>{{ card.customer or "No customer" }}</span>
-                <span class="pill status-{{ card.status }}">{{ card.status }}</span>
+                <div class="queue-card-main">
+                  <strong>{{ card.machine_sequence }}. <a href="/admin/cards/{{ card.id }}">No. {{ card.order_number }}</a></strong>
+                  <span>{{ card.customer or "No customer" }}</span>
+                  <small>{{ card.product_type or "No product" }}</small>
+                  <span class="pill status-{{ card.status }}">{{ status_labels.get(card.status, card.status) }}</span>
+                </div>
+                <form class="planning-form" action="/admin/cards/{{ card.id }}/planning" method="post">
+                  <input type="hidden" name="loaded_version" value="{{ card.version }}">
+                  <select name="machine_id" aria-label="New machine for order {{ card.order_number }}">
+                    {% for machine in machines %}
+                      <option value="{{ machine.id }}" {% if card.machine_id == machine.id %}selected{% endif %}>{{ machine.id }}</option>
+                    {% endfor %}
+                  </select>
+                  <input name="machine_sequence" inputmode="numeric" pattern="[0-9]*" value="{{ card.machine_sequence or '' }}" aria-label="New sequence for order {{ card.order_number }}">
+                  <button type="submit">Save</button>
+                </form>
               </div>
             {% endfor %}
           {% else %}

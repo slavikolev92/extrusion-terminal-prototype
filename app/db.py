@@ -204,7 +204,7 @@ def fetch_cards_by_status(statuses: tuple[str, ...]) -> list[dict[str, Any]]:
             f"""
             SELECT id, order_number, status, machine_id, machine_sequence,
                    customer, product_type, quantity_1, unit_1, tare_weight,
-                   updated_at
+                   version, updated_at
             FROM cards
             WHERE status IN ({placeholders})
             ORDER BY machine_id IS NULL, machine_id, machine_sequence IS NULL,
@@ -1463,7 +1463,12 @@ def update_terminal_material_fields(
     return RuleResult(True, ("Material fields saved.",))
 
 
-def release_card(card_id: int, machine_id: int, machine_sequence: int) -> RuleResult:
+def release_card(
+    card_id: int,
+    machine_id: int,
+    machine_sequence: int,
+    loaded_version: int | None = None,
+) -> RuleResult:
     from .importer import IMPORT_FIELDS, card_has_usable_extrusion_step
 
     messages: list[str] = []
@@ -1472,7 +1477,7 @@ def release_card(card_id: int, machine_id: int, machine_sequence: int) -> RuleRe
     with connect() as connection:
         card = connection.execute(
             f"""
-            SELECT id, status, {import_columns}
+            SELECT id, order_number, status, version, {import_columns}
             FROM cards
             WHERE id = ?
             """,
@@ -1481,6 +1486,11 @@ def release_card(card_id: int, machine_id: int, machine_sequence: int) -> RuleRe
 
         if not card:
             return RuleResult(False, ("Card was not found.",))
+
+        if loaded_version is not None:
+            version_result = validate_loaded_card_version(card, loaded_version)
+            if not version_result.ok:
+                return version_result
 
         if card["status"] != STATUS_IMPORTED:
             messages.append("Only imported cards can be released.")
@@ -1540,6 +1550,112 @@ def release_card(card_id: int, machine_id: int, machine_sequence: int) -> RuleRe
             )
 
     return RuleResult(True, (f"Order {card['order_number']} released to machine {machine_id}.",))
+
+
+def update_card_planning(
+    card_id: int,
+    loaded_version: int,
+    machine_id: int,
+    machine_sequence: int,
+) -> RuleResult:
+    with connect() as connection:
+        card = connection.execute(
+            """
+            SELECT id, order_number, status, machine_id, machine_sequence, version,
+                   tare_weight, actual_raw_material_used, raw_material_brand_grade,
+                   raw_material_batch_lot, first_started_at, finished_at, cancelled_at
+            FROM cards
+            WHERE id = ?
+            """,
+            (card_id,),
+        ).fetchone()
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        if card["status"] not in ACTIVE_TERMINAL_STATUSES:
+            return RuleResult(
+                False,
+                ("Only active terminal cards can be reassigned or resequenced.",),
+            )
+
+        messages: list[str] = []
+        machine_exists = connection.execute(
+            "SELECT 1 FROM machines WHERE id = ?",
+            (machine_id,),
+        ).fetchone()
+        if not machine_exists:
+            messages.append("Select a valid machine.")
+
+        if machine_sequence < 1:
+            messages.append("Sequence must be 1 or higher.")
+
+        duplicate = fetch_duplicate_active_sequence_card(
+            connection,
+            card_id=card_id,
+            machine_id=machine_id,
+            machine_sequence=machine_sequence,
+        )
+        if duplicate:
+            messages.append(
+                f"Machine {machine_id} already has active sequence {machine_sequence} "
+                f"on order {duplicate['order_number']}."
+            )
+
+        if card["status"] in (STATUS_RUNNING, STATUS_PAUSED):
+            occupied_card = fetch_occupied_machine_card(connection, card_id, machine_id)
+            if occupied_card:
+                messages.append(
+                    f"Machine {machine_id} is occupied by order "
+                    f"{occupied_card['order_number']}."
+                )
+
+        if messages:
+            return RuleResult(False, tuple(messages))
+
+        try:
+            connection.execute(
+                """
+                UPDATE cards
+                SET machine_id = ?,
+                    machine_sequence = ?,
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (machine_id, machine_sequence, card_id),
+            )
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return RuleResult(
+                False,
+                ("Planning update failed because the machine/sequence is already active.",),
+            )
+
+    return RuleResult(
+        True,
+        (f"Order {card['order_number']} moved to machine {machine_id}, sequence {machine_sequence}.",),
+    )
+
+
+def fetch_duplicate_active_sequence_card(
+    connection: sqlite3.Connection,
+    card_id: int,
+    machine_id: int,
+    machine_sequence: int,
+) -> sqlite3.Row | None:
+    return connection.execute(
+        f"""
+        SELECT order_number
+        FROM cards
+        WHERE id <> ?
+          AND machine_id = ?
+          AND machine_sequence = ?
+          AND status IN ({", ".join("?" for _ in ACTIVE_TERMINAL_STATUSES)})
+        LIMIT 1
+        """,
+        (card_id, machine_id, machine_sequence, *ACTIVE_TERMINAL_STATUSES),
+    ).fetchone()
 
 
 def fetch_machine_queues() -> list[dict[str, Any]]:
