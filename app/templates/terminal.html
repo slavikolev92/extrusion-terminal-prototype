@@ -100,6 +100,11 @@
       </div>
     </header>
 
+    <div class="sync-banner" id="terminal-sync-banner" role="status" aria-live="polite">
+      <span>Updates available. Finish the current entry, then refresh.</span>
+      <button type="button" id="terminal-sync-refresh">Refresh</button>
+    </div>
+
     {% if workflow_result %}
       <div class="notice {% if not workflow_result.ok %}error{% endif %}">
         {% for message in workflow_result.messages %}
@@ -409,4 +414,88 @@
     </section>
   </section>
 </main>
+
+<script>
+  (() => {
+    const initialSnapshot = {{ terminal_snapshot | tojson }};
+    const selectedCardId = {% if selected_card %}{{ selected_card.id }}{% else %}null{% endif %};
+    const banner = document.getElementById("terminal-sync-banner");
+    const refreshButton = document.getElementById("terminal-sync-refresh");
+    const editableSelector = "input:not([type='hidden']):not([disabled]), textarea:not([disabled]), select:not([disabled])";
+    let currentSignature = initialSnapshot.signature;
+    let terminalDirty = false;
+    let formSubmitting = false;
+
+    const showBanner = () => {
+      banner?.classList.add("visible");
+    };
+
+    const isEditingFocused = () => {
+      const active = document.activeElement;
+      return Boolean(active && active.matches && active.matches(editableSelector));
+    };
+
+    const canRefreshNow = () => !formSubmitting && !terminalDirty && !isEditingFocused();
+
+    const snapshotUrl = () => {
+      const url = new URL("/terminal/snapshot", window.location.origin);
+      if (selectedCardId !== null) {
+        url.searchParams.set("selected_card_id", String(selectedCardId));
+      }
+      return url;
+    };
+
+    document.addEventListener("input", (event) => {
+      if (event.target.matches && event.target.matches(editableSelector)) {
+        terminalDirty = true;
+      }
+    });
+
+    document.addEventListener("change", (event) => {
+      if (event.target.matches && event.target.matches(editableSelector)) {
+        terminalDirty = true;
+      }
+    });
+
+    document.addEventListener("submit", () => {
+      formSubmitting = true;
+      terminalDirty = false;
+    });
+
+    refreshButton?.addEventListener("click", () => {
+      window.location.reload();
+    });
+
+    const pollSnapshot = async () => {
+      if (formSubmitting) {
+        return;
+      }
+
+      try {
+        const response = await fetch(snapshotUrl(), {
+          headers: { "Accept": "application/json" },
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          return;
+        }
+        const snapshot = await response.json();
+        if (snapshot.signature === currentSignature) {
+          return;
+        }
+
+        if (canRefreshNow()) {
+          window.location.reload();
+          return;
+        }
+
+        showBanner();
+      } catch {
+        // Manual refresh and server-side version checks still protect the workflow.
+      }
+    };
+
+    window.setInterval(pollSnapshot, 10000);
+  })();
+</script>
 {% endblock %}

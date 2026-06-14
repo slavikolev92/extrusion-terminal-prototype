@@ -35,6 +35,7 @@ from .db import (
     resume_production_timing,
     restore_cancelled_card,
     start_production_timing,
+    terminal_snapshot as fetch_terminal_snapshot,
     update_admin_imported_fields,
     update_card_planning,
     update_roll_gross_weight,
@@ -420,6 +421,11 @@ async def terminal(request: Request):
     return terminal_response(request)
 
 
+@app.get("/terminal/snapshot")
+async def terminal_snapshot_route(selected_card_id: int | None = None):
+    return fetch_terminal_snapshot(selected_card_id)
+
+
 @app.get("/terminal/cards/{card_id}")
 async def terminal_card(request: Request, card_id: int):
     return terminal_response(request, selected_card_id=card_id)
@@ -664,6 +670,7 @@ def terminal_response(
             "active_cards": fetch_cards_by_status(ACTIVE_TERMINAL_STATUSES),
             "archive_cards": fetch_cards_by_status(ARCHIVE_STATUSES),
             "selected_card": selected_card,
+            "terminal_snapshot": fetch_terminal_snapshot(selected_card_id),
             **extra,
         },
     )

@@ -215,6 +215,83 @@ def fetch_cards_by_status(statuses: tuple[str, ...]) -> list[dict[str, Any]]:
         return rows_to_dicts(rows)
 
 
+def terminal_snapshot(selected_card_id: int | None = None) -> dict[str, Any]:
+    terminal_visible_statuses = (*ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES)
+    active_placeholders = ", ".join("?" for _ in ACTIVE_TERMINAL_STATUSES)
+    visible_placeholders = ", ".join("?" for _ in terminal_visible_statuses)
+
+    with connect() as connection:
+        active_rows = connection.execute(
+            f"""
+            SELECT id, order_number, status, machine_id, machine_sequence,
+                   version, updated_at
+            FROM cards
+            WHERE status IN ({active_placeholders})
+            ORDER BY machine_id IS NULL, machine_id, machine_sequence IS NULL,
+                     machine_sequence, order_number, id
+            """,
+            ACTIVE_TERMINAL_STATUSES,
+        ).fetchall()
+        active_cards = rows_to_dicts(active_rows)
+
+        selected_card = None
+        selected_card_missing = False
+        if selected_card_id is not None:
+            selected_row = connection.execute(
+                f"""
+                SELECT id, order_number, status, machine_id, machine_sequence,
+                       version, updated_at
+                FROM cards
+                WHERE id = ?
+                  AND status IN ({visible_placeholders})
+                """,
+                (selected_card_id, *terminal_visible_statuses),
+            ).fetchone()
+            if selected_row:
+                selected_card = dict(selected_row)
+            else:
+                selected_card_missing = True
+
+    active_signature = "|".join(
+        ":".join(
+            str(card[field] if card[field] is not None else "")
+            for field in (
+                "id",
+                "order_number",
+                "status",
+                "machine_id",
+                "machine_sequence",
+                "version",
+                "updated_at",
+            )
+        )
+        for card in active_cards
+    )
+    selected_signature = "none"
+    if selected_card is not None:
+        selected_signature = ":".join(
+            str(selected_card[field] if selected_card[field] is not None else "")
+            for field in (
+                "id",
+                "status",
+                "machine_id",
+                "machine_sequence",
+                "version",
+                "updated_at",
+            )
+        )
+    elif selected_card_missing:
+        selected_signature = f"missing:{selected_card_id}"
+
+    return {
+        "active_signature": active_signature,
+        "signature": f"{active_signature}||{selected_signature}",
+        "selected_card": selected_card,
+        "selected_card_missing": selected_card_missing,
+        "active_cards": active_cards,
+    }
+
+
 def fetch_card_by_id(card_id: int) -> dict[str, Any] | None:
     with connect() as connection:
         row = connection.execute(

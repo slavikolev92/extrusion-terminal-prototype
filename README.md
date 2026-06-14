@@ -723,7 +723,7 @@ Conflict handling:
 - When admin or terminal opens a card, the app should remember the loaded version.
 - On save/action, if the card was changed elsewhere after it was loaded, the app should warn and require reload before continuing.
 - Admin edits after release/running should be allowed.
-- Terminal should show admin changes after refresh/reload.
+- Terminal should show admin changes after refresh/reload. The terminal also checks for active queue and selected-card changes in the background; when safe it refreshes automatically, and while an operator is typing it shows an updates-available prompt instead.
 - Do not build complex merge tooling for this prototype.
 - The goal is to prevent silent overwrites when shift manager/admin and terminal are editing the same card.
 

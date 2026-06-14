@@ -199,6 +199,23 @@ small {
   background: var(--red-soft);
 }
 
+.sync-banner {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  border: 1px solid #abc9e4;
+  border-radius: 7px;
+  background: var(--blue-soft);
+  padding: 12px;
+  font-weight: 750;
+}
+
+.sync-banner.visible {
+  display: flex;
+}
+
 .notice ul {
   margin-bottom: 0;
 }

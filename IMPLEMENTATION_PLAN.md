@@ -257,6 +257,12 @@ Implementation bundles:
    - Add tests for release, reassignment, resequencing, sequence normalization, occupied machine blocking, and stale edit blocking.
    - Manual check complete with a temporary database: release multiple cards, resequence a queue, move a pending card between machines, normalize sequence gaps, and verify terminal queue order.
 
+3a. Terminal sync awareness - done
+   - Added a read-only `/terminal/snapshot` endpoint for active queue and selected-card version/status checks.
+   - `/terminal` now polls for queue or selected-card changes and refreshes automatically only when no operator input is focused or dirty.
+   - If updates arrive while the operator is typing, the terminal shows an updates-available banner with a manual refresh button.
+   - Existing `loaded_version` conflict checks remain the authoritative stale-write protection.
+
 4. Admin workflow controls and production-data correction
    - Add admin-side reversible cancel/restore using the same business rules as terminal cancel/restore.
    - Add admin editing for production-side correction fields needed before print: tare, roll gross weights, terminal material fields, and timing segments.
