@@ -31,7 +31,7 @@ Scope:
 - admin CSV upload.
 - app-ready CSV template.
 - imported cards persist with `imported` status.
-- validation status `ready` or `no extrusion step`.
+- validation status `ready` for saved cards; no-extrusion rows are reported and skipped.
 - duplicate order numbers skipped by default.
 - overwrite option updates imported fields only.
 - read-only Excel `.bas` export macro.
@@ -76,7 +76,7 @@ Scope:
 - add a focused test runner and test structure.
 - test database initialization.
 - test CSV import success.
-- test no-extrusion validation.
+- test no-extrusion rows are reported and skipped.
 - test duplicate import skip.
 - test overwrite import preservation.
 - test release success.
@@ -229,11 +229,11 @@ Implementation bundles:
 1. Admin navigation and import UX cleanup - done
    - Split the current one-page `/admin` workflow into clear admin sections/routes.
    - Keep import persistent on upload; do not create an unsaved temporary import queue.
-   - Show an import result table that makes created, skipped duplicate, overwritten, no-extrusion, and row-error outcomes obvious.
+   - Show an import result table that makes created, skipped duplicate, overwritten, skipped no-extrusion, and row-error outcomes obvious.
    - Keep overwrite as an explicit checkbox/action.
    - Preserve current backend behavior that overwrite updates imported/front-card fields only.
    - Add or update tests for duplicate skip/overwrite result reporting and production-data preservation.
-   - Manual check: import a CSV with new, duplicate, overwrite, and no-extrusion rows.
+   - Manual check: import a CSV with new, duplicate, overwrite, and skipped no-extrusion rows.
 
 2. Admin card index and full card detail/review
    - Add `/admin/cards` with basic filters: order number, customer, product, order/delivery date, and status.

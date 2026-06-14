@@ -113,9 +113,9 @@ Admin page behavior:
 - Expected validation statuses include:
   - `ready`
   - `duplicate`
-  - `no extrusion step`
 - `ready` means the draft can be submitted/released to the terminal.
 - `duplicate` is based on order number.
+- Rows with `no extrusion step` should be reported in the import result and skipped. They should not create cards because they cannot be used by the extrusion workstation.
 - The shift manager can edit any field on an imported card/order from the admin page.
 - Admin editing is broader than terminal editing; terminal editing is intentionally limited.
 - The admin page should provide a simple machine planning view split into four machine columns.
@@ -503,8 +503,8 @@ Confirmed export location convention:
 Validation direction:
 
 - The export may export selected rows, but the app import must validate whether each imported row is usable for the extrusion pilot.
-- If a row has no extrusion flag or empty/missing extrusion data, the app should notify the shift manager with a message such as `no extrusion step`.
-- This validation belongs to CSV import/draft review so bad rows do not silently enter the terminal queue.
+- If a row has no extrusion flag or empty/missing extrusion data, the app should notify the shift manager with a message such as `no extrusion step` and skip that row without saving a card.
+- This validation belongs to CSV import review so unusable rows do not enter planning or the terminal queue.
 - If an imported order number already exists, the app should warn and allow the shift manager to overwrite/re-import.
 - Overwrite/re-import should update only imported/front-card/order information.
 - Overwrite/re-import must not overwrite existing roll entries, gross weights, timing data, or other back-page/workstation-entered production data.

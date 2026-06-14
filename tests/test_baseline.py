@@ -89,7 +89,7 @@ def test_csv_import_creates_imported_ready_cards(connection):
     assert card["customer"] == "Test Customer"
 
 
-def test_csv_import_flags_rows_without_extrusion_step(connection):
+def test_csv_import_skips_rows_without_extrusion_step(connection):
     result = import_cards_from_csv(
         "no-extrusion.csv",
         csv_bytes(
@@ -107,12 +107,12 @@ def test_csv_import_flags_rows_without_extrusion_step(connection):
         "SELECT order_number, status, validation_status FROM cards WHERE order_number = '25279'"
     ).fetchone()
 
-    assert result.rows_imported == 1
-    assert result.row_results[0].action == "created"
+    assert result.rows_imported == 0
+    assert result.skipped == 1
+    assert result.row_results[0].action == "skipped"
     assert result.row_results[0].validation_status == VALIDATION_NO_EXTRUSION_STEP
     assert "no extrusion step" in result.row_results[0].message
-    assert card["status"] == STATUS_IMPORTED
-    assert card["validation_status"] == VALIDATION_NO_EXTRUSION_STEP
+    assert card is None
 
 
 def test_duplicate_import_is_skipped_by_default(connection):
@@ -303,20 +303,27 @@ def test_release_succeeds_for_ready_cards(connection):
 
 
 def test_release_blocks_invalid_non_ready_cards(connection):
-    result = import_cards_from_csv(
-        "invalid.csv",
-        csv_bytes(
-            extrusion_row(
-                "25283",
-                extrusion_flag="",
-                raw_material_a="",
-                packaging_method="",
-            )
+    cursor = connection.execute(
+        """
+        INSERT INTO cards (
+            order_number,
+            status,
+            validation_status,
+            customer,
+            product_type
+        )
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            "25283",
+            STATUS_IMPORTED,
+            VALIDATION_NO_EXTRUSION_STEP,
+            "Invalid Customer",
+            "PE film",
         ),
-        overwrite_existing=False,
     )
-    assert result.rows_imported == 1
-    card_id = int(connection.execute("SELECT id FROM cards WHERE order_number = '25283'").fetchone()["id"])
+    connection.commit()
+    card_id = int(cursor.lastrowid)
 
     release_result = db.release_card(card_id, machine_id=1, machine_sequence=1)
 

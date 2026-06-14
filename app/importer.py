@@ -208,6 +208,21 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
 
             card["validation_status"] = validate_card(card)
 
+            if card["validation_status"] == VALIDATION_NO_EXTRUSION_STEP:
+                message = "Skipped because this row has no extrusion step."
+                result.skipped += 1
+                result.row_errors.append(f"Row {row_number}: {message}")
+                result.row_results.append(
+                    ImportRowResult(
+                        row_number=row_number,
+                        order_number=order_number,
+                        action="skipped",
+                        validation_status=card["validation_status"],
+                        message=message,
+                    )
+                )
+                continue
+
             if order_number in seen_order_numbers:
                 message = "Duplicate order number inside this CSV."
                 result.skipped += 1
@@ -282,8 +297,6 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
 
 def import_success_message(validation_status: str, *, updated: bool) -> str:
     action = "Updated existing card" if updated else "Created new card"
-    if validation_status == VALIDATION_NO_EXTRUSION_STEP:
-        return f"{action}; imported for review but blocked from release: no extrusion step."
     return f"{action}; ready for planning."
 
 

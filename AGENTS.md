@@ -87,7 +87,7 @@ Before continuing beyond the current import/release milestone, add automated tes
 
 - database initialization seeds machines `1` through `4`
 - CSV import creates imported cards
-- no-extrusion rows are flagged
+- no-extrusion rows are reported and skipped without creating cards
 - duplicate imports are skipped by default
 - overwrite import preserves production data
 - release requires `ready` validation
