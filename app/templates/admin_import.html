@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}Import - Extrusion Terminal{% endblock %}
+
+{% block body %}
+<main class="page">
+  <header class="page-header">
+    <div>
+      <p class="eyebrow">Shift manager</p>
+      <h1>Import</h1>
+    </div>
+    <a class="nav-link" href="/terminal">Terminal</a>
+  </header>
+
+  {% include "_admin_nav.html" %}
+
+  <section class="section">
+    <div class="section-head">
+      <h2>CSV import</h2>
+      <a href="/admin/import-template.csv">Download template</a>
+    </div>
+
+    <form class="import-form" action="/admin/import" method="post" enctype="multipart/form-data">
+      <label>
+        CSV file
+        <input type="file" name="csv_file" accept=".csv,text/csv" required>
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" name="overwrite_existing" value="true">
+        Overwrite imported card fields for matching order numbers
+      </label>
+      <button type="submit">Import CSV</button>
+    </form>
+
+    {% if import_result %}
+      <div class="notice {% if import_result.row_errors and import_result.rows_imported == 0 %}error{% endif %}">
+        <strong>Import result:</strong>
+        {{ import_result.rows_imported }} imported
+        ({{ import_result.created }} new, {{ import_result.updated }} updated),
+        {{ import_result.skipped }} skipped from {{ import_result.rows_seen }} rows.
+      </div>
+    {% endif %}
+  </section>
+
+  {% if import_result %}
+    <section class="section">
+      <div class="section-head">
+        <h2>Uploaded rows</h2>
+        <span>{{ import_result.filename }}</span>
+      </div>
+
+      {% if import_result.row_results %}
+        <table class="compact-table">
+          <thead>
+            <tr>
+              <th>CSV row</th>
+              <th>Order</th>
+              <th>Action</th>
+              <th>Validation</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in import_result.row_results %}
+              <tr>
+                <td>{{ row.row_number or "File" }}</td>
+                <td>{{ row.order_number or "-" }}</td>
+                <td><span class="pill action-{{ row.action }}">{{ row.action }}</span></td>
+                <td>
+                  {% if row.validation_status %}
+                    <span class="pill">{{ row.validation_status }}</span>
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+                <td>{{ row.message }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="empty">No rows were processed.</p>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Recent imports</h2>
+      <span>{{ recent_imports|length }} shown</span>
+    </div>
+    {% if recent_imports %}
+      <table>
+        <thead>
+          <tr>
+            <th>Batch</th>
+            <th>File</th>
+            <th>Rows seen</th>
+            <th>Rows imported</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for batch in recent_imports %}
+            <tr>
+              <td>{{ batch.id }}</td>
+              <td>{{ batch.source_filename or "-" }}</td>
+              <td>{{ batch.rows_seen }}</td>
+              <td>{{ batch.rows_imported }}</td>
+              <td>{{ batch.created_at }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="empty">No imports yet.</p>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

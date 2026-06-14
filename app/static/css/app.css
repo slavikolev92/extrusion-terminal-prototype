@@ -121,6 +121,14 @@ h3 {
   padding: 16px;
 }
 
+.admin-nav,
+.admin-landing {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
 .section-head {
   margin-bottom: 12px;
 }
@@ -221,6 +229,24 @@ thead th {
   padding: 2px 8px;
   font-size: 12px;
   font-weight: 800;
+}
+
+.action-created,
+.action-updated {
+  border-color: #79c990;
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.action-skipped {
+  border-color: var(--line-strong);
+  background: var(--surface-soft);
+}
+
+.action-blocked {
+  border-color: #f0a3a8;
+  background: var(--red-soft);
+  color: var(--red);
 }
 
 .machine-grid {

@@ -48,12 +48,20 @@ app = FastAPI(title="Extrusion Terminal Prototype", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
 
-def admin_context(**extra: Any) -> dict[str, Any]:
+def admin_import_context(**extra: Any) -> dict[str, Any]:
+    context: dict[str, Any] = {
+        "recent_imports": fetch_recent_import_batches(),
+        "summary": database_summary(),
+    }
+    context.update(extra)
+    return context
+
+
+def admin_planning_context(**extra: Any) -> dict[str, Any]:
     context: dict[str, Any] = {
         "draft_cards": fetch_cards_by_status((STATUS_DRAFT, STATUS_IMPORTED)),
         "machine_queues": fetch_machine_queues(),
         "machines": fetch_machines(),
-        "recent_imports": fetch_recent_import_batches(),
         "summary": database_summary(),
     }
     context.update(extra)
@@ -75,11 +83,16 @@ async def health() -> dict:
 
 
 @app.get("/admin")
-async def admin(request: Request):
+async def admin() -> RedirectResponse:
+    return RedirectResponse(url="/admin/import", status_code=303)
+
+
+@app.get("/admin/import")
+async def admin_import(request: Request):
     return templates.TemplateResponse(
         request,
-        "admin.html",
-        admin_context(),
+        "admin_import.html",
+        admin_import_context(),
     )
 
 
@@ -107,8 +120,17 @@ async def import_csv(
 
     return templates.TemplateResponse(
         request,
-        "admin.html",
-        admin_context(import_result=result),
+        "admin_import.html",
+        admin_import_context(import_result=result),
+    )
+
+
+@app.get("/admin/planning")
+async def admin_planning(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "admin_planning.html",
+        admin_planning_context(),
     )
 
 
@@ -125,8 +147,8 @@ async def release_card_to_terminal(
 
     return templates.TemplateResponse(
         request,
-        "admin.html",
-        admin_context(release_result=release_result),
+        "admin_planning.html",
+        admin_planning_context(release_result=release_result),
     )
 
 

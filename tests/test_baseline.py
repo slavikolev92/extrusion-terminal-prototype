@@ -78,6 +78,11 @@ def test_csv_import_creates_imported_ready_cards(connection):
     assert result.rows_seen == 1
     assert result.rows_imported == 1
     assert result.created == 1
+    assert len(result.row_results) == 1
+    assert result.row_results[0].row_number == 2
+    assert result.row_results[0].order_number == "25278"
+    assert result.row_results[0].action == "created"
+    assert result.row_results[0].validation_status == VALIDATION_READY
     assert card["order_number"] == "25278"
     assert card["status"] == STATUS_IMPORTED
     assert card["validation_status"] == VALIDATION_READY
@@ -103,6 +108,9 @@ def test_csv_import_flags_rows_without_extrusion_step(connection):
     ).fetchone()
 
     assert result.rows_imported == 1
+    assert result.row_results[0].action == "created"
+    assert result.row_results[0].validation_status == VALIDATION_NO_EXTRUSION_STEP
+    assert "no extrusion step" in result.row_results[0].message
     assert card["status"] == STATUS_IMPORTED
     assert card["validation_status"] == VALIDATION_NO_EXTRUSION_STEP
 
@@ -128,7 +136,73 @@ def test_duplicate_import_is_skipped_by_default(connection):
     assert duplicate.rows_imported == 0
     assert duplicate.skipped == 1
     assert duplicate.duplicate_rows == ["25280"]
+    assert duplicate.row_results[0].row_number == 2
+    assert duplicate.row_results[0].order_number == "25280"
+    assert duplicate.row_results[0].action == "skipped"
+    assert "overwrite" in duplicate.row_results[0].message
     assert card["customer"] == "Original Customer"
+
+
+def test_duplicate_row_inside_same_csv_is_reported_and_skipped(connection):
+    result = import_cards_from_csv(
+        "duplicate-in-file.csv",
+        csv_bytes(
+            extrusion_row("25288", customer="First Customer"),
+            extrusion_row("25288", customer="Second Customer"),
+        ),
+        overwrite_existing=False,
+    )
+
+    card = connection.execute(
+        "SELECT customer FROM cards WHERE order_number = '25288'"
+    ).fetchone()
+
+    assert result.rows_seen == 2
+    assert result.rows_imported == 1
+    assert result.created == 1
+    assert result.skipped == 1
+    assert result.duplicate_rows == ["25288"]
+    assert [row.action for row in result.row_results] == ["created", "skipped"]
+    assert result.row_results[1].row_number == 3
+    assert result.row_results[1].validation_status == VALIDATION_READY
+    assert "inside this CSV" in result.row_results[1].message
+    assert card["customer"] == "First Customer"
+
+
+def test_missing_order_number_row_is_reported_and_skipped(connection):
+    result = import_cards_from_csv(
+        "missing-order.csv",
+        csv_bytes(extrusion_row("")),
+        overwrite_existing=False,
+    )
+
+    card_count = connection.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+
+    assert result.rows_seen == 1
+    assert result.rows_imported == 0
+    assert result.skipped == 1
+    assert result.row_results[0].row_number == 2
+    assert result.row_results[0].order_number == ""
+    assert result.row_results[0].action == "skipped"
+    assert result.row_results[0].message == "Missing order_number."
+    assert card_count == 0
+
+
+def test_missing_required_columns_are_reported_as_file_level_blocker(connection):
+    result = import_cards_from_csv(
+        "missing-columns.csv",
+        b"order_number,customer\n25289,Customer\n",
+        overwrite_existing=False,
+    )
+
+    card_count = connection.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+
+    assert result.rows_seen == 0
+    assert result.rows_imported == 0
+    assert result.row_results[0].row_number is None
+    assert result.row_results[0].action == "blocked"
+    assert "Missing required CSV columns" in result.row_results[0].message
+    assert card_count == 0
 
 
 def test_overwrite_import_updates_imported_fields_and_preserves_production_data(connection):
@@ -196,6 +270,8 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
     ).fetchone()[0]
 
     assert result.updated == 1
+    assert result.row_results[0].action == "updated"
+    assert result.row_results[0].order_number == "25281"
     assert card["status"] == STATUS_PENDING
     assert card["machine_id"] == 2
     assert card["machine_sequence"] == 7

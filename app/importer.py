@@ -98,6 +98,15 @@ TRUE_EXTRUSION_FLAGS = {
 
 
 @dataclass
+class ImportRowResult:
+    row_number: int | None
+    order_number: str
+    action: str
+    validation_status: str
+    message: str
+
+
+@dataclass
 class ImportResult:
     filename: str
     rows_seen: int = 0
@@ -107,6 +116,7 @@ class ImportResult:
     skipped: int = 0
     duplicate_rows: list[str] = field(default_factory=list)
     row_errors: list[str] = field(default_factory=list)
+    row_results: list[ImportRowResult] = field(default_factory=list)
     batch_id: int | None = None
 
 
@@ -136,13 +146,33 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
     reader = csv.DictReader(io.StringIO(text))
 
     if not reader.fieldnames:
-        result.row_errors.append("CSV file has no header row.")
+        message = "CSV file has no header row."
+        result.row_errors.append(message)
+        result.row_results.append(
+            ImportRowResult(
+                row_number=None,
+                order_number="",
+                action="blocked",
+                validation_status="",
+                message=message,
+            )
+        )
         return result
 
     header_map = build_header_map(reader.fieldnames)
     missing_required = [field for field in ("order_number", "extrusion_flag") if field not in header_map.values()]
     if missing_required:
-        result.row_errors.append(f"Missing required CSV columns: {', '.join(missing_required)}.")
+        message = f"Missing required CSV columns: {', '.join(missing_required)}."
+        result.row_errors.append(message)
+        result.row_results.append(
+            ImportRowResult(
+                row_number=None,
+                order_number="",
+                action="blocked",
+                validation_status="",
+                message=message,
+            )
+        )
         return result
 
     with connect() as connection:
@@ -162,18 +192,39 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
             order_number = card["order_number"]
 
             if not order_number:
+                message = "Missing order_number."
                 result.skipped += 1
-                result.row_errors.append(f"Row {row_number}: missing order_number.")
+                result.row_errors.append(f"Row {row_number}: {message}")
+                result.row_results.append(
+                    ImportRowResult(
+                        row_number=row_number,
+                        order_number="",
+                        action="skipped",
+                        validation_status="",
+                        message=message,
+                    )
+                )
                 continue
 
+            card["validation_status"] = validate_card(card)
+
             if order_number in seen_order_numbers:
+                message = "Duplicate order number inside this CSV."
                 result.skipped += 1
                 result.duplicate_rows.append(order_number)
-                result.row_errors.append(f"Row {row_number}: duplicate order_number in this CSV: {order_number}.")
+                result.row_errors.append(f"Row {row_number}: {message} {order_number}.")
+                result.row_results.append(
+                    ImportRowResult(
+                        row_number=row_number,
+                        order_number=order_number,
+                        action="skipped",
+                        validation_status=card["validation_status"],
+                        message=message,
+                    )
+                )
                 continue
 
             seen_order_numbers.add(order_number)
-            card["validation_status"] = validate_card(card)
 
             existing = connection.execute(
                 "SELECT id FROM cards WHERE order_number = ?",
@@ -181,18 +232,41 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
             ).fetchone()
 
             if existing and not overwrite_existing:
+                message = "Skipped duplicate existing order. Select overwrite to update imported fields."
                 result.skipped += 1
                 result.duplicate_rows.append(order_number)
+                result.row_results.append(
+                    ImportRowResult(
+                        row_number=row_number,
+                        order_number=order_number,
+                        action="skipped",
+                        validation_status=card["validation_status"],
+                        message=message,
+                    )
+                )
                 continue
 
             if existing:
                 update_imported_card_fields(connection, int(existing["id"]), int(result.batch_id), card)
                 result.updated += 1
+                action = "updated"
+                message = import_success_message(card["validation_status"], updated=True)
             else:
                 insert_imported_card(connection, int(result.batch_id), card)
                 result.created += 1
+                action = "created"
+                message = import_success_message(card["validation_status"], updated=False)
 
             result.rows_imported += 1
+            result.row_results.append(
+                ImportRowResult(
+                    row_number=row_number,
+                    order_number=order_number,
+                    action=action,
+                    validation_status=card["validation_status"],
+                    message=message,
+                )
+            )
 
         connection.execute(
             """
@@ -204,6 +278,13 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
         )
 
     return result
+
+
+def import_success_message(validation_status: str, *, updated: bool) -> str:
+    action = "Updated existing card" if updated else "Created new card"
+    if validation_status == VALIDATION_NO_EXTRUSION_STEP:
+        return f"{action}; imported for review but blocked from release: no extrusion step."
+    return f"{action}; ready for planning."
 
 
 def decode_csv(content: bytes) -> str:

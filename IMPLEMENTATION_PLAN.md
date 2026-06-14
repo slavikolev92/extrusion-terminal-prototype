@@ -204,63 +204,77 @@ Review checkpoint:
 
 ## Milestone 9 - Pre-Print Workflow Completion
 
-Status: next
+Status: in progress
 
-Purpose:
+Confirmed direction:
 
-- Before building print output, walk through the complete shift-manager and terminal workflows as the real users would use them.
-- Confirm which documented non-print requirements are still needed for the prototype and which are acceptable pilot simplifications.
-- Implement the missing non-print functionality that affects operational correctness or print readiness.
-- Keep this milestone scoped to workflow completion; do not implement print output here.
+- CSV import is persistent, not an unsaved temporary preview state.
+- Import means "save these operational cards into the app database for review and planning."
+- Release means "send this saved card to the workstation queue for production."
+- Imported cards do not appear on `/terminal` until machine and sequence are assigned and release succeeds.
+- Duplicate overwrite remains explicit and must update only Excel/imported operational-card fields, preserving production data.
+- The admin side should be structured as a temporary but clear prototype tool, not a large ERP dashboard.
+- Keep print output out of Milestone 9.
 
-Known missing or unresolved items to review and bundle:
+Target admin structure:
 
-- Admin card review/edit:
-  - imported drafts should be reviewable beyond the table row summary.
-  - shift manager should be able to correct imported/front-card fields in-app when re-import is not the right tool.
-  - edits should use simple conflict/version checks and preserve terminal-entered production data.
-- Timing correction:
-  - existing timing segments are currently read-only.
-  - decide and implement the simplest correction workflow needed before printed start/finish/time values become official.
-- Machine and sequence correction after release:
-  - released cards currently show machine/sequence as read-only in the terminal detail.
-  - implement reassignment/resequencing if it is needed for real production changes.
-  - preserve backend protection against duplicate active machine sequence and invalid running-card conflicts.
-- Admin-side cancel/restore:
-  - terminal supports cancel/restore, but admin currently does not.
-  - decide whether shift manager needs the same reversible cancellation controls before printing.
-- Duplicate import and duplicate sequence UX:
-  - current duplicate order imports are skipped unless overwrite is selected.
-  - current duplicate active machine sequences are backend-blocked on release.
-  - decide whether the README expectation for visible `duplicate` draft status or immediate duplicate sequence flagging should be implemented or documented as a pilot simplification.
-- Workflow walkthrough:
-  - run through expected shift-manager actions and terminal actions, including exception cases.
-  - use findings to update this milestone before implementation if more non-print gaps are discovered.
+- `/admin/import` - CSV import, import result review, duplicate/overwrite clarity.
+- `/admin/planning` - unreleased card pool plus four machine queues, release, reassignment, resequencing.
+- `/admin/cards` - searchable card index with filters.
+- `/admin/cards/{card_id}` - full card review/edit page for shift-manager corrections.
+- `/admin` may redirect to `/admin/import` or show a simple navigation page.
 
-Suggested implementation bundles:
+Implementation bundles:
 
-1. Admin review/edit bundle:
-   - card detail/review route for imported and released cards.
-   - editable imported/front-card fields with version guard.
-   - tests for preserving roll/timing/tare/status data.
-2. Queue correction bundle:
-   - machine/sequence reassignment for released active cards.
-   - admin cancel/restore if confirmed.
-   - tests for duplicate sequence, occupied machine, stale edits, and archive behavior.
-3. Timing correction bundle:
-   - minimal segment correction controls.
-   - tests for recalculated total time, stale edits, and completed-card print-readiness.
-4. Duplicate UX/documentation bundle:
-   - implement duplicate draft/visual flag behavior if still required, or explicitly document current skip/overwrite behavior as the accepted pilot behavior.
+1. Admin navigation and import UX cleanup - done
+   - Split the current one-page `/admin` workflow into clear admin sections/routes.
+   - Keep import persistent on upload; do not create an unsaved temporary import queue.
+   - Show an import result table that makes created, skipped duplicate, overwritten, no-extrusion, and row-error outcomes obvious.
+   - Keep overwrite as an explicit checkbox/action.
+   - Preserve current backend behavior that overwrite updates imported/front-card fields only.
+   - Add or update tests for duplicate skip/overwrite result reporting and production-data preservation.
+   - Manual check: import a CSV with new, duplicate, overwrite, and no-extrusion rows.
 
-Review checkpoint:
+2. Admin card index and full card detail/review
+   - Add `/admin/cards` with basic filters: order number, customer, product, order/delivery date, and status.
+   - Add `/admin/cards/{card_id}` showing the full operational card data, status, machine/sequence, timing, tare, rolls, and terminal material fields.
+   - Make imported/front-card fields editable from the admin detail page.
+   - Use loaded `version` conflict checks for admin edits.
+   - Preserve production data when editing imported/front-card fields.
+   - Add tests for admin detail fetch, imported-field editing, stale edit blocking, and preservation of rolls/timing/tare/status.
+   - Manual check: find a card, edit imported fields, verify terminal-entered data remains intact.
 
-- walkthrough completed with the user or with user-confirmed scenarios.
-- every remaining non-print README requirement is either implemented, moved into this milestone's implementation list, or explicitly documented as a pilot simplification after user confirmation.
-- tests cover new backend validation and conflict behavior.
-- focused manual workflow passes with temporary data.
-- implementation stays separate from print output.
-- commit.
+3. Planning, release, reassignment, and resequencing
+   - Build `/admin/planning` around two views: unreleased ready card pool and four machine queues.
+   - Release imported ready cards by assigning machine and sequence.
+   - Allow shift manager to change machine and sequence after release for active cards.
+   - Preserve backend protection against duplicate active machine sequence.
+   - Preserve backend protection against assigning a running/paused card into an occupied machine conflict.
+   - Show validation errors clearly near the affected card/queue action.
+   - Add tests for release, reassignment, resequencing, duplicate sequence blocking, occupied machine blocking, and stale edit blocking.
+   - Manual check: release multiple cards, reorder queues, move a card between machines, and verify terminal queue order.
+
+4. Admin workflow controls and production-data correction
+   - Add admin-side reversible cancel/restore using the same business rules as terminal cancel/restore.
+   - Add admin editing for production-side correction fields needed before print: tare, roll gross weights, terminal material fields, and timing segments.
+   - Keep completed cards editable, but preserve finish validation invariants needed for print readiness.
+   - Implement the simplest timing correction workflow: edit segment start/end values, end reason, and recalculate totals; prevent invalid intervals and multiple open segments.
+   - Use loaded `version` conflict checks for all correction forms.
+   - Add tests for admin cancel/restore, roll/tare correction, timing correction, recalculated total time, invalid timing rejection, and stale edit blocking.
+   - Manual check: correct a completed card's rolls and timing, then verify it remains ready for later print.
+
+5. Pre-print workflow walkthrough and documentation update
+   - Run a focused shift-manager workflow using temporary data: import, review, edit, plan, release, reassign/resequence, cancel/restore, correct production data.
+   - Run a focused terminal workflow against those cards: queue selection, timing, rolls, finish, archive visibility.
+   - Update `README.md`, `AGENTS.md`, and this plan if any accepted simplifications or changed behaviors are confirmed.
+   - Run syntax/import checks, relevant automated tests, `git diff --check`, and a focused manual app check.
+   - Commit Milestone 9 only after the non-print workflow is coherent and print-ready.
+
+Milestone 9 commit strategy:
+
+- Prefer one commit per implementation bundle if each bundle is complete and verified.
+- Do not mix print output into any Milestone 9 commit.
+- Do not leave a large uncommitted pile across multiple bundles.
 
 ## Milestone 10 - Print Output
 
