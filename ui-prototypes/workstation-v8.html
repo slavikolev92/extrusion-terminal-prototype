@@ -74,73 +74,63 @@
 
     .page {
       height: 100%;
-      padding: 12px;
+      padding: 0;
     }
 
     .app {
       position: relative;
-      height: calc(100vh - 24px);
+      height: 100vh;
       min-height: 680px;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
-      border: 1px solid var(--line);
-      border-radius: 14px;
+      border: 0;
+      border-radius: 0;
       overflow: hidden;
-      background: var(--surface);
-      box-shadow: var(--shadow);
+      background: #e9edf2;
+      box-shadow: none;
     }
 
     .machine-nav {
       min-width: 0;
-      border-bottom: 1px solid var(--line);
-      background: var(--nav-bg);
-      padding: 10px 12px;
+      border-bottom: 1px solid #cfd6de;
+      background: #ececec;
+      padding: 24px 28px;
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr)) 104px;
-      gap: 10px;
+      grid-template-columns: repeat(4, minmax(270px, 380px)) 112px;
+      justify-content: center;
+      gap: 16px;
       align-items: stretch;
     }
 
     .machine-tab {
       position: relative;
       min-width: 0;
-      min-height: 92px;
-      border: 1px solid rgba(11, 107, 203, .14);
+      min-height: 126px;
+      border-width: 10px 2px 2px 2px;
+      border-style: solid;
+      border-color: #aeb7c1;
       border-radius: 10px;
       background: #fff;
-      padding: 10px 11px;
+      padding: 14px 14px 12px;
       display: grid;
-      grid-template-rows: auto auto auto;
+      grid-template-rows: auto auto auto auto;
       align-content: center;
-      gap: 7px;
+      gap: 9px;
       text-align: left;
       overflow: hidden;
     }
 
-    .machine-tab::before {
-      content: "";
-      position: absolute;
-      left: 0;
-      right: 0;
-      top: 0;
-      height: 5px;
-      background: transparent;
-    }
-
-    .machine-tab.running::before { background: var(--green); }
-    .machine-tab.paused::before { background: #9b7a13; }
     .machine-tab.selected {
-      border-color: rgba(11, 107, 203, .5);
-      box-shadow: inset 0 0 0 2px rgba(11, 107, 203, .28);
+      border-color: #0b355f;
+      box-shadow: none;
     }
     .machine-tab.idle {
       background: #f8fafc;
-      border-style: dashed;
-      border-color: #c5ced8;
+      border-style: solid;
+      border-color: #aeb7c1;
     }
 
     .machine-tab-top,
-    .machine-tab-meta,
     .machine-tab-progress {
       min-width: 0;
       display: flex;
@@ -158,18 +148,46 @@
       font-weight: 950;
     }
 
+    .machine-tab-title {
+      min-width: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .machine-tab-icon {
+      width: 17px;
+      height: 17px;
+      flex: 0 0 auto;
+      object-fit: contain;
+    }
+
     .machine-tab-meta {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
       color: var(--text);
       font-size: 14px;
       font-weight: 800;
       line-height: 1.15;
     }
 
-    .machine-tab-order {
+    .machine-tab-customer,
+    .machine-tab-product {
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .machine-tab-customer {
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    .machine-tab-product {
+      font-size: 13px;
+      font-weight: 800;
     }
 
     .machine-tab-progress {
@@ -192,7 +210,7 @@
 
     .history-nav {
       min-width: 0;
-      min-height: 92px;
+      min-height: 126px;
       display: grid;
       place-items: center;
       border-radius: 10px;
@@ -388,18 +406,22 @@
     .main {
       min-width: 0;
       min-height: 0;
-      background: var(--bg);
+      background: #fff;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
       overflow: hidden;
+      margin: 0;
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
     }
 
     .topbar {
       min-width: 0;
-      min-height: 72px;
+      min-height: 76px;
       background: var(--surface);
       border-bottom: 1px solid var(--line);
-      padding: 12px 16px;
+      padding: 16px 24px;
     }
 
     .title {
@@ -480,43 +502,43 @@
     .workspace {
       min-width: 0;
       min-height: 0;
-      padding: 12px 14px 14px;
+      padding: 18px 24px 24px;
       display: grid;
       grid-template-columns: minmax(0, 1fr) 480px;
-      gap: 14px;
+      gap: 28px;
     }
 
     .panel {
       min-width: 0;
       min-height: 0;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      overflow: hidden;
-      background: var(--surface);
-      box-shadow: var(--shadow);
+      border: 0;
+      border-radius: 0;
+      overflow: visible;
+      background: transparent;
+      box-shadow: none;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
     }
 
     .panel-head {
-      min-height: 42px;
-      padding: 10px 13px;
-      border-bottom: 1px solid var(--line);
-      background: linear-gradient(180deg, #fcfdff 0%, #f5f8fb 100%);
-      font-size: 15px;
-      font-weight: 850;
+      min-height: 0;
+      padding: 0 0 12px;
+      border-bottom: 0;
+      background: transparent;
+      font-size: 18px;
+      font-weight: 900;
     }
 
     .panel-body {
       min-height: 0;
-      padding: 12px;
+      padding: 0;
       overflow: hidden;
     }
 
     .details-body {
       display: grid;
       grid-template-rows: auto auto minmax(0, 1fr);
-      gap: 14px;
+      gap: 18px;
     }
 
     .order-section,
@@ -564,11 +586,11 @@
     }
 
     .notes {
-      min-height: 54px;
-      border: 1px solid #d7e0e9;
-      border-radius: 9px;
-      padding: 11px 12px;
-      background: #fbfcfd;
+      min-height: 0;
+      border: 0;
+      border-radius: 0;
+      padding: 0;
+      background: transparent;
       color: #26323f;
       font-size: 16px;
       font-weight: 400;
@@ -697,6 +719,14 @@
     .metric.remain {
       background: #fbfcfd;
       border-color: var(--line);
+    }
+
+    .gross-metrics .metric,
+    .gross-metrics .metric.remain {
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      padding: 8px 10px;
     }
 
     .metric .big {
@@ -982,13 +1012,13 @@
 
     @media (max-width: 1360px) {
       .machine-nav {
-        grid-template-columns: repeat(4, minmax(0, 1fr)) 92px;
-        gap: 8px;
-        padding: 10px;
+        grid-template-columns: repeat(4, minmax(210px, 1fr)) 96px;
+        gap: 10px;
+        padding: 18px;
       }
 
       .machine-tab {
-        padding: 9px;
+        padding: 11px;
       }
 
       .machine-tab-meta {
@@ -997,7 +1027,7 @@
 
       .workspace {
         grid-template-columns: minmax(0, 1fr) 440px;
-        gap: 10px;
+        gap: 20px;
       }
 
       .info-grid {
@@ -1012,21 +1042,21 @@
 
     @media (max-height: 760px) {
       .page {
-        padding: 8px;
+        padding: 0;
       }
 
       .app {
-        height: calc(100vh - 16px);
+        height: 100vh;
         min-height: 0;
       }
 
       .machine-nav {
-        padding: 8px;
+        padding: 14px 18px;
       }
 
       .machine-tab,
       .history-nav {
-        min-height: 84px;
+        min-height: 96px;
       }
 
       .machine-tab {
@@ -1047,11 +1077,11 @@
       }
 
       .workspace {
-        padding: 8px 10px 10px;
+        padding: 12px 18px 18px;
       }
 
       .panel-body {
-        padding: 9px 10px;
+        padding: 0;
       }
 
       .field {
@@ -1059,7 +1089,7 @@
       }
 
       .notes {
-        max-height: 48px;
+        max-height: none;
         overflow: hidden;
       }
 
@@ -1095,57 +1125,73 @@
       <header class="machine-nav" aria-label="Навигация по машини">
         <button class="machine-tab running selected" type="button">
           <span class="machine-tab-top">
-            <span class="machine-tab-name">Машина 1</span>
+            <span class="machine-tab-title">
+              <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
+              <span class="machine-tab-name">Машина 1</span>
+            </span>
             <span class="status running">Изработване</span>
           </span>
           <span class="machine-tab-meta">
-            <span class="machine-tab-order">Пелети Пирин (№25278) · ТСФ 890/0.082</span>
+            <span class="machine-tab-customer">Пелети Пирин</span>
+            <span class="machine-tab-product">ТСФ 890/0.082</span>
           </span>
           <span class="machine-tab-progress">
             <span class="progress"><span style="width:75%"></span></span>
-            <span class="machine-tab-qty">3000.0 / 4000.0 кг</span>
+            <span class="machine-tab-qty">3000 / 4000 кг</span>
           </span>
         </button>
 
         <button class="machine-tab running" type="button">
           <span class="machine-tab-top">
-            <span class="machine-tab-name">Машина 2</span>
+            <span class="machine-tab-title">
+              <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
+              <span class="machine-tab-name">Машина 2</span>
+            </span>
             <span class="status running">Изработване</span>
           </span>
           <span class="machine-tab-meta">
-            <span class="machine-tab-order">Бета Трейд (№25280) · Торби LDPE</span>
+            <span class="machine-tab-customer">Бета Трейд</span>
+            <span class="machine-tab-product">Торби LDPE</span>
           </span>
           <span class="machine-tab-progress">
             <span class="progress"><span style="width:12%"></span></span>
-            <span class="machine-tab-qty">96.6 / 800.0 кг</span>
+            <span class="machine-tab-qty">97 / 800 кг</span>
           </span>
         </button>
 
         <button class="machine-tab paused" type="button">
           <span class="machine-tab-top">
-            <span class="machine-tab-name">Машина 3</span>
+            <span class="machine-tab-title">
+              <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
+              <span class="machine-tab-name">Машина 3</span>
+            </span>
             <span class="status paused">Паузирана</span>
           </span>
           <span class="machine-tab-meta">
-            <span class="machine-tab-order">Алфа Пак (№25281) · Фолио 890/0.082</span>
+            <span class="machine-tab-customer">Алфа Пак</span>
+            <span class="machine-tab-product">Фолио 890/0.082</span>
           </span>
           <span class="machine-tab-progress">
             <span class="progress"><span style="width:61%"></span></span>
-            <span class="machine-tab-qty">183.0 / 300.0 кг</span>
+            <span class="machine-tab-qty">183 / 300 кг</span>
           </span>
         </button>
 
         <button class="machine-tab idle" type="button">
           <span class="machine-tab-top">
-            <span class="machine-tab-name">Машина 4</span>
+            <span class="machine-tab-title">
+              <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
+              <span class="machine-tab-name">Машина 4</span>
+            </span>
             <span class="status idle">Свободна</span>
           </span>
           <span class="machine-tab-meta">
-            <span class="machine-tab-order">няма активна карта · следваща №25286</span>
+            <span class="machine-tab-customer">-</span>
+            <span class="machine-tab-product" aria-hidden="true"></span>
           </span>
           <span class="machine-tab-progress">
             <span class="progress"><span style="width:0%"></span></span>
-            <span class="machine-tab-qty">0.0 / 0.0 кг</span>
+            <span class="machine-tab-qty">0 / 0 кг</span>
           </span>
         </button>
 

@@ -135,8 +135,15 @@ Confirmed workstation screen structure:
 - The top machine navigation is global terminal navigation and should be available from every workstation screen.
 - Clicking a machine in the top navigation changes the selected machine/card; the screen content underneath is specific to that selected machine/order.
 - The top machine navigation visually separates terminal-wide navigation from selected-machine/order details below.
+- The top machine navigation should sit on a neutral gray band, not on the same white surface as the selected-order content and not on an input-like blue tint.
+- Leave clear top, bottom, and side breathing room around the top machine buttons so they read as navigation, not squeezed content.
+- Machine navigation buttons should be compact horizontally but tall enough to be prominent and readable.
+- The selected-machine/order content below the navigation should stay flat on a full-width page surface with internal content padding; do not wrap the whole active order area in another inset page-shell box.
 - The operator works on one focused card at a time.
 - The focused card header should make the selected machine and order number obvious.
+- Under the top machine navigation, the selected-machine/order page should use a flat structure rather than nested cards inside cards.
+- Avoid repeated rounded panel wrappers for the page shell. Use section headings, whitespace, and simple dividers before adding another bordered container.
+- Use bordered/boxed treatments only for actual controls, tables, repeated cards, and input groups where the frame helps interaction.
 - Main visible actions are `Start`, a single `Pause/Resume` toggle, and `Finish`.
 - `Print/Reprint` belongs in the overflow/burger menu.
 - `Cancel/Restore` belongs in the overflow/burger menu.
@@ -162,12 +169,22 @@ Top machine navigation content:
 
 - Each machine button should be compact but not cramped.
 - Each machine button must clearly show the full Bulgarian machine label: `Машина 1`, `Машина 2`, `Машина 3`, or `Машина 4`.
+- Each machine label may include a small machine/home-style icon before the label, matching the Figma navigation treatment.
 - Each machine button should show the current status, such as `Изработване`, `Паузирана`, or `Свободна`.
-- Each machine button should show the most important current order context in one strong line: customer with order number, separator, then the product/material identifier.
-- Preferred compact format: `Пелети Пирин (№25278) · ТСФ 890/0.082`.
+- Each machine button should show the most important current order context in separate rows: customer name, then product/material identifier, then the progress bar.
+- Do not combine customer and product in one line; long customer names and long product identifiers must not compete for the same horizontal space.
+- If a machine has no active card, show `-` in the customer row and do not show next-card text.
+- Do not show next-card text in the top machine navigation cards.
 - Each machine button should show a progress bar with produced/target kilograms to the side of the bar, not underneath it.
+- Top machine navigation is an overview, so produced/target kilograms should be rounded to whole kilograms with no decimals.
 - Do not show waiting-card counts in the top machine buttons.
 - The selected machine should be visually stronger than the other machine buttons.
+- Machine-card borders should communicate selection, not status.
+- Do not use status-colored top borders on machine cards when the status pill is already visible.
+- Machine-card borders should use the Figma-style weight pattern: thicker top border and thinner side/bottom borders.
+- Selected machine card should use a dark blue border derived from the input blue palette.
+- Inactive/unselected machine cards should use neutral gray borders so the currently displayed machine is unambiguous.
+- Idle/free machine cards should keep the same solid border pattern as other unselected cards; the status pill communicates that the machine is free.
 
 The focused technology-card panel should be shown as:
 
