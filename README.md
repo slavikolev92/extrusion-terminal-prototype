@@ -91,6 +91,17 @@ Lifecycle states:
 | `completed` / `finished` | Operators have finished the order/card. It moves from the active terminal queue to the terminal completed section and remains available in app history/details. |
 | `cancelled` | Operators or shift manager cancelled the card. It is no longer active, remains visible with completed/cancelled cards, and can be toggled back to `pending`. |
 
+Canonical Bulgarian status labels:
+
+| Internal status | Bulgarian label |
+| --- | --- |
+| `imported` | Импортирана |
+| `pending` | Изчакване |
+| `running` | Изработване |
+| `paused` | Паузирана |
+| `completed` | Завършена |
+| `cancelled` | Анулирана |
+
 The important distinction: CSV import should already create persistent app records. Submit/release should not be the first time the data is saved; it should change the order/card from an app-side draft into a terminal-visible card.
 
 Screen/access model:
@@ -104,6 +115,111 @@ Screen/access model:
 - The terminal UI should not expose navigation to `/admin`.
 - The shift manager can access `/admin` directly by URL from the shift-manager PC.
 - This is practical segregation, not strong security.
+
+## Workstation UI Direction
+
+The workstation interface is the operator-facing `/terminal` screen used at the extrusion machines. It is separate from the shift-manager/admin interface and should remain as simple as possible.
+
+Current active UI prototype:
+
+- Use `ui-prototypes/workstation-v8.html` as the active workstation prototype baseline.
+- Keep `ui-prototypes/workstation-v7.html` as the checkpoint before the top-machine-navigation restructure.
+- Older workstation prototypes are not accepted as the design direction.
+- The workstation UI should be optimized for clear use at the real terminal/workstation monitor, not for dense desktop administration.
+- Text inside operational-card fields, notes, recipe rows, and weight inputs must be large enough to read without careful inspection.
+- Avoid unnecessary subtitles and explanatory text. Use section headings only where they reduce confusion.
+
+Confirmed workstation screen structure:
+
+- Four fixed machine navigation buttons stay visible across the top of the screen.
+- The top machine navigation is global terminal navigation and should be available from every workstation screen.
+- Clicking a machine in the top navigation changes the selected machine/card; the screen content underneath is specific to that selected machine/order.
+- The top machine navigation visually separates terminal-wide navigation from selected-machine/order details below.
+- The operator works on one focused card at a time.
+- The focused card header should make the selected machine and order number obvious.
+- Main visible actions are `Start`, a single `Pause/Resume` toggle, and `Finish`.
+- `Print/Reprint` belongs in the overflow/burger menu.
+- `Cancel/Restore` belongs in the overflow/burger menu.
+- `История` belongs with the global top navigation because it is not specific to one active order.
+- The roll panel should stay focused on tare, new gross roll entry, roll correction, and gross/net totals.
+- New roll entry should sit directly above the roll list.
+- Roll gross/net/remaining totals should be shown below the roll list, not above the entry controls.
+- Gross total and remaining gross amount should be visually grouped because remaining amount is based on the gross target.
+- Net total should be shown separately from gross/remaining, but all three totals should fit on one row in the workstation roll panel.
+- The roll panel should be wide enough for four-digit kilogram values with one decimal place, such as `3000.0`, without truncating.
+- Remaining amount should not use a strong warning color by default.
+- The workstation roll table should not show always-visible delete buttons next to every roll row.
+- Gross and net columns in the workstation roll table should use equal width.
+- Tare/core weight should be labelled `Шпула, кг` on the workstation.
+- `Шпула, кг` is an order-level editable field and should not dominate the repeated roll-entry workflow.
+- `Шпула, кг` should save inline on `Enter` and on blur, using the same conflict/version checks as other terminal edits.
+- Do not use a separate `Save` button for `Шпула, кг` unless inline save proves unreliable in testing.
+- Show `Макс. тегло ролка, кг` next to `Шпула, кг`, on the left side.
+- `Макс. тегло ролка, кг` is entered by the shift manager, read-only for machine operators, and informational only.
+- `Макс. тегло ролка, кг` should not enforce roll-weight validation in this pilot.
+
+Top machine navigation content:
+
+- Each machine button should be compact but not cramped.
+- Each machine button must clearly show the full Bulgarian machine label: `Машина 1`, `Машина 2`, `Машина 3`, or `Машина 4`.
+- Each machine button should show the current status, such as `Изработване`, `Паузирана`, or `Свободна`.
+- Each machine button should show the most important current order context in one strong line: customer with order number, separator, then the product/material identifier.
+- Preferred compact format: `Пелети Пирин (№25278) · ТСФ 890/0.082`.
+- Each machine button should show a progress bar with produced/target kilograms to the side of the bar, not underneath it.
+- Do not show waiting-card counts in the top machine buttons.
+- The selected machine should be visually stronger than the other machine buttons.
+
+The focused technology-card panel should be shown as:
+
+1. `Технологична Карта`
+2. Requested product/order fields without an extra `Заявено изделие` subtitle, because the panel title and field labels already make the section clear.
+3. A separate `Забележки` section.
+4. A separate `Рецепта` section.
+
+Requested product/order fields:
+
+- `Изделие`
+- `Фирма`
+- `Количество`
+- `Размер`
+- `Заготовка`
+- `Материал`
+
+Notes display:
+
+- Workbook notes come from the technology card/order source data.
+- In the workstation UI, notes should be labelled `Забележки`.
+- Notes should be visually more prominent than a squeezed inline text row.
+- Notes text should be larger and readable, but not bold by default.
+- Leave enough vertical spacing between `Забележки` and `Рецепта` so the two sections read as separate parts of the card.
+
+Recipe display:
+
+- The recipe table represents a single-layer extrusion recipe.
+- The row order should mimic the existing Excel technology card structure because the app imports the data from that structure.
+- User-facing recipe row labels should be normalized for readability and should not blindly preserve all-caps source text unless it is a technical abbreviation.
+- The first recipe column should label the type of raw material, not a generic "position".
+- Use the Bulgarian header `Вид суровина` for the first recipe column.
+- The second recipe column is the planned/source raw material from the technology card.
+- Use the Bulgarian header `Заложена суровина` for the second recipe column.
+- `Заложена суровина` is read-only on the workstation. Operators must not edit it.
+- If operators use a different actual material than the planned/source material, they enter it in the third column.
+- Use the Bulgarian header `Използван материал` for the third recipe column.
+- `Използван материал` starts blank after import and is filled only by machine operators when needed.
+- The fourth recipe column is `Партида`.
+- `Партида` starts blank after import and is filled by machine operators with the actual batch/lot used for the order.
+
+Confirmed recipe rows for the workstation table:
+
+| Row label | Source field |
+| --- | --- |
+| `Вид суровина A` | Extrusion raw material A |
+| `Вид суровина B` | Extrusion raw material B |
+| `Вид суровина C` | Extrusion raw material C |
+| `Линеен /mLLDPE/` | Extrusion linear PE |
+| `Антистатик` | Extrusion antistatic |
+| `Мастербач` | Extrusion masterbatch |
+| `Креда` | Extrusion chalk |
 
 Admin page behavior:
 
@@ -368,6 +484,7 @@ Recommended conceptual schema:
 | Entity | Purpose |
 | --- | --- |
 | `orders` / `cards` | One row per imported extrusion operational card/order. Stores the structured fields imported from Excel, current status, order-level tare, and print/workflow timestamps. |
+| `recipe_material_entries` | One row per recipe material line for a card. Stores the row type, imported/source material, operator-entered actual used material, and operator-entered batch/lot. |
 | `roll_entries` | One row per produced roll. Linked to the parent order/card by internal ID and order number. Stores roll number, gross weight, and calculated net weight. |
 | `production_time_segments` | One row per production run segment. Stores each start/resume and pause/finish interval so total production time can exclude pauses. |
 | `imports` / `import_batches` | One row per CSV import event, so the app can show which file/import created drafts. |
@@ -386,6 +503,8 @@ Confirmed storage behavior:
 - Completed orders remain available in the app for review.
 - Completed orders should clear from the terminal execution view.
 - Imported operational-card fields should be stored as readable structured fields in the app.
+- Imported/source recipe material values should remain separate from operator-entered actual material and batch values.
+- Re-import/overwrite should update only imported/source recipe material values and should preserve operator-entered actual material and batch values.
 - Roll weights entered at the terminal must be linked to the same order/card.
 - Roll number is an index starting at `1` and increasing upward for the order.
 - Gross weight is entered by workers after each roll is counted.
@@ -394,6 +513,8 @@ Confirmed storage behavior:
 - Total net weight formula: `total_net_weight = total_gross_weight - (number_of_rolls * tare_weight)`.
 - Tare weight is stored once on the order/card.
 - The same tare weight applies to every roll in the order.
+- Maximum roll weight is stored on the order/card when provided by the shift manager.
+- Maximum roll weight is informational for operators and must not block or validate roll entry in this pilot.
 - Roll entries do not need notes for the pilot.
 - Keep only latest values; no change history is required for the pilot.
 - Every operator action that changes production data must persist immediately. There should not be a separate "save all" button for roll entries or timing actions.
@@ -406,7 +527,9 @@ Confirmed storage behavior:
 - Net weight per roll should be stored or calculatable, but does not need to be shown to operators per roll.
 - Operators should see total gross weight so far and total net weight so far.
 - Weight inputs should support up to two decimal places.
-- Totals may be displayed rounded for readability, but storage/calculation should preserve the needed precision.
+- Workstation kilogram values should be displayed with exactly one digit after the decimal point.
+- Use normal decimal rounding rules for displayed kilograms.
+- Storage/calculation should preserve the needed precision even when the workstation display rounds to one decimal place.
 
 Confirmed production timing behavior:
 
@@ -442,10 +565,10 @@ Terminal editable fields:
 
 - Most imported operational-card fields should be read-only on the terminal.
 - Operators should be able to edit fields that reflect actual machine-side material usage:
-  - actual raw material used
-  - raw material brand/grade/mark
-  - raw material batch/lot
-- These brand/batch fields are not present in the Excel database. In the current paper process, they are written directly on the operational card for auditability.
+  - `Използван материал`, when the actual raw material differs from the planned/source raw material
+  - `Партида`, the actual batch/lot used for the order
+- Planned/source recipe materials from the technology card remain read-only on the terminal.
+- These operator-entered material and batch fields are not source fields from the Excel database. In the current paper process, they are written directly on the operational card for auditability.
 - Operators should be able to edit tare weight.
 - Operators should be able to edit gross roll weights.
 - Operators should be able to correct start/pause/resume/finish timing data when needed.
@@ -493,7 +616,7 @@ Confirmed CSV scope:
 - CSV headers may use stable internal field names chosen by the implementation, for example `order_number` or `raw_material_a`.
 - The workbook structure is stable, so internal CSV headers can be mapped by fixed source columns.
 - User-facing labels in the app and print output must use the Bulgarian field names/operators expect from the operational card, not internal CSV names.
-- App-only fields that are not in Excel should start blank after import, including actual material used, brand/grade/mark, batch/lot, and tare weight.
+- App-only fields that are not source Excel fields should start blank after import, including `Използван материал`, `Партида`, and tare weight.
 
 Confirmed export location convention:
 

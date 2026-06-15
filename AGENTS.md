@@ -172,4 +172,4 @@ Completed and committed:
 
 Next recommended milestone:
 
-- Connect `ui-prototypes/workstation-v4.html` to the live `/terminal` workstation route before starting print output.
+- Continue from `ui-prototypes/workstation-v8.html` as the active workstation prototype before connecting it to the live `/terminal` workstation route or starting print output. Keep `workstation-v7.html` as the checkpoint before the top-machine-navigation restructure.
