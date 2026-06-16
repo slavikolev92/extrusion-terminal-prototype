@@ -16,6 +16,15 @@ CARD_STATUSES = (
     STATUS_CANCELLED,
 )
 
+STATUS_LABELS = {
+    STATUS_IMPORTED: "Импортирана",
+    STATUS_PENDING: "Изчакване",
+    STATUS_RUNNING: "Изработване",
+    STATUS_PAUSED: "Паузирана",
+    STATUS_COMPLETED: "Завършена",
+    STATUS_CANCELLED: "Анулирана",
+}
+
 ACTIVE_TERMINAL_STATUSES = (
     STATUS_PENDING,
     STATUS_RUNNING,

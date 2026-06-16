@@ -6,6 +6,39 @@ Use this file while executing the setup. Record actual values, commands, decisio
 
 This infrastructure work is separate from `IMPLEMENTATION_PLAN.md`, which tracks application features.
 
+## Confirmed Hardware
+
+Detailed hardware notes are also recorded in `HARDWARE_SETUP.md`.
+
+Server PC:
+
+| Item | Value |
+| --- | --- |
+| Model | Dell OptiPlex 7080 Micro |
+| CPU | Intel Core i3-10100, up to 4.30 GHz, 6 MB cache |
+| RAM | 16 GB DDR4 SO-DIMM |
+| Storage | 512 GB M.2 NVMe SSD |
+| Ethernet | Present; wired LAN will be used |
+| Wi-Fi | Present on label, but not planned for server connectivity |
+| Serial number | FJ3K8F3 |
+
+Terminal workstation:
+
+| Item | Value |
+| --- | --- |
+| RAM | 4 GB |
+| Input | Keyboard and mouse |
+| Touchscreen | No |
+| Display | Approximately 24 inches; exact resolution not confirmed |
+| Network | Wired LAN only; no Wi-Fi requirement |
+| Operating system | Linux only; no Windows OS |
+
+Current hardware conclusion:
+
+- The Dell OptiPlex 7080 Micro is sufficient for Proxmox plus one small Linux app VM for this pilot.
+- The workstation specs are sufficient for browser kiosk usage unless later testing shows display scaling or browser performance issues.
+- Because the server appears to have a single NVMe SSD, off-machine backup should be planned before pilot use.
+
 ## Scope
 
 Current infrastructure goal:

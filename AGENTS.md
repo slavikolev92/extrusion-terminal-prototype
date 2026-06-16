@@ -18,7 +18,7 @@ Confirmed scope:
 - Terminal execution of released extrusion operational cards.
 - Roll gross-weight entry, order-level tare weight, calculated net totals.
 - Production timing with start, pause, resume, and finish segments.
-- Completed/cancelled cards remain available for review and correction.
+- Completed cards remain available on the workstation for review, correction, and reprint. Cancelled cards remain available to shift-manager/admin, not to workstation operators.
 - HTML/CSS print output for completed cards, matching the existing Excel front/back operational card as closely as possible.
 - SQLite-safe backups and documented recovery before pilot use.
 
@@ -105,7 +105,7 @@ As new slices are implemented, add tests for:
 - tare and roll entry
 - roll correction
 - finish validation
-- completed/cancelled queue behavior
+- completed workstation queue behavior and admin cancelled-card behavior
 - backup and restore behavior
 - print eligibility
 
@@ -165,11 +165,12 @@ Completed and committed:
 - terminal card detail view and first version-checked material-field edit.
 - production timing actions: start, pause, resume, one running/occupied card per machine, and timing segments.
 - tare and roll entry: order-level tare, gross roll entry, roll corrections, roll deletion with automatic renumbering, and gross/net totals.
-- finish, cancel, and history behavior: finish validation, active segment closure, completed/cancelled archive visibility, and reversible cancellation.
+- finish and history behavior: finish validation, active segment closure, completed workstation archive visibility, and admin-side reversible cancellation.
 - backup and recovery behavior: SQLite-safe timestamped backups, restore helper, retention, startup/restart documentation, and troubleshooting notes.
 - admin production corrections: admin-side cancel/restore, terminal material corrections, tare and roll corrections, and timing segment corrections with loaded-version conflict checks.
-- pre-print workflow walkthrough: temporary-database pass through import, admin review/edit, planning/resequence, terminal timing/tare/roll/finish, archive visibility, stale-write blocking, admin correction, admin cancel/restore, and running-card timing invariant checks.
+- pre-print workflow walkthrough: temporary-database pass through import, admin review/edit, planning/resequence, terminal timing/tare/roll/finish, completed archive visibility, stale-write blocking, admin correction, admin cancel/restore, and running-card timing invariant checks.
 
 Next recommended milestone:
 
 - Continue from `ui-prototypes/workstation-v8.html` as the active workstation prototype before connecting it to the live `/terminal` workstation route or starting print output. Keep `workstation-v7.html` as the checkpoint before the top-machine-navigation restructure.
+- The V8 workstation should not expose cancellation or restore controls; cancellation remains an admin/shift-manager action.

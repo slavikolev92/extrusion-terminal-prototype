@@ -72,7 +72,7 @@ Confirmed model:
 - The terminal may have multiple running cards at the same time.
 - A machine cannot have more than one running card at the same time.
 - A machine can have many pending cards.
-- If a card is paused, treat that machine as occupied until the card is completed, cancelled, or reassigned.
+- If a card is paused, treat that machine as occupied until the card is completed, cancelled by the shift manager, or reassigned.
 - Operators should see machine queues in the shift-manager sequence. The app should keep corrections possible if real production changes.
 - Running cards should be visually obvious, for example highlighted green, so operators do not forget that time is being tracked.
 - There are no named users or logins for the pilot.
@@ -89,7 +89,7 @@ Lifecycle states:
 | `running` | Operators started production timing for the card. Multiple cards may be running at once. |
 | `paused` | Production timing was paused for the card. |
 | `completed` / `finished` | Operators have finished the order/card. It moves from the active terminal queue to the terminal completed section and remains available in app history/details. |
-| `cancelled` | Operators or shift manager cancelled the card. It is no longer active, remains visible with completed/cancelled cards, and can be toggled back to `pending`. |
+| `cancelled` | Shift manager/admin cancelled the card. It is no longer active, remains visible in admin review, and can be toggled back to `pending` from admin. |
 
 Canonical Bulgarian status labels:
 
@@ -140,16 +140,39 @@ Confirmed workstation screen structure:
 - Machine navigation buttons should be compact horizontally but tall enough to be prominent and readable.
 - The selected-machine/order content below the navigation should stay flat on a full-width page surface with internal content padding; do not wrap the whole active order area in another inset page-shell box.
 - The operator works on one focused card at a time.
-- The focused card header should make the selected machine and order number obvious.
+- The focused card header should make the selected machine and order number obvious in the format `Машина 1: №25278`.
 - Under the top machine navigation, the selected-machine/order page should use a flat structure rather than nested cards inside cards.
 - Avoid repeated rounded panel wrappers for the page shell. Use section headings, whitespace, and simple dividers before adding another bordered container.
 - Use bordered/boxed treatments only for actual controls, tables, repeated cards, and input groups where the frame helps interaction.
-- Main visible actions are `Start`, a single `Pause/Resume` toggle, and `Finish`.
+- Main visible actions are `Старт`, a single `Пауза/Продължи` toggle, and `Приключи`.
+- Before production starts, `Старт` is the primary action; `Пауза` and `Приключи` are disabled.
+- While production is running, `Приключи` is the primary visible action because finishing is the normal successful path.
+- While production is running, `Пауза` is available but visually secondary because pausing is exceptional behavior used for problems or urgent order changes.
+- While production is paused, the pause control becomes `Продължи` and becomes the primary action; `Приключи` remains secondary if finishing from pause is valid.
+- Do not use a generic `Stop` action in the terminal workflow because it can be confused with pause, finish, cancel, or machine stop.
+- The top machine navigation should align its machine-card group with the left edge of the details and recipe content below.
+- Global navigation actions should sit on the right side of the top machine-navigation band, aligned with the right-side order actions and roll panel below.
+- `Завършени поръчки` should be the top global navigation action, and `Опашка` should sit directly beneath it.
+- `Опашка` is global navigation, not a production action, so it should not sit between `Приключи` and the overflow menu in the selected-order action row.
+- Clicking `Опашка` should open a queue drawer/panel showing queued cards grouped by `Машина 1` through `Машина 4`.
+- Queue and completed-order drawers should cover the full workstation viewport from top to bottom. Do not start them below the top machine navigation, because partially visible machine cards behind the drawer create an awkward half-covered state.
+- The currently selected machine section should be visually highlighted first.
+- Queue rows should be compact, not large cards.
+- Queue rows should use three information rows: sequence + customer name + order ID + status; product/type; then size/thickness + material + ordered kilograms.
+- Clicking a queue row loads/displays that card on screen only. It must not start, pause, finish, cancel, or otherwise mutate production state.
+- If a machine has no running card, selecting a queued row can load that card into the workstation view so the operator can then press `Старт`.
 - `Print/Reprint` belongs in the overflow/burger menu.
-- `Cancel/Restore` belongs in the overflow/burger menu.
-- `История` belongs with the global top navigation because it is not specific to one active order.
-- The roll panel should stay focused on tare, new gross roll entry, roll correction, and gross/net totals.
-- New roll entry should sit directly above the roll list.
+- `Cancel/Restore` does not belong on the workstation. Operators should not cancel or restore cards; shift-manager/admin handles cancellation from the admin page.
+- `Завършени поръчки` belongs with the global top navigation because completed-card lookup is not specific to one active order.
+- `Завършени поръчки` should open a completed-orders drawer/panel, separate from `Опашка`.
+- Completed orders should be searchable/filterable by `Фирма`, `Изделие`, `Размер / дебелина`, and `Материал`.
+- Completed-order rows should be compact result rows, not machine cards.
+- Completed-order rows should show customer + order ID, product/type, size/thickness, material, total kilograms, and completion date/time.
+- Clicking a completed-order row loads/displays that completed card on screen only. It must not restart the order or change production state.
+- When a completed card is displayed, production actions such as `Старт`, `Пауза`, and `Приключи` should be disabled; reprint should be available from the overflow menu.
+- The roll panel should stay focused on core/tare weight, new gross roll entry, roll correction, and gross/net totals.
+- `Шпула, кг` should sit immediately before the `Нова ролка, кг` input in the roll-entry controls.
+- New roll entry controls should sit directly above the roll list so the roll table can extend upward.
 - Roll gross/net/remaining totals should be shown below the roll list, not above the entry controls.
 - Gross total and remaining gross amount should be visually grouped because remaining amount is based on the gross target.
 - Net total should be shown separately from gross/remaining, but all three totals should fit on one row in the workstation roll panel.
@@ -161,7 +184,7 @@ Confirmed workstation screen structure:
 - `Шпула, кг` is an order-level editable field and should not dominate the repeated roll-entry workflow.
 - `Шпула, кг` should save inline on `Enter` and on blur, using the same conflict/version checks as other terminal edits.
 - Do not use a separate `Save` button for `Шпула, кг` unless inline save proves unreliable in testing.
-- Show `Макс. тегло ролка, кг` next to `Шпула, кг`, on the left side.
+- Show `Макс. тегло ролка, кг` in the `Детайли` pane after `Материал`, using the same plain label/value treatment as the other details fields.
 - `Макс. тегло ролка, кг` is entered by the shift manager, read-only for machine operators, and informational only.
 - `Макс. тегло ролка, кг` should not enforce roll-weight validation in this pilot.
 
@@ -186,27 +209,48 @@ Top machine navigation content:
 - Inactive/unselected machine cards should use neutral gray borders so the currently displayed machine is unambiguous.
 - Idle/free machine cards should keep the same solid border pattern as other unselected cards; the status pill communicates that the machine is free.
 
-The focused technology-card panel should be shown as:
+The focused active-order detail area should be shown as:
 
-1. `Технологична Карта`
-2. Requested product/order fields without an extra `Заявено изделие` subtitle, because the panel title and field labels already make the section clear.
-3. A separate `Забележки` section.
-4. A separate `Рецепта` section.
+1. `Детайли`
+2. Requested product/order fields inside one clean bordered details block, without an extra `Заявено изделие` subtitle.
+3. `Забележки` inside the same details block, below the requested product/order fields.
+4. A separate `Рецепта` section below the details block, with enough breathing room to read as a separate part of the card.
+
+Details typography rules:
+
+- Section titles should be dark, readable, and moderately weighted, not oversized or aggressively bold.
+- Workstation typography should be readable from a standing/operator position, not sized like a desktop back-office form.
+- Field labels should use normal title casing, smaller font size than values, lighter weight, and neutral gray color; they should still be large enough to read clearly on the terminal.
+- Field values should be the primary text: darker, materially larger than labels, and semibold rather than ultra-bold.
+- The details block should use consistent internal padding on all sides and explicit row spacing; avoid accidental-looking extra whitespace below the notes.
+- Avoid all-caps labels for ordinary Bulgarian words. Preserve uppercase only where the source text is a technical abbreviation or product identifier.
+
+Workstation visual system rules:
+
+- Use a tight, consistent type scale for the workstation prototype: `12px` for small metadata, `14px` for labels/table headers, `17px` for normal values and table text, `21px` for titles/actions, `28px` for compact roll-pane totals, and `30px` only for larger major totals.
+- Use a tight, consistent font-weight scale: `400` for normal notes/body copy, `700` for labels and secondary table text, `800` for values and primary table text, and `900` only for major titles, machine names, and totals.
+- Use neutral white containers with simple borders for detail blocks, tare/max-roll controls, new-roll entry, roll tables, and totals.
+- Do not tint ordinary data-entry containers green, blue-gray, or warning colors unless the color communicates a real state.
+- Editable input fields should use a white background. Non-editable value boxes should use a light gray background.
+- Use one consistent primary action color for the current primary operator action, such as `Старт`, `Продължи`, `Приключи`, and add roll.
+- Do not color `Пауза` as a primary action while production is running; use neutral/outline styling.
+- Reserve red only for destructive actions and disabled gray only for unavailable actions.
 
 Requested product/order fields:
 
-- `Изделие`
+- `Вид изделие`
 - `Фирма`
 - `Количество`
-- `Размер`
-- `Заготовка`
+- `Размер / дебелина`
+- `Вид заготовка`
 - `Материал`
+- `Макс. тегло ролка, кг`
 
 Notes display:
 
 - Workbook notes come from the technology card/order source data.
 - In the workstation UI, notes should be labelled `Забележки`.
-- Notes should be visually more prominent than a squeezed inline text row.
+- Notes should sit inside the clean bordered details block under the requested product/order fields.
 - Notes text should be larger and readable, but not bold by default.
 - Leave enough vertical spacing between `Забележки` and `Рецепта` so the two sections read as separate parts of the card.
 
@@ -214,6 +258,7 @@ Recipe display:
 
 - The recipe table represents a single-layer extrusion recipe.
 - The row order should mimic the existing Excel technology card structure because the app imports the data from that structure.
+- The workstation recipe table must visibly fit the full single-layer recipe row set, including `Креда`, without clipping the final row in the normal terminal viewport.
 - User-facing recipe row labels should be normalized for readability and should not blindly preserve all-caps source text unless it is a technical abbreviation.
 - The first recipe column should label the type of raw material, not a generic "position".
 - Use the Bulgarian header `Вид суровина` for the first recipe column.
@@ -570,13 +615,14 @@ Finish validation:
 
 Cancellation behavior:
 
-- Operators and shift manager/admin can cancel cards.
+- Only shift manager/admin can cancel cards.
 - Cancellation does not require a reason.
 - Cancelling changes the card status to `cancelled`.
 - Cancelled cards are no longer active and should not appear in the main active queue.
-- Cancelled cards remain visible with completed/cancelled job cards.
+- Cancelled cards remain visible to shift-manager/admin for review and restoration.
+- Cancelled cards should not appear in the workstation completed-order lookup.
 - Cancelling is reversible: clicking the cancel action again on a cancelled card changes it back to `pending`.
-- This reversible cancel behavior should be available both from the terminal and from the shift-manager/admin page.
+- This reversible cancel behavior should be available from the shift-manager/admin page, not from the workstation terminal.
 
 Terminal editable fields:
 

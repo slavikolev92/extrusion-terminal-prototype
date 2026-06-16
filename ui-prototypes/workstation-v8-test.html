@@ -7,23 +7,26 @@
   <style>
     :root {
       color-scheme: light;
-      --bg: #edf1f5;
+      --bg: #e8edf1;
       --surface: #ffffff;
-      --surface-soft: #f7f9fb;
-      --nav-bg: #eaf1f8;
-      --nav-card: #f8fbfe;
-      --line: #d5dde6;
-      --line-strong: #92a0af;
-      --text: #1f2933;
-      --muted: #667382;
-      --blue: #0b6bcb;
-      --blue-soft: rgba(223, 238, 255, .58);
-      --green: #1f7a43;
-      --green-soft: #e8f6ed;
+      --surface-soft: #f6f8fa;
+      --surface-warm: #fbfaf7;
+      --nav-bg: #e7ecef;
+      --nav-card: #f8fafb;
+      --line: #d7dee4;
+      --line-strong: #8795a3;
+      --text: #182530;
+      --muted: #66717d;
+      --blue: #164f7a;
+      --blue-soft: #e7f1f8;
+      --green: #137344;
+      --green-strong: #0d5f38;
+      --green-soft: #eaf6ef;
       --yellow-soft: #fff7d6;
       --red: #b4232c;
       --red-soft: #ffe8e8;
-      --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 10px 24px rgba(16, 24, 40, .05);
+      --amber: #9b6900;
+      --shadow: 0 1px 2px rgba(16, 24, 40, .08), 0 12px 26px rgba(16, 24, 40, .06);
       font-family: "Segoe UI", Arial, sans-serif;
     }
 
@@ -50,8 +53,12 @@
       background: var(--surface);
       color: var(--text);
       padding: 0 12px;
-      font-weight: 800;
+      font-weight: 850;
       white-space: nowrap;
+    }
+
+    button:not(:disabled) {
+      cursor: pointer;
     }
 
     button:disabled {
@@ -64,12 +71,18 @@
       width: 100%;
       min-width: 0;
       min-height: 34px;
-      border: 1px solid var(--line-strong);
+      border: 1px solid #b4c0cb;
       border-radius: 7px;
       background: #fff;
       color: var(--text);
       padding: 5px 8px;
-      font-weight: 800;
+      font-weight: 850;
+      font-variant-numeric: tabular-nums;
+    }
+
+    input:focus {
+      border-color: var(--blue);
+      outline: 3px solid rgba(22, 79, 122, .16);
     }
 
     .page {
@@ -93,42 +106,26 @@
     .machine-nav {
       min-width: 0;
       border-bottom: 1px solid #cfd6de;
-      background: #ececec;
-      padding: 24px;
+      background: var(--nav-bg);
+      padding: 16px 22px;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 156px;
-      gap: 18px;
+      grid-template-columns: repeat(4, minmax(270px, 380px)) 112px;
+      justify-content: center;
+      gap: 12px;
       align-items: stretch;
-    }
-
-    .machine-nav-list {
-      min-width: 0;
-      display: grid;
-      grid-template-columns: repeat(4, minmax(240px, 380px));
-      justify-content: start;
-      gap: 16px;
-      align-items: stretch;
-    }
-
-    .machine-nav-actions {
-      min-width: 0;
-      display: grid;
-      grid-template-rows: repeat(2, minmax(0, 58px));
-      align-content: center;
-      gap: 10px;
-      align-self: stretch;
     }
 
     .machine-tab {
       position: relative;
       min-width: 0;
-      min-height: 126px;
-      border-width: 10px 2px 2px 2px;
+      min-height: 112px;
+      border-width: 1px 1px 1px 6px;
       border-style: solid;
-      border-color: #aeb7c1;
-      border-radius: 10px;
+      border-color: #c6d0d9;
+      border-left-color: #aab6c0;
+      border-radius: 8px;
       background: #fff;
-      padding: 14px 14px 12px;
+      padding: 13px 14px;
       display: grid;
       grid-template-rows: auto auto auto auto;
       align-content: center;
@@ -138,13 +135,15 @@
     }
 
     .machine-tab.selected {
-      border-color: #0b355f;
-      box-shadow: none;
+      border-color: #96a8b7;
+      border-left-color: var(--blue);
+      box-shadow: 0 0 0 2px rgba(22, 79, 122, .18);
     }
     .machine-tab.idle {
       background: #f8fafc;
       border-style: solid;
       border-color: #aeb7c1;
+      border-left-color: #aeb7c1;
     }
 
     .machine-tab-top,
@@ -162,7 +161,7 @@
 
     .machine-tab-name {
       font-size: 17px;
-      font-weight: 900;
+      font-weight: 950;
     }
 
     .machine-tab-title {
@@ -203,13 +202,13 @@
     }
 
     .machine-tab-product {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 800;
     }
 
     .machine-tab-progress {
       color: var(--muted);
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 800;
       line-height: 1.2;
     }
@@ -225,26 +224,16 @@
       white-space: nowrap;
     }
 
-    .history-nav,
-    .queue-nav {
+    .history-nav {
       min-width: 0;
+      min-height: 112px;
       display: grid;
       place-items: center;
-      border-radius: 10px;
+      border: 1px solid #d7dee4;
+      border-radius: 8px;
       background: #fff;
-      border-color: #b8c4d1;
-      color: #0b355f;
-      font-size: 14px;
+      color: var(--muted);
       font-weight: 900;
-      padding: 8px 10px;
-      text-align: center;
-      line-height: 1.15;
-      white-space: normal;
-    }
-
-    .history-nav:hover,
-    .queue-nav:hover {
-      border-color: #0b355f;
     }
 
     .rail {
@@ -274,7 +263,7 @@
 
     .clock {
       color: var(--muted);
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 800;
     }
 
@@ -331,7 +320,8 @@
     .actions,
     .panel-head,
     .totals,
-    .roll-entry {
+    .roll-entry,
+    .tare-row {
       display: flex;
       align-items: center;
       gap: 8px;
@@ -345,7 +335,7 @@
     }
 
     .machine-name {
-      font-size: 17px;
+      font-size: 18px;
       font-weight: 900;
     }
 
@@ -356,7 +346,7 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 900;
       border: 1px solid transparent;
       white-space: nowrap;
@@ -381,16 +371,10 @@
       border-style: dashed;
     }
 
-    .status.completed {
-      color: #475569;
-      background: #eef2f6;
-      border-color: #c7ced6;
-    }
-
     .machine-order {
       overflow: hidden;
-      font-size: 14px;
-      font-weight: 800;
+      font-size: 15px;
+      font-weight: 850;
       line-height: 1.15;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -451,10 +435,10 @@
 
     .topbar {
       min-width: 0;
-      min-height: 76px;
+      min-height: 70px;
       background: var(--surface);
       border-bottom: 1px solid var(--line);
-      padding: 16px 24px;
+      padding: 12px 22px;
     }
 
     .title {
@@ -466,8 +450,17 @@
     .title h2 {
       margin: 0;
       overflow: hidden;
-      font-size: 21px;
+      font-size: 23px;
       line-height: 1.05;
+      font-weight: 900;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .title-sub {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 13px;
       font-weight: 800;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -477,18 +470,23 @@
       flex-wrap: nowrap;
     }
 
-    .action-primary,
-    .roll-entry button {
-      background: #0b355f;
-      border-color: #0b355f;
+    .pause-btn {
+      background: #f2f7f4;
+      border-color: #9fcdb3;
+      color: var(--green-strong);
+    }
+
+    .pause-btn:active,
+    .pause-btn:hover {
+      background: var(--green);
+      border-color: var(--green);
       color: #fff;
     }
 
-    .action-secondary,
-    .menu-btn {
-      background: #fff;
-      border-color: #b8c4d1;
-      color: #0b355f;
+    .finish-btn {
+      background: #1f2933;
+      color: #fff;
+      border-color: #1f2933;
     }
 
     .menu {
@@ -498,7 +496,7 @@
     .menu-btn {
       width: 38px;
       padding: 0;
-      font-size: 21px;
+      font-size: 22px;
       line-height: 1;
     }
 
@@ -528,13 +526,19 @@
       background: #fff;
     }
 
+    .danger {
+      color: var(--red);
+      background: var(--red-soft) !important;
+      border-color: #f0b2b6;
+    }
+
     .workspace {
       min-width: 0;
       min-height: 0;
-      padding: 18px 24px 24px;
+      padding: 16px 22px 20px;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 480px;
-      gap: 28px;
+      grid-template-columns: minmax(0, 1fr) 500px;
+      gap: 22px;
     }
 
     .panel {
@@ -551,13 +555,36 @@
 
     .panel-head {
       min-height: 0;
-      padding: 0 0 16px;
+      padding: 0 0 10px;
       border-bottom: 0;
       background: transparent;
-      color: #1f2933;
-      font-size: 21px;
+      font-size: 18px;
+      font-weight: 900;
+    }
+
+    .panel-title {
+      min-width: 0;
+      display: grid;
+      gap: 2px;
+    }
+
+    .panel-title-main {
+      overflow: hidden;
+      font-size: 18px;
+      line-height: 1.08;
+      font-weight: 950;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .panel-title-sub,
+    .panel-hint {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 12px;
       font-weight: 800;
-      line-height: 1.15;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .panel-body {
@@ -568,10 +595,11 @@
 
     .details-body {
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
-      gap: 24px;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      gap: 14px;
     }
 
+    .order-section,
     .notes-section {
       min-width: 0;
       display: grid;
@@ -579,121 +607,121 @@
     }
 
     .section-title {
-      color: #657383;
-      font-size: 14px;
-      font-weight: 700;
-      line-height: 1.2;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      line-height: 1.1;
+      text-transform: uppercase;
     }
 
     .info-grid {
       display: grid;
-      grid-template-columns:
-        minmax(180px, 1.2fr)
-        minmax(220px, 1.35fr)
-        minmax(150px, .82fr)
-        minmax(150px, .82fr)
-        minmax(120px, .62fr)
-        minmax(86px, .46fr)
-        minmax(140px, .7fr);
-      column-gap: 28px;
-      row-gap: 16px;
-    }
-
-    .order-section {
-      min-width: 0;
-      border: 1px solid #d9dee5;
-      border-radius: 9px;
-      background: #fff;
-      padding: 18px;
-      display: grid;
-      gap: 18px;
-      align-content: start;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-soft);
+      overflow: hidden;
     }
 
     .field {
       min-width: 0;
-      min-height: 0;
+      min-height: 58px;
+      border-right: 1px solid #e1e6eb;
+      border-bottom: 1px solid #e1e6eb;
+      background: #fff;
+      padding: 9px 11px;
+    }
+
+    .field:nth-child(3n) {
+      border-right: 0;
+    }
+
+    .field:nth-last-child(-n+3) {
       border-bottom: 0;
-      padding-bottom: 0;
     }
 
     .field-label {
       display: block;
-      margin-bottom: 6px;
-      color: #657383;
-      font-size: 14px;
-      font-weight: 700;
-      line-height: 1.2;
+      margin-bottom: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+      text-transform: uppercase;
     }
 
     .value {
       overflow-wrap: anywhere;
-      color: #111827;
-      font-size: 17px;
+      font-size: 16px;
       font-weight: 800;
-      line-height: 1.2;
+      line-height: 1.16;
     }
 
     .notes {
       min-height: 0;
-      border: 0;
-      border-radius: 0;
-      padding: 0;
-      background: transparent;
+      border: 1px solid #dce3e9;
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: var(--surface-warm);
       color: #26323f;
-      font-size: 17px;
+      font-size: 16px;
       font-weight: 400;
-      line-height: 1.4;
+      line-height: 1.35;
     }
 
     .recipe-section {
       min-height: 0;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
-      gap: 12px;
-      margin-top: 0;
+      gap: 7px;
+      margin-top: 2px;
     }
 
     .recipe-title {
-      color: #1f2933;
-      font-size: 21px;
-      font-weight: 800;
-      line-height: 1.15;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+      line-height: 1.1;
+      text-transform: uppercase;
     }
 
     .recipe-table {
       min-height: 0;
       border: 1px solid var(--line);
-      border-radius: 9px;
-      overflow: hidden;
+      border-radius: 8px;
+      overflow: auto;
       background: #fff;
     }
 
     .recipe-head,
     .recipe-row {
       display: grid;
-      grid-template-columns: 178px minmax(190px, 1fr) minmax(150px, .7fr) minmax(120px, .5fr);
+      grid-template-columns: 172px minmax(190px, 1fr) minmax(150px, .72fr) minmax(110px, .48fr);
       align-items: stretch;
     }
 
     .recipe-head {
-      min-height: 36px;
-      background: #f1f4f7;
-      color: #657383;
-      font-size: 14px;
-      font-weight: 700;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      min-height: 34px;
+      background: #eef2f5;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
     }
 
     .recipe-row {
-      min-height: 54px;
-      border-top: 1px solid #dde3e9;
+      min-height: 52px;
+      border-top: 1px solid #e0e6eb;
     }
 
     .recipe-head div,
     .recipe-row > div {
       min-width: 0;
-      border-right: 1px solid #dde3e9;
-      padding: 6px 9px;
+      border-right: 1px solid #e0e6eb;
+      padding: 6px 8px;
     }
 
     .recipe-head div:last-child,
@@ -702,9 +730,9 @@
     }
 
     .component {
-      background: #f8fafc;
+      background: #f7f9fb;
       color: #1f2933;
-      font-size: 17px;
+      font-size: 16px;
       font-weight: 800;
       line-height: 1.18;
       overflow-wrap: anywhere;
@@ -712,111 +740,126 @@
     }
 
     .material-planned {
-      min-height: 34px;
+      min-height: 36px;
       border: 1px solid transparent;
       border-radius: 7px;
-      background: #fff;
+      background: transparent;
       color: #26323f;
-      padding: 8px 7px;
-      font-size: 17px;
-      font-weight: 700;
+      padding: 7px 6px;
+      font-size: 16px;
+      font-weight: 800;
       line-height: 1.18;
       overflow-wrap: anywhere;
     }
 
     .recipe-row input {
       min-height: 36px;
-      padding: 6px 8px;
-      font-size: 17px;
-      font-weight: 700;
+      padding: 5px 7px;
+      font-size: 16px;
+      font-weight: 800;
     }
 
     .roll-body {
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr) auto;
-      gap: 9px;
+      grid-template-rows: auto auto auto minmax(0, 1fr);
+      gap: 11px;
     }
 
     .totals {
       display: grid;
-      grid-template-columns: minmax(0, 2.05fr) minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
       gap: 8px;
-      align-items: stretch;
     }
 
     .gross-metrics {
       min-width: 0;
-      min-height: 100%;
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: #fff;
-      padding: 8px 0;
+      display: contents;
     }
 
     .metric {
-      position: relative;
       min-width: 0;
-      height: 100%;
-      min-height: 68px;
+      min-height: 74px;
       border: 1px solid var(--line);
-      border-radius: 9px;
-      background: #fff;
-      padding: 10px 14px;
+      border-radius: 8px;
+      background: #fbfcfd;
+      padding: 10px 11px;
     }
 
     .metric.remain {
-      background: #fff;
-      border-color: var(--line);
+      background: #f4fbf6;
+      border-color: #9fd0b5;
     }
 
     .gross-metrics .metric,
     .gross-metrics .metric.remain {
-      border: 0;
-      border-radius: 0;
-      background: transparent;
-      padding: 0 22px;
-    }
-
-    .gross-metrics .metric.remain::before {
-      content: "";
-      position: absolute;
-      left: 0;
-      top: 8px;
-      bottom: 8px;
-      width: 1px;
-      background: #dce3ea;
-    }
-
-    .totals .field-label {
-      color: #718091;
-      font-weight: 700;
-      margin-bottom: 6px;
+      border-radius: 8px;
+      padding: 10px 11px;
     }
 
     .metric .big {
-      margin-top: 0;
+      margin-top: 6px;
       overflow: hidden;
-      font-size: 30px;
+      font-size: 28px;
       line-height: 1;
-      font-weight: 900;
+      font-weight: 950;
       font-variant-numeric: tabular-nums;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
-    .totals .metric .big {
-      font-size: 28px;
+    .metric.remain .big {
+      color: var(--green-strong);
+      font-size: 32px;
+    }
+
+    .tare-row {
+      align-items: end;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+      padding: 8px;
+    }
+
+    .tare-row label {
+      min-width: 0;
+      flex: 1 1 0;
+    }
+
+    .tare-row .field-label {
+      min-height: 28px;
+      display: flex;
+      align-items: end;
+    }
+
+    .target-roll-weight {
+      min-width: 0;
+      flex: 1 1 0;
+    }
+
+    .readonly-weight {
+      min-height: 38px;
+      border: 1px solid #d7e0e9;
+      border-radius: 7px;
+      background: #fff;
+      color: #26323f;
+      padding: 7px 8px;
+      font-size: 18px;
+      font-weight: 850;
+      line-height: 1.2;
+    }
+
+    .tare-row input {
+      min-height: 38px;
+      font-size: 18px;
     }
 
     .roll-entry {
       align-items: end;
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      background: #fff;
-      padding: 8px;
+      border: 1px solid #96cdaa;
+      border-radius: 10px;
+      background: linear-gradient(180deg, #f9fffb 0%, #edf8f1 100%);
+      box-shadow: inset 0 0 0 1px rgba(19, 115, 68, .08);
+      padding: 12px;
     }
 
     .roll-entry label {
@@ -824,27 +867,54 @@
       flex: 1 1 auto;
     }
 
-    .roll-entry .core-weight-field {
-      flex: 0 0 138px;
-    }
-
     .roll-entry input {
-      min-height: 44px;
-      font-size: 17px;
+      min-height: 58px;
+      border-color: #8fc6a5;
+      color: #10261b;
+      padding: 6px 12px;
+      font-size: 34px;
+      line-height: 1;
+      font-weight: 950;
     }
 
     .roll-entry button {
-      min-height: 44px;
+      min-width: 128px;
+      min-height: 58px;
+      background: var(--green);
+      color: #fff;
+      border-color: var(--green-strong);
+      font-size: 19px;
+      box-shadow: 0 3px 0 var(--green-strong);
+    }
+
+    .roll-entry button:active {
+      transform: translateY(2px);
+      box-shadow: 0 1px 0 var(--green-strong);
     }
 
     .roll-table {
       min-height: 0;
       border: 1px solid var(--line);
-      border-radius: 9px;
+      border-radius: 8px;
       background: #fff;
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-rows: auto auto minmax(0, 1fr);
       overflow: hidden;
+    }
+
+    .roll-table-title {
+      min-height: 34px;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      background: #fbfcfd;
+      border-bottom: 1px solid #e2e7ec;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+      text-transform: uppercase;
     }
 
     .roll-list {
@@ -855,7 +925,7 @@
     .roll-head,
     .roll-row {
       display: grid;
-      grid-template-columns: 48px minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-columns: 44px minmax(0, 1fr) minmax(0, .8fr);
       min-height: 36px;
       align-items: center;
     }
@@ -863,14 +933,18 @@
     .roll-head {
       background: #f1f4f7;
       color: var(--muted);
-      font-size: 12px;
-      font-weight: 800;
+      font-size: 11px;
+      font-weight: 850;
       text-transform: uppercase;
     }
 
     .roll-row {
-      border-top: 1px solid #dde3e9;
-      font-weight: 800;
+      border-top: 1px solid #edf0f3;
+      font-weight: 850;
+    }
+
+    .roll-row:nth-child(even) {
+      background: #fafbfc;
     }
 
     .roll-head div,
@@ -881,29 +955,28 @@
 
     .roll-row input {
       min-height: 30px;
+      border-color: #d2dbe3;
+      background: #fff;
       padding: 3px 6px;
       font-size: 14px;
     }
 
-    .queue-overlay,
-    .history-overlay {
+    .queue-overlay {
       position: absolute;
       z-index: 20;
-      inset: 0;
+      inset: 128px 0 0 0;
       display: none;
-      background: rgba(31, 41, 51, .26);
+      background: rgba(31, 41, 51, .18);
     }
 
-    .queue-overlay.open,
-    .history-overlay.open {
+    .queue-overlay.open {
       display: block;
     }
 
     .queue-drawer {
       height: 100%;
       width: min(900px, 82%);
-      margin-left: auto;
-      border-left: 1px solid var(--line);
+      border-right: 1px solid var(--line);
       background: var(--surface);
       box-shadow: var(--shadow);
       display: grid;
@@ -922,7 +995,7 @@
 
     .queue-drawer-head h2 {
       margin: 0;
-      font-size: 21px;
+      font-size: 22px;
       line-height: 1;
       font-weight: 900;
     }
@@ -930,7 +1003,7 @@
     .queue-close {
       width: 38px;
       padding: 0;
-      font-size: 21px;
+      font-size: 22px;
     }
 
     .queue-sections {
@@ -939,7 +1012,7 @@
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 12px;
-      overflow: auto;
+      overflow: hidden;
     }
 
     .queue-machine {
@@ -976,7 +1049,7 @@
       align-content: start;
       gap: 6px;
       padding: 8px;
-      overflow: auto;
+      overflow: hidden;
     }
 
     .queue-card {
@@ -984,9 +1057,9 @@
       border: 1px solid #d8e0e8;
       border-radius: 8px;
       background: #fff;
-      padding: 7px 10px;
+      padding: 9px 10px;
       display: grid;
-      gap: 4px;
+      gap: 6px;
       text-align: left;
     }
 
@@ -1012,212 +1085,48 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
+      gap: 10px;
     }
 
     .queue-card-title {
       min-width: 0;
       overflow: hidden;
-      font-size: 17px;
+      font-size: 16px;
       line-height: 1.1;
-      font-weight: 800;
+      font-weight: 900;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
-    .queue-sequence {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 22px;
-      height: 22px;
-      margin-right: 8px;
-      border-radius: 6px;
-      background: #eef2f6;
-      color: #475569;
-      font-size: 14px;
-      font-weight: 900;
-      font-variant-numeric: tabular-nums;
-    }
-
+    .queue-card-meta,
     .queue-card-sub {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
+    .queue-card-meta {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+    }
+
     .queue-card-sub {
       color: var(--text);
-      font-size: 14px;
-      font-weight: 800;
-    }
-
-    .queue-card-details {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-      color: var(--muted);
-      font-size: 14px;
-      font-weight: 800;
-    }
-
-    .queue-card-details span {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .history-drawer {
-      height: 100%;
-      width: min(1120px, 90%);
-      margin-left: auto;
-      border-left: 1px solid var(--line);
-      background: var(--surface);
-      box-shadow: var(--shadow);
-      display: grid;
-      grid-template-rows: auto auto minmax(0, 1fr);
-    }
-
-    .history-drawer-head {
-      min-height: 62px;
-      border-bottom: 1px solid var(--line);
-      padding: 12px 16px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-    }
-
-    .history-drawer-head h2 {
-      margin: 0;
-      font-size: 21px;
-      line-height: 1;
-      font-weight: 900;
-    }
-
-    .history-close {
-      width: 38px;
-      padding: 0;
-      font-size: 21px;
-    }
-
-    .history-filters {
-      border-bottom: 1px solid var(--line);
-      padding: 12px 16px;
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
-      background: #fbfcfd;
-    }
-
-    .history-filters label {
-      min-width: 0;
-      display: grid;
-      gap: 5px;
-    }
-
-    .history-filters input {
-      min-height: 36px;
-      font-size: 14px;
-      font-weight: 700;
-    }
-
-    .history-results {
-      min-height: 0;
-      padding: 12px 16px;
-      display: grid;
-      align-content: start;
-      gap: 8px;
-      overflow: auto;
-    }
-
-    .history-row {
-      min-width: 0;
-      border: 1px solid #d8e0e8;
-      border-radius: 8px;
-      background: #fff;
-      padding: 8px 10px;
-      display: grid;
-      gap: 5px;
-      text-align: left;
-    }
-
-    .history-row.selected {
-      border-color: rgba(11, 107, 203, .58);
-      background: var(--blue-soft);
-    }
-
-    .history-row-top {
-      min-width: 0;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-    }
-
-    .history-row-title {
-      min-width: 0;
-      overflow: hidden;
-      font-size: 17px;
-      line-height: 1.1;
-      font-weight: 800;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .history-row-product {
-      min-width: 0;
-      overflow: hidden;
-      color: var(--text);
-      font-size: 14px;
-      font-weight: 800;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .history-row-details {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-      color: var(--muted);
-      font-size: 14px;
-      font-weight: 800;
-    }
-
-    .history-row-details span {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .history-empty {
-      display: none;
-      color: var(--muted);
-      font-size: 17px;
-      font-weight: 700;
-      padding: 18px 4px;
-    }
-
-    .history-results.empty .history-empty {
-      display: block;
+      font-size: 13px;
+      font-weight: 850;
     }
 
     @media (max-width: 1360px) {
       .machine-nav {
-        grid-template-columns: minmax(0, 1fr) 132px;
+        grid-template-columns: repeat(4, minmax(210px, 1fr)) 96px;
         gap: 10px;
-        padding: 18px 24px;
-      }
-
-      .machine-nav-list {
-        grid-template-columns: repeat(4, minmax(210px, 1fr));
-        gap: 10px;
+        padding: 14px 18px;
       }
 
       .machine-tab {
-        padding: 11px;
+        min-height: 104px;
+        padding: 10px;
       }
 
       .machine-tab-meta {
@@ -1225,21 +1134,32 @@
       }
 
       .workspace {
-        grid-template-columns: minmax(0, 1fr) 440px;
-        gap: 20px;
+        grid-template-columns: minmax(0, 1fr) 460px;
+        gap: 18px;
       }
 
       .info-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
-      .recipe-head,
-      .recipe-row {
-        grid-template-columns: 156px minmax(150px, 1fr) minmax(118px, .62fr) minmax(92px, .48fr);
+      .field,
+      .field:nth-child(3n),
+      .field:nth-last-child(-n+3) {
+        border-right: 1px solid #e1e6eb;
+        border-bottom: 1px solid #e1e6eb;
       }
 
-      .history-filters {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+      .field:nth-child(even) {
+        border-right: 0;
+      }
+
+      .field:nth-last-child(-n+2) {
+        border-bottom: 0;
+      }
+
+      .recipe-head,
+      .recipe-row {
+        grid-template-columns: 150px minmax(150px, 1fr) minmax(118px, .62fr) minmax(92px, .48fr);
       }
     }
 
@@ -1254,22 +1174,12 @@
       }
 
       .machine-nav {
-        padding: 14px 18px;
+        padding: 10px 16px;
       }
 
-      .machine-tab {
-        min-height: 96px;
-      }
-
-      .machine-nav-actions {
-        grid-template-rows: repeat(2, minmax(0, 43px));
-        gap: 8px;
-      }
-
-      .history-nav,
-      .queue-nav {
-        font-size: 12px;
-        padding: 6px 8px;
+      .machine-tab,
+      .history-nav {
+        min-height: 88px;
       }
 
       .machine-tab {
@@ -1278,7 +1188,7 @@
       }
 
       .machine-tab-name {
-        font-size: 17px;
+        font-size: 16px;
       }
 
       .machine-tab-meta {
@@ -1286,11 +1196,11 @@
       }
 
       .machine-tab-progress {
-        font-size: 12px;
+        font-size: 11px;
       }
 
       .workspace {
-        padding: 12px 18px 18px;
+        padding: 12px 18px 16px;
       }
 
       .panel-body {
@@ -1307,7 +1217,7 @@
       }
 
       .recipe-row {
-        min-height: 46px;
+        min-height: 44px;
       }
 
       .recipe-row input {
@@ -1319,11 +1229,28 @@
       }
 
       .metric {
-        min-height: 60px;
+        min-height: 58px;
       }
 
       .metric .big {
-        font-size: 21px;
+        font-size: 22px;
+      }
+
+      .metric.remain .big {
+        font-size: 25px;
+      }
+
+      .roll-entry {
+        padding: 10px;
+      }
+
+      .roll-entry input,
+      .roll-entry button {
+        min-height: 50px;
+      }
+
+      .roll-entry input {
+        font-size: 29px;
       }
 
       .roll-row {
@@ -1336,88 +1263,81 @@
   <main class="page">
     <div class="app">
       <header class="machine-nav" aria-label="Навигация по машини">
-        <div class="machine-nav-list">
-          <button class="machine-tab running selected" type="button">
-            <span class="machine-tab-top">
-              <span class="machine-tab-title">
-                <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
-                <span class="machine-tab-name">Машина 1</span>
-              </span>
-              <span class="status running">Изработване</span>
+        <button class="machine-tab running selected" type="button">
+          <span class="machine-tab-top">
+            <span class="machine-tab-title">
+              <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
+              <span class="machine-tab-name">Машина 1</span>
             </span>
-            <span class="machine-tab-meta">
-              <span class="machine-tab-customer">Пелети Пирин</span>
-              <span class="machine-tab-product">ТСФ 890/0.082</span>
-            </span>
-            <span class="machine-tab-progress">
-              <span class="progress"><span style="width:75%"></span></span>
-              <span class="machine-tab-qty">3000 / 4000 кг</span>
-            </span>
-          </button>
+            <span class="status running">Изработване</span>
+          </span>
+          <span class="machine-tab-meta">
+            <span class="machine-tab-customer">Пелети Пирин</span>
+            <span class="machine-tab-product">ТСФ 890/0.082</span>
+          </span>
+          <span class="machine-tab-progress">
+            <span class="progress"><span style="width:75%"></span></span>
+            <span class="machine-tab-qty">3000 / 4000 кг</span>
+          </span>
+        </button>
 
-          <button class="machine-tab running" type="button">
-            <span class="machine-tab-top">
-              <span class="machine-tab-title">
-                <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
-                <span class="machine-tab-name">Машина 2</span>
-              </span>
-              <span class="status running">Изработване</span>
+        <button class="machine-tab running" type="button">
+          <span class="machine-tab-top">
+            <span class="machine-tab-title">
+              <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
+              <span class="machine-tab-name">Машина 2</span>
             </span>
-            <span class="machine-tab-meta">
-              <span class="machine-tab-customer">Бета Трейд</span>
-              <span class="machine-tab-product">Торби LDPE</span>
-            </span>
-            <span class="machine-tab-progress">
-              <span class="progress"><span style="width:12%"></span></span>
-              <span class="machine-tab-qty">97 / 800 кг</span>
-            </span>
-          </button>
+            <span class="status running">Изработване</span>
+          </span>
+          <span class="machine-tab-meta">
+            <span class="machine-tab-customer">Бета Трейд</span>
+            <span class="machine-tab-product">Торби LDPE</span>
+          </span>
+          <span class="machine-tab-progress">
+            <span class="progress"><span style="width:12%"></span></span>
+            <span class="machine-tab-qty">97 / 800 кг</span>
+          </span>
+        </button>
 
-          <button class="machine-tab paused" type="button">
-            <span class="machine-tab-top">
-              <span class="machine-tab-title">
-                <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
-                <span class="machine-tab-name">Машина 3</span>
-              </span>
-              <span class="status paused">Паузирана</span>
+        <button class="machine-tab paused" type="button">
+          <span class="machine-tab-top">
+            <span class="machine-tab-title">
+              <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
+              <span class="machine-tab-name">Машина 3</span>
             </span>
-            <span class="machine-tab-meta">
-              <span class="machine-tab-customer">Алфа Пак</span>
-              <span class="machine-tab-product">Фолио 890/0.082</span>
-            </span>
-            <span class="machine-tab-progress">
-              <span class="progress"><span style="width:61%"></span></span>
-              <span class="machine-tab-qty">183 / 300 кг</span>
-            </span>
-          </button>
+            <span class="status paused">Паузирана</span>
+          </span>
+          <span class="machine-tab-meta">
+            <span class="machine-tab-customer">Алфа Пак</span>
+            <span class="machine-tab-product">Фолио 890/0.082</span>
+          </span>
+          <span class="machine-tab-progress">
+            <span class="progress"><span style="width:61%"></span></span>
+            <span class="machine-tab-qty">183 / 300 кг</span>
+          </span>
+        </button>
 
-          <button class="machine-tab idle" type="button">
-            <span class="machine-tab-top">
-              <span class="machine-tab-title">
-                <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
-                <span class="machine-tab-name">Машина 4</span>
-              </span>
-              <span class="status idle">Свободна</span>
+        <button class="machine-tab idle" type="button">
+          <span class="machine-tab-top">
+            <span class="machine-tab-title">
+              <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
+              <span class="machine-tab-name">Машина 4</span>
             </span>
-            <span class="machine-tab-meta">
-              <span class="machine-tab-customer">-</span>
-              <span class="machine-tab-product" aria-hidden="true"></span>
-            </span>
-            <span class="machine-tab-progress">
-              <span class="progress"><span style="width:0%"></span></span>
-              <span class="machine-tab-qty">0 / 0 кг</span>
-            </span>
-          </button>
-        </div>
+            <span class="status idle">Свободна</span>
+          </span>
+          <span class="machine-tab-meta">
+            <span class="machine-tab-customer">-</span>
+            <span class="machine-tab-product" aria-hidden="true"></span>
+          </span>
+          <span class="machine-tab-progress">
+            <span class="progress"><span style="width:0%"></span></span>
+            <span class="machine-tab-qty">0 / 0 кг</span>
+          </span>
+        </button>
 
-        <div class="machine-nav-actions" aria-label="Глобални действия">
-          <button class="history-nav" id="history-open" type="button" aria-controls="history-overlay" aria-expanded="false">
-            <span>Завършени поръчки</span>
-          </button>
-          <button class="queue-nav" id="queue-open" type="button" aria-controls="queue-overlay" aria-expanded="false">
-            <span>Опашка</span>
-          </button>
-        </div>
+        <button class="history-nav" type="button">
+          <span>История</span>
+        </button>
       </header>
 
       <div class="queue-overlay" id="queue-overlay" aria-hidden="true">
@@ -1429,139 +1349,84 @@
           <div class="queue-sections">
             <section class="queue-machine selected">
               <div class="queue-machine-head">
-                <span>Машина 1</span>
+                <span>М1</span>
                 <span class="status running">Изработване</span>
               </div>
               <div class="queue-list">
                 <button class="queue-card running selected" type="button">
-                  <span class="queue-card-top"><span class="queue-card-title"><span class="queue-sequence">1</span>Пелети Пирин (№25278)</span><span class="status running">Изработване</span></span>
-                  <span class="queue-card-sub">ТСФ 890/0.082</span>
-                  <span class="queue-card-details"><span>890 / 0.082</span><span>LDPE</span><span>500 кг</span></span>
+                  <span class="queue-card-top"><span class="queue-card-title">Пелети Пирин</span><span class="status running">Изработване</span></span>
+                  <span class="queue-card-sub">ТСФ 890/0.082 · 500 кг</span>
+                  <span class="queue-card-meta">1 · №25278</span>
                 </button>
                 <button class="queue-card pending" type="button">
-                  <span class="queue-card-top"><span class="queue-card-title"><span class="queue-sequence">2</span>Орбита Пак (№25284)</span><span class="status idle">Изчакване</span></span>
-                  <span class="queue-card-sub">LDPE плик</span>
-                  <span class="queue-card-details"><span>720 / 0.060</span><span>LDPE</span><span>500 кг</span></span>
+                  <span class="queue-card-top"><span class="queue-card-title">Орбита Пак</span><span class="status idle">Изчакване</span></span>
+                  <span class="queue-card-sub">LDPE плик · 500 кг</span>
+                  <span class="queue-card-meta">2 · №25284</span>
                 </button>
                 <button class="queue-card pending" type="button">
-                  <span class="queue-card-top"><span class="queue-card-title"><span class="queue-sequence">3</span>Нова Фуудс (№25290)</span><span class="status idle">Изчакване</span></span>
-                  <span class="queue-card-sub">Фолио</span>
-                  <span class="queue-card-details"><span>1100 / 0.045</span><span>LLDPE</span><span>1200 кг</span></span>
+                  <span class="queue-card-top"><span class="queue-card-title">Нова Фуудс</span><span class="status idle">Изчакване</span></span>
+                  <span class="queue-card-sub">Фолио · 1200 кг</span>
+                  <span class="queue-card-meta">3 · №25290</span>
                 </button>
               </div>
             </section>
 
             <section class="queue-machine">
               <div class="queue-machine-head">
-                <span>Машина 2</span>
+                <span>М2</span>
                 <span class="status running">Изработване</span>
               </div>
               <div class="queue-list">
                 <button class="queue-card running" type="button">
-                  <span class="queue-card-top"><span class="queue-card-title"><span class="queue-sequence">1</span>Бета Трейд (№25280)</span><span class="status running">Изработване</span></span>
-                  <span class="queue-card-sub">Торби LDPE</span>
-                  <span class="queue-card-details"><span>650 / 0.055</span><span>LDPE</span><span>800 кг</span></span>
+                  <span class="queue-card-top"><span class="queue-card-title">Бета Трейд</span><span class="status running">Изработване</span></span>
+                  <span class="queue-card-sub">Торби · 800 кг</span>
+                  <span class="queue-card-meta">1 · №25280</span>
                 </button>
                 <button class="queue-card pending" type="button">
-                  <span class="queue-card-top"><span class="queue-card-title"><span class="queue-sequence">2</span>Еко Пак (№25282)</span><span class="status idle">Изчакване</span></span>
-                  <span class="queue-card-sub">Ръкав</span>
-                  <span class="queue-card-details"><span>980 / 0.070</span><span>LDPE</span><span>600 кг</span></span>
+                  <span class="queue-card-top"><span class="queue-card-title">Еко Пак</span><span class="status idle">Изчакване</span></span>
+                  <span class="queue-card-sub">Ръкав · 600 кг</span>
+                  <span class="queue-card-meta">2 · №25282</span>
                 </button>
               </div>
             </section>
 
             <section class="queue-machine">
               <div class="queue-machine-head">
-                <span>Машина 3</span>
+                <span>М3</span>
                 <span class="status paused">Паузирана</span>
               </div>
               <div class="queue-list">
                 <button class="queue-card paused" type="button">
-                  <span class="queue-card-top"><span class="queue-card-title"><span class="queue-sequence">1</span>Алфа Пак (№25281)</span><span class="status paused">Паузирана</span></span>
-                  <span class="queue-card-sub">Фолио 890/0.082</span>
-                  <span class="queue-card-details"><span>890 / 0.082</span><span>LDPE</span><span>300 кг</span></span>
+                  <span class="queue-card-top"><span class="queue-card-title">Алфа Пак</span><span class="status paused">Паузирана</span></span>
+                  <span class="queue-card-sub">Фолио · 300 кг</span>
+                  <span class="queue-card-meta">1 · №25281</span>
                 </button>
                 <button class="queue-card pending" type="button">
-                  <span class="queue-card-top"><span class="queue-card-title"><span class="queue-sequence">2</span>Делта Ком (№25288)</span><span class="status idle">Изчакване</span></span>
-                  <span class="queue-card-sub">LDPE фолио</span>
-                  <span class="queue-card-details"><span>760 / 0.050</span><span>LDPE</span><span>350 кг</span></span>
+                  <span class="queue-card-top"><span class="queue-card-title">Делта Ком</span><span class="status idle">Изчакване</span></span>
+                  <span class="queue-card-sub">LDPE · 350 кг</span>
+                  <span class="queue-card-meta">2 · №25288</span>
                 </button>
               </div>
             </section>
 
             <section class="queue-machine">
               <div class="queue-machine-head">
-                <span>Машина 4</span>
+                <span>М4</span>
                 <span class="status idle">Свободна</span>
               </div>
               <div class="queue-list">
                 <button class="queue-card pending" type="button">
-                  <span class="queue-card-top"><span class="queue-card-title"><span class="queue-sequence">1</span>Сити Маркет (№25286)</span><span class="status idle">Изчакване</span></span>
-                  <span class="queue-card-sub">Плик</span>
-                  <span class="queue-card-details"><span>540 / 0.040</span><span>LDPE</span><span>700 кг</span></span>
+                  <span class="queue-card-top"><span class="queue-card-title">Сити Маркет</span><span class="status idle">Изчакване</span></span>
+                  <span class="queue-card-sub">Плик · 700 кг</span>
+                  <span class="queue-card-meta">1 · №25286</span>
                 </button>
                 <button class="queue-card pending" type="button">
-                  <span class="queue-card-top"><span class="queue-card-title"><span class="queue-sequence">2</span>Хелиос (№25292)</span><span class="status idle">Изчакване</span></span>
-                  <span class="queue-card-sub">Фолио</span>
-                  <span class="queue-card-details"><span>800 / 0.065</span><span>LLDPE</span><span>450 кг</span></span>
+                  <span class="queue-card-top"><span class="queue-card-title">Хелиос</span><span class="status idle">Изчакване</span></span>
+                  <span class="queue-card-sub">Фолио · 450 кг</span>
+                  <span class="queue-card-meta">2 · №25292</span>
                 </button>
               </div>
             </section>
-          </div>
-        </aside>
-      </div>
-
-      <div class="history-overlay" id="history-overlay" aria-hidden="true">
-        <aside class="history-drawer" aria-label="Завършени поръчки">
-          <div class="history-drawer-head">
-            <h2>Завършени поръчки</h2>
-            <button class="history-close" id="history-close" type="button" aria-label="Затвори завършените поръчки">×</button>
-          </div>
-          <div class="history-filters" aria-label="Филтри за завършени поръчки">
-            <label>
-              <span class="field-label">Фирма</span>
-              <input class="history-filter" type="search" placeholder="напр. Пирин" data-filter="customer">
-            </label>
-            <label>
-              <span class="field-label">Изделие</span>
-              <input class="history-filter" type="search" placeholder="напр. фолио" data-filter="product">
-            </label>
-            <label>
-              <span class="field-label">Размер / дебелина</span>
-              <input class="history-filter" type="search" placeholder="напр. 890 / 0.082" data-filter="size">
-            </label>
-            <label>
-              <span class="field-label">Материал</span>
-              <input class="history-filter" type="search" placeholder="напр. LDPE" data-filter="material">
-            </label>
-          </div>
-          <div class="history-results" id="history-results">
-            <button class="history-row" type="button" data-customer="пелети пирин" data-product="тсф 890/0.082" data-size="890 / 0.082" data-material="ldpe">
-              <span class="history-row-top"><span class="history-row-title">Пелети Пирин (№25271)</span><span class="status completed">Завършена</span></span>
-              <span class="history-row-product">ТСФ 890/0.082</span>
-              <span class="history-row-details"><span>890 / 0.082</span><span>LDPE</span><span>500 кг</span><span>15.06.2026 14:32</span></span>
-            </button>
-            <button class="history-row" type="button" data-customer="бета трейд" data-product="торби ldpe" data-size="650 / 0.055" data-material="ldpe">
-              <span class="history-row-top"><span class="history-row-title">Бета Трейд (№25263)</span><span class="status completed">Завършена</span></span>
-              <span class="history-row-product">Торби LDPE</span>
-              <span class="history-row-details"><span>650 / 0.055</span><span>LDPE</span><span>800 кг</span><span>15.06.2026 11:10</span></span>
-            </button>
-            <button class="history-row" type="button" data-customer="алфа пак" data-product="фолио 890/0.082" data-size="890 / 0.082" data-material="ldpe">
-              <span class="history-row-top"><span class="history-row-title">Алфа Пак (№25258)</span><span class="status completed">Завършена</span></span>
-              <span class="history-row-product">Фолио 890/0.082</span>
-              <span class="history-row-details"><span>890 / 0.082</span><span>LDPE</span><span>300 кг</span><span>14.06.2026 16:45</span></span>
-            </button>
-            <button class="history-row" type="button" data-customer="сити маркет" data-product="плик" data-size="540 / 0.040" data-material="ldpe">
-              <span class="history-row-top"><span class="history-row-title">Сити Маркет (№25241)</span><span class="status completed">Завършена</span></span>
-              <span class="history-row-product">Плик</span>
-              <span class="history-row-details"><span>540 / 0.040</span><span>LDPE</span><span>700 кг</span><span>14.06.2026 09:20</span></span>
-            </button>
-            <button class="history-row" type="button" data-customer="нова фуудс" data-product="термосвиваемо фолио" data-size="1100 / 0.045" data-material="lldpe">
-              <span class="history-row-top"><span class="history-row-title">Нова Фуудс (№25235)</span><span class="status completed">Завършена</span></span>
-              <span class="history-row-product">Термосвиваемо фолио</span>
-              <span class="history-row-details"><span>1100 / 0.045</span><span>LLDPE</span><span>1200 кг</span><span>13.06.2026 18:05</span></span>
-            </button>
-            <div class="history-empty">Няма намерени завършени поръчки.</div>
           </div>
         </aside>
       </div>
@@ -1569,16 +1434,18 @@
       <section class="main">
         <header class="topbar">
           <div class="title">
-            <h2>Машина 1: №25278</h2>
+            <h2>М1 · №25278</h2>
+            <div class="title-sub">Пелети Пирин · ТСФ 890/0.082 · 3000 / 4000 кг</div>
           </div>
           <div class="actions">
-            <button id="action-start" disabled>Старт</button>
-            <button class="action-secondary" id="action-pause">Пауза</button>
-            <button class="action-primary" id="action-finish">Приключи</button>
+            <button disabled>Старт</button>
+            <button class="pause-btn">Пауза</button>
+            <button class="finish-btn">Приключи</button>
             <div class="menu">
               <button class="menu-btn" aria-label="Още действия">⋯</button>
               <div class="menu-panel">
                 <button>Печат / препечат</button>
+                <button class="danger">Анулирай / възстанови</button>
               </div>
             </div>
           </div>
@@ -1587,13 +1454,16 @@
         <div class="workspace">
           <section class="panel details-panel">
             <div class="panel-head">
-              <span>Детайли</span>
+              <span class="panel-title">
+                <span class="panel-title-main">Поръчка и рецепта</span>
+                <span class="panel-title-sub">Данни от технологичната карта</span>
+              </span>
             </div>
             <div class="panel-body details-body">
               <section class="order-section">
                 <div class="info-grid">
                   <div class="field">
-                    <span class="field-label">Вид изделие</span>
+                    <span class="field-label">Изделие</span>
                     <div class="value">ТСФ 890/0.082</div>
                   </div>
                   <div class="field">
@@ -1605,29 +1475,25 @@
                     <div class="value">500 кг / 5 ролки</div>
                   </div>
                   <div class="field">
-                    <span class="field-label">Размер / дебелина</span>
+                    <span class="field-label">Размер</span>
                     <div class="value">890 / 0.082</div>
                   </div>
                   <div class="field">
-                    <span class="field-label">Вид заготовка</span>
+                    <span class="field-label">Заготовка</span>
                     <div class="value">плоско</div>
                   </div>
                   <div class="field">
                     <span class="field-label">Материал</span>
                     <div class="value">LDPE</div>
                   </div>
-                  <div class="field">
-                    <span class="field-label">Макс. тегло ролка, кг</span>
-                    <div class="value">60.0</div>
-                  </div>
                 </div>
+              </section>
 
-                <section class="notes-section">
-                  <div class="section-title">Забележки</div>
-                  <div class="notes">
-                    Екструдират се ролки по 4500 м. Размерът се пуска с 2-3 см изрезка.
-                  </div>
-                </section>
+              <section class="notes-section">
+                <div class="section-title">Забележки</div>
+                <div class="notes">
+                  Екструдират се ролки по 4500 м. Размерът се пуска с 2-3 см изрезка.
+                </div>
               </section>
 
               <div class="recipe-section">
@@ -1688,22 +1554,54 @@
 
           <section class="panel input-panel">
             <div class="panel-head">
-              <span>Ролки</span>
+              <span class="panel-title">
+                <span class="panel-title-main">Въвеждане на ролки</span>
+                <span class="panel-title-sub">Бруто тегло за всяка произведена ролка</span>
+              </span>
+              <span class="panel-hint">50 ролки</span>
             </div>
             <div class="panel-body roll-body">
               <div class="roll-entry">
-                <label class="core-weight-field">
-                  <span class="field-label">Шпула, кг</span>
-                  <input value="1.2">
-                </label>
                 <label>
-                  <span class="field-label">Нова ролка, кг</span>
+                  <span class="field-label">Нова ролка - бруто кг</span>
                   <input value="60.0">
                 </label>
                 <button>Добави</button>
               </div>
 
+              <div class="totals">
+                <div class="gross-metrics">
+                  <div class="metric remain">
+                    <span class="field-label">Оставащи</span>
+                    <div class="big">1000.0</div>
+                  </div>
+                  <div class="metric">
+                    <span class="field-label">Бруто</span>
+                    <div class="big">3000.0</div>
+                  </div>
+                </div>
+                <div class="metric">
+                  <span class="field-label">Нето</span>
+                  <div class="big">2940.0</div>
+                </div>
+              </div>
+
+              <div class="tare-row">
+                <div class="target-roll-weight">
+                  <span class="field-label">Макс. тегло ролка, кг</span>
+                  <div class="readonly-weight">60.0</div>
+                </div>
+                <label>
+                  <span class="field-label">Шпула, кг</span>
+                  <input value="1.2">
+                </label>
+              </div>
+
               <div class="roll-table">
+                <div class="roll-table-title">
+                  <span>Корекции на въведени ролки</span>
+                  <span>последни записи</span>
+                </div>
                 <div class="roll-head">
                   <div>№</div>
                   <div>Бруто кг</div>
@@ -1762,23 +1660,6 @@
                   <div class="roll-row"><div>50</div><div><input value="60.0"></div><div>58.8</div></div>
                 </div>
               </div>
-
-              <div class="totals">
-                <div class="gross-metrics">
-                  <div class="metric">
-                    <span class="field-label">Бруто</span>
-                    <div class="big">3000.0</div>
-                  </div>
-                  <div class="metric remain">
-                    <span class="field-label">Оставащи</span>
-                    <div class="big">1000.0</div>
-                  </div>
-                </div>
-                <div class="metric">
-                  <span class="field-label">Нето</span>
-                  <div class="big">2940.0</div>
-                </div>
-              </div>
             </div>
           </section>
         </div>
@@ -1791,65 +1672,15 @@
       const openButton = document.getElementById("queue-open");
       const closeButton = document.getElementById("queue-close");
       const queueCards = document.querySelectorAll(".queue-card");
-      const historyOverlay = document.getElementById("history-overlay");
-      const historyOpenButton = document.getElementById("history-open");
-      const historyCloseButton = document.getElementById("history-close");
-      const historyFilters = document.querySelectorAll(".history-filter");
-      const historyRows = document.querySelectorAll(".history-row");
-      const historyResults = document.getElementById("history-results");
 
       const openQueue = () => {
-        closeHistory();
         overlay.classList.add("open");
         overlay.setAttribute("aria-hidden", "false");
-        if (openButton) {
-          openButton.setAttribute("aria-expanded", "true");
-        }
       };
 
       const closeQueue = () => {
         overlay.classList.remove("open");
         overlay.setAttribute("aria-hidden", "true");
-        if (openButton) {
-          openButton.setAttribute("aria-expanded", "false");
-        }
-      };
-
-      const openHistory = () => {
-        closeQueue();
-        historyOverlay.classList.add("open");
-        historyOverlay.setAttribute("aria-hidden", "false");
-        if (historyOpenButton) {
-          historyOpenButton.setAttribute("aria-expanded", "true");
-        }
-      };
-
-      const closeHistory = () => {
-        historyOverlay.classList.remove("open");
-        historyOverlay.setAttribute("aria-hidden", "true");
-        if (historyOpenButton) {
-          historyOpenButton.setAttribute("aria-expanded", "false");
-        }
-      };
-
-      const filterHistory = () => {
-        let visibleCount = 0;
-        historyRows.forEach((row) => {
-          const matches = Array.from(historyFilters).every((filter) => {
-            const value = filter.value.trim().toLowerCase();
-            if (!value) {
-              return true;
-            }
-            return (row.dataset[filter.dataset.filter] || "").includes(value);
-          });
-          row.hidden = !matches;
-          if (matches) {
-            visibleCount += 1;
-          }
-        });
-        if (historyResults) {
-          historyResults.classList.toggle("empty", visibleCount === 0);
-        }
       };
 
       if (openButton) {
@@ -1858,29 +1689,15 @@
       if (closeButton) {
         closeButton.addEventListener("click", closeQueue);
       }
-      if (historyOpenButton) {
-        historyOpenButton.addEventListener("click", openHistory);
-      }
-      if (historyCloseButton) {
-        historyCloseButton.addEventListener("click", closeHistory);
-      }
       overlay.addEventListener("click", (event) => {
         if (event.target === overlay) {
           closeQueue();
         }
       });
-      historyOverlay.addEventListener("click", (event) => {
-        if (event.target === historyOverlay) {
-          closeHistory();
-        }
-      });
       queueCards.forEach((card) => card.addEventListener("click", closeQueue));
-      historyFilters.forEach((filter) => filter.addEventListener("input", filterHistory));
-      historyRows.forEach((row) => row.addEventListener("click", closeHistory));
       document.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
           closeQueue();
-          closeHistory();
         }
       });
     })();

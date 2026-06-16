@@ -82,20 +82,8 @@
             <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
             <button type="submit">Finished</button>
           </form>
-          <form action="/terminal/cards/{{ selected_card.id }}/cancel" method="post">
-            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-            <button type="submit">Cancel</button>
-          </form>
         {% else %}
           <button disabled>Finished</button>
-          {% if selected_card and selected_card.status == "cancelled" %}
-            <form action="/terminal/cards/{{ selected_card.id }}/restore" method="post">
-              <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-              <button type="submit">Restore</button>
-            </form>
-          {% else %}
-            <button disabled>Cancel</button>
-          {% endif %}
         {% endif %}
       </div>
     </header>
@@ -156,10 +144,6 @@
           <div>
             <dt>Finished</dt>
             <dd>{{ selected_card.finished_at or "-" }}</dd>
-          </div>
-          <div>
-            <dt>Cancelled</dt>
-            <dd>{{ selected_card.cancelled_at or "-" }}</dd>
           </div>
           <div>
             <dt>Active segment</dt>
@@ -400,16 +384,17 @@
     </div>
 
     <section class="section archive">
-      <h3>Completed / cancelled</h3>
-      {% if archive_cards %}
-        {% for card in archive_cards %}
+      <h3>Completed</h3>
+      {% set completed_archive_cards = archive_cards | selectattr("status", "equalto", "completed") | list %}
+      {% if completed_archive_cards %}
+        {% for card in completed_archive_cards %}
           <a class="queue-card {{ card.status }} {% if selected_card and selected_card.id == card.id %}selected{% endif %}" href="/terminal/cards/{{ card.id }}">
             <strong>No. {{ card.order_number }}</strong>
             <span>{{ card.status }}</span>
           </a>
         {% endfor %}
       {% else %}
-        <p class="empty">No completed or cancelled cards yet.</p>
+        <p class="empty">No completed cards yet.</p>
       {% endif %}
     </section>
   </section>

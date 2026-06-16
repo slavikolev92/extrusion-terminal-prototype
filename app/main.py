@@ -13,6 +13,7 @@ from .constants import (
     ACTIVE_TERMINAL_STATUSES,
     ARCHIVE_STATUSES,
     CARD_STATUSES,
+    STATUS_LABELS,
     STATUS_IMPORTED,
 )
 from .db import (
@@ -50,15 +51,6 @@ from .rules import RuleResult
 
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
-
-STATUS_LABELS = {
-    "imported": "Импортирана",
-    "pending": "Чакаща",
-    "running": "В производство",
-    "paused": "Пауза",
-    "completed": "Приключена",
-    "cancelled": "Анулирана",
-}
 
 IMPORT_FIELD_LABELS = {
     "order_number": "№ поръчка",

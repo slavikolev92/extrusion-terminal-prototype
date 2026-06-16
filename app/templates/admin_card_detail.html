@@ -358,11 +358,11 @@
         <dd>{{ card.first_started_at or "-" }}</dd>
       </div>
       <div>
-        <dt>Приключена</dt>
+        <dt>{{ status_labels.completed }}</dt>
         <dd>{{ card.finished_at or "-" }}</dd>
       </div>
       <div>
-        <dt>Анулирана</dt>
+        <dt>{{ status_labels.cancelled }}</dt>
         <dd>{{ card.cancelled_at or "-" }}</dd>
       </div>
       <div>

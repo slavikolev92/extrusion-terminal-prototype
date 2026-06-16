@@ -100,7 +100,7 @@ Scope:
 - machine quick tile opens running/paused card if present, otherwise next pending card.
 - detail view shows imported operational-card fields needed by operators.
 - terminal does not expose `/admin` navigation.
-- completed/cancelled cards remain separate from the active queue.
+- completed cards remain separate from the active queue; cancelled cards are not shown to workstation operators.
 - forms/actions carry the loaded card version or `updated_at` value.
 - stale edits are blocked with a reload warning instead of silently overwriting newer data.
 
@@ -160,7 +160,7 @@ Review checkpoint:
 - tests and manual workflow pass.
 - commit.
 
-## Milestone 7 - Finish, Cancel, And History
+## Milestone 7 - Finish, Cancellation, And History
 
 Status: done
 
@@ -169,9 +169,9 @@ Scope:
 - finish validation.
 - finish closes active timing segment.
 - completed cards leave active terminal queue.
-- completed/cancelled cards appear in history/completed section.
-- cancellation without reason.
-- cancelled cards reversible back to `pending`.
+- completed cards appear in the workstation completed section.
+- cancellation without reason remains supported for shift-manager/admin.
+- cancelled cards are reversible back to `pending` from admin.
 - completed cards remain editable as confirmed.
 
 Review checkpoint:
@@ -179,7 +179,7 @@ Review checkpoint:
 - finish blocked without tare, timing, or rolls.
 - finish succeeds when requirements are met.
 - cancelled card leaves active queue.
-- cancellation reversal works.
+- admin cancellation reversal works.
 - tests and manual workflow pass.
 - commit.
 
@@ -279,10 +279,13 @@ Implementation bundles:
    - Run syntax/import checks, relevant automated tests, `git diff --check`, and a focused manual app check.
    - Technical walkthrough complete with a temporary database: import, admin review/edit, planning/resequence, terminal timing/tare/roll/finish, archive visibility, stale-write blocking, admin production correction, admin cancel/restore, and running-card timing invariant checks passed.
 
-6. Workstation V4 terminal UI connection
-   - Replace the current temporary `/terminal` layout with a live implementation based on `ui-prototypes/workstation-v4.html`.
+6. Workstation V8 terminal UI connection
+   - Replace the current temporary `/terminal` layout with a live implementation based on `ui-prototypes/workstation-v8.html`.
+   - Treat `ui-prototypes/workstation-v7.html` as the checkpoint before the top-machine-navigation restructure; do not reconnect V4.
    - Preserve existing backend routes, database rules, loaded-version conflict checks, terminal sync awareness, and production invariants.
-   - Remove prototype demo data/client-only state and wire the UI to live server-rendered cards, forms, queue/archive lists, timing actions, material fields, tare, rolls, finish/cancel/restore, and update banner behavior.
+   - Remove prototype demo data/client-only state and wire the UI to live server-rendered cards, forms, active queue, completed-card lookup, timing actions, material fields, tare, rolls, finish, print/reprint access, and update banner behavior.
+   - Do not expose card cancellation or restore controls on the workstation; shift-manager/admin remains responsible for cancellation and restoration.
+   - Add the imported maximum roll weight field to the live workstation detail pane as read-only operator information.
    - Add/update focused tests for route rendering and required controls.
    - Run syntax/import checks, automated tests, `git diff --check`, and a focused browser/manual check with a temporary database.
    - Commit before starting print output.
