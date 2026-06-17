@@ -1,0 +1,26 @@
+{
+  "name": "extrusion-terminal",
+  "version": "1.0.0",
+  "description": "This repository is for a pilot app that helps move the extrusion terminal from paper production cards to an app-driven workflow. This README is written for future agents. It should preserve the confirmed project facts, the inspected Excel workbook structure, and the current open decisions without turning discussion ideas into requirements.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/slavikolev92/extrusion-terminal-prototype.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/slavikolev92/extrusion-terminal-prototype/issues"
+  },
+  "homepage": "https://github.com/slavikolev92/extrusion-terminal-prototype#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.61.0"
+  }
+}

@@ -111,6 +111,40 @@ As new slices are implemented, add tests for:
 
 Tests can use temporary SQLite database paths. Do not test by mutating the real runtime database unless the user explicitly asks for that manual test.
 
+## VM Development And UI Verification
+
+- The normal development environment for this repository is the Linux VM checkout.
+- Use the repo-local Python virtualenv `.venv`.
+- Use local Node Playwright installed in this repo for browser verification.
+- Do not run npm with sudo.
+- Do not install npm packages globally.
+- Do not mutate the real runtime database during tests.
+- For UI changes, verify against the live FastAPI app with Playwright before claiming completion.
+- Save screenshots/videos/traces under `artifacts/ui-checks/`.
+- `artifacts/`, `node_modules/`, Playwright reports, screenshots, videos, traces, and local databases must stay untracked.
+- Before saying UI work is complete, run focused tests and capture at least one relevant Playwright screenshot.
+- Do not stage or commit unless the user explicitly asks.
+
+Python tests:
+
+```bash
+source .venv/bin/activate
+python -m pytest
+```
+
+Start local server:
+
+```bash
+source .venv/bin/activate
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Playwright:
+
+```bash
+npx playwright test
+```
+
 ## Review And Commit Policy
 
 Review every milestone before committing. The review should check:
@@ -169,8 +203,9 @@ Completed and committed:
 - backup and recovery behavior: SQLite-safe timestamped backups, restore helper, retention, startup/restart documentation, and troubleshooting notes.
 - admin production corrections: admin-side cancel/restore, terminal material corrections, tare and roll corrections, and timing segment corrections with loaded-version conflict checks.
 - pre-print workflow walkthrough: temporary-database pass through import, admin review/edit, planning/resequence, terminal timing/tare/roll/finish, completed archive visibility, stale-write blocking, admin correction, admin cancel/restore, and running-card timing invariant checks.
+- workstation V8 live terminal connection: `/terminal` uses the live server-rendered V8 workstation layout with four-machine navigation, active queue drawer, completed lookup, selected-card details, recipe rows, material corrections, tare/roll controls, totals, timing actions, sync banner behavior, read-only maximum roll weight, and no workstation cancellation/restore controls.
 
 Next recommended milestone:
 
-- Continue from `ui-prototypes/workstation-v8.html` as the active workstation prototype before connecting it to the live `/terminal` workstation route or starting print output. Keep `workstation-v7.html` as the checkpoint before the top-machine-navigation restructure.
-- The V8 workstation should not expose cancellation or restore controls; cancellation remains an admin/shift-manager action.
+- Continue with Slice 4 from `WORKSTATION_V8_CONNECTION_PLAN.md`: functional hardening and edge cases for the live V8 workstation. Do not start print output yet.
+- Keep `workstation-v7.html` as the checkpoint before the top-machine-navigation restructure. The V8 workstation must not expose cancellation or restore controls; cancellation remains an admin/shift-manager action.

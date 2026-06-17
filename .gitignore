@@ -24,6 +24,10 @@ pytest-cache-files-*/
 
 # Node/browser tooling noise if used for UI checks.
 node_modules/
+artifacts/
+test-results/
+playwright-report/
+.playwright/
 
 # OS/editor files.
 .DS_Store
