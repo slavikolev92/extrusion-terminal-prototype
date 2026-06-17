@@ -52,7 +52,12 @@ def import_and_release_card(
                 (order_number,),
             ).fetchone()["id"]
         )
-    assert db.release_card(card_id, machine_id, machine_sequence).ok
+    assert db.release_card(
+        card_id,
+        machine_id,
+        machine_sequence,
+        max_roll_weight="60.0",
+    ).ok
     return card_id
 
 
@@ -167,7 +172,7 @@ def test_timing_actions_block_stale_loaded_versions(connection):
 
     assert not stale_result.ok
     assert stale_result.messages == (
-        "Card changed after this page was loaded. Reload the card and try again.",
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )
     assert card["status"] == STATUS_RUNNING
 
@@ -195,7 +200,7 @@ def test_start_blocks_when_machine_has_running_or_paused_card(connection):
     ).fetchone()[0]
 
     assert not blocked_result.ok
-    assert blocked_result.messages == ("Machine 1 is occupied by order 25404.",)
+    assert blocked_result.messages == ("Машина 1 е заета от поръчка 25404.",)
     assert blocked_card["status"] == STATUS_PENDING
     assert blocked_segments == 0
 
@@ -210,7 +215,7 @@ def test_start_blocks_when_machine_has_running_or_paused_card(connection):
     )
 
     assert not paused_blocked_result.ok
-    assert paused_blocked_result.messages == ("Machine 1 is occupied by order 25404.",)
+    assert paused_blocked_result.messages == ("Машина 1 е заета от поръчка 25404.",)
 
 
 def test_total_production_seconds_sums_segments_without_pauses(connection):

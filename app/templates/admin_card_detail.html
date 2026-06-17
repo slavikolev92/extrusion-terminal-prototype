@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}Поръчка № {{ card.order_number }} - Extrusion Terminal{% endblock %}
+{% block title %}Поръчка № {{ card.order_number }} - Терминал Екструдиране{% endblock %}
 
 {% block body %}
 <main class="page wide-page admin-review-page">
   <header class="page-header admin-card-header">
     <div>
-      <p class="eyebrow">Преглед на карта</p>
+      <p class="eyebrow">Преглед на технологична карта</p>
       <h1>Поръчка № {{ card.order_number }}</h1>
       <div class="admin-card-meta">
         <span class="pill status-{{ card.status }}">{{ status_labels.get(card.status, card.status) }}</span>
@@ -22,17 +22,17 @@
       </div>
     </div>
     <div class="actions">
-      <a class="nav-link" href="/admin/cards">Карти</a>
+      <a class="nav-link" href="/admin/cards">Технологични карти</a>
       <a class="nav-link" href="/terminal">Терминал</a>
       {% if card.status in ["pending", "running", "paused"] %}
         <form action="/admin/cards/{{ card.id }}/cancel" method="post">
           <input type="hidden" name="loaded_version" value="{{ card.version }}">
-          <button type="submit">Cancel</button>
+          <button type="submit">Анулирай</button>
         </form>
       {% elif card.status == "cancelled" %}
         <form action="/admin/cards/{{ card.id }}/restore" method="post">
           <input type="hidden" name="loaded_version" value="{{ card.version }}">
-          <button type="submit">Restore</button>
+          <button type="submit">Възстанови</button>
         </form>
       {% endif %}
     </div>
@@ -67,10 +67,10 @@
   {% endif %}
 
   {% for result_block in [
-    ("workflow_result", workflow_result, "Workflow saved:", "Workflow blocked:"),
-    ("material_result", material_result, "Material saved:", "Material blocked:"),
-    ("roll_result", roll_result, "Roll data saved:", "Roll data blocked:"),
-    ("timing_result", timing_result, "Timing saved:", "Timing blocked:")
+    ("workflow_result", workflow_result, "Статусът е записан:", "Статусът е блокиран:"),
+    ("material_result", material_result, "Материалите са записани:", "Материалите са блокирани:"),
+    ("roll_result", roll_result, "Ролките са записани:", "Ролките са блокирани:"),
+    ("timing_result", timing_result, "Времето е записано:", "Времето е блокирано:")
   ] %}
     {% set result = result_block[1] %}
     {% if result %}
@@ -90,7 +90,7 @@
 
     <section class="section operational-panel">
       <div class="section-head">
-        <h2>Карта</h2>
+        <h2>Технологична карта</h2>
         <button type="submit">Запази корекциите</button>
       </div>
       <div class="operational-info-grid">
@@ -107,7 +107,7 @@
           <input name="delivery_date" value="{{ card.delivery_date or '' }}">
         </label>
         <label>
-          <span>Фирма</span>
+          <span>Клиент</span>
           <input name="customer" value="{{ card.customer or '' }}">
         </label>
         <label>
@@ -150,6 +150,10 @@
         <label>
           <span>Материал</span>
           <input name="material" value="{{ card.material or '' }}">
+        </label>
+        <label>
+          <span>Макс. тегло ролка, кг</span>
+          <input name="max_roll_weight" value="{{ card.max_roll_weight or '' }}">
         </label>
         <label class="wide">
           <span>Забележки</span>
@@ -221,24 +225,24 @@
 
   <section class="section operational-panel">
     <div class="section-head">
-      <h2>Machine-side material</h2>
-      <span>Terminal correction fields</span>
+      <h2>Материал на машината</h2>
+      <span>Корекции от терминала</span>
     </div>
     <form class="field-form admin-correction-form" action="/admin/cards/{{ card.id }}/production-materials" method="post">
       <input type="hidden" name="loaded_version" value="{{ card.version }}">
       <label>
-        Actual raw material used
+        Използван материал
         <input name="actual_raw_material_used" value="{{ card.actual_raw_material_used or '' }}">
       </label>
       <label>
-        Brand / grade / mark
+        Марка / клас
         <input name="raw_material_brand_grade" value="{{ card.raw_material_brand_grade or '' }}">
       </label>
       <label>
-        Batch / lot
+        Партида
         <input name="raw_material_batch_lot" value="{{ card.raw_material_batch_lot or '' }}">
       </label>
-      <button type="submit">Save material fields</button>
+      <button type="submit">Запази материалите</button>
     </form>
   </section>
 
@@ -285,19 +289,19 @@
       <form class="field-form tare-form admin-inline-form" action="/admin/cards/{{ card.id }}/tare" method="post">
         <input type="hidden" name="loaded_version" value="{{ card.version }}">
         <label>
-          Tare weight
+          Шпула, кг
           <input type="number" name="tare_weight" min="0" step="0.01" value="{{ card.tare_weight if card.tare_weight is not none else '' }}">
         </label>
-        <button type="submit">Save tare</button>
+        <button type="submit">Запази шпула</button>
       </form>
 
       <form class="roll-entry admin-inline-form" action="/admin/cards/{{ card.id }}/rolls" method="post">
         <input type="hidden" name="loaded_version" value="{{ card.version }}">
         <label>
-          Gross weight for roll {{ card.next_roll_number }}
+          Бруто тегло за ролка {{ card.next_roll_number }}
           <input type="number" name="gross_weight" min="0" step="0.01" {% if not can_edit_rolls %}disabled{% endif %}>
         </label>
-        <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Add roll</button>
+        <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Добави ролка</button>
       </form>
 
       {% if card.roll_entries %}
@@ -322,16 +326,16 @@
         <div class="admin-roll-corrections">
           {% for roll in card.roll_entries %}
             <div class="admin-roll-correction-row">
-              <span>Roll {{ roll.roll_number }}</span>
+              <span>Ролка {{ roll.roll_number }}</span>
               <form class="inline-roll-form" action="/admin/cards/{{ card.id }}/rolls/{{ roll.id }}" method="post">
                 <input type="hidden" name="loaded_version" value="{{ card.version }}">
                 <input type="number" name="gross_weight" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %}>
-                <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Save</button>
+                <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Запази</button>
               </form>
               {% if can_edit_rolls and not (card.status == "completed" and card.roll_count <= 1 and roll.gross_weight is not none) %}
                 <form class="roll-delete-form" action="/admin/cards/{{ card.id }}/rolls/{{ roll.id }}/delete" method="post">
                   <input type="hidden" name="loaded_version" value="{{ card.version }}">
-                  <button type="submit">Delete</button>
+                  <button type="submit">Изтрий</button>
                 </form>
               {% endif %}
             </div>
@@ -384,7 +388,7 @@
             <tr>
               <td>{{ segment.started_at }}</td>
               <td>{{ segment.ended_at or "В ход" }}</td>
-              <td>{{ segment.end_reason or "-" }}</td>
+              <td>{{ timing_reason_labels.get(segment.end_reason, segment.end_reason) if segment.end_reason else "-" }}</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -395,28 +399,28 @@
             <form class="timing-correction-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}" method="post">
               <input type="hidden" name="loaded_version" value="{{ card.version }}">
               <label>
-                Started
+                Начало
                 <input name="started_at" value="{{ segment.started_at }}">
               </label>
               <label>
-                Ended
+                Край
                 <input name="ended_at" value="{{ segment.ended_at or '' }}">
               </label>
               <label>
-                Reason
+                Причина
                 <select name="end_reason">
-                  <option value="" {% if not segment.end_reason %}selected{% endif %}>Open</option>
-                  <option value="pause" {% if segment.end_reason == "pause" %}selected{% endif %}>pause</option>
-                  <option value="finish" {% if segment.end_reason == "finish" %}selected{% endif %}>finish</option>
-                  <option value="correction" {% if segment.end_reason == "correction" %}selected{% endif %}>correction</option>
+                  <option value="" {% if not segment.end_reason %}selected{% endif %}>В ход</option>
+                  <option value="pause" {% if segment.end_reason == "pause" %}selected{% endif %}>пауза</option>
+                  <option value="finish" {% if segment.end_reason == "finish" %}selected{% endif %}>приключване</option>
+                  <option value="correction" {% if segment.end_reason == "correction" %}selected{% endif %}>корекция</option>
                 </select>
               </label>
-              <button type="submit">Save</button>
+              <button type="submit">Запази</button>
             </form>
             {% if card.status != "completed" or card.timing_segments|length > 1 %}
               <form class="timing-delete-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}/delete" method="post">
                 <input type="hidden" name="loaded_version" value="{{ card.version }}">
-                <button type="submit">Delete</button>
+                <button type="submit">Изтрий</button>
               </form>
             {% endif %}
           </div>
@@ -429,23 +433,23 @@
     <form class="timing-correction-form add-timing-form" action="/admin/cards/{{ card.id }}/timing-segments" method="post">
       <input type="hidden" name="loaded_version" value="{{ card.version }}">
       <label>
-        Started
+        Начало
         <input name="started_at" placeholder="YYYY-MM-DD HH:MM:SS">
       </label>
       <label>
-        Ended
+        Край
         <input name="ended_at" placeholder="YYYY-MM-DD HH:MM:SS">
       </label>
       <label>
-        Reason
+        Причина
         <select name="end_reason">
-          <option value="">Open</option>
-          <option value="pause">pause</option>
-          <option value="finish">finish</option>
-          <option value="correction">correction</option>
+          <option value="">В ход</option>
+          <option value="pause">пауза</option>
+          <option value="finish">приключване</option>
+          <option value="correction">корекция</option>
         </select>
       </label>
-      <button type="submit">Add segment</button>
+      <button type="submit">Добави сегмент</button>
     </form>
   </section>
 
@@ -457,7 +461,7 @@
     <dl class="detail-grid">
       <div>
         <dt>Статус</dt>
-        <dd>{{ status_labels.get(card.status, card.status) }} ({{ card.status }})</dd>
+        <dd>{{ status_labels.get(card.status, card.status) }}</dd>
       </div>
       <div>
         <dt>Импорт</dt>
@@ -479,7 +483,7 @@
     {% if card.status == "imported" and not card.roll_entries and not card.timing_segments %}
       <form class="danger-form" action="/admin/cards/{{ card.id }}/delete" method="post">
         <input type="hidden" name="loaded_version" value="{{ card.version }}">
-        <button type="submit">Изтрий невъзложена карта</button>
+        <button type="submit">Изтрий невъзложена технологична карта</button>
       </form>
     {% endif %}
   </section>

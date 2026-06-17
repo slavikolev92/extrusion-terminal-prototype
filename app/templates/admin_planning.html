@@ -1,15 +1,15 @@
 {% extends "base.html" %}
 
-{% block title %}Planning - Extrusion Terminal{% endblock %}
+{% block title %}Планиране - Терминал Екструдиране{% endblock %}
 
 {% block body %}
 <main class="page">
   <header class="page-header">
     <div>
-      <p class="eyebrow">Shift manager</p>
-      <h1>Planning</h1>
+      <p class="eyebrow">Началник смяна</p>
+      <h1>Планиране</h1>
     </div>
-    <a class="nav-link" href="/terminal">Terminal</a>
+    <a class="nav-link" href="/terminal">Терминал</a>
   </header>
 
   {% include "_admin_nav.html" %}
@@ -18,9 +18,9 @@
     <section class="section">
       <div class="notice {% if not release_result.ok %}error{% endif %}">
         {% if release_result.ok %}
-          <strong>Release complete:</strong>
+          <strong>Изпращането е готово:</strong>
         {% else %}
-          <strong>Release blocked:</strong>
+          <strong>Изпращането е блокирано:</strong>
         {% endif %}
         {% for message in release_result.messages %}
           <div>{{ message }}</div>
@@ -33,9 +33,9 @@
     <section class="section">
       <div class="notice {% if not planning_result.ok %}error{% endif %}">
         {% if planning_result.ok %}
-          <strong>Planning saved:</strong>
+          <strong>Планирането е записано:</strong>
         {% else %}
-          <strong>Planning blocked:</strong>
+          <strong>Планирането е блокирано:</strong>
         {% endif %}
         {% for message in planning_result.messages %}
           <div>{{ message }}</div>
@@ -46,20 +46,18 @@
 
   <section class="section">
     <div class="section-head">
-      <h2>Unreleased cards</h2>
-      <span>{{ draft_cards|length }} cards</span>
+      <h2>Неизпратени технологични карти</h2>
+      <span>{{ draft_cards|length }} карти</span>
     </div>
 
     {% if draft_cards %}
       <table>
         <thead>
           <tr>
-            <th>Order</th>
-            <th>Customer</th>
-            <th>Product</th>
-            <th>Machine</th>
-            <th>Sequence</th>
-            <th>Action</th>
+            <th>Поръчка</th>
+            <th>Клиент</th>
+            <th>Изделие</th>
+            <th>Изпрати</th>
           </tr>
         </thead>
         <tbody>
@@ -68,17 +66,27 @@
               <td><a href="/admin/cards/{{ card.id }}">{{ card.order_number }}</a></td>
               <td>{{ card.customer or "-" }}</td>
               <td>{{ card.product_type or "-" }}</td>
-              <td colspan="3">
+              <td>
                 <form class="release-form" action="/admin/cards/{{ card.id }}/release" method="post">
                   <input type="hidden" name="loaded_version" value="{{ card.version }}">
-                  <select name="machine_id" aria-label="Machine for order {{ card.order_number }}">
-                    <option value="">Machine</option>
-                    {% for machine in machines %}
-                      <option value="{{ machine.id }}" {% if card.machine_id == machine.id %}selected{% endif %}>{{ machine.id }}</option>
-                    {% endfor %}
-                  </select>
-                  <input name="machine_sequence" inputmode="numeric" pattern="[0-9]*" placeholder="Sequence" value="{{ card.machine_sequence or '' }}" aria-label="Sequence for order {{ card.order_number }}">
-                  <button type="submit">Release</button>
+                  <label class="release-field">
+                    <span>Макс. тегло ролка, кг</span>
+                    <input name="max_roll_weight" inputmode="decimal" value="{{ card.max_roll_weight or '' }}" aria-label="Максимално тегло ролка за поръчка {{ card.order_number }}">
+                  </label>
+                  <label class="release-field required-field">
+                    <span>Ред <span class="required-marker">*</span></span>
+                    <input name="machine_sequence" inputmode="numeric" pattern="[0-9]*" value="{{ card.machine_sequence or '' }}" aria-label="Ред за поръчка {{ card.order_number }}" required>
+                  </label>
+                  <label class="release-field required-field">
+                    <span>Машина <span class="required-marker">*</span></span>
+                    <select name="machine_id" aria-label="Машина за поръчка {{ card.order_number }}" required>
+                      <option value="">Машина</option>
+                      {% for machine in machines %}
+                        <option value="{{ machine.id }}" {% if card.machine_id == machine.id %}selected{% endif %}>{{ machine.id }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <button type="submit">Изпрати</button>
                 </form>
               </td>
             </tr>
@@ -86,42 +94,42 @@
         </tbody>
       </table>
     {% else %}
-      <p class="empty">No unreleased cards.</p>
+      <p class="empty">Няма неизпратени технологични карти.</p>
     {% endif %}
   </section>
 
   <section class="section">
     <div class="section-head">
-      <h2>Machine queues</h2>
-      <span>{{ summary.machine_count }} machines seeded</span>
+      <h2>Опашки по машини</h2>
+      <span>{{ summary.machine_count }} машини в системата</span>
     </div>
     <div class="machine-grid">
       {% for queue in machine_queues %}
         <article class="machine-column">
-          <h3>{{ queue.machine.name }}</h3>
+          <h3>Машина {{ queue.machine.id }}</h3>
           {% if queue.cards %}
             {% for card in queue.cards %}
               <div class="queue-card {{ card.status }}">
                 <div class="queue-card-main">
-                  <strong>{{ card.machine_sequence }}. <a href="/admin/cards/{{ card.id }}">No. {{ card.order_number }}</a></strong>
-                  <span>{{ card.customer or "No customer" }}</span>
-                  <small>{{ card.product_type or "No product" }}</small>
+                  <strong>{{ card.machine_sequence }}. <a href="/admin/cards/{{ card.id }}">№ {{ card.order_number }}</a></strong>
+                  <span>{{ card.customer or "Без клиент" }}</span>
+                  <small>{{ card.product_type or "Без изделие" }}</small>
                   <span class="pill status-{{ card.status }}">{{ status_labels.get(card.status, card.status) }}</span>
                 </div>
                 <form class="planning-form" action="/admin/cards/{{ card.id }}/planning" method="post">
                   <input type="hidden" name="loaded_version" value="{{ card.version }}">
-                  <select name="machine_id" aria-label="New machine for order {{ card.order_number }}">
+                  <select name="machine_id" aria-label="Нова машина за поръчка {{ card.order_number }}">
                     {% for machine in machines %}
                       <option value="{{ machine.id }}" {% if card.machine_id == machine.id %}selected{% endif %}>{{ machine.id }}</option>
                     {% endfor %}
                   </select>
-                  <input name="machine_sequence" inputmode="numeric" pattern="[0-9]*" value="{{ card.machine_sequence or '' }}" aria-label="New sequence for order {{ card.order_number }}">
-                  <button type="submit">Save</button>
+                  <input name="machine_sequence" inputmode="numeric" pattern="[0-9]*" value="{{ card.machine_sequence or '' }}" aria-label="Нов ред за поръчка {{ card.order_number }}">
+                  <button type="submit">Запази</button>
                 </form>
               </div>
             {% endfor %}
           {% else %}
-            <p class="empty">No active cards.</p>
+            <p class="empty">Няма активни технологични карти.</p>
           {% endif %}
         </article>
       {% endfor %}

@@ -24,11 +24,11 @@ def validate_release_fields(card: dict) -> RuleResult:
     messages: list[str] = []
 
     if card.get("status") not in RELEASABLE_STATUSES:
-        messages.append("Only imported cards can be released.")
+        messages.append("Само импортирани технологични карти могат да се изпращат.")
     if not card.get("machine_id"):
-        messages.append("Machine assignment is required before release.")
+        messages.append("Изберете машина преди изпращане.")
     if card.get("machine_sequence") in (None, ""):
-        messages.append("Machine sequence is required before release.")
+        messages.append("Въведете ред преди изпращане.")
 
     return RuleResult(ok=not messages, messages=tuple(messages))
 

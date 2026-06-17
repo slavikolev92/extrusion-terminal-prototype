@@ -95,7 +95,12 @@ def test_admin_card_index_text_filters_are_case_insensitive(connection):
 
 def test_admin_card_detail_includes_full_review_data(connection):
     card_id = import_ready_card("25704")
-    assert db.release_card(card_id, machine_id=2, machine_sequence=1).ok
+    assert db.release_card(
+        card_id,
+        machine_id=2,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    ).ok
     assert db.update_terminal_material_fields(
         card_id,
         db.fetch_admin_card_detail(card_id)["version"],
@@ -115,6 +120,7 @@ def test_admin_card_detail_includes_full_review_data(connection):
     assert card["machine_id"] == 2
     assert card["machine_sequence"] == 1
     assert card["customer"] == "Admin Customer"
+    assert card["max_roll_weight"] == "60.0"
     assert card["actual_raw_material_used"] == "Actual LDPE"
     assert card["raw_material_brand_grade"] == "Grade A"
     assert card["raw_material_batch_lot"] == "Batch 42"
@@ -138,7 +144,12 @@ def test_admin_card_detail_context_groups_quantities_and_recipe_rows(connection)
         raw_material_b="LDPE B",
         linear_pe="20%",
     )
-    assert db.release_card(card_id, machine_id=1, machine_sequence=2).ok
+    assert db.release_card(
+        card_id,
+        machine_id=1,
+        machine_sequence=2,
+        max_roll_weight="60.0",
+    ).ok
     assert db.update_terminal_material_fields(
         card_id,
         db.fetch_admin_card_detail(card_id)["version"],
@@ -173,6 +184,7 @@ def test_admin_imported_field_edit_succeeds_and_increments_version(connection):
     card = db.fetch_admin_card_detail(card_id)
     fields = current_imported_fields(card_id)
     fields["customer"] = "Corrected Customer"
+    fields["max_roll_weight"] = "72.5"
     fields["notes"] = "Corrected notes"
 
     result = db.update_admin_imported_fields(card_id, card["version"], fields)
@@ -180,6 +192,7 @@ def test_admin_imported_field_edit_succeeds_and_increments_version(connection):
 
     assert result.ok
     assert updated["customer"] == "Corrected Customer"
+    assert updated["max_roll_weight"] == "72.5"
     assert updated["notes"] == "Corrected notes"
     assert updated["version"] == card["version"] + 1
 
@@ -197,14 +210,19 @@ def test_admin_imported_field_edit_blocks_stale_version(connection):
 
     assert not stale_result.ok
     assert stale_result.messages == (
-        "Card changed after this page was loaded. Reload the card and try again.",
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )
     assert card["customer"] == "First Save"
 
 
 def test_admin_imported_field_edit_preserves_production_data(connection):
     card_id = import_ready_card("25707")
-    assert db.release_card(card_id, machine_id=3, machine_sequence=1).ok
+    assert db.release_card(
+        card_id,
+        machine_id=3,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    ).ok
     assert db.update_terminal_material_fields(
         card_id,
         db.fetch_admin_card_detail(card_id)["version"],
@@ -221,6 +239,7 @@ def test_admin_imported_field_edit_preserves_production_data(connection):
     fields = current_imported_fields(card_id)
     fields["order_number"] = "25770"
     fields["customer"] = "Preserved Customer"
+    fields["max_roll_weight"] = "80"
     result = db.update_admin_imported_fields(card_id, before["version"], fields)
     after = db.fetch_admin_card_detail(card_id)
     roll_order_numbers = connection.execute(
@@ -231,6 +250,7 @@ def test_admin_imported_field_edit_preserves_production_data(connection):
     assert result.ok
     assert after["order_number"] == "25770"
     assert after["customer"] == "Preserved Customer"
+    assert after["max_roll_weight"] == "80"
     assert after["status"] == STATUS_PAUSED
     assert after["machine_id"] == 3
     assert after["machine_sequence"] == 1
@@ -254,7 +274,7 @@ def test_admin_imported_field_edit_blocks_duplicate_order_number(connection):
     unchanged = db.fetch_admin_card_detail(card_id)
 
     assert not result.ok
-    assert result.messages == ("Order number already exists on another card.",)
+    assert result.messages == ("Номерът на поръчката вече съществува в друга карта.",)
     assert unchanged["order_number"] == "25709"
 
 
@@ -273,7 +293,7 @@ def test_admin_imported_field_edit_blocks_no_extrusion_result(connection):
     unchanged = db.fetch_admin_card_detail(card_id)
 
     assert not result.ok
-    assert result.messages == ("Imported fields must keep a usable extrusion step before saving.",)
+    assert result.messages == ("Импортираните полета трябва да запазят валидна стъпка за екструдиране преди запис.",)
     assert unchanged["extrusion_flag"] == "da"
     assert unchanged["raw_material_a"] == "LDPE A"
 
@@ -304,12 +324,17 @@ def test_admin_delete_removes_unreleased_card(connection):
 
 def test_admin_delete_blocks_released_card(connection):
     card_id = import_ready_card("25712")
-    assert db.release_card(card_id, machine_id=4, machine_sequence=9).ok
+    assert db.release_card(
+        card_id,
+        machine_id=4,
+        machine_sequence=9,
+        max_roll_weight="60.0",
+    ).ok
     card = db.fetch_admin_card_detail(card_id)
 
     result = db.delete_admin_imported_card(card_id, card["version"])
     still_exists = db.fetch_admin_card_detail(card_id)
 
     assert not result.ok
-    assert result.messages == ("Only unreleased imported cards can be deleted.",)
+    assert result.messages == ("Само неизпратени импортирани технологични карти могат да се изтриват.",)
     assert still_exists is not None

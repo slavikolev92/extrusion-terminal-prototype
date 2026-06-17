@@ -1,43 +1,43 @@
 {% extends "base.html" %}
 
-{% block title %}Import - Extrusion Terminal{% endblock %}
+{% block title %}Импорт - Терминал Екструдиране{% endblock %}
 
 {% block body %}
 <main class="page">
   <header class="page-header">
     <div>
-      <p class="eyebrow">Shift manager</p>
-      <h1>Import</h1>
+      <p class="eyebrow">Началник смяна</p>
+      <h1>Импорт</h1>
     </div>
-    <a class="nav-link" href="/terminal">Terminal</a>
+    <a class="nav-link" href="/terminal">Терминал</a>
   </header>
 
   {% include "_admin_nav.html" %}
 
   <section class="section">
     <div class="section-head">
-      <h2>CSV import</h2>
-      <a href="/admin/import-template.csv">Download template</a>
+      <h2>Импорт от CSV</h2>
+      <a href="/admin/import-template.csv">Изтегли шаблон</a>
     </div>
 
     <form class="import-form" action="/admin/import" method="post" enctype="multipart/form-data">
       <label>
-        CSV file
+        CSV файл
         <input type="file" name="csv_file" accept=".csv,text/csv" required>
       </label>
       <label class="checkbox">
         <input type="checkbox" name="overwrite_existing" value="true">
-        Overwrite imported card fields for matching order numbers
+        Обнови данните на съществуващи поръчки със същия номер
       </label>
-      <button type="submit">Import CSV</button>
+      <button type="submit">Импортирай CSV</button>
     </form>
 
     {% if import_result %}
       <div class="notice {% if import_result.row_errors and import_result.rows_imported == 0 %}error{% endif %}">
-        <strong>Import result:</strong>
-        {{ import_result.rows_imported }} imported
-        ({{ import_result.created }} new, {{ import_result.updated }} updated),
-        {{ import_result.skipped }} skipped from {{ import_result.rows_seen }} rows.
+        <strong>Резултат от импорта:</strong>
+        {{ import_result.rows_imported }} импортирани
+        ({{ import_result.created }} нови, {{ import_result.updated }} обновени),
+        {{ import_result.skipped }} пропуснати от общо {{ import_result.rows_seen }} реда.
       </div>
     {% endif %}
   </section>
@@ -45,7 +45,7 @@
   {% if import_result %}
     <section class="section">
       <div class="section-head">
-        <h2>Uploaded rows</h2>
+        <h2>Обработени редове</h2>
         <span>{{ import_result.filename }}</span>
       </div>
 
@@ -53,43 +53,43 @@
         <table class="compact-table">
           <thead>
             <tr>
-              <th>CSV row</th>
-              <th>Order</th>
-              <th>Action</th>
-              <th>Message</th>
+              <th>Ред в CSV</th>
+              <th>Поръчка</th>
+              <th>Действие</th>
+              <th>Съобщение</th>
             </tr>
           </thead>
           <tbody>
             {% for row in import_result.row_results %}
               <tr>
-                <td>{{ row.row_number or "File" }}</td>
+                <td>{{ row.row_number or "Файл" }}</td>
                 <td>{{ row.order_number or "-" }}</td>
-                <td><span class="pill action-{{ row.action }}">{{ row.action }}</span></td>
+                <td><span class="pill action-{{ row.action }}">{{ import_action_labels.get(row.action, row.action) }}</span></td>
                 <td>{{ row.message }}</td>
               </tr>
             {% endfor %}
           </tbody>
         </table>
       {% else %}
-        <p class="empty">No rows were processed.</p>
+        <p class="empty">Няма обработени редове.</p>
       {% endif %}
     </section>
   {% endif %}
 
   <section class="section">
     <div class="section-head">
-      <h2>Recent imports</h2>
-      <span>{{ recent_imports|length }} shown</span>
+      <h2>Последни импорти</h2>
+      <span>{{ recent_imports|length }} показани</span>
     </div>
     {% if recent_imports %}
       <table>
         <thead>
           <tr>
-            <th>Batch</th>
-            <th>File</th>
-            <th>Rows seen</th>
-            <th>Rows imported</th>
-            <th>Created</th>
+            <th>Импорт №</th>
+            <th>Файл</th>
+            <th>Прочетени редове</th>
+            <th>Импортирани редове</th>
+            <th>Създадено</th>
           </tr>
         </thead>
         <tbody>
@@ -105,7 +105,7 @@
         </tbody>
       </table>
     {% else %}
-      <p class="empty">No imports yet.</p>
+      <p class="empty">Все още няма импорти.</p>
     {% endif %}
   </section>
 </main>

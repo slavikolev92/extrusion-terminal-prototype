@@ -52,7 +52,12 @@ def import_and_release_card(
                 (order_number,),
             ).fetchone()["id"]
         )
-    assert db.release_card(card_id, machine_id, machine_sequence).ok
+    assert db.release_card(
+        card_id,
+        machine_id,
+        machine_sequence,
+        max_roll_weight="60.0",
+    ).ok
     return card_id
 
 
@@ -76,7 +81,7 @@ def test_tare_update_persists_and_checks_loaded_version(connection):
     assert card["version"] == loaded_version + 1
     assert not stale_result.ok
     assert stale_result.messages == (
-        "Card changed after this page was loaded. Reload the card and try again.",
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )
 
 
@@ -105,9 +110,9 @@ def test_add_roll_while_running_assigns_roll_numbers(connection):
     ).fetchall()
 
     assert first_result.ok
-    assert first_result.messages == ("Roll 1 saved.",)
+    assert first_result.messages == ("Ролка 1 е записана.",)
     assert second_result.ok
-    assert second_result.messages == ("Roll 2 saved.",)
+    assert second_result.messages == ("Ролка 2 е записана.",)
     assert [(roll["roll_number"], roll["gross_weight"]) for roll in rolls] == [
         (1, 25.50),
         (2, 30),
@@ -138,11 +143,11 @@ def test_add_roll_is_blocked_when_card_is_not_running(connection):
     assert db.fetch_terminal_card_detail(paused_card_id)["status"] == STATUS_PAUSED
     assert not pending_result.ok
     assert pending_result.messages == (
-        "Roll weights can only be changed while the card is running or completed.",
+        "Теглата на ролките могат да се променят само когато картата е в изработване или завършена.",
     )
     assert not paused_result.ok
     assert paused_result.messages == (
-        "Roll weights can only be changed while the card is running or completed.",
+        "Теглата на ролките могат да се променят само когато картата е в изработване или завършена.",
     )
 
 
@@ -166,9 +171,9 @@ def test_weight_inputs_reject_more_than_two_decimal_places(connection):
     ).fetchone()[0]
 
     assert not tare_result.ok
-    assert tare_result.messages == ("Tare weight supports at most two decimal places.",)
+    assert tare_result.messages == ("Шпула поддържа най-много два знака след десетичната запетая.",)
     assert not gross_result.ok
-    assert gross_result.messages == ("Gross weight supports at most two decimal places.",)
+    assert gross_result.messages == ("Бруто тегло поддържа най-много два знака след десетичната запетая.",)
     assert roll_count == 0
 
 
@@ -215,11 +220,11 @@ def test_stale_roll_add_and_update_are_blocked(connection):
 
     assert not stale_add.ok
     assert stale_add.messages == (
-        "Card changed after this page was loaded. Reload the card and try again.",
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )
     assert not stale_update.ok
     assert stale_update.messages == (
-        "Card changed after this page was loaded. Reload the card and try again.",
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )
     assert card["roll_count"] == 1
     assert card["roll_entries"][0]["gross_weight"] == 20
@@ -282,7 +287,7 @@ def test_delete_middle_roll_renumbers_remaining_rolls_and_recalculates_totals(co
     updated_rolls = updated_card["roll_entries"]
 
     assert result.ok
-    assert result.messages == ("Roll 2 deleted. Remaining rolls renumbered.",)
+    assert result.messages == ("Ролка 2 е изтрита. Оставащите ролки са преномерирани.",)
     assert updated_card["version"] == loaded_version + 1
     assert updated_card["roll_count"] == 2
     assert updated_card["next_roll_number"] == 3
@@ -317,7 +322,7 @@ def test_delete_roll_is_blocked_when_card_is_not_running_or_completed(connection
 
     assert not result.ok
     assert result.messages == (
-        "Roll weights can only be changed while the card is running or completed.",
+        "Теглата на ролките могат да се променят само когато картата е в изработване или завършена.",
     )
     assert db.fetch_terminal_card_detail(card_id)["roll_count"] == 1
 
@@ -333,7 +338,7 @@ def test_delete_roll_checks_loaded_version(connection):
 
     assert not stale_result.ok
     assert stale_result.messages == (
-        "Card changed after this page was loaded. Reload the card and try again.",
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )
     assert db.fetch_terminal_card_detail(card_id)["roll_count"] == 1
 
@@ -387,7 +392,7 @@ def test_completed_card_cannot_delete_final_gross_roll(connection):
     updated_card = db.fetch_terminal_card_detail(card_id)
 
     assert not result.ok
-    assert result.messages == ("Completed cards must keep at least one gross roll weight.",)
+    assert result.messages == ("Завършените карти трябва да запазят поне едно бруто тегло на ролка.",)
     assert updated_card["status"] == "completed"
     assert updated_card["roll_count"] == 1
     assert updated_card["roll_entries"][0]["roll_number"] == 1
@@ -420,7 +425,7 @@ def test_completed_card_cannot_clear_final_gross_roll(connection):
     updated_card = db.fetch_terminal_card_detail(card_id)
 
     assert not result.ok
-    assert result.messages == ("Completed cards must keep at least one gross roll weight.",)
+    assert result.messages == ("Завършените карти трябва да запазят поне едно бруто тегло на ролка.",)
     assert updated_card["status"] == "completed"
     assert updated_card["roll_count"] == 1
     assert updated_card["roll_entries"][0]["gross_weight"] == 25

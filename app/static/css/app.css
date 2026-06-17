@@ -245,10 +245,34 @@ select {
 
 .release-form {
   display: grid;
-  grid-template-columns: 110px 150px auto;
+  grid-template-columns: repeat(3, 170px) minmax(120px, 1fr);
   gap: 8px;
-  align-items: center;
-  max-width: 430px;
+  align-items: end;
+  width: 100%;
+}
+
+.release-field {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.release-field input,
+.release-field select {
+  width: 100%;
+}
+
+.release-form button {
+  justify-self: end;
+  width: 180px;
+}
+
+.required-marker {
+  color: var(--red);
+  font-weight: 900;
 }
 
 .release-form input {

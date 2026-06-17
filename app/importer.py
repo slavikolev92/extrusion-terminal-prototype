@@ -118,15 +118,15 @@ class ImportResult:
 def csv_template() -> str:
     sample_values = {
         "order_number": "25278",
-        "customer": "Sample Customer",
-        "product_type": "PE film",
+        "customer": "Примерен клиент",
+        "product_type": "PE фолио",
         "quantity_1": "500",
         "unit_1": "kg",
         "material": "LDPE",
         "size_thickness": "600/0.050",
         "extrusion_flag": "да",
         "raw_material_a": "LDPE",
-        "packaging_method": "rolls",
+        "packaging_method": "ролки",
     }
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=IMPORT_FIELDS, lineterminator="\n")
@@ -141,7 +141,7 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
     reader = csv.DictReader(io.StringIO(text))
 
     if not reader.fieldnames:
-        message = "CSV file has no header row."
+        message = "CSV файлът няма заглавен ред."
         result.row_errors.append(message)
         result.row_results.append(
             ImportRowResult(
@@ -156,7 +156,7 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
     header_map = build_header_map(reader.fieldnames)
     missing_required = [field for field in ("order_number", "extrusion_flag") if field not in header_map.values()]
     if missing_required:
-        message = f"Missing required CSV columns: {', '.join(missing_required)}."
+        message = f"Липсват задължителни CSV колони: {', '.join(missing_required)}."
         result.row_errors.append(message)
         result.row_results.append(
             ImportRowResult(
@@ -185,9 +185,9 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
             order_number = card["order_number"]
 
             if not order_number:
-                message = "Missing order_number."
+                message = "Липсва номер на поръчка."
                 result.skipped += 1
-                result.row_errors.append(f"Row {row_number}: {message}")
+                result.row_errors.append(f"Ред {row_number}: {message}")
                 result.row_results.append(
                     ImportRowResult(
                         row_number=row_number,
@@ -199,9 +199,9 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                 continue
 
             if not card_has_usable_extrusion_step(card):
-                message = "Skipped because this row has no extrusion step."
+                message = "Пропуснат ред: няма екструдиране."
                 result.skipped += 1
-                result.row_errors.append(f"Row {row_number}: {message}")
+                result.row_errors.append(f"Ред {row_number}: {message}")
                 result.row_results.append(
                     ImportRowResult(
                         row_number=row_number,
@@ -213,10 +213,10 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                 continue
 
             if order_number in seen_order_numbers:
-                message = "Duplicate order number inside this CSV."
+                message = "Дублиран номер на поръчка в този CSV файл."
                 result.skipped += 1
                 result.duplicate_rows.append(order_number)
-                result.row_errors.append(f"Row {row_number}: {message} {order_number}.")
+                result.row_errors.append(f"Ред {row_number}: {message} {order_number}.")
                 result.row_results.append(
                     ImportRowResult(
                         row_number=row_number,
@@ -235,7 +235,7 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
             ).fetchone()
 
             if existing and not overwrite_existing:
-                message = "Skipped duplicate existing order. Select overwrite to update imported fields."
+                message = "Пропусната съществуваща поръчка. Отметнете обновяване, за да обновите данните от импорта."
                 result.skipped += 1
                 result.duplicate_rows.append(order_number)
                 result.row_results.append(
@@ -282,8 +282,9 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
 
 
 def import_success_message(*, updated: bool) -> str:
-    action = "Updated existing card" if updated else "Created new card"
-    return f"{action}; ready for planning."
+    if updated:
+        return "Обновена съществуваща технологична карта; готова за планиране."
+    return "Създадена нова технологична карта; готова за планиране."
 
 
 def decode_csv(content: bytes) -> str:

@@ -53,7 +53,13 @@ def import_ready_card(order_number: str, **overrides: str) -> int:
 def release_ready_card(order_number: str, machine_id: int, machine_sequence: int) -> int:
     card_id = import_ready_card(order_number)
     version = db.fetch_admin_card_detail(card_id)["version"]
-    assert db.release_card(card_id, machine_id, machine_sequence, version).ok
+    assert db.release_card(
+        card_id,
+        machine_id,
+        machine_sequence,
+        version,
+        max_roll_weight="60.0",
+    ).ok
     return card_id
 
 
@@ -65,7 +71,13 @@ def test_release_accepts_loaded_version_and_clamps_empty_machine_to_first_positi
     card_id = import_ready_card("25800")
     loaded_version = card_version(card_id)
 
-    result = db.release_card(card_id, 1, 3, loaded_version)
+    result = db.release_card(
+        card_id,
+        1,
+        3,
+        loaded_version,
+        max_roll_weight="60.0",
+    )
     card = db.fetch_admin_card_detail(card_id)
 
     assert result.ok
@@ -82,12 +94,18 @@ def test_release_blocks_stale_loaded_version(connection):
     fields["customer"] = "Updated Before Release"
     assert db.update_admin_imported_fields(card_id, loaded_version, fields).ok
 
-    result = db.release_card(card_id, 1, 1, loaded_version)
+    result = db.release_card(
+        card_id,
+        1,
+        1,
+        loaded_version,
+        max_roll_weight="60.0",
+    )
     card = db.fetch_admin_card_detail(card_id)
 
     assert not result.ok
     assert result.messages == (
-        "Card changed after this page was loaded. Reload the card and try again.",
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )
     assert card["status"] == "imported"
     assert card["machine_id"] is None
@@ -179,7 +197,7 @@ def test_planning_blocks_running_card_into_occupied_machine(connection):
     moving_card = db.fetch_admin_card_detail(moving_id)
 
     assert not result.ok
-    assert result.messages == ("Machine 1 is occupied by order 25807.",)
+    assert result.messages == ("Машина 1 е заета от поръчка 25807.",)
     assert moving_card["status"] == STATUS_RUNNING
     assert moving_card["machine_id"] == 2
     assert moving_card["machine_sequence"] == 1
@@ -209,7 +227,7 @@ def test_planning_blocks_stale_loaded_version(connection):
 
     assert not result.ok
     assert result.messages == (
-        "Card changed after this page was loaded. Reload the card and try again.",
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )
     assert card["machine_sequence"] == 1
 

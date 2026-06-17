@@ -1,85 +1,85 @@
 {% extends "base.html" %}
 
-{% block title %}Cards - Extrusion Terminal{% endblock %}
+{% block title %}Технологични карти - Терминал Екструдиране{% endblock %}
 
 {% block body %}
 <main class="page">
   <header class="page-header">
     <div>
-      <p class="eyebrow">Shift manager</p>
-      <h1>Cards</h1>
+      <p class="eyebrow">Началник смяна</p>
+      <h1>Технологични карти</h1>
     </div>
-    <a class="nav-link" href="/terminal">Terminal</a>
+    <a class="nav-link" href="/terminal">Терминал</a>
   </header>
 
   {% include "_admin_nav.html" %}
 
   <section class="section">
     <div class="section-head">
-      <h2>Find cards</h2>
-      <span>Showing up to 100</span>
+      <h2>Търсене на технологични карти</h2>
+      <span>Показват се до 100</span>
     </div>
     <form class="filter-form" action="/admin/cards" method="get">
       <label>
-        Order
+        Поръчка
         <input name="order_number" value="{{ filters.order_number }}">
       </label>
       <label>
-        Customer
+        Клиент
         <input name="customer" value="{{ filters.customer }}">
       </label>
       <label>
-        Product
+        Изделие
         <input name="product" value="{{ filters.product }}">
       </label>
       <label>
-        Status
+        Статус
         <select name="status">
-          <option value="">Any</option>
+          <option value="">Всички</option>
           {% for status in card_statuses %}
-            <option value="{{ status }}" {% if filters.status == status %}selected{% endif %}>{{ status }}</option>
+            <option value="{{ status }}" {% if filters.status == status %}selected{% endif %}>{{ status_labels.get(status, status) }}</option>
           {% endfor %}
         </select>
       </label>
-      <button type="submit">Filter</button>
-      <a class="nav-link" href="/admin/cards">Clear</a>
+      <button type="submit">Филтрирай</button>
+      <a class="nav-link" href="/admin/cards">Изчисти</a>
     </form>
   </section>
 
   <section class="section">
     <div class="section-head">
-      <h2>Card index</h2>
-      <span>{{ cards|length }} cards</span>
+      <h2>Списък с технологични карти</h2>
+      <span>{{ cards|length }} карти</span>
     </div>
     {% if cards %}
       <table class="compact-table">
         <thead>
           <tr>
-            <th>Order</th>
-            <th>Status</th>
-            <th>Customer</th>
-            <th>Product</th>
-            <th>Machine / seq.</th>
-            <th>Updated</th>
-            <th>Review</th>
+            <th>Поръчка</th>
+            <th>Статус</th>
+            <th>Клиент</th>
+            <th>Изделие</th>
+            <th>Машина / ред</th>
+            <th>Обновена</th>
+            <th>Преглед</th>
           </tr>
         </thead>
         <tbody>
           {% for card in cards %}
             <tr>
               <td>{{ card.order_number }}</td>
-              <td><span class="pill status-{{ card.status }}">{{ card.status }}</span></td>
+              <td><span class="pill status-{{ card.status }}">{{ status_labels.get(card.status, card.status) }}</span></td>
               <td>{{ card.customer or "-" }}</td>
               <td>{{ card.product_type or "-" }}</td>
               <td>{{ card.machine_id or "-" }} / {{ card.machine_sequence or "-" }}</td>
               <td>{{ card.updated_at }}</td>
-              <td><a href="/admin/cards/{{ card.id }}">Open</a></td>
+              <td><a href="/admin/cards/{{ card.id }}">Отвори</a></td>
             </tr>
           {% endfor %}
         </tbody>
       </table>
     {% else %}
-      <p class="empty">No cards match these filters.</p>
+      <p class="empty">Няма технологични карти по тези филтри.</p>
     {% endif %}
   </section>
 </main>

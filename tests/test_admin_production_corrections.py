@@ -56,7 +56,13 @@ def import_ready_card(order_number: str) -> int:
 
 def release_ready_card(order_number: str, machine_id: int = 1, sequence: int = 1) -> int:
     card_id = import_ready_card(order_number)
-    assert db.release_card(card_id, machine_id, sequence, card_version(card_id)).ok
+    assert db.release_card(
+        card_id,
+        machine_id,
+        sequence,
+        card_version(card_id),
+        max_roll_weight="60.0",
+    ).ok
     return card_id
 
 
@@ -106,7 +112,7 @@ def test_admin_cancel_closes_running_segment_and_blocks_stale_version(connection
     assert segment["end_reason"] == "correction"
     assert not stale_result.ok
     assert stale_result.messages == (
-        "Card changed after this page was loaded. Reload the card and try again.",
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )
 
 
@@ -127,7 +133,7 @@ def test_admin_restore_returns_cancelled_card_to_pending_and_blocks_duplicate_se
     blocked = db.restore_cancelled_card(cancelled_id, card_version(cancelled_id))
 
     assert not blocked.ok
-    assert blocked.messages == ("Machine 2 already has active sequence 1 on order 26002.",)
+    assert blocked.messages == ("Машина 2 вече има активен ред 1 за поръчка 26002.",)
 
 
 def test_admin_material_correction_updates_terminal_fields_and_blocks_stale_version(connection):
@@ -174,7 +180,7 @@ def test_admin_tare_correction_recalculates_net_weights_and_blocks_invalid_tare(
     assert card["total_net_weight"] == "7.50"
     assert not invalid_result.ok
     assert invalid_result.messages == (
-        "Tare weight cannot be greater than an existing gross roll weight.",
+        "Шпулата не може да бъде по-голяма от съществуващо бруто тегло на ролка.",
     )
 
 
@@ -208,7 +214,7 @@ def test_admin_roll_add_update_delete_preserves_numbering_and_completed_final_ro
     assert final_card["roll_entries"][0]["roll_number"] == 1
     assert final_card["roll_entries"][0]["gross_weight"] == 26
     assert not blocked_delete.ok
-    assert blocked_delete.messages == ("Completed cards must keep at least one gross roll weight.",)
+    assert blocked_delete.messages == ("Завършените карти трябва да запазят поне едно бруто тегло на ролка.",)
 
 
 def test_admin_timing_segment_edit_recalculates_total_time(connection):
@@ -265,11 +271,11 @@ def test_admin_timing_correction_rejects_invalid_intervals_and_multiple_open_seg
         "",
     )
     assert not invalid_interval.ok
-    assert invalid_interval.messages == ("Ended at cannot be earlier than started at.",)
+    assert invalid_interval.messages == ("Краят не може да бъде преди началото.",)
     assert not open_result.ok
-    assert open_result.messages == ("Card already has an open timing segment.",)
+    assert open_result.messages == ("Картата вече има отворен времеви сегмент.",)
     assert not non_running_open_result.ok
-    assert non_running_open_result.messages == ("Only running cards can have an open timing segment.",)
+    assert non_running_open_result.messages == ("Само карти в изработване могат да имат отворен времеви сегмент.",)
 
 
 def test_admin_timing_correction_blocks_deleting_all_timing_from_completed_card(connection):
@@ -288,9 +294,9 @@ def test_admin_timing_correction_blocks_deleting_all_timing_from_completed_card(
     )
 
     assert not delete_result.ok
-    assert delete_result.messages == ("Completed cards must keep at least one timing segment.",)
+    assert delete_result.messages == ("Завършените карти трябва да запазят поне един времеви сегмент.",)
     assert not open_update_result.ok
-    assert open_update_result.messages == ("Only running cards can have an open timing segment.",)
+    assert open_update_result.messages == ("Само карти в изработване могат да имат отворен времеви сегмент.",)
 
 
 def test_admin_timing_correction_preserves_running_open_segment(connection):
@@ -314,9 +320,9 @@ def test_admin_timing_correction_preserves_running_open_segment(connection):
     delete_result = db.delete_timing_segment(card_id, segment_id, card["version"])
 
     assert not close_result.ok
-    assert close_result.messages == ("Running cards must keep an open timing segment.",)
+    assert close_result.messages == ("Картите в изработване трябва да запазят отворен времеви сегмент.",)
     assert not delete_result.ok
-    assert delete_result.messages == ("Running cards must keep an open timing segment.",)
+    assert delete_result.messages == ("Картите в изработване трябва да запазят отворен времеви сегмент.",)
 
 
 def test_admin_timing_correction_blocks_open_segment_on_non_running_card(connection):
@@ -331,7 +337,7 @@ def test_admin_timing_correction_blocks_open_segment_on_non_running_card(connect
     )
 
     assert not result.ok
-    assert result.messages == ("Only running cards can have an open timing segment.",)
+    assert result.messages == ("Само карти в изработване могат да имат отворен времеви сегмент.",)
 
 
 def test_admin_timing_correction_blocks_stale_loaded_version(connection):
@@ -355,7 +361,7 @@ def test_admin_timing_correction_blocks_stale_loaded_version(connection):
 
     assert not stale_result.ok
     assert stale_result.messages == (
-        "Card changed after this page was loaded. Reload the card and try again.",
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )
 
 
