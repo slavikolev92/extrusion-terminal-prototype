@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -11,12 +12,15 @@ from fastapi.templating import Jinja2Templates
 
 from .constants import (
     ACTIVE_TERMINAL_STATUSES,
-    ARCHIVE_STATUSES,
     CARD_STATUSES,
     STATUS_LABELS,
     STATUS_IMPORTED,
+    STATUS_PENDING,
+    TERMINAL_ARCHIVE_STATUSES,
+    TIMING_REASON_LABELS,
 )
 from .db import (
+    STALE_CARD_MESSAGE,
     add_timing_segment,
     add_roll_gross_weight,
     cancel_card,
@@ -52,11 +56,21 @@ from .rules import RuleResult
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
+CARD_NOT_FOUND_MESSAGE = "Картата не е намерена."
+INVALID_LOADED_VERSION_MESSAGE = "Версията на заредената карта е невалидна. Презаредете картата."
+
+IMPORT_ACTION_LABELS = {
+    "blocked": "блокиран",
+    "created": "създаден",
+    "skipped": "пропуснат",
+    "updated": "обновен",
+}
+
 IMPORT_FIELD_LABELS = {
     "order_number": "№ поръчка",
     "order_date": "Дата",
     "delivery_date": "Дата доставка",
-    "customer": "Фирма",
+    "customer": "Клиент",
     "city": "Град",
     "product_type": "Вид изделие",
     "quantity_1": "Количество",
@@ -91,6 +105,13 @@ RECIPE_FIELD_ROWS = (
     ("Креда", "chalk"),
 )
 
+TERMINAL_RECIPE_LABELS = {
+    "raw_material_a": "Вид суровина A",
+    "raw_material_b": "Вид суровина B",
+    "raw_material_c": "Вид суровина C",
+    "linear_pe": "Линеен /mLLDPE/",
+}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -98,7 +119,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Extrusion Terminal Prototype", lifespan=lifespan)
+app = FastAPI(title="Терминал Екструдиране", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
 
@@ -135,6 +156,7 @@ def admin_card_detail_context(card_id: int, **extra: Any) -> dict[str, Any] | No
         "import_fields": IMPORT_FIELDS,
         "import_field_labels": IMPORT_FIELD_LABELS,
         "status_labels": STATUS_LABELS,
+        "timing_reason_labels": TIMING_REASON_LABELS,
         "quantity_lines": build_quantity_lines(card),
         "recipe_rows": build_recipe_rows(card),
     }
@@ -187,6 +209,14 @@ def build_recipe_rows(card: dict[str, Any]) -> list[dict[str, str | bool]]:
     return rows
 
 
+def build_terminal_recipe_rows(card: dict[str, Any]) -> list[dict[str, str | bool]]:
+    rows = build_recipe_rows(card)
+    for row in rows:
+        field = str(row["field"])
+        row["label"] = TERMINAL_RECIPE_LABELS.get(field, str(row["label"]))
+    return rows
+
+
 @app.get("/")
 async def index() -> RedirectResponse:
     return RedirectResponse(url="/terminal", status_code=303)
@@ -211,7 +241,7 @@ async def admin_import(request: Request):
     return templates.TemplateResponse(
         request,
         "admin_import.html",
-        admin_import_context(),
+        admin_import_context(import_action_labels=IMPORT_ACTION_LABELS),
     )
 
 
@@ -240,7 +270,7 @@ async def import_csv(
     return templates.TemplateResponse(
         request,
         "admin_import.html",
-        admin_import_context(import_result=result),
+        admin_import_context(import_result=result, import_action_labels=IMPORT_ACTION_LABELS),
     )
 
 
@@ -274,6 +304,7 @@ async def admin_cards(
             "cards": fetch_admin_cards(filters),
             "filters": filters,
             "card_statuses": CARD_STATUSES,
+            "status_labels": STATUS_LABELS,
             "summary": database_summary(),
         },
     )
@@ -283,7 +314,7 @@ async def admin_cards(
 async def admin_card_detail(request: Request, card_id: int):
     context = admin_card_detail_context(card_id)
     if context is None:
-        return PlainTextResponse("Card was not found.", status_code=404)
+        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
     return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
@@ -302,7 +333,7 @@ async def save_admin_imported_fields(request: Request, card_id: int):
 
     context = admin_card_detail_context(card_id, imported_field_result=imported_field_result)
     if context is None:
-        return PlainTextResponse("Card was not found.", status_code=404)
+        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
     return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
@@ -321,7 +352,7 @@ async def delete_admin_card(
 
     context = admin_card_detail_context(card_id, delete_result=delete_result)
     if context is None:
-        return PlainTextResponse("Card was not found.", status_code=404)
+        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
     return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
@@ -330,6 +361,7 @@ async def release_card_to_terminal(
     request: Request,
     card_id: int,
     loaded_version: str = Form(...),
+    max_roll_weight: str = Form(""),
     machine_id: str = Form(...),
     machine_sequence: str = Form(...),
 ):
@@ -342,6 +374,7 @@ async def release_card_to_terminal(
                 parsed_planning["machine_id"],
                 parsed_planning["machine_sequence"],
                 loaded_version=parsed_version,
+                max_roll_weight=max_roll_weight,
             )
 
     return templates.TemplateResponse(
@@ -389,7 +422,7 @@ async def cancel_admin_card(
 
     context = admin_card_detail_context(card_id, workflow_result=workflow_result)
     if context is None:
-        return PlainTextResponse("Card was not found.", status_code=404)
+        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
     return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
@@ -405,7 +438,7 @@ async def restore_admin_card(
 
     context = admin_card_detail_context(card_id, workflow_result=workflow_result)
     if context is None:
-        return PlainTextResponse("Card was not found.", status_code=404)
+        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
     return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
@@ -430,7 +463,7 @@ async def save_admin_production_materials(
 
     context = admin_card_detail_context(card_id, material_result=material_result)
     if context is None:
-        return PlainTextResponse("Card was not found.", status_code=404)
+        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
     return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
@@ -447,7 +480,7 @@ async def save_admin_tare_weight(
 
     context = admin_card_detail_context(card_id, roll_result=roll_result)
     if context is None:
-        return PlainTextResponse("Card was not found.", status_code=404)
+        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
     return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
@@ -464,7 +497,7 @@ async def add_admin_roll_weight(
 
     context = admin_card_detail_context(card_id, roll_result=roll_result)
     if context is None:
-        return PlainTextResponse("Card was not found.", status_code=404)
+        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
     return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
@@ -487,7 +520,7 @@ async def save_admin_roll_weight(
 
     context = admin_card_detail_context(card_id, roll_result=roll_result)
     if context is None:
-        return PlainTextResponse("Card was not found.", status_code=404)
+        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
     return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
@@ -508,7 +541,7 @@ async def delete_admin_roll_weight(
 
     context = admin_card_detail_context(card_id, roll_result=roll_result)
     if context is None:
-        return PlainTextResponse("Card was not found.", status_code=404)
+        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
     return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
@@ -533,7 +566,7 @@ async def add_admin_timing_segment(
 
     context = admin_card_detail_context(card_id, timing_result=timing_result)
     if context is None:
-        return PlainTextResponse("Card was not found.", status_code=404)
+        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
     return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
@@ -560,7 +593,7 @@ async def save_admin_timing_segment(
 
     context = admin_card_detail_context(card_id, timing_result=timing_result)
     if context is None:
-        return PlainTextResponse("Card was not found.", status_code=404)
+        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
     return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
@@ -581,7 +614,7 @@ async def delete_admin_timing_segment(
 
     context = admin_card_detail_context(card_id, timing_result=timing_result)
     if context is None:
-        return PlainTextResponse("Card was not found.", status_code=404)
+        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
     return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
@@ -595,19 +628,19 @@ def parse_planning_form(
         parsed_machine_id = int(machine_id)
     except ValueError:
         parsed_machine_id = 0
-        messages.append("Machine must be a number from 1 to 4.")
+        messages.append("Машината трябва да е число от 1 до 4.")
 
     try:
         parsed_sequence = int(machine_sequence)
     except ValueError:
         parsed_sequence = 0
-        messages.append("Sequence must be a whole number.")
+        messages.append("Редът трябва да е цяло число.")
 
     if parsed_machine_id not in (1, 2, 3, 4):
-        messages.append("Machine must be 1, 2, 3, or 4.")
+        messages.append("Машината трябва да е 1, 2, 3 или 4.")
 
     if parsed_sequence < 1:
-        messages.append("Sequence must be 1 or higher.")
+        messages.append("Редът трябва да е 1 или по-голям.")
 
     result = RuleResult(not messages, tuple(messages))
     if not result.ok:
@@ -646,7 +679,7 @@ async def save_terminal_materials(
     try:
         parsed_version = int(loaded_version)
     except ValueError:
-        material_result = RuleResult(False, ("Loaded card version is invalid. Reload the card.",))
+        material_result = RuleResult(False, (INVALID_LOADED_VERSION_MESSAGE,))
     else:
         material_result = update_terminal_material_fields(
             card_id=card_id,
@@ -678,6 +711,7 @@ async def save_tare_weight(
         request,
         selected_card_id=card_id,
         roll_result=roll_result,
+        roll_result_target="tare",
     )
 
 
@@ -696,6 +730,7 @@ async def add_roll_weight(
         request,
         selected_card_id=card_id,
         roll_result=roll_result,
+        roll_result_target="new_roll",
     )
 
 
@@ -720,6 +755,8 @@ async def save_roll_weight(
         request,
         selected_card_id=card_id,
         roll_result=roll_result,
+        roll_result_target="roll_row",
+        roll_result_roll_id=roll_id,
     )
 
 
@@ -742,6 +779,8 @@ async def delete_roll_weight(
         request,
         selected_card_id=card_id,
         roll_result=roll_result,
+        roll_result_target="roll_row",
+        roll_result_roll_id=roll_id,
     )
 
 
@@ -813,45 +852,11 @@ async def finish_terminal_card(
     )
 
 
-@app.post("/terminal/cards/{card_id}/cancel")
-async def cancel_terminal_card(
-    request: Request,
-    card_id: int,
-    loaded_version: str = Form(...),
-):
-    parsed_version, workflow_result = parse_loaded_version(loaded_version)
-    if parsed_version is not None:
-        workflow_result = cancel_card(card_id, parsed_version)
-
-    return terminal_response(
-        request,
-        selected_card_id=card_id,
-        workflow_result=workflow_result,
-    )
-
-
-@app.post("/terminal/cards/{card_id}/restore")
-async def restore_terminal_card(
-    request: Request,
-    card_id: int,
-    loaded_version: str = Form(...),
-):
-    parsed_version, workflow_result = parse_loaded_version(loaded_version)
-    if parsed_version is not None:
-        workflow_result = restore_cancelled_card(card_id, parsed_version)
-
-    return terminal_response(
-        request,
-        selected_card_id=card_id,
-        workflow_result=workflow_result,
-    )
-
-
 def parse_loaded_version(loaded_version: str) -> tuple[int | None, RuleResult]:
     try:
         return int(loaded_version), RuleResult(True)
     except ValueError:
-        return None, RuleResult(False, ("Loaded card version is invalid. Reload the card.",))
+        return None, RuleResult(False, (INVALID_LOADED_VERSION_MESSAGE,))
 
 
 def terminal_response(
@@ -859,24 +864,232 @@ def terminal_response(
     selected_card_id: int | None = None,
     **extra: Any,
 ):
+    return templates.TemplateResponse(
+        request,
+        "terminal.html",
+        terminal_context(selected_card_id, **extra),
+    )
+
+
+def terminal_context(
+    selected_card_id: int | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    machine_queues = fetch_machine_queues()
+    if selected_card_id is None:
+        selected_card_id = next(
+            (
+                int(queue["focus_card"]["id"])
+                for queue in machine_queues
+                if queue["focus_card"]
+            ),
+            None,
+        )
+
     selected_card = fetch_terminal_card_detail(selected_card_id) if selected_card_id else None
     if selected_card:
         selected_card["total_production_duration"] = format_duration(
             selected_card["total_production_seconds"],
         )
-    return templates.TemplateResponse(
-        request,
-        "terminal.html",
-        {
-            "machines": fetch_machines(),
-            "machine_queues": fetch_machine_queues(),
-            "active_cards": fetch_cards_by_status(ACTIVE_TERMINAL_STATUSES),
-            "archive_cards": fetch_cards_by_status(ARCHIVE_STATUSES),
-            "selected_card": selected_card,
-            "terminal_snapshot": fetch_terminal_snapshot(selected_card_id),
-            **extra,
+        enrich_terminal_card_display(selected_card)
+
+    selected_machine_id = selected_card["machine_id"] if selected_card else None
+    enriched_queues = enrich_machine_queues(machine_queues, selected_card)
+    active_cards = [
+        card
+        for queue in enriched_queues
+        for card in queue["cards"]
+    ]
+    archive_cards = [
+        enrich_terminal_list_card(card, selected_card)
+        for card in fetch_cards_by_status(TERMINAL_ARCHIVE_STATUSES)
+    ]
+
+    context: dict[str, Any] = {
+        "machines": fetch_machines(),
+        "machine_queues": enriched_queues,
+        "active_cards": active_cards,
+        "archive_cards": archive_cards,
+        "selected_card": selected_card,
+        "selected_machine_id": selected_machine_id,
+        "terminal_snapshot": fetch_terminal_snapshot(selected_card_id),
+        "status_labels": STATUS_LABELS,
+        "recipe_rows": build_terminal_recipe_rows(selected_card) if selected_card else [],
+        **extra,
+        "terminal_feedback": build_terminal_feedback(extra),
+    }
+    return context
+
+
+def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
+    feedback: dict[str, Any] = {
+        "toast": None,
+        "scroll_rolls_to_bottom": False,
+        "refresh_required": False,
+        "errors": {
+            "tare": (),
+            "new_roll": (),
+            "roll_rows": {},
+            "material": (),
+            "topbar": (),
         },
+    }
+
+    for result_name, target in (
+        ("workflow_result", "topbar"),
+        ("timing_result", "topbar"),
+        ("material_result", "material"),
+        ("roll_result", terminal_roll_feedback_target(results)),
+    ):
+        result = results.get(result_name)
+        if not isinstance(result, RuleResult):
+            continue
+
+        messages = tuple(message for message in result.messages if message)
+        if not messages:
+            continue
+
+        if result.ok:
+            feedback["toast"] = {"messages": messages}
+            if result_name == "roll_result" and target == "new_roll":
+                feedback["scroll_rolls_to_bottom"] = True
+            continue
+
+        if is_terminal_card_state_error(messages):
+            feedback["refresh_required"] = True
+            continue
+
+        if target == "roll_row":
+            roll_id = results.get("roll_result_roll_id")
+            if roll_id is not None:
+                feedback["errors"]["roll_rows"][roll_id] = messages
+            else:
+                feedback["errors"]["new_roll"] = messages
+        else:
+            feedback["errors"][target] = messages
+
+    return feedback
+
+
+def is_terminal_card_state_error(messages: tuple[str, ...]) -> bool:
+    state_messages = {
+        STALE_CARD_MESSAGE,
+        INVALID_LOADED_VERSION_MESSAGE,
+    }
+    return any(message in state_messages for message in messages)
+
+
+def terminal_roll_feedback_target(results: dict[str, Any]) -> str:
+    target = str(results.get("roll_result_target") or "new_roll")
+    if target in {"tare", "new_roll", "roll_row"}:
+        return target
+    return "new_roll"
+
+
+def enrich_machine_queues(
+    machine_queues: list[dict[str, Any]],
+    selected_card: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    enriched_queues: list[dict[str, Any]] = []
+    for queue in machine_queues:
+        enriched_cards = [
+            enrich_terminal_list_card(card, selected_card)
+            for card in queue["cards"]
+        ]
+        focus_card = queue["focus_card"]
+        if focus_card:
+            focus_card = next(
+                (card for card in enriched_cards if card["id"] == focus_card["id"]),
+                enrich_terminal_list_card(focus_card, selected_card),
+            )
+        enriched_queue = {**queue, "cards": enriched_cards, "focus_card": focus_card}
+        enriched_queues.append(enriched_queue)
+    return enriched_queues
+
+
+def enrich_terminal_card_display(card: dict[str, Any]) -> dict[str, Any]:
+    enrich_terminal_list_card(card, card)
+    card["quantity_display"] = build_quantity_display(card)
+    card["recipe_rows"] = build_terminal_recipe_rows(card)
+    card["target_gross_weight"] = target_gross_display(card)
+    card["remaining_gross_weight"] = remaining_gross_display(card)
+    return card
+
+
+def enrich_terminal_list_card(
+    card: dict[str, Any],
+    selected_card: dict[str, Any] | None,
+) -> dict[str, Any]:
+    card["status_label"] = STATUS_LABELS.get(card.get("status"), str(card.get("status") or ""))
+    card["status_display_class"] = (
+        "idle" if card.get("status") == STATUS_PENDING else str(card.get("status") or "")
     )
+    card["quantity_display"] = build_quantity_display(card)
+    card["target_gross_weight"] = target_gross_display(card)
+    card["produced_gross_weight"] = rounded_weight_display(card.get("total_gross_weight"))
+    card["remaining_gross_weight"] = remaining_gross_display(card)
+    card["progress_percent"] = progress_percent(card)
+    card["is_selected"] = bool(selected_card and selected_card["id"] == card["id"])
+    return card
+
+
+def build_quantity_display(card: dict[str, Any]) -> str:
+    lines = [line["display"] for line in build_quantity_lines(card)]
+    return " / ".join(lines) if lines else "-"
+
+
+def target_gross_decimal(card: dict[str, Any]) -> Decimal | None:
+    unit = str(card.get("unit_1") or "").strip().casefold()
+    if unit not in {"kg", "kgs", "кг"}:
+        return None
+    return decimal_from_display(card.get("quantity_1"))
+
+
+def target_gross_display(card: dict[str, Any]) -> str | None:
+    target = target_gross_decimal(card)
+    return decimal_weight_display(target) if target is not None else None
+
+
+def remaining_gross_display(card: dict[str, Any]) -> str | None:
+    target = target_gross_decimal(card)
+    produced = decimal_from_display(card.get("total_gross_weight")) or Decimal("0")
+    if target is None:
+        return None
+    return decimal_weight_display(target - produced)
+
+
+def progress_percent(card: dict[str, Any]) -> int:
+    target = target_gross_decimal(card)
+    produced = decimal_from_display(card.get("total_gross_weight")) or Decimal("0")
+    if target is None or target <= 0:
+        return 0
+    percentage = int((produced / target) * Decimal("100"))
+    return max(0, min(100, percentage))
+
+
+def decimal_from_display(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    text = str(value).strip().replace(",", ".")
+    if not text:
+        return None
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        return None
+
+
+def decimal_weight_display(value: Decimal | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value.quantize(Decimal('0.01'))}"
+
+
+def rounded_weight_display(value: Any) -> str:
+    decimal_value = decimal_from_display(value)
+    if decimal_value is None:
+        return "0"
+    return f"{decimal_value.quantize(Decimal('1'))}"
 
 
 def format_duration(total_seconds: int) -> str:

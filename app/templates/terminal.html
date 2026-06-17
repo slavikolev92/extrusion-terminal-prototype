@@ -1,486 +1,2141 @@
-{% extends "base.html" %}
+<!doctype html>
+<html lang="bg">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Терминал - Екструдиране</title>
+  <style>
 
-{% block title %}Terminal - Extrusion Terminal{% endblock %}
+    :root {
+      color-scheme: light;
+      --bg: #edf1f5;
+      --surface: #ffffff;
+      --surface-soft: #f7f9fb;
+      --nav-bg: #eaf1f8;
+      --nav-card: #f8fbfe;
+      --line: #d5dde6;
+      --line-strong: #92a0af;
+      --text: #1f2933;
+      --muted: #667382;
+      --blue: #0b6bcb;
+      --blue-soft: rgba(223, 238, 255, .58);
+      --green: #1f7a43;
+      --green-soft: #e8f6ed;
+      --yellow-soft: #fff7d6;
+      --red: #b4232c;
+      --red-soft: #ffe8e8;
+      --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 10px 24px rgba(16, 24, 40, .05);
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
 
-{% block body %}
-<main class="terminal-shell">
-  <aside class="terminal-sidebar">
-    <header>
-      <h1>Terminal</h1>
-      <span>{{ active_cards|length }} active</span>
-    </header>
+    * { box-sizing: border-box; }
 
-    <div class="machine-strip">
-      {% for queue in machine_queues %}
-        {% set focus_card = queue.focus_card %}
-        <a class="machine-tile" href="{% if focus_card %}/terminal/cards/{{ focus_card.id }}{% else %}/terminal{% endif %}">
-          <strong>{{ queue.machine.id }}</strong>
-          {% if focus_card %}
-            <span>No. {{ focus_card.order_number }}</span>
-            <small>{{ focus_card.status }}</small>
-          {% else %}
-            <span>No card</span>
-            <small>idle</small>
-          {% endif %}
-        </a>
-      {% endfor %}
-    </div>
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+    }
 
-    <section>
-      <h2>Queue</h2>
-      {% if active_cards %}
-        {% for card in active_cards %}
-          <a class="queue-card {{ card.status }} {% if selected_card and selected_card.id == card.id %}selected{% endif %}" href="/terminal/cards/{{ card.id }}">
-            <strong>No. {{ card.order_number }}</strong>
-            <span>{{ card.customer or "No customer" }}</span>
-            <small>Machine {{ card.machine_id or "-" }} / {{ card.machine_sequence or "-" }}</small>
-          </a>
-        {% endfor %}
-      {% else %}
-        <p class="empty">No active cards released to the terminal.</p>
-      {% endif %}
-    </section>
-  </aside>
+    button,
+    input {
+      font: inherit;
+    }
 
-  <section class="work-surface">
-    <header class="work-header">
+    button {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      padding: 0 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    button:disabled {
+      color: #8a96a5;
+      background: #f1f3f5;
+      border-color: #d9e0e7;
+    }
+
+    input {
+      width: 100%;
+      min-width: 0;
+      min-height: 34px;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--text);
+      padding: 5px 8px;
+      font-weight: 800;
+    }
+
+    .page {
+      height: 100%;
+      padding: 0;
+    }
+
+    .app {
+      position: relative;
+      height: 100vh;
+      min-height: 680px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      border: 0;
+      border-radius: 0;
+      overflow: hidden;
+      background: #e9edf2;
+      box-shadow: none;
+    }
+
+    .machine-nav {
+      min-width: 0;
+      border-bottom: 1px solid #cfd6de;
+      background: #ececec;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 156px;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .machine-nav-list {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(240px, 380px));
+      justify-content: start;
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .machine-nav-actions {
+      min-width: 0;
+      display: grid;
+      grid-template-rows: repeat(2, minmax(0, 58px));
+      align-content: center;
+      gap: 10px;
+      align-self: stretch;
+    }
+
+    .machine-tab {
+      position: relative;
+      min-width: 0;
+      min-height: 126px;
+      border-width: 10px 2px 2px 2px;
+      border-style: solid;
+      border-color: #aeb7c1;
+      border-radius: 10px;
+      background: #fff;
+      padding: 14px 14px 12px;
+      display: grid;
+      grid-template-rows: auto auto auto auto;
+      align-content: center;
+      gap: 9px;
+      text-align: left;
+      overflow: hidden;
+    }
+
+    .machine-tab.selected {
+      border-color: #0b355f;
+      box-shadow: none;
+    }
+    .machine-tab.idle {
+      background: #f8fafc;
+      border-style: solid;
+      border-color: #aeb7c1;
+    }
+
+    .machine-tab-top,
+    .machine-tab-progress {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .machine-tab-top,
+    .machine-tab-progress {
+      justify-content: space-between;
+    }
+
+    .machine-tab-name {
+      font-size: 17px;
+      font-weight: 900;
+    }
+
+    .machine-tab-title {
+      min-width: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .machine-tab-icon {
+      width: 17px;
+      height: 17px;
+      flex: 0 0 auto;
+      object-fit: contain;
+    }
+
+    .machine-tab-meta {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.15;
+    }
+
+    .machine-tab-customer,
+    .machine-tab-product {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .machine-tab-customer {
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    .machine-tab-product {
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .machine-tab-progress {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+
+    .machine-tab-progress .progress {
+      flex: 1 1 auto;
+    }
+
+    .machine-tab-qty {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .history-nav,
+    .queue-nav {
+      min-width: 0;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      background: #fff;
+      border-color: #b8c4d1;
+      color: #0b355f;
+      font-size: 14px;
+      font-weight: 900;
+      padding: 8px 10px;
+      text-align: center;
+      line-height: 1.15;
+      white-space: normal;
+    }
+
+    .history-nav:hover,
+    .queue-nav:hover {
+      border-color: #0b355f;
+    }
+
+    .rail {
+      min-width: 0;
+      min-height: 0;
+      background: var(--nav-bg);
+      border-right: 1px solid var(--line);
+      padding: 14px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 10px;
+    }
+
+    .rail-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 2px 0;
+    }
+
+    .rail-head h1 {
+      margin: 0;
+      font-size: 21px;
+      font-weight: 900;
+    }
+
+    .clock {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .machine-list {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: repeat(4, minmax(0, 1fr));
+      gap: 9px;
+    }
+
+    .machine {
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+      border: 1px solid rgba(11, 107, 203, .12);
+      border-radius: 10px;
+      background: var(--nav-card);
+      padding: 10px 10px 10px 12px;
+      display: grid;
+      grid-template-rows: auto auto auto;
+      align-content: center;
+      gap: 8px;
+      overflow: hidden;
+    }
+
+    .machine::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      border-radius: 10px 0 0 10px;
+      background: transparent;
+    }
+
+    .machine.running::before { background: var(--green); }
+    .machine.paused::before { background: #9b7a13; }
+    .machine.selected {
+      border-color: rgba(11, 107, 203, .45);
+      box-shadow: inset 0 0 0 2px rgba(11, 107, 203, .35);
+      background: #ffffff;
+    }
+    .machine.idle {
+      background: #f7f9fb;
+      border-style: dashed;
+      border-color: #c5ced8;
+    }
+
+    .machine-top,
+    .machine-meta,
+    .rail-actions,
+    .topbar,
+    .actions,
+    .panel-head,
+    .totals,
+    .roll-entry {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .machine-top,
+    .machine-meta,
+    .topbar,
+    .panel-head {
+      justify-content: space-between;
+    }
+
+    .machine-name {
+      font-size: 17px;
+      font-weight: 900;
+    }
+
+    .status {
+      min-height: 22px;
+      padding: 0 7px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 900;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .status.running {
+      color: var(--green);
+      background: #eef8f1;
+      border-color: #add5ba;
+    }
+
+    .status.paused {
+      color: #8a6500;
+      background: #fff6d7;
+      border-color: #ddc46a;
+    }
+
+    .status.idle {
+      color: #6f7b87;
+      background: #fff;
+      border-color: #c7ced6;
+      border-style: dashed;
+    }
+
+    .status.completed {
+      color: #475569;
+      background: #eef2f6;
+      border-color: #c7ced6;
+    }
+
+    .machine-order {
+      overflow: hidden;
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.15;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .machine-customer {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.15;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .progress {
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(31, 41, 51, .11);
+      overflow: hidden;
+    }
+
+    .progress > span {
+      display: block;
+      height: 100%;
+      background: var(--green);
+      border-radius: inherit;
+    }
+
+    .machine-meta {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .rail-actions {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .rail-actions button {
+      width: 100%;
+      background: rgba(255, 255, 255, .68);
+    }
+
+    .main {
+      min-width: 0;
+      min-height: 0;
+      background: #fff;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      overflow: hidden;
+      margin: 0;
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    .topbar {
+      min-width: 0;
+      min-height: 76px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      padding: 16px 24px;
+    }
+
+    .title {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+
+    .title h2 {
+      margin: 0;
+      overflow: hidden;
+      font-size: 21px;
+      line-height: 1.05;
+      font-weight: 800;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .action-area {
+      min-width: 0;
+      display: grid;
+      justify-items: end;
+      gap: 4px;
+    }
+
+    .actions {
+      flex-wrap: nowrap;
+    }
+
+    .action-primary,
+    .roll-entry button {
+      background: #0b355f;
+      border-color: #0b355f;
+      color: #fff;
+    }
+
+    .action-secondary,
+    .menu-btn {
+      background: #fff;
+      border-color: #b8c4d1;
+      color: #0b355f;
+    }
+
+    .menu {
+      position: relative;
+    }
+
+    .menu-btn {
+      width: 38px;
+      padding: 0;
+      font-size: 21px;
+      line-height: 1;
+    }
+
+    .menu-panel {
+      position: absolute;
+      right: 0;
+      top: 44px;
+      z-index: 5;
+      width: 210px;
+      display: none;
+      gap: 5px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fff;
+      box-shadow: var(--shadow);
+      padding: 6px;
+    }
+
+    .menu:hover .menu-panel,
+    .menu:focus-within .menu-panel {
+      display: grid;
+    }
+
+    .menu-panel button {
+      min-height: 34px;
+      justify-content: flex-start;
+      background: #fff;
+    }
+
+    .workspace {
+      min-width: 0;
+      min-height: 0;
+      padding: 18px 24px 24px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 480px;
+      gap: 28px;
+    }
+
+    .refresh-alert {
+      margin: 14px 24px 0;
+      border: 1px solid #d79a35;
+      border-left-width: 6px;
+      border-radius: 8px;
+      background: #fff8e8;
+      color: #4f3410;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, .05);
+    }
+
+    .refresh-alert-text {
+      min-width: 0;
+      display: grid;
+      gap: 3px;
+    }
+
+    .refresh-alert-title {
+      font-size: 15px;
+      font-weight: 900;
+      line-height: 1.2;
+    }
+
+    .refresh-alert-body {
+      font-size: 14px;
+      font-weight: 750;
+      line-height: 1.25;
+    }
+
+    .refresh-alert-body p {
+      margin: 0;
+    }
+
+    .refresh-alert .refresh-link {
+      flex: 0 0 auto;
+      min-height: 42px;
+      border-color: #0b355f;
+      border-radius: 7px;
+      background: #0b355f;
+      color: #fff;
+      padding: 0 18px;
+      font-weight: 900;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+    }
+
+    .refresh-alert.action-alert {
+      border-color: #f0a3a8;
+      border-left-color: var(--red);
+      background: #fff5f5;
+      color: #6f1d24;
+    }
+
+    .panel {
+      min-width: 0;
+      min-height: 0;
+      border: 0;
+      border-radius: 0;
+      overflow: visible;
+      background: transparent;
+      box-shadow: none;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .panel-head {
+      min-height: 0;
+      padding: 0 0 16px;
+      border-bottom: 0;
+      background: transparent;
+      color: #1f2933;
+      font-size: 21px;
+      font-weight: 800;
+      line-height: 1.15;
+    }
+
+    .panel-body {
+      min-height: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .details-body {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 24px;
+    }
+
+    .notes-section {
+      min-width: 0;
+      display: grid;
+      gap: 8px;
+    }
+
+    .section-title {
+      color: #657383;
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns:
+        minmax(180px, 1.2fr)
+        minmax(220px, 1.35fr)
+        minmax(150px, .82fr)
+        minmax(150px, .82fr)
+        minmax(120px, .62fr)
+        minmax(86px, .46fr)
+        minmax(140px, .7fr);
+      column-gap: 28px;
+      row-gap: 16px;
+    }
+
+    .order-section {
+      min-width: 0;
+      border: 1px solid #d9dee5;
+      border-radius: 9px;
+      background: #fff;
+      padding: 18px;
+      display: grid;
+      gap: 18px;
+      align-content: start;
+    }
+
+    .field {
+      min-width: 0;
+      min-height: 0;
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .field-label {
+      display: block;
+      margin-bottom: 6px;
+      color: #657383;
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .value {
+      overflow-wrap: anywhere;
+      color: #111827;
+      font-size: 17px;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+
+    .notes {
+      min-height: 0;
+      border: 0;
+      border-radius: 0;
+      padding: 0;
+      background: transparent;
+      color: #26323f;
+      font-size: 17px;
+      font-weight: 400;
+      line-height: 1.4;
+    }
+
+    .recipe-section {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 12px;
+      margin-top: 0;
+    }
+
+    .recipe-title {
+      color: #1f2933;
+      font-size: 21px;
+      font-weight: 800;
+      line-height: 1.15;
+    }
+
+    .recipe-table {
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .recipe-head,
+    .recipe-row {
+      display: grid;
+      grid-template-columns: 178px minmax(190px, 1fr) minmax(150px, .7fr) minmax(120px, .5fr);
+      align-items: stretch;
+    }
+
+    .recipe-head {
+      min-height: 36px;
+      background: #f1f4f7;
+      color: #657383;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .recipe-row {
+      min-height: 54px;
+      border-top: 1px solid #dde3e9;
+    }
+
+    .recipe-head div,
+    .recipe-row > div {
+      min-width: 0;
+      border-right: 1px solid #dde3e9;
+      padding: 6px 9px;
+    }
+
+    .recipe-head div:last-child,
+    .recipe-row > div:last-child {
+      border-right: 0;
+    }
+
+    .component {
+      background: #f8fafc;
+      color: #1f2933;
+      font-size: 17px;
+      font-weight: 800;
+      line-height: 1.18;
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+
+    .material-planned {
+      min-height: 34px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: #fff;
+      color: #26323f;
+      padding: 8px 7px;
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1.18;
+      overflow-wrap: anywhere;
+    }
+
+    .recipe-row input {
+      min-height: 36px;
+      padding: 6px 8px;
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .field-error-slot {
+      min-height: 18px;
+      color: var(--red);
+      font-size: 12px;
+      font-weight: 750;
+      line-height: 1.2;
+    }
+
+    .inline-error {
+      display: grid;
+      gap: 2px;
+    }
+
+    .inline-error p {
+      margin: 0;
+    }
+
+    .recipe-error-slot {
+      margin-top: -4px;
+    }
+
+    .roll-body {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 9px;
+    }
+
+    .totals {
+      display: grid;
+      grid-template-columns: minmax(0, 2.05fr) minmax(0, 1fr);
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .gross-metrics {
+      min-width: 0;
+      min-height: 100%;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 8px 0;
+    }
+
+    .metric {
+      position: relative;
+      min-width: 0;
+      height: 100%;
+      min-height: 68px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fff;
+      padding: 10px 14px;
+    }
+
+    .metric.remain {
+      background: #fff;
+      border-color: var(--line);
+    }
+
+    .gross-metrics .metric,
+    .gross-metrics .metric.remain {
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      padding: 0 22px;
+    }
+
+    .gross-metrics .metric.remain::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 8px;
+      bottom: 8px;
+      width: 1px;
+      background: #dce3ea;
+    }
+
+    .totals .field-label {
+      color: #718091;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .metric .big {
+      margin-top: 0;
+      overflow: hidden;
+      font-size: 30px;
+      line-height: 1;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .totals .metric .big {
+      font-size: 28px;
+    }
+
+    .roll-entry {
+      align-items: start;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fff;
+      padding: 8px;
+    }
+
+    .roll-entry label {
+      min-width: 0;
+      display: grid;
+    }
+
+    .roll-entry .core-weight-field {
+      flex: 0 0 138px;
+    }
+
+    .roll-entry input {
+      min-height: 44px;
+      font-size: 17px;
+    }
+
+    .roll-entry button {
+      min-height: 44px;
+    }
+
+    .roll-table {
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fff;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .roll-list {
+      min-height: 0;
+      overflow: auto;
+    }
+
+    .roll-head,
+    .roll-row {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr) minmax(0, 1fr);
+      min-height: 52px;
+      align-items: center;
+    }
+
+    .roll-head {
+      background: #f1f4f7;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .roll-row {
+      border-top: 1px solid #dde3e9;
+      font-weight: 800;
+    }
+
+    .roll-head div,
+    .roll-row div {
+      min-width: 0;
+      padding: 5px 7px;
+    }
+
+    .roll-row input {
+      min-height: 30px;
+      padding: 3px 6px;
+      font-size: 14px;
+    }
+
+    .roll-weight-cell {
+      display: grid;
+      gap: 3px;
+    }
+
+    .roll-row-error-slot {
+      min-height: 14px;
+      font-size: 11px;
+    }
+
+    .queue-overlay,
+    .history-overlay {
+      position: absolute;
+      z-index: 20;
+      inset: 0;
+      display: none;
+      background: rgba(31, 41, 51, .26);
+    }
+
+    .queue-overlay.open,
+    .history-overlay.open {
+      display: block;
+    }
+
+    .queue-drawer {
+      height: 100%;
+      width: min(900px, 82%);
+      margin-left: auto;
+      border-left: 1px solid var(--line);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .queue-drawer-head {
+      min-height: 62px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .queue-drawer-head h2 {
+      margin: 0;
+      font-size: 21px;
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .queue-close {
+      width: 38px;
+      padding: 0;
+      font-size: 21px;
+    }
+
+    .queue-sections {
+      min-height: 0;
+      padding: 12px 14px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      overflow: auto;
+    }
+
+    .queue-machine {
+      min-width: 0;
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fbfcfd;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .queue-machine.selected {
+      border-color: rgba(11, 107, 203, .45);
+      box-shadow: inset 0 0 0 1px rgba(11, 107, 203, .24);
+    }
+
+    .queue-machine-head {
+      min-height: 42px;
+      border-bottom: 1px solid var(--line);
+      background: #f1f4f7;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-weight: 900;
+    }
+
+    .queue-list {
+      min-height: 0;
+      display: grid;
+      align-content: start;
+      gap: 6px;
+      padding: 8px;
+      overflow: auto;
+    }
+
+    .queue-card {
+      min-width: 0;
+      border: 1px solid #d8e0e8;
+      border-radius: 8px;
+      background: #fff;
+      padding: 7px 10px;
+      display: grid;
+      gap: 4px;
+      text-align: left;
+    }
+
+    .queue-card.selected {
+      border-color: rgba(11, 107, 203, .58);
+      background: var(--blue-soft);
+    }
+
+    .queue-card.running {
+      border-left: 5px solid var(--green);
+    }
+
+    .queue-card.paused {
+      border-left: 5px solid #9b7a13;
+    }
+
+    .queue-card.pending {
+      border-left: 5px solid #9aa7b6;
+    }
+
+    .queue-card-top {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .queue-card-title {
+      min-width: 0;
+      overflow: hidden;
+      font-size: 17px;
+      line-height: 1.1;
+      font-weight: 800;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .queue-sequence {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 22px;
+      height: 22px;
+      margin-right: 8px;
+      border-radius: 6px;
+      background: #eef2f6;
+      color: #475569;
+      font-size: 14px;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .queue-card-sub {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .queue-card-sub {
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .queue-card-details {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .queue-card-details span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .history-drawer {
+      height: 100%;
+      width: min(1120px, 90%);
+      margin-left: auto;
+      border-left: 1px solid var(--line);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+    }
+
+    .history-drawer-head {
+      min-height: 62px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .history-drawer-head h2 {
+      margin: 0;
+      font-size: 21px;
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .history-close {
+      width: 38px;
+      padding: 0;
+      font-size: 21px;
+    }
+
+    .history-filters {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 16px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      background: #fbfcfd;
+    }
+
+    .history-filters label {
+      min-width: 0;
+      display: grid;
+      gap: 5px;
+    }
+
+    .history-filters input {
+      min-height: 36px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .history-results {
+      min-height: 0;
+      padding: 12px 16px;
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      overflow: auto;
+    }
+
+    .history-row {
+      min-width: 0;
+      border: 1px solid #d8e0e8;
+      border-radius: 8px;
+      background: #fff;
+      padding: 8px 10px;
+      display: grid;
+      gap: 5px;
+      text-align: left;
+    }
+
+    .history-row.selected {
+      border-color: rgba(11, 107, 203, .58);
+      background: var(--blue-soft);
+    }
+
+    .history-row-top {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .history-row-title {
+      min-width: 0;
+      overflow: hidden;
+      font-size: 17px;
+      line-height: 1.1;
+      font-weight: 800;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .history-row-product {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 800;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .history-row-details {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .history-row-details span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .history-empty {
+      display: none;
+      color: var(--muted);
+      font-size: 17px;
+      font-weight: 700;
+      padding: 18px 4px;
+    }
+
+    .history-results.empty .history-empty {
+      display: block;
+    }
+
+    @media (max-width: 1360px) {
+      .machine-nav {
+        grid-template-columns: minmax(0, 1fr) 132px;
+        gap: 10px;
+        padding: 18px 24px;
+      }
+
+      .machine-nav-list {
+        grid-template-columns: repeat(4, minmax(210px, 1fr));
+        gap: 10px;
+      }
+
+      .machine-tab {
+        padding: 11px;
+      }
+
+      .machine-tab-meta {
+        font-size: 14px;
+      }
+
+      .workspace {
+        grid-template-columns: minmax(0, 1fr) 440px;
+        gap: 20px;
+      }
+
+      .info-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .recipe-head,
+      .recipe-row {
+        grid-template-columns: 156px minmax(150px, 1fr) minmax(118px, .62fr) minmax(92px, .48fr);
+      }
+
+      .history-filters {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-height: 760px) {
+      .page {
+        padding: 0;
+      }
+
+      .app {
+        height: 100vh;
+        min-height: 0;
+      }
+
+      .machine-nav {
+        padding: 14px 18px;
+      }
+
+      .machine-tab {
+        min-height: 96px;
+      }
+
+      .machine-nav-actions {
+        grid-template-rows: repeat(2, minmax(0, 43px));
+        gap: 8px;
+      }
+
+      .history-nav,
+      .queue-nav {
+        font-size: 12px;
+        padding: 6px 8px;
+      }
+
+      .machine-tab {
+        padding: 8px;
+        gap: 6px;
+      }
+
+      .machine-tab-name {
+        font-size: 17px;
+      }
+
+      .machine-tab-meta {
+        font-size: 12px;
+      }
+
+      .machine-tab-progress {
+        font-size: 12px;
+      }
+
+      .workspace {
+        padding: 12px 18px 18px;
+      }
+
+      .panel-body {
+        padding: 0;
+      }
+
+      .field {
+        min-height: 36px;
+      }
+
+      .notes {
+        max-height: none;
+        overflow: hidden;
+      }
+
+      .recipe-row {
+        min-height: 46px;
+      }
+
+      .recipe-row input {
+        min-height: 32px;
+      }
+
+      .material-planned {
+        min-height: 32px;
+      }
+
+      .metric {
+        min-height: 60px;
+      }
+
+      .metric .big {
+        font-size: 21px;
+      }
+
+      .roll-row {
+        min-height: 34px;
+      }
+    }
+
+    a.machine-tab,
+    a.queue-card,
+    a.history-row {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    form {
+      margin: 0;
+    }
+
+    .tare-form,
+    .add-roll-form {
+      min-width: 0;
+      display: grid;
+      column-gap: 10px;
+      row-gap: 2px;
+      align-items: end;
+    }
+
+    .tare-form {
+      flex: 0 0 138px;
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .add-roll-form {
+      flex: 1 1 auto;
+      grid-template-columns: minmax(0, 1fr) 110px;
+    }
+
+    .tare-form label,
+    .add-roll-form label {
+      min-width: 0;
+    }
+
+    .tare-form .field-error-slot,
+    .add-roll-form .field-error-slot {
+      grid-column: 1 / -1;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    .terminal-toast {
+      position: fixed;
+      top: 18px;
+      right: 18px;
+      z-index: 50;
+      max-width: min(420px, calc(100vw - 36px));
+      border: 1px solid #acd5ba;
+      border-radius: 8px;
+      background: var(--green-soft);
+      color: var(--green);
+      box-shadow: var(--shadow);
+      padding: 10px 12px;
+      display: flex;
+      align-items: start;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 850;
+    }
+
+    .terminal-toast p {
+      margin: 0;
+    }
+
+    .terminal-toast-close {
+      width: 28px;
+      min-height: 28px;
+      border-color: #acd5ba;
+      background: #fff;
+      color: var(--green);
+      padding: 0;
+      line-height: 1;
+    }
+
+    .no-card {
+      min-height: 0;
+      padding: 36px;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 20px;
+      font-weight: 850;
+    }
+
+  </style>
+</head>
+<body>
+  {% if terminal_feedback.toast %}
+    <div class="terminal-toast" role="status" aria-live="polite">
       <div>
-        <p class="eyebrow">Current card</p>
-        {% if selected_card %}
-          <h2>No. {{ selected_card.order_number }} - {{ selected_card.customer or "No customer" }}</h2>
-        {% else %}
-          <h2>Select a queued card</h2>
-        {% endif %}
+        {% for message in terminal_feedback.toast.messages %}
+          <p>{{ message }}</p>
+        {% endfor %}
       </div>
-      <div class="actions">
-        {% if selected_card and selected_card.status == "pending" %}
-          <form action="/terminal/cards/{{ selected_card.id }}/timing/start" method="post">
-            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-            <button type="submit">Start</button>
-          </form>
-        {% else %}
-          <button disabled>Start</button>
-        {% endif %}
-        {% if selected_card and selected_card.status == "running" %}
-          <form action="/terminal/cards/{{ selected_card.id }}/timing/pause" method="post">
-            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-            <button type="submit">Pause</button>
-          </form>
-        {% else %}
-          <button disabled>Pause</button>
-        {% endif %}
-        {% if selected_card and selected_card.status == "paused" %}
-          <form action="/terminal/cards/{{ selected_card.id }}/timing/resume" method="post">
-            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-            <button type="submit">Resume</button>
-          </form>
-        {% else %}
-          <button disabled>Resume</button>
-        {% endif %}
-        {% if selected_card and selected_card.status in ["pending", "running", "paused"] %}
-          <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post">
-            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-            <button type="submit">Finished</button>
-          </form>
-        {% else %}
-          <button disabled>Finished</button>
-        {% endif %}
-      </div>
-    </header>
-
-    <div class="sync-banner" id="terminal-sync-banner" role="status" aria-live="polite">
-      <span>Updates available. Finish the current entry, then refresh.</span>
-      <button type="button" id="terminal-sync-refresh">Refresh</button>
+      <button class="terminal-toast-close" type="button" aria-label="Затвори">×</button>
     </div>
-
-    {% if workflow_result %}
-      <div class="notice {% if not workflow_result.ok %}error{% endif %}">
-        {% for message in workflow_result.messages %}
-          <div>{{ message }}</div>
-        {% endfor %}
-      </div>
-    {% endif %}
-
-    {% if timing_result %}
-      <div class="notice {% if not timing_result.ok %}error{% endif %}">
-        {% for message in timing_result.messages %}
-          <div>{{ message }}</div>
-        {% endfor %}
-      </div>
-    {% endif %}
-
-    {% if material_result %}
-      <div class="notice {% if not material_result.ok %}error{% endif %}">
-        {% for message in material_result.messages %}
-          <div>{{ message }}</div>
-        {% endfor %}
-      </div>
-    {% endif %}
-
-    {% if roll_result %}
-      <div class="notice {% if not roll_result.ok %}error{% endif %}">
-        {% for message in roll_result.messages %}
-          <div>{{ message }}</div>
-        {% endfor %}
-      </div>
-    {% endif %}
-
-    <section class="section timing-panel">
-      <h3>Production timing</h3>
-      {% if selected_card %}
-        <dl class="detail-grid">
-          <div>
-            <dt>Status</dt>
-            <dd>{{ selected_card.status }}</dd>
-          </div>
-          <div>
-            <dt>Total time</dt>
-            <dd>{{ selected_card.total_production_duration }}</dd>
-          </div>
-          <div>
-            <dt>First started</dt>
-            <dd>{{ selected_card.first_started_at or "-" }}</dd>
-          </div>
-          <div>
-            <dt>Finished</dt>
-            <dd>{{ selected_card.finished_at or "-" }}</dd>
-          </div>
-          <div>
-            <dt>Active segment</dt>
-            <dd>{{ selected_card.active_segment_started_at or "-" }}</dd>
-          </div>
-        </dl>
-        {% if selected_card.timing_segments %}
-          <table class="compact-table">
-            <thead>
-              <tr>
-                <th>Started</th>
-                <th>Ended</th>
-                <th>Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for segment in selected_card.timing_segments %}
-                <tr>
-                  <td>{{ segment.started_at }}</td>
-                  <td>{{ segment.ended_at or "Running" }}</td>
-                  <td>{{ segment.end_reason or "-" }}</td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        {% else %}
-          <p class="empty">No timing segments yet.</p>
-        {% endif %}
-      {% else %}
-        <p class="empty">Timing controls appear after selecting a card.</p>
-      {% endif %}
-    </section>
-
-    <section class="section roll-panel">
-      <div class="section-head">
-        <h3>Tare and rolls</h3>
-        {% if selected_card %}
-          <span>Next roll {{ selected_card.next_roll_number }}</span>
-        {% endif %}
-      </div>
-      {% if selected_card %}
-        {% set can_edit_rolls = selected_card.status in ["running", "completed"] %}
-        <div class="roll-controls">
-          <form class="field-form tare-form" action="/terminal/cards/{{ selected_card.id }}/tare" method="post">
-            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-            <label>
-              Order tare weight
-              <input type="number" name="tare_weight" min="0" step="0.01" value="{{ selected_card.tare_weight if selected_card.tare_weight is not none else '' }}">
-            </label>
-            <button type="submit">Save tare</button>
-          </form>
-
-          <form class="roll-entry" action="/terminal/cards/{{ selected_card.id }}/rolls" method="post">
-            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-            <label>
-              Gross weight for roll {{ selected_card.next_roll_number }}
-              <input type="number" name="gross_weight" min="0" step="0.01" {% if can_edit_rolls %}autofocus{% else %}disabled{% endif %}>
-            </label>
-            <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Add</button>
-          </form>
+  {% endif %}
+  <main class="page">
+    <div class="app">
+      <header class="machine-nav" aria-label="Навигация по машини">
+        <div class="machine-nav-list">
+          {% for queue in machine_queues %}
+            {% set focus_card = queue.focus_card %}
+            {% set machine_selected = selected_card and selected_card.machine_id == queue.machine.id %}
+            <a class="machine-tab {% if focus_card %}{{ focus_card.status_display_class }}{% else %}idle{% endif %} {% if machine_selected %}selected{% endif %}" href="{% if focus_card %}/terminal/cards/{{ focus_card.id }}{% else %}/terminal{% endif %}">
+              <span class="machine-tab-top">
+                <span class="machine-tab-title">
+                  <img class="machine-tab-icon" src="{{ url_for('static', path='/assets/machine-icon.png') }}" alt="" aria-hidden="true">
+                  <span class="machine-tab-name">Машина {{ queue.machine.id }}</span>
+                </span>
+                {% if focus_card %}
+                  <span class="status {{ focus_card.status_display_class }}">{{ focus_card.status_label }}</span>
+                {% else %}
+                  <span class="status idle">Свободна</span>
+                {% endif %}
+              </span>
+              <span class="machine-tab-meta">
+                <span class="machine-tab-customer">{{ focus_card.customer if focus_card else "-" }}</span>
+                {% if focus_card %}
+                  <span class="machine-tab-product">{{ focus_card.product_type or "-" }}</span>
+                {% else %}
+                  <span class="machine-tab-product" aria-hidden="true"></span>
+                {% endif %}
+              </span>
+              <span class="machine-tab-progress">
+                <span class="progress"><span style="width:{{ focus_card.progress_percent if focus_card else 0 }}%"></span></span>
+                <span class="machine-tab-qty">{{ focus_card.produced_gross_weight if focus_card else "0" }} / {{ focus_card.target_gross_weight if focus_card and focus_card.target_gross_weight else "0" }} кг</span>
+              </span>
+            </a>
+          {% endfor %}
         </div>
 
-        <dl class="total-grid">
-          <div>
-            <dt>Rolls</dt>
-            <dd>{{ selected_card.roll_count }}</dd>
-          </div>
-          <div>
-            <dt>Total gross</dt>
-            <dd>{{ selected_card.total_gross_weight }}</dd>
-          </div>
-          <div>
-            <dt>Total net</dt>
-            <dd>{{ selected_card.total_net_weight if selected_card.total_net_weight is not none else "Pending tare" }}</dd>
-          </div>
-        </dl>
+        <div class="machine-nav-actions" aria-label="Глобални действия">
+          <button class="history-nav" id="history-open" type="button" aria-controls="history-overlay" aria-expanded="false">
+            <span>Завършени поръчки</span>
+          </button>
+          <button class="queue-nav" id="queue-open" type="button" aria-controls="queue-overlay" aria-expanded="false">
+            <span>Опашка</span>
+          </button>
+        </div>
+      </header>
 
-        {% if not can_edit_rolls %}
-          <p class="empty">Roll weights can only be changed while the card is running or completed.</p>
+      <div class="queue-overlay" id="queue-overlay" aria-hidden="true">
+        <aside class="queue-drawer" aria-label="Опашка по машини">
+          <div class="queue-drawer-head">
+            <h2>Опашка по машини</h2>
+            <button class="queue-close" id="queue-close" type="button" aria-label="Затвори опашката">×</button>
+          </div>
+          <div class="queue-sections">
+            {% for queue in machine_queues %}
+              <section class="queue-machine {% if selected_card and selected_card.machine_id == queue.machine.id %}selected{% endif %}">
+                <div class="queue-machine-head">
+                  <span>Машина {{ queue.machine.id }}</span>
+                  {% if queue.focus_card %}
+                    <span class="status {{ queue.focus_card.status_display_class }}">{{ queue.focus_card.status_label }}</span>
+                  {% else %}
+                    <span class="status idle">Свободна</span>
+                  {% endif %}
+                </div>
+                <div class="queue-list">
+                  {% if queue.cards %}
+                    {% for card in queue.cards %}
+                      <a class="queue-card {{ card.status_display_class }} {% if card.is_selected %}selected{% endif %}" href="/terminal/cards/{{ card.id }}">
+                        <span class="queue-card-top"><span class="queue-card-title"><span class="queue-sequence">{{ card.machine_sequence or "-" }}</span>{{ card.customer or "-" }} (№{{ card.order_number }})</span><span class="status {{ card.status_display_class }}">{{ card.status_label }}</span></span>
+                        <span class="queue-card-sub">{{ card.product_type or "-" }}</span>
+                        <span class="queue-card-details"><span>{{ card.size_thickness or "-" }}</span><span>{{ card.material or "-" }}</span><span>{{ card.quantity_display }}</span></span>
+                      </a>
+                    {% endfor %}
+                  {% else %}
+                    <div class="queue-card"><span class="queue-card-sub">Няма активни поръчки.</span></div>
+                  {% endif %}
+                </div>
+              </section>
+            {% endfor %}
+          </div>
+        </aside>
+      </div>
+
+      <div class="history-overlay" id="history-overlay" aria-hidden="true">
+        <aside class="history-drawer" aria-label="Завършени поръчки">
+          <div class="history-drawer-head">
+            <h2>Завършени поръчки</h2>
+            <button class="history-close" id="history-close" type="button" aria-label="Затвори завършените поръчки">×</button>
+          </div>
+          <div class="history-filters" aria-label="Филтри за завършени поръчки">
+            <label>
+              <span class="field-label">Фирма</span>
+              <input class="history-filter" type="search" placeholder="напр. Пирин" data-filter="customer">
+            </label>
+            <label>
+              <span class="field-label">Изделие</span>
+              <input class="history-filter" type="search" placeholder="напр. фолио" data-filter="product">
+            </label>
+            <label>
+              <span class="field-label">Размер / дебелина</span>
+              <input class="history-filter" type="search" placeholder="напр. 890 / 0.082" data-filter="size">
+            </label>
+            <label>
+              <span class="field-label">Материал</span>
+              <input class="history-filter" type="search" placeholder="напр. LDPE" data-filter="material">
+            </label>
+          </div>
+          <div class="history-results" id="history-results">
+            {% for card in archive_cards %}
+              <a class="history-row {% if card.is_selected %}selected{% endif %}" href="/terminal/cards/{{ card.id }}" data-customer="{{ (card.customer or '')|lower }}" data-product="{{ (card.product_type or '')|lower }}" data-size="{{ (card.size_thickness or '')|lower }}" data-material="{{ (card.material or '')|lower }}">
+                <span class="history-row-top"><span class="history-row-title">{{ card.customer or "-" }} (№{{ card.order_number }})</span><span class="status completed">{{ card.status_label }}</span></span>
+                <span class="history-row-product">{{ card.product_type or "-" }}</span>
+                <span class="history-row-details"><span>{{ card.size_thickness or "-" }}</span><span>{{ card.material or "-" }}</span><span>{{ card.quantity_display }}</span><span>{{ card.finished_at or "-" }}</span></span>
+              </a>
+            {% endfor %}
+            <div class="history-empty" id="history-empty" {% if archive_cards %}hidden{% endif %}>Няма намерени завършени поръчки.</div>
+          </div>
+        </aside>
+      </div>
+
+      <section class="main">
+        <header class="topbar">
+          <div class="title">
+            {% if selected_card %}
+              <h2>Машина {{ selected_card.machine_id or "-" }}: №{{ selected_card.order_number }}</h2>
+            {% else %}
+              <h2>Изберете поръчка</h2>
+            {% endif %}
+          </div>
+          <div class="action-area">
+            <div class="actions">
+              {% if selected_card and selected_card.status == "pending" %}
+                <form action="/terminal/cards/{{ selected_card.id }}/timing/start" method="post">
+                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                  <button class="action-primary" type="submit">Старт</button>
+                </form>
+              {% else %}
+                <button type="button" disabled>Старт</button>
+              {% endif %}
+
+              {% if selected_card and selected_card.status == "running" %}
+                <form action="/terminal/cards/{{ selected_card.id }}/timing/pause" method="post">
+                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                  <button class="action-secondary" type="submit">Пауза</button>
+                </form>
+              {% elif selected_card and selected_card.status == "paused" %}
+                <form action="/terminal/cards/{{ selected_card.id }}/timing/resume" method="post">
+                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                  <button class="action-primary" type="submit">Продължи</button>
+                </form>
+              {% else %}
+                <button type="button" disabled>Пауза</button>
+              {% endif %}
+
+              {% if selected_card and selected_card.status in ["running", "paused"] %}
+                <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post">
+                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                  <button class="{% if selected_card.status == 'running' %}action-primary{% else %}action-secondary{% endif %}" type="submit">Приключи</button>
+                </form>
+              {% else %}
+                <button type="button" disabled>Приключи</button>
+              {% endif %}
+
+              <div class="menu">
+                <button class="menu-btn" type="button" aria-label="Още действия">⋯</button>
+                <div class="menu-panel">
+                  <button type="button">Печат / препечат</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {% if terminal_feedback.refresh_required %}
+          <div class="refresh-alert" id="terminal-refresh-alert" role="alert" aria-live="assertive">
+            <div class="refresh-alert-text">
+              <div class="refresh-alert-title">Данните са променени</div>
+              <div class="refresh-alert-body">Презаредете картата, преди да продължите.</div>
+            </div>
+            <a class="refresh-link" id="terminal-refresh-alert-button" href="{% if selected_card %}/terminal/cards/{{ selected_card.id }}{% else %}/terminal{% endif %}">Презареди</a>
+          </div>
+        {% elif terminal_feedback.errors.topbar %}
+          <div class="refresh-alert action-alert" data-feedback-target="topbar" role="alert" aria-live="assertive">
+            <div class="refresh-alert-text">
+              <div class="refresh-alert-title">Действието не беше записано</div>
+              <div class="refresh-alert-body">
+                {% for message in terminal_feedback.errors.topbar %}
+                  <p>{{ message }}</p>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
         {% endif %}
 
-        {% if selected_card.roll_entries %}
-          <table class="compact-table roll-table">
-            <thead>
-              <tr>
-                <th>Roll</th>
-                <th>Gross weight</th>
-                <th>Net weight</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for roll in selected_card.roll_entries %}
-                <tr>
-                  <td>{{ roll.roll_number }}</td>
-                  <td>
-                    <form class="inline-roll-form" action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}" method="post">
-                      <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                      <input type="number" name="gross_weight" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %}>
-                      <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Save</button>
-                    </form>
-                  </td>
-                  <td>{{ roll.net_weight if roll.net_weight is not none else "-" }}</td>
-                  <td>
-                    <form class="roll-delete-form" action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}/delete" method="post">
-                      <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                      <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Delete</button>
-                    </form>
-                    <small>{{ roll.updated_at }}</small>
-                  </td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        {% else %}
-          <p class="empty">No roll weights yet.</p>
-        {% endif %}
-      {% else %}
-        <p class="empty">Tare and roll controls appear after selecting a card.</p>
-      {% endif %}
-    </section>
-
-    <div class="placeholder-grid">
-      <section class="section">
-        <h3>Operational card</h3>
         {% if selected_card %}
-          <dl class="detail-grid">
-            <div>
-              <dt>Status</dt>
-              <dd>{{ selected_card.status }}</dd>
-            </div>
-            <div>
-              <dt>Machine / sequence</dt>
-              <dd>{{ selected_card.machine_id or "-" }} / {{ selected_card.machine_sequence or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Customer</dt>
-              <dd>{{ selected_card.customer or "-" }}</dd>
-            </div>
-            <div>
-              <dt>City</dt>
-              <dd>{{ selected_card.city or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Product</dt>
-              <dd>{{ selected_card.product_type or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Quantity</dt>
-              <dd>{{ selected_card.quantity_1 or "-" }} {{ selected_card.unit_1 or "" }}</dd>
-            </div>
-            <div>
-              <dt>Material</dt>
-              <dd>{{ selected_card.material or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Size / thickness</dt>
-              <dd>{{ selected_card.size_thickness or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Folding</dt>
-              <dd>{{ selected_card.extrusion_folding or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Next operation</dt>
-              <dd>{{ selected_card.extrusion_next_operation or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Treatment</dt>
-              <dd>{{ selected_card.extrusion_treatment or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Raw material A</dt>
-              <dd>{{ selected_card.raw_material_a or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Raw material B</dt>
-              <dd>{{ selected_card.raw_material_b or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Raw material C</dt>
-              <dd>{{ selected_card.raw_material_c or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Linear PE</dt>
-              <dd>{{ selected_card.linear_pe or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Antistatic</dt>
-              <dd>{{ selected_card.antistatic or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Masterbatch</dt>
-              <dd>{{ selected_card.masterbatch or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Chalk</dt>
-              <dd>{{ selected_card.chalk or "-" }}</dd>
-            </div>
-            <div>
-              <dt>Packaging</dt>
-              <dd>{{ selected_card.packaging_method or "-" }}</dd>
-            </div>
-            <div class="wide">
-              <dt>Notes</dt>
-              <dd>{{ selected_card.notes or "-" }}</dd>
-            </div>
-          </dl>
-        {% else %}
-          <p class="empty">Select a card from the machine strip or active queue.</p>
-        {% endif %}
-      </section>
+          {% set can_edit_rolls = selected_card.status in ["running", "completed"] %}
+          {% set can_edit_card = selected_card.status in ["pending", "running", "paused", "completed"] %}
+          <div class="workspace">
+            <section class="panel details-panel">
+              <div class="panel-head">
+                <span>Детайли</span>
+              </div>
+              <div class="panel-body details-body">
+                <section class="order-section">
+                  <div class="info-grid">
+                    <div class="field">
+                      <span class="field-label">Вид изделие</span>
+                      <div class="value">{{ selected_card.product_type or "-" }}</div>
+                    </div>
+                    <div class="field">
+                      <span class="field-label">Фирма</span>
+                      <div class="value">{{ selected_card.customer or "-" }}</div>
+                    </div>
+                    <div class="field">
+                      <span class="field-label">Количество</span>
+                      <div class="value">{{ selected_card.quantity_display }}</div>
+                    </div>
+                    <div class="field">
+                      <span class="field-label">Размер / дебелина</span>
+                      <div class="value">{{ selected_card.size_thickness or "-" }}</div>
+                    </div>
+                    <div class="field">
+                      <span class="field-label">Вид заготовка</span>
+                      <div class="value">{{ selected_card.product_form or "-" }}</div>
+                    </div>
+                    <div class="field">
+                      <span class="field-label">Материал</span>
+                      <div class="value">{{ selected_card.material or "-" }}</div>
+                    </div>
+                    <div class="field">
+                      <span class="field-label">Макс. тегло ролка, кг</span>
+                      <div class="value">{{ selected_card.max_roll_weight or "-" }}</div>
+                    </div>
+                  </div>
 
-      <section class="section">
-        <h3>Machine-side material</h3>
-        {% if selected_card %}
-          <form class="field-form" action="/terminal/cards/{{ selected_card.id }}/materials" method="post">
-            <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-            <label>
-              Actual raw material used
-              <input name="actual_raw_material_used" value="{{ selected_card.actual_raw_material_used or '' }}">
-            </label>
-            <label>
-              Brand / grade / mark
-              <input name="raw_material_brand_grade" value="{{ selected_card.raw_material_brand_grade or '' }}">
-            </label>
-            <label>
-              Batch / lot
-              <input name="raw_material_batch_lot" value="{{ selected_card.raw_material_batch_lot or '' }}">
-            </label>
-            <button type="submit">Save material fields</button>
-          </form>
-          <p class="empty">Version {{ selected_card.version }} loaded at {{ selected_card.updated_at }}.</p>
+                  <section class="notes-section">
+                    <div class="section-title">Забележки</div>
+                    <div class="notes">{{ selected_card.notes or "-" }}</div>
+                  </section>
+                </section>
+
+                <div class="recipe-section">
+                  <div class="recipe-title">Рецепта</div>
+                  <form class="recipe-table" action="/terminal/cards/{{ selected_card.id }}/materials" method="post">
+                    <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                    <input type="hidden" name="raw_material_brand_grade" value="{{ selected_card.raw_material_brand_grade or '' }}">
+                    <div class="recipe-head">
+                      <div>Вид суровина</div>
+                      <div>Заложена суровина</div>
+                      <div>Използван материал</div>
+                      <div>Партида</div>
+                    </div>
+                    {% for row in recipe_rows %}
+                      <div class="recipe-row">
+                        <div class="component">{{ row.label }}</div>
+                        <div><div class="material-planned">{{ row.planned or "" }}</div></div>
+                        {% if loop.first %}
+                          <div><input name="actual_raw_material_used" value="{{ selected_card.actual_raw_material_used or '' }}" {% if not can_edit_card %}disabled{% endif %}></div>
+                          <div><input name="raw_material_batch_lot" value="{{ selected_card.raw_material_batch_lot or '' }}" {% if not can_edit_card %}disabled{% endif %}></div>
+                        {% else %}
+                          <div><input aria-label="{{ row.label }} използван материал" {% if not can_edit_card %}disabled{% endif %}></div>
+                          <div><input aria-label="{{ row.label }} партида" {% if not can_edit_card %}disabled{% endif %}></div>
+                        {% endif %}
+                      </div>
+                    {% endfor %}
+                    <button type="submit" hidden>Запази материал</button>
+                  </form>
+                  <div class="recipe-error-slot field-error-slot" data-feedback-target="material">
+                    {% if terminal_feedback.errors.material %}
+                      <div class="inline-error" role="alert">
+                        {% for message in terminal_feedback.errors.material %}
+                          <p>{{ message }}</p>
+                        {% endfor %}
+                      </div>
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel input-panel">
+              <div class="panel-head">
+                <span>Ролки</span>
+              </div>
+              <div class="panel-body roll-body">
+                <div class="roll-entry">
+                  <form class="tare-form core-weight-field" action="/terminal/cards/{{ selected_card.id }}/tare" method="post" data-autosubmit="true">
+                    <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                    <label>
+                      <span class="field-label">Шпула, кг</span>
+                      <input type="number" name="tare_weight" min="0" step="0.01" value="{{ selected_card.tare_weight if selected_card.tare_weight is not none else '' }}" {% if not can_edit_card %}disabled{% endif %}>
+                    </label>
+                    <div class="field-error-slot" data-feedback-target="tare">
+                      {% if terminal_feedback.errors.tare %}
+                        <div class="inline-error" role="alert">
+                          {% for message in terminal_feedback.errors.tare %}
+                            <p>{{ message }}</p>
+                          {% endfor %}
+                        </div>
+                      {% endif %}
+                    </div>
+                  </form>
+                  <form class="add-roll-form" action="/terminal/cards/{{ selected_card.id }}/rolls" method="post">
+                    <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                    <label>
+                      <span class="field-label">Нова ролка, кг</span>
+                      <input type="number" name="gross_weight" min="0" step="0.01" {% if not can_edit_rolls %}disabled{% endif %}>
+                    </label>
+                    <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Добави</button>
+                    <div class="field-error-slot" data-feedback-target="new_roll">
+                      {% if terminal_feedback.errors.new_roll %}
+                        <div class="inline-error" role="alert">
+                          {% for message in terminal_feedback.errors.new_roll %}
+                            <p>{{ message }}</p>
+                          {% endfor %}
+                        </div>
+                      {% endif %}
+                    </div>
+                  </form>
+                </div>
+
+                <div class="roll-table">
+                  <div class="roll-head">
+                    <div>№</div>
+                    <div>Бруто кг</div>
+                    <div>Нето</div>
+                  </div>
+                  <div class="roll-list" data-scroll-bottom="{% if terminal_feedback.scroll_rolls_to_bottom %}true{% else %}false{% endif %}">
+                    {% if selected_card.roll_entries %}
+                      {% for roll in selected_card.roll_entries %}
+                        <div class="roll-row" data-roll-id="{{ roll.id }}">
+                          <div>{{ roll.roll_number }}</div>
+                          <div class="roll-weight-cell">
+                            <form action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}" method="post">
+                              <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                              <input type="number" name="gross_weight" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %}>
+                            </form>
+                            <div class="roll-row-error-slot field-error-slot" data-feedback-roll-id="{{ roll.id }}">
+                              {% set roll_errors = terminal_feedback.errors.roll_rows.get(roll.id) %}
+                              {% if roll_errors %}
+                                <div class="inline-error" role="alert">
+                                  {% for message in roll_errors %}
+                                    <p>{{ message }}</p>
+                                  {% endfor %}
+                                </div>
+                              {% endif %}
+                            </div>
+                          </div>
+                          <div>{{ roll.net_weight if roll.net_weight is not none else "-" }}</div>
+                        </div>
+                      {% endfor %}
+                    {% else %}
+                      <div class="roll-row"><div>-</div><div>Няма въведени ролки.</div><div>-</div></div>
+                    {% endif %}
+                  </div>
+                </div>
+
+                <div class="totals">
+                  <div class="gross-metrics">
+                    <div class="metric">
+                      <span class="field-label">Бруто</span>
+                      <div class="big">{{ selected_card.total_gross_weight }}</div>
+                    </div>
+                    <div class="metric remain">
+                      <span class="field-label">Оставащи</span>
+                      <div class="big">{{ selected_card.remaining_gross_weight or "-" }}</div>
+                    </div>
+                  </div>
+                  <div class="metric">
+                    <span class="field-label">Нето</span>
+                    <div class="big">{{ selected_card.total_net_weight if selected_card.total_net_weight is not none else "-" }}</div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
         {% else %}
-          <p class="empty">Material fields appear after selecting a card.</p>
+          <div class="no-card">Изберете поръчка от машините, опашката или завършените поръчки.</div>
         {% endif %}
       </section>
     </div>
-
-    <section class="section archive">
-      <h3>Completed</h3>
-      {% set completed_archive_cards = archive_cards | selectattr("status", "equalto", "completed") | list %}
-      {% if completed_archive_cards %}
-        {% for card in completed_archive_cards %}
-          <a class="queue-card {{ card.status }} {% if selected_card and selected_card.id == card.id %}selected{% endif %}" href="/terminal/cards/{{ card.id }}">
-            <strong>No. {{ card.order_number }}</strong>
-            <span>{{ card.status }}</span>
-          </a>
-        {% endfor %}
-      {% else %}
-        <p class="empty">No completed cards yet.</p>
-      {% endif %}
-    </section>
-  </section>
-</main>
-
-<script>
-  (() => {
-    const initialSnapshot = {{ terminal_snapshot | tojson }};
-    const selectedCardId = {% if selected_card %}{{ selected_card.id }}{% else %}null{% endif %};
-    const banner = document.getElementById("terminal-sync-banner");
-    const refreshButton = document.getElementById("terminal-sync-refresh");
-    const editableSelector = "input:not([type='hidden']):not([disabled]), textarea:not([disabled]), select:not([disabled])";
-    let currentSignature = initialSnapshot.signature;
-    let terminalDirty = false;
-    let formSubmitting = false;
-
-    const showBanner = () => {
-      banner?.classList.add("visible");
-    };
-
-    const isEditingFocused = () => {
-      const active = document.activeElement;
-      return Boolean(active && active.matches && active.matches(editableSelector));
-    };
-
-    const canRefreshNow = () => !formSubmitting && !terminalDirty && !isEditingFocused();
-
-    const snapshotUrl = () => {
-      const url = new URL("/terminal/snapshot", window.location.origin);
-      if (selectedCardId !== null) {
-        url.searchParams.set("selected_card_id", String(selectedCardId));
+  </main>
+  <script>
+    (() => {
+      const toast = document.querySelector(".terminal-toast");
+      const closeButton = toast?.querySelector(".terminal-toast-close");
+      const closeToast = () => {
+        if (toast) {
+          toast.hidden = true;
+        }
+      };
+      closeButton?.addEventListener("click", closeToast);
+      if (toast) {
+        window.setTimeout(closeToast, 3000);
       }
-      return url;
-    };
+    })();
 
-    document.addEventListener("input", (event) => {
-      if (event.target.matches && event.target.matches(editableSelector)) {
-        terminalDirty = true;
-      }
-    });
-
-    document.addEventListener("change", (event) => {
-      if (event.target.matches && event.target.matches(editableSelector)) {
-        terminalDirty = true;
-      }
-    });
-
-    document.addEventListener("submit", () => {
-      formSubmitting = true;
-      terminalDirty = false;
-    });
-
-    refreshButton?.addEventListener("click", () => {
-      window.location.reload();
-    });
-
-    const pollSnapshot = async () => {
-      if (formSubmitting) {
+    (() => {
+      const rollList = document.querySelector(".roll-list[data-scroll-bottom='true']");
+      if (!rollList) {
         return;
       }
+      window.requestAnimationFrame(() => {
+        rollList.scrollTop = rollList.scrollHeight;
+      });
+    })();
 
-      try {
-        const response = await fetch(snapshotUrl(), {
-          headers: { "Accept": "application/json" },
-          cache: "no-store",
+    (() => {
+      const initialSnapshot = {{ terminal_snapshot | tojson }};
+      const selectedCardId = {% if selected_card %}{{ selected_card.id }}{% else %}null{% endif %};
+      const refreshUrl = selectedCardId === null ? "/terminal" : `/terminal/cards/${selectedCardId}`;
+      const topbar = document.querySelector(".topbar");
+      let refreshAlert = document.getElementById("terminal-refresh-alert");
+      let currentSignature = initialSnapshot.signature;
+      let formSubmitting = false;
+
+      const bindRefreshAlert = () => {
+        const button = document.getElementById("terminal-refresh-alert-button");
+        button?.setAttribute("href", refreshUrl);
+      };
+
+      const showRefreshAlert = () => {
+        if (refreshAlert) {
+          return;
+        }
+        refreshAlert = document.createElement("div");
+        refreshAlert.className = "refresh-alert";
+        refreshAlert.id = "terminal-refresh-alert";
+        refreshAlert.setAttribute("role", "alert");
+        refreshAlert.setAttribute("aria-live", "assertive");
+        refreshAlert.innerHTML = `
+          <div class="refresh-alert-text">
+            <div class="refresh-alert-title">Данните са променени</div>
+            <div class="refresh-alert-body">Презаредете картата, преди да продължите.</div>
+          </div>
+          <a class="refresh-link" id="terminal-refresh-alert-button" href="${refreshUrl}">Презареди</a>
+        `;
+        if (topbar) {
+          topbar.insertAdjacentElement("afterend", refreshAlert);
+          bindRefreshAlert();
+        }
+      };
+
+      const snapshotUrl = () => {
+        const url = new URL("/terminal/snapshot", window.location.origin);
+        if (selectedCardId !== null) {
+          url.searchParams.set("selected_card_id", String(selectedCardId));
+        }
+        return url;
+      };
+
+      document.addEventListener("submit", () => {
+        formSubmitting = true;
+      });
+
+      bindRefreshAlert();
+
+      const pollSnapshot = async () => {
+        if (formSubmitting) {
+          return;
+        }
+
+        try {
+          const response = await fetch(snapshotUrl(), {
+            headers: { "Accept": "application/json" },
+            cache: "no-store",
+          });
+          if (!response.ok) {
+            return;
+          }
+          const snapshot = await response.json();
+          if (snapshot.signature === currentSignature) {
+            return;
+          }
+
+          currentSignature = snapshot.signature;
+          showRefreshAlert();
+        } catch {
+          // Manual refresh and server-side version checks still protect the workflow.
+        }
+      };
+
+      window.setInterval(pollSnapshot, 10000);
+    })();
+
+    (() => {
+      const overlay = document.getElementById("queue-overlay");
+      const openButton = document.getElementById("queue-open");
+      const closeButton = document.getElementById("queue-close");
+      const queueCards = document.querySelectorAll(".queue-card");
+      const historyOverlay = document.getElementById("history-overlay");
+      const historyOpenButton = document.getElementById("history-open");
+      const historyCloseButton = document.getElementById("history-close");
+      const historyFilters = document.querySelectorAll(".history-filter");
+      const historyRows = document.querySelectorAll(".history-row");
+      const historyResults = document.getElementById("history-results");
+      const historyEmpty = document.getElementById("history-empty");
+      const autoSubmitForms = document.querySelectorAll("form[data-autosubmit='true']");
+
+      const openQueue = () => {
+        closeHistory();
+        overlay.classList.add("open");
+        overlay.setAttribute("aria-hidden", "false");
+        if (openButton) {
+          openButton.setAttribute("aria-expanded", "true");
+        }
+      };
+
+      const closeQueue = () => {
+        overlay.classList.remove("open");
+        overlay.setAttribute("aria-hidden", "true");
+        if (openButton) {
+          openButton.setAttribute("aria-expanded", "false");
+        }
+      };
+
+      const openHistory = () => {
+        closeQueue();
+        historyOverlay.classList.add("open");
+        historyOverlay.setAttribute("aria-hidden", "false");
+        if (historyOpenButton) {
+          historyOpenButton.setAttribute("aria-expanded", "true");
+        }
+      };
+
+      const closeHistory = () => {
+        historyOverlay.classList.remove("open");
+        historyOverlay.setAttribute("aria-hidden", "true");
+        if (historyOpenButton) {
+          historyOpenButton.setAttribute("aria-expanded", "false");
+        }
+      };
+
+      const filterHistory = () => {
+        let visibleCount = 0;
+        historyRows.forEach((row) => {
+          const matches = Array.from(historyFilters).every((filter) => {
+            const value = filter.value.trim().toLowerCase();
+            if (!value) {
+              return true;
+            }
+            return (row.dataset[filter.dataset.filter] || "").includes(value);
+          });
+          row.hidden = !matches;
+          if (matches) {
+            visibleCount += 1;
+          }
         });
-        if (!response.ok) {
-          return;
+        if (historyResults) {
+          historyResults.classList.toggle("empty", visibleCount === 0);
         }
-        const snapshot = await response.json();
-        if (snapshot.signature === currentSignature) {
-          return;
+        if (historyEmpty) {
+          historyEmpty.hidden = visibleCount !== 0;
         }
+      };
 
-        if (canRefreshNow()) {
-          window.location.reload();
-          return;
-        }
-
-        showBanner();
-      } catch {
-        // Manual refresh and server-side version checks still protect the workflow.
+      if (openButton) {
+        openButton.addEventListener("click", openQueue);
       }
-    };
+      if (closeButton) {
+        closeButton.addEventListener("click", closeQueue);
+      }
+      if (historyOpenButton) {
+        historyOpenButton.addEventListener("click", openHistory);
+      }
+      if (historyCloseButton) {
+        historyCloseButton.addEventListener("click", closeHistory);
+      }
+      overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) {
+          closeQueue();
+        }
+      });
+      historyOverlay.addEventListener("click", (event) => {
+        if (event.target === historyOverlay) {
+          closeHistory();
+        }
+      });
+      queueCards.forEach((card) => card.addEventListener("click", closeQueue));
+      historyFilters.forEach((filter) => filter.addEventListener("input", filterHistory));
+      historyRows.forEach((row) => row.addEventListener("click", closeHistory));
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          closeQueue();
+          closeHistory();
+        }
+      });
 
-    window.setInterval(pollSnapshot, 10000);
-  })();
-</script>
-{% endblock %}
+      autoSubmitForms.forEach((form) => {
+        const input = form.querySelector("input:not([type='hidden'])");
+        let initialValue = input?.value || "";
+        let submitted = false;
+        form.addEventListener("submit", () => {
+          submitted = true;
+          initialValue = input?.value || "";
+        });
+        input?.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            form.requestSubmit();
+          }
+        });
+        input?.addEventListener("blur", () => {
+          if (!submitted && input.value !== initialValue) {
+            form.requestSubmit();
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
