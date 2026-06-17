@@ -206,6 +206,12 @@ Review checkpoint:
 
 Status: in progress
 
+Current state:
+
+- The pre-print workflow and live V8 workstation connection have been implemented.
+- The app has been launched and accessed successfully.
+- Milestone 9 remains open because V8 workstation bugs and edge cases were observed after launch and must be fixed before print output starts.
+
 Confirmed direction:
 
 - CSV import is persistent, not an unsaved temporary preview state.
@@ -235,14 +241,14 @@ Implementation bundles:
    - Add or update tests for duplicate skip/overwrite result reporting and production-data preservation.
    - Manual check: import a CSV with new, duplicate, overwrite, and skipped no-extrusion rows.
 
-2. Admin card index and full card detail/review - implementation, admin detail redesign correction, and automated checks complete; manual UI check pending
+2. Admin card index and full card detail/review - done
    - Add `/admin/cards` with basic filters: order number, customer, product, order/delivery date, and status.
    - Add `/admin/cards/{card_id}` showing the full operational card data, status, machine/sequence, timing, tare, rolls, and terminal material fields.
    - Make imported/front-card fields editable from the admin detail page.
    - Use loaded `version` conflict checks for admin edits.
    - Preserve production data when editing imported/front-card fields.
    - Add tests for admin detail fetch, imported-field editing, stale edit blocking, and preservation of rolls/timing/tare/status.
-   - Manual check still pending: find a card, edit imported fields, verify terminal-entered data remains intact.
+   - Manual admin-detail behavior was covered later by the broader pre-print workflow walkthrough; no separate pending admin-detail check remains recorded.
 
    Cleanup note: removed the redundant validation-status UI/product concept from Import, Planning, Cards, and admin card detail. Import outcomes now rely on Action/Message, while import, admin edit, and release still validate current extrusion fields server-side.
 
@@ -289,7 +295,8 @@ Implementation bundles:
    - The maximum roll weight field is visible in the live workstation detail pane as read-only operator information.
    - Focused V8 render tests were added for route rendering, machine controls, live selected-card fields, max roll weight, queue/completed content, cancelled-card absence, versioned write forms, and absence of workstation cancel/restore controls.
    - Slice 3 verification passed with syntax/import checks, the full automated suite, `git diff --check`, and a focused in-app browser manual check with a temporary database.
-   - Next step: Slice 4 functional hardening and edge cases. Do not start print output yet.
+   - The app has been launched/accessed successfully with the live V8 workstation, but bugs were observed after launch.
+   - Next step: Slice 4 V8 workstation bug fixing, functional hardening, and edge cases. Do not start print output yet.
 
 Milestone 9 commit strategy:
 

@@ -218,7 +218,7 @@
         {% endfor %}
       </div>
       <p class="secondary-note">
-        Текущият модел пази един общ комплект терминални полета за реална суровина, марка и партида, затова те се показват само на ред A.
+        Терминалът пази реално използван материал и партида по редове, отделно от заложената рецепта.
       </p>
     </section>
   </form>
@@ -226,21 +226,33 @@
   <section class="section operational-panel">
     <div class="section-head">
       <h2>Материал на машината</h2>
-      <span>Корекции от терминала</span>
+      <span>Корекции по редове от рецептата</span>
     </div>
-    <form class="field-form admin-correction-form" action="/admin/cards/{{ card.id }}/production-materials" method="post">
+    <form class="admin-correction-form" action="/admin/cards/{{ card.id }}/production-materials" method="post">
       <input type="hidden" name="loaded_version" value="{{ card.version }}">
+      <div class="recipe-table admin-recipe-table">
+        <div class="recipe-head">
+          <div>Позиция</div>
+          <div>Заложена суровина</div>
+          <div>Използван материал</div>
+          <div>Партиден №</div>
+        </div>
+        {% for row in recipe_rows %}
+          <div class="recipe-row">
+            <div class="component">{{ row.label }}</div>
+            <div class="readonly-cell">{{ row.planned or "-" }}</div>
+            <div>
+              <input name="actual_material__{{ row.field }}" value="{{ row.actual_material or '' }}" aria-label="{{ row.label }} използван материал">
+            </div>
+            <div>
+              <input name="batch_lot__{{ row.field }}" value="{{ row.batch or '' }}" aria-label="{{ row.label }} партида">
+            </div>
+          </div>
+        {% endfor %}
+      </div>
       <label>
-        Използван материал
-        <input name="actual_raw_material_used" value="{{ card.actual_raw_material_used or '' }}">
-      </label>
-      <label>
-        Марка / клас
+        Марка / клас за ред A
         <input name="raw_material_brand_grade" value="{{ card.raw_material_brand_grade or '' }}">
-      </label>
-      <label>
-        Партида
-        <input name="raw_material_batch_lot" value="{{ card.raw_material_batch_lot or '' }}">
       </label>
       <button type="submit">Запази материалите</button>
     </form>

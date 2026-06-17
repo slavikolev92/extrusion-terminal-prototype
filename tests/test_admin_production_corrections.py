@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 from datetime import datetime, timedelta
@@ -9,7 +10,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from app import db
 from app.constants import STATUS_CANCELLED, STATUS_COMPLETED, STATUS_PENDING, STATUS_RUNNING
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
-from app.main import admin_card_detail_context, app
+from app.main import admin_card_detail_context, app, save_admin_production_materials
 
 
 def csv_bytes(*rows: dict[str, str]) -> bytes:
@@ -38,10 +39,10 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
     return row
 
 
-def import_ready_card(order_number: str) -> int:
+def import_ready_card(order_number: str, **overrides: str) -> int:
     result = import_cards_from_csv(
         f"{order_number}.csv",
-        csv_bytes(extrusion_row(order_number)),
+        csv_bytes(extrusion_row(order_number, **overrides)),
         overwrite_existing=False,
     )
     assert result.rows_imported == 1
@@ -66,6 +67,41 @@ def release_ready_card(order_number: str, machine_id: int = 1, sequence: int = 1
     return card_id
 
 
+def recipe_actual_entries(**overrides: dict[str, str]) -> dict[str, dict[str, str]]:
+    entries = {
+        "raw_material_a": {
+            "actual_material_used": "Terminal A",
+            "batch_lot": "Terminal Batch A",
+        },
+        "raw_material_b": {
+            "actual_material_used": "Terminal B",
+            "batch_lot": "Terminal Batch B",
+        },
+        "raw_material_c": {
+            "actual_material_used": "",
+            "batch_lot": "",
+        },
+        "linear_pe": {
+            "actual_material_used": "",
+            "batch_lot": "",
+        },
+        "antistatic": {
+            "actual_material_used": "",
+            "batch_lot": "",
+        },
+        "masterbatch": {
+            "actual_material_used": "",
+            "batch_lot": "",
+        },
+        "chalk": {
+            "actual_material_used": "",
+            "batch_lot": "",
+        },
+    }
+    entries.update(overrides)
+    return entries
+
+
 def card_version(card_id: int) -> int:
     return int(db.fetch_admin_card_detail(card_id)["version"])
 
@@ -80,6 +116,19 @@ def add_tare(card_id: int, tare_weight: str = "1.00") -> None:
 
 def add_roll(card_id: int, gross_weight: str = "25.00") -> None:
     assert db.add_roll_gross_weight(card_id, card_version(card_id), gross_weight).ok
+
+
+class FormRequest:
+    def __init__(self, data: dict[str, str]) -> None:
+        self.data = data
+
+    async def form(self) -> dict[str, str]:
+        return self.data
+
+    def url_for(self, name: str, **path_params: str) -> str:
+        if name == "static":
+            return f"/static{path_params.get('path', '')}"
+        return f"/{name}"
 
 
 def prepare_completed_card(order_number: str) -> int:
@@ -160,7 +209,63 @@ def test_admin_material_correction_updates_terminal_fields_and_blocks_stale_vers
     assert card["actual_raw_material_used"] == "Actual LDPE"
     assert card["raw_material_brand_grade"] == "Grade A"
     assert card["raw_material_batch_lot"] == "Batch 42"
+    assert card["recipe_actual_entries"]["raw_material_a"]["actual_material_used"] == "Actual LDPE"
+    assert card["recipe_actual_entries"]["raw_material_a"]["batch_lot"] == "Batch 42"
     assert not stale_result.ok
+
+
+def test_admin_material_correction_route_updates_recipe_actual_entries(connection):
+    card_id = import_ready_card("26015", raw_material_b="LDPE B")
+    assert db.release_card(
+        card_id,
+        machine_id=1,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    ).ok
+    assert db.update_terminal_recipe_actual_entries(
+        card_id,
+        card_version(card_id),
+        recipe_actual_entries(),
+    ).ok
+
+    response = asyncio.run(
+        save_admin_production_materials(
+            FormRequest(
+                {
+                    "loaded_version": str(card_version(card_id)),
+                    "raw_material_brand_grade": "Admin Grade A",
+                    "actual_material__raw_material_a": "Admin A",
+                    "batch_lot__raw_material_a": "Admin Batch A",
+                    "actual_material__raw_material_b": "Terminal B",
+                    "batch_lot__raw_material_b": "Terminal Batch B",
+                    "actual_material__raw_material_c": "",
+                    "batch_lot__raw_material_c": "",
+                    "actual_material__linear_pe": "",
+                    "batch_lot__linear_pe": "",
+                    "actual_material__antistatic": "",
+                    "batch_lot__antistatic": "",
+                    "actual_material__masterbatch": "",
+                    "batch_lot__masterbatch": "",
+                    "actual_material__chalk": "",
+                    "batch_lot__chalk": "",
+                }
+            ),
+            card_id,
+        )
+    )
+    card = db.fetch_admin_card_detail(card_id)
+    context = admin_card_detail_context(card_id)
+
+    assert response.status_code == 200
+    assert card["recipe_actual_entries"]["raw_material_a"]["actual_material_used"] == "Admin A"
+    assert card["recipe_actual_entries"]["raw_material_a"]["batch_lot"] == "Admin Batch A"
+    assert card["recipe_actual_entries"]["raw_material_b"]["actual_material_used"] == "Terminal B"
+    assert card["actual_raw_material_used"] == "Admin A"
+    assert card["raw_material_brand_grade"] == "Admin Grade A"
+    assert card["raw_material_batch_lot"] == "Admin Batch A"
+    assert context["recipe_rows"][0]["actual_material"] == "Admin A"
+    assert context["recipe_rows"][0]["batch"] == "Admin Batch A"
+    assert context["recipe_rows"][1]["actual_material"] == "Terminal B"
 
 
 def test_admin_tare_correction_recalculates_net_weights_and_blocks_invalid_tare(connection):

@@ -147,6 +147,9 @@
       border-style: solid;
       border-color: #aeb7c1;
     }
+    .machine-tab.idle.selected {
+      border-color: #0b355f;
+    }
 
     .machine-tab-top,
     .machine-tab-progress {
@@ -821,7 +824,7 @@
 
     .roll-body {
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr) auto;
+      grid-template-rows: auto minmax(0, 1fr) auto auto;
       gap: 9px;
     }
 
@@ -981,6 +984,81 @@
     .roll-row-error-slot {
       min-height: 14px;
       font-size: 11px;
+    }
+
+    .roll-delete-panel {
+      border: 1px solid #e0b6b6;
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .roll-delete-panel[hidden] {
+      display: none;
+    }
+
+    .roll-delete-head {
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 7px 10px;
+      color: #8f1f1f;
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    .roll-delete-close {
+      min-height: 28px;
+      border-color: #d7b8b8;
+      background: #fff;
+      color: #8f1f1f;
+      padding: 3px 8px;
+      font-size: 12px;
+    }
+
+    .roll-delete-form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 112px 92px;
+      gap: 8px;
+      align-items: end;
+      border-top: 1px solid #f0d1d1;
+      padding: 8px;
+    }
+
+    .roll-delete-form label {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+
+    .roll-delete-form select,
+    .roll-delete-form input {
+      min-width: 0;
+      min-height: 34px;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background: #fff;
+      padding: 4px 7px;
+      font-size: 14px;
+      font-weight: 750;
+    }
+
+    .roll-delete-form button {
+      min-height: 34px;
+      border-color: #b83232;
+      background: #b83232;
+      color: #fff;
+    }
+
+    .menu-panel .roll-correction-open {
+      color: #8f1f1f;
+    }
+
+    .roll-delete-error-slot {
+      grid-column: 1 / -1;
+      min-height: 14px;
     }
 
     .queue-overlay,
@@ -1341,6 +1419,66 @@
       }
     }
 
+    @media (max-height: 980px) {
+      .machine-nav {
+        padding: 14px 24px;
+      }
+
+      .machine-tab {
+        min-height: 100px;
+        padding: 9px 12px;
+        gap: 6px;
+      }
+
+      .machine-nav-actions {
+        grid-template-rows: repeat(2, minmax(0, 45px));
+        gap: 8px;
+      }
+
+      .topbar {
+        min-height: 62px;
+        padding: 10px 24px;
+      }
+
+      .workspace {
+        padding: 12px 24px 16px;
+      }
+
+      .panel-head {
+        padding-bottom: 10px;
+      }
+
+      .details-body {
+        gap: 14px;
+      }
+
+      .order-section {
+        padding: 14px 18px;
+        gap: 12px;
+      }
+
+      .recipe-section {
+        gap: 8px;
+      }
+
+      .recipe-head {
+        min-height: 32px;
+      }
+
+      .recipe-row {
+        min-height: 46px;
+      }
+
+      .recipe-row input {
+        min-height: 32px;
+      }
+
+      .material-planned {
+        min-height: 32px;
+        padding: 6px 7px;
+      }
+    }
+
     @media (max-height: 760px) {
       .page {
         padding: 0;
@@ -1535,8 +1673,7 @@
         <div class="machine-nav-list">
           {% for queue in machine_queues %}
             {% set focus_card = queue.focus_card %}
-            {% set machine_selected = selected_card and selected_card.machine_id == queue.machine.id %}
-            <a class="machine-tab {% if focus_card %}{{ focus_card.status_display_class }}{% else %}idle{% endif %} {% if machine_selected %}selected{% endif %}" href="{% if focus_card %}/terminal/cards/{{ focus_card.id }}{% else %}/terminal{% endif %}">
+            <a class="machine-tab {% if focus_card %}{{ focus_card.status_display_class }}{% else %}idle{% endif %} {% if queue.is_selected %}selected{% endif %}" href="{% if focus_card %}/terminal/cards/{{ focus_card.id }}{% else %}/terminal?machine_id={{ queue.machine.id }}{% endif %}">
               <span class="machine-tab-top">
                 <span class="machine-tab-title">
                   <img class="machine-tab-icon" src="{{ url_for('static', path='/assets/machine-icon.png') }}" alt="" aria-hidden="true">
@@ -1558,7 +1695,7 @@
               </span>
               <span class="machine-tab-progress">
                 <span class="progress"><span style="width:{{ focus_card.progress_percent if focus_card else 0 }}%"></span></span>
-                <span class="machine-tab-qty">{{ focus_card.produced_gross_weight if focus_card else "0" }} / {{ focus_card.target_gross_weight if focus_card and focus_card.target_gross_weight else "0" }} кг</span>
+                <span class="machine-tab-qty">{{ focus_card.produced_gross_weight if focus_card else "0" }} / {{ focus_card.target_gross_weight if focus_card and focus_card.target_gross_weight else "-" }} кг</span>
               </span>
             </a>
           {% endfor %}
@@ -1582,7 +1719,7 @@
           </div>
           <div class="queue-sections">
             {% for queue in machine_queues %}
-              <section class="queue-machine {% if selected_card and selected_card.machine_id == queue.machine.id %}selected{% endif %}">
+              <section class="queue-machine {% if queue.is_selected %}selected{% endif %}">
                 <div class="queue-machine-head">
                   <span>Машина {{ queue.machine.id }}</span>
                   {% if queue.focus_card %}
@@ -1652,6 +1789,8 @@
           <div class="title">
             {% if selected_card %}
               <h2>Машина {{ selected_card.machine_id or "-" }}: №{{ selected_card.order_number }}</h2>
+            {% elif selected_machine_id %}
+              <h2>Машина {{ selected_machine_id }}</h2>
             {% else %}
               <h2>Изберете поръчка</h2>
             {% endif %}
@@ -1694,6 +1833,9 @@
                 <button class="menu-btn" type="button" aria-label="Още действия">⋯</button>
                 <div class="menu-panel">
                   <button type="button">Печат / препечат</button>
+                  {% if selected_card and selected_card.roll_entries and selected_card.status in ["running", "completed"] %}
+                    <button class="roll-correction-open" id="roll-correction-open" type="button">Корекции на ролки</button>
+                  {% endif %}
                 </div>
               </div>
             </div>
@@ -1772,7 +1914,6 @@
                   <div class="recipe-title">Рецепта</div>
                   <form class="recipe-table" action="/terminal/cards/{{ selected_card.id }}/materials" method="post">
                     <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                    <input type="hidden" name="raw_material_brand_grade" value="{{ selected_card.raw_material_brand_grade or '' }}">
                     <div class="recipe-head">
                       <div>Вид суровина</div>
                       <div>Заложена суровина</div>
@@ -1783,13 +1924,8 @@
                       <div class="recipe-row">
                         <div class="component">{{ row.label }}</div>
                         <div><div class="material-planned">{{ row.planned or "" }}</div></div>
-                        {% if loop.first %}
-                          <div><input name="actual_raw_material_used" value="{{ selected_card.actual_raw_material_used or '' }}" {% if not can_edit_card %}disabled{% endif %}></div>
-                          <div><input name="raw_material_batch_lot" value="{{ selected_card.raw_material_batch_lot or '' }}" {% if not can_edit_card %}disabled{% endif %}></div>
-                        {% else %}
-                          <div><input aria-label="{{ row.label }} използван материал" {% if not can_edit_card %}disabled{% endif %}></div>
-                          <div><input aria-label="{{ row.label }} партида" {% if not can_edit_card %}disabled{% endif %}></div>
-                        {% endif %}
+                        <div><input name="actual_material__{{ row.field }}" value="{{ row.actual_material or '' }}" aria-label="{{ row.label }} използван материал" {% if not can_edit_card %}disabled{% endif %}></div>
+                        <div><input name="batch_lot__{{ row.field }}" value="{{ row.batch or '' }}" aria-label="{{ row.label }} партида" {% if not can_edit_card %}disabled{% endif %}></div>
                       </div>
                     {% endfor %}
                     <button type="submit" hidden>Запази материал</button>
@@ -1884,6 +2020,40 @@
                   </div>
                 </div>
 
+                {% if selected_card.roll_entries and can_edit_rolls %}
+                  <section class="roll-delete-panel" id="roll-delete-panel" {% if not terminal_feedback.errors.roll_delete %}hidden{% endif %}>
+                    <div class="roll-delete-head">
+                      <span>Изтриване на ролка</span>
+                      <button class="roll-delete-close" id="roll-delete-close" type="button">Затвори</button>
+                    </div>
+                    <form class="roll-delete-form" action="/terminal/cards/{{ selected_card.id }}/rolls/actions/delete-selected" method="post">
+                      <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                      <label>
+                        <span class="field-label">Ролка</span>
+                        <select name="roll_id">
+                          {% for roll in selected_card.roll_entries %}
+                            <option value="{{ roll.id }}">№{{ roll.roll_number }}{% if roll.gross_weight is not none %} - {{ roll.gross_weight }} кг{% endif %}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <label>
+                        <span class="field-label">Потвърди №</span>
+                        <input type="number" name="confirm_roll_number" min="1" step="1" inputmode="numeric">
+                      </label>
+                      <button type="submit">Изтрий</button>
+                      <div class="roll-delete-error-slot field-error-slot" data-feedback-target="roll_delete">
+                        {% if terminal_feedback.errors.roll_delete %}
+                          <div class="inline-error" role="alert">
+                            {% for message in terminal_feedback.errors.roll_delete %}
+                              <p>{{ message }}</p>
+                            {% endfor %}
+                          </div>
+                        {% endif %}
+                      </div>
+                    </form>
+                  </section>
+                {% endif %}
+
                 <div class="totals">
                   <div class="gross-metrics">
                     <div class="metric">
@@ -1904,7 +2074,13 @@
             </section>
           </div>
         {% else %}
-          <div class="no-card">Изберете поръчка от машините, опашката или завършените поръчки.</div>
+          <div class="no-card">
+            {% if selected_machine_id %}
+              Няма активна поръчка за Машина {{ selected_machine_id }}.
+            {% else %}
+              Изберете поръчка от машините, опашката или завършените поръчки.
+            {% endif %}
+          </div>
         {% endif %}
       </section>
     </div>
@@ -1937,7 +2113,10 @@
     (() => {
       const initialSnapshot = {{ terminal_snapshot | tojson }};
       const selectedCardId = {% if selected_card %}{{ selected_card.id }}{% else %}null{% endif %};
-      const refreshUrl = selectedCardId === null ? "/terminal" : `/terminal/cards/${selectedCardId}`;
+      const selectedMachineId = {% if selected_machine_id %}{{ selected_machine_id }}{% else %}null{% endif %};
+      const refreshUrl = selectedCardId === null
+        ? (selectedMachineId === null ? "/terminal" : `/terminal?machine_id=${selectedMachineId}`)
+        : `/terminal/cards/${selectedCardId}`;
       const topbar = document.querySelector(".topbar");
       let refreshAlert = document.getElementById("terminal-refresh-alert");
       let currentSignature = initialSnapshot.signature;
@@ -2025,6 +2204,9 @@
       const historyResults = document.getElementById("history-results");
       const historyEmpty = document.getElementById("history-empty");
       const autoSubmitForms = document.querySelectorAll("form[data-autosubmit='true']");
+      const rollCorrectionOpen = document.getElementById("roll-correction-open");
+      const rollDeletePanel = document.getElementById("roll-delete-panel");
+      const rollDeleteClose = document.getElementById("roll-delete-close");
 
       const openQueue = () => {
         closeHistory();
@@ -2094,6 +2276,16 @@
       }
       if (historyCloseButton) {
         historyCloseButton.addEventListener("click", closeHistory);
+      }
+      if (rollCorrectionOpen && rollDeletePanel) {
+        rollCorrectionOpen.addEventListener("click", () => {
+          rollDeletePanel.hidden = false;
+        });
+      }
+      if (rollDeleteClose && rollDeletePanel) {
+        rollDeleteClose.addEventListener("click", () => {
+          rollDeletePanel.hidden = true;
+        });
       }
       overlay.addEventListener("click", (event) => {
         if (event.target === overlay) {

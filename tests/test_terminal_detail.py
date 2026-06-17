@@ -165,6 +165,175 @@ def test_terminal_material_field_update_blocks_stale_version(connection):
     assert card["raw_material_batch_lot"] == "Batch 42"
 
 
+def recipe_actual_entries() -> dict[str, dict[str, str]]:
+    return {
+        "raw_material_a": {
+            "actual_material_used": "Actual A",
+            "batch_lot": "Batch A",
+        },
+        "raw_material_b": {
+            "actual_material_used": "Actual B",
+            "batch_lot": "Batch B",
+        },
+        "raw_material_c": {
+            "actual_material_used": "Actual C",
+            "batch_lot": "Batch C",
+        },
+        "linear_pe": {
+            "actual_material_used": "Actual Linear",
+            "batch_lot": "Batch Linear",
+        },
+        "antistatic": {
+            "actual_material_used": "Actual Antistatic",
+            "batch_lot": "Batch Antistatic",
+        },
+        "masterbatch": {
+            "actual_material_used": "Actual Masterbatch",
+            "batch_lot": "Batch Masterbatch",
+        },
+        "chalk": {
+            "actual_material_used": "Actual Chalk",
+            "batch_lot": "Batch Chalk",
+        },
+    }
+
+
+def test_terminal_recipe_actual_entries_persist_all_rows_and_survive_finish(connection):
+    card_id = import_ready_card(
+        "25340",
+        raw_material_b="LDPE B",
+        raw_material_c="LDPE C",
+        linear_pe="Linear PE",
+        antistatic="Antistatic",
+        masterbatch="Masterbatch",
+        chalk="Chalk",
+    )
+    assert db.release_card(
+        card_id,
+        machine_id=1,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    ).ok
+    loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
+
+    result = db.update_terminal_recipe_actual_entries(
+        card_id,
+        loaded_version,
+        recipe_actual_entries(),
+    )
+
+    card = db.fetch_terminal_card_detail(card_id)
+    assert result.ok
+    assert card["version"] == loaded_version + 1
+    assert set(card["recipe_actual_entries"]) == set(recipe_actual_entries())
+    assert card["recipe_actual_entries"]["raw_material_a"]["actual_material_used"] == "Actual A"
+    assert card["recipe_actual_entries"]["raw_material_b"]["batch_lot"] == "Batch B"
+    assert card["recipe_actual_entries"]["chalk"]["actual_material_used"] == "Actual Chalk"
+
+    assert db.start_production_timing(card_id, card["version"]).ok
+    assert db.update_tare_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "1.20",
+    ).ok
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "510.00",
+    ).ok
+    assert db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"]).ok
+
+    completed_card = db.fetch_terminal_card_detail(card_id)
+    assert completed_card["status"] == "completed"
+    assert completed_card["recipe_actual_entries"]["linear_pe"]["actual_material_used"] == "Actual Linear"
+    assert completed_card["recipe_actual_entries"]["masterbatch"]["batch_lot"] == "Batch Masterbatch"
+
+
+def test_terminal_recipe_actual_entries_block_stale_version(connection):
+    card_id = import_ready_card("25341")
+    assert db.release_card(
+        card_id,
+        machine_id=2,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    ).ok
+    loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
+    assert db.update_terminal_recipe_actual_entries(
+        card_id,
+        loaded_version,
+        recipe_actual_entries(),
+    ).ok
+
+    stale_result = db.update_terminal_recipe_actual_entries(
+        card_id,
+        loaded_version,
+        {
+            "raw_material_a": {
+                "actual_material_used": "Stale",
+                "batch_lot": "Stale Batch",
+            },
+        },
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert not stale_result.ok
+    assert stale_result.messages == (
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
+    )
+    assert card["recipe_actual_entries"]["raw_material_a"]["actual_material_used"] == "Actual A"
+
+
+def test_terminal_recipe_actual_entries_survive_reimport(connection):
+    card_id = import_ready_card("25342", raw_material_a="Original A")
+    assert db.release_card(
+        card_id,
+        machine_id=3,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    ).ok
+    assert db.update_terminal_recipe_actual_entries(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        recipe_actual_entries(),
+    ).ok
+
+    result = import_cards_from_csv(
+        "overwrite.csv",
+        csv_bytes(extrusion_row("25342", raw_material_a="Updated A")),
+        overwrite_existing=True,
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert result.updated == 1
+    assert card["raw_material_a"] == "Updated A"
+    assert card["recipe_actual_entries"]["raw_material_a"]["actual_material_used"] == "Actual A"
+    assert card["recipe_actual_entries"]["raw_material_a"]["batch_lot"] == "Batch A"
+
+
+def test_terminal_recipe_actual_entries_reject_unknown_component(connection):
+    card_id = import_ready_card("25343")
+    assert db.release_card(
+        card_id,
+        machine_id=4,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    ).ok
+
+    result = db.update_terminal_recipe_actual_entries(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        {
+            "not_a_recipe_row": {
+                "actual_material_used": "Wrong",
+                "batch_lot": "Wrong",
+            },
+        },
+    )
+
+    assert not result.ok
+    assert result.messages == ("Формата съдържа непознат ред от рецептата.",)
+
+
 def test_terminal_card_detail_hides_cancelled_cards(connection):
     card_id = import_ready_card("25305")
     assert db.release_card(

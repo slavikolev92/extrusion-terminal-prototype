@@ -116,6 +116,19 @@ CREATE TABLE IF NOT EXISTS roll_entries (
     UNIQUE (card_id, roll_number)
 );
 
+CREATE TABLE IF NOT EXISTS recipe_actual_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    component_key TEXT NOT NULL,
+    component_label TEXT NOT NULL,
+    planned_material TEXT,
+    actual_material_used TEXT,
+    batch_lot TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (card_id, component_key)
+);
+
 CREATE TABLE IF NOT EXISTS production_time_segments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
@@ -143,6 +156,9 @@ ON cards(status, machine_id, machine_sequence);
 CREATE INDEX IF NOT EXISTS idx_roll_entries_card_roll
 ON roll_entries(card_id, roll_number);
 
+CREATE INDEX IF NOT EXISTS idx_recipe_actual_entries_card
+ON recipe_actual_entries(card_id);
+
 CREATE INDEX IF NOT EXISTS idx_time_segments_card_started
 ON production_time_segments(card_id, started_at);
 
@@ -157,6 +173,16 @@ MACHINE_SEED = (
     (2, "Machine 2", 1, 2),
     (3, "Machine 3", 1, 3),
     (4, "Machine 4", 1, 4),
+)
+
+RECIPE_COMPONENT_FIELDS = (
+    ("raw_material_a", "Вид суровина A"),
+    ("raw_material_b", "Вид суровина B"),
+    ("raw_material_c", "Вид суровина C"),
+    ("linear_pe", "Линеен /mLLDPE/"),
+    ("antistatic", "Антистатик"),
+    ("masterbatch", "Мастербач"),
+    ("chalk", "Креда"),
 )
 
 
@@ -415,6 +441,7 @@ def fetch_admin_card_detail(card_id: int) -> dict[str, Any] | None:
         )
         roll_data = fetch_roll_entries_and_totals(connection, card_id, card["tare_weight"])
         card.update(roll_data)
+        card["recipe_actual_entries"] = fetch_recipe_actual_entries(connection, card_id)
         return card
 
 
@@ -459,7 +486,24 @@ def fetch_terminal_card_detail(card_id: int) -> dict[str, Any] | None:
         )
         roll_data = fetch_roll_entries_and_totals(connection, card_id, card["tare_weight"])
         card.update(roll_data)
+        card["recipe_actual_entries"] = fetch_recipe_actual_entries(connection, card_id)
         return card
+
+
+def fetch_recipe_actual_entries(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> dict[str, dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT id, component_key, component_label, planned_material,
+               actual_material_used, batch_lot, created_at, updated_at
+        FROM recipe_actual_entries
+        WHERE card_id = ?
+        """,
+        (card_id,),
+    ).fetchall()
+    return {str(row["component_key"]): dict(row) for row in rows}
 
 
 def fetch_roll_entries_and_totals(
@@ -1888,7 +1932,7 @@ def update_terminal_material_fields(
     with connect() as connection:
         card = connection.execute(
             """
-            SELECT id, version
+            SELECT id, version, raw_material_a
             FROM cards
             WHERE id = ?
               AND status IN (?, ?, ?, ?, ?)
@@ -1919,6 +1963,117 @@ def update_terminal_material_fields(
                 actual_raw_material_used.strip(),
                 raw_material_brand_grade.strip(),
                 raw_material_batch_lot.strip(),
+                card_id,
+            ),
+        )
+        _upsert_recipe_actual_entry(
+            connection,
+            card,
+            "raw_material_a",
+            dict(RECIPE_COMPONENT_FIELDS)["raw_material_a"],
+            actual_raw_material_used,
+            raw_material_batch_lot,
+        )
+
+    return RuleResult(True, ("Материалите са записани.",))
+
+
+def _upsert_recipe_actual_entry(
+    connection: sqlite3.Connection,
+    card: sqlite3.Row,
+    component_key: str,
+    component_label: str,
+    actual_material: str,
+    batch_lot: str,
+) -> None:
+    planned_material = str(card[component_key] or "")
+    connection.execute(
+        """
+        INSERT INTO recipe_actual_entries (
+            card_id, component_key, component_label, planned_material,
+            actual_material_used, batch_lot
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(card_id, component_key) DO UPDATE SET
+            component_label = excluded.component_label,
+            planned_material = excluded.planned_material,
+            actual_material_used = excluded.actual_material_used,
+            batch_lot = excluded.batch_lot,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (
+            int(card["id"]),
+            component_key,
+            component_label,
+            planned_material,
+            actual_material.strip(),
+            batch_lot.strip(),
+        ),
+    )
+
+
+def update_terminal_recipe_actual_entries(
+    card_id: int,
+    loaded_version: int,
+    entries: dict[str, dict[str, str]],
+    raw_material_brand_grade: str | None = None,
+) -> RuleResult:
+    component_labels = dict(RECIPE_COMPONENT_FIELDS)
+    unknown_keys = sorted(set(entries) - set(component_labels))
+    if unknown_keys:
+        return RuleResult(False, ("Формата съдържа непознат ред от рецептата.",))
+
+    import_columns = ", ".join(component_labels)
+    with connect() as connection:
+        card = connection.execute(
+            f"""
+            SELECT id, version, raw_material_brand_grade, {import_columns}
+            FROM cards
+            WHERE id = ?
+              AND status IN (?, ?, ?, ?, ?)
+            """,
+            (card_id, *ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES),
+        ).fetchone()
+
+        if not card:
+            return RuleResult(False, ("Картата не е намерена.",))
+
+        if int(card["version"]) != loaded_version:
+            return RuleResult(False, (STALE_CARD_MESSAGE,))
+
+        for component_key, component_label in RECIPE_COMPONENT_FIELDS:
+            entry = entries.get(component_key, {})
+            actual_material = str(entry.get("actual_material_used") or "").strip()
+            batch_lot = str(entry.get("batch_lot") or "").strip()
+            _upsert_recipe_actual_entry(
+                connection,
+                card,
+                component_key,
+                component_label,
+                actual_material,
+                batch_lot,
+            )
+
+        raw_material_entry = entries.get("raw_material_a", {})
+        raw_material_used = str(raw_material_entry.get("actual_material_used") or "").strip()
+        raw_material_batch_lot = str(raw_material_entry.get("batch_lot") or "").strip()
+        if raw_material_brand_grade is None:
+            raw_material_brand_grade = str(card["raw_material_brand_grade"] or "")
+
+        connection.execute(
+            """
+            UPDATE cards
+            SET actual_raw_material_used = ?,
+                raw_material_brand_grade = ?,
+                raw_material_batch_lot = ?,
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                raw_material_used,
+                raw_material_brand_grade.strip(),
+                raw_material_batch_lot,
                 card_id,
             ),
         )

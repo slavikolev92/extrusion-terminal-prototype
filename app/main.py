@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+import re
 from typing import Any
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -48,7 +49,7 @@ from .db import (
     update_card_planning,
     update_roll_gross_weight,
     update_tare_weight,
-    update_terminal_material_fields,
+    update_terminal_recipe_actual_entries,
 )
 from .importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
 from .rules import RuleResult
@@ -136,7 +137,7 @@ def admin_planning_context(**extra: Any) -> dict[str, Any]:
     context: dict[str, Any] = {
         "draft_cards": fetch_cards_by_status((STATUS_IMPORTED,)),
         "machine_queues": fetch_machine_queues(),
-        "machines": fetch_machines(),
+        "machines": machines,
         "summary": database_summary(),
         "status_labels": STATUS_LABELS,
     }
@@ -183,27 +184,27 @@ def build_quantity_lines(card: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def build_recipe_rows(card: dict[str, Any]) -> list[dict[str, str | bool]]:
+    actual_entries = card.get("recipe_actual_entries") or {}
+    if not isinstance(actual_entries, dict):
+        actual_entries = {}
     rows: list[dict[str, str | bool]] = []
     for label, field in RECIPE_FIELD_ROWS:
         is_actual_row = field == "raw_material_a"
+        entry = actual_entries.get(field, {}) if isinstance(actual_entries, dict) else {}
+        actual_material = str(entry.get("actual_material_used") or "")
+        batch = str(entry.get("batch_lot") or "")
+        if is_actual_row and field not in actual_entries:
+            actual_material = str(card.get("actual_raw_material_used") or "")
+            batch = str(card.get("raw_material_batch_lot") or "")
         rows.append(
             {
                 "label": label,
                 "field": field,
                 "planned": str(card.get(field) or ""),
-                "actual_material": str(card.get("actual_raw_material_used") or "")
-                if is_actual_row
-                else "",
+                "actual_material": actual_material,
                 "brand": str(card.get("raw_material_brand_grade") or "") if is_actual_row else "",
-                "batch": str(card.get("raw_material_batch_lot") or "") if is_actual_row else "",
-                "has_actual": bool(
-                    is_actual_row
-                    and (
-                        card.get("actual_raw_material_used")
-                        or card.get("raw_material_brand_grade")
-                        or card.get("raw_material_batch_lot")
-                    )
-                ),
+                "batch": batch,
+                "has_actual": bool(actual_material or batch),
             }
         )
     return rows
@@ -215,6 +216,16 @@ def build_terminal_recipe_rows(card: dict[str, Any]) -> list[dict[str, str | boo
         field = str(row["field"])
         row["label"] = TERMINAL_RECIPE_LABELS.get(field, str(row["label"]))
     return rows
+
+
+def recipe_actual_entries_from_form(form: Any) -> dict[str, dict[str, str]]:
+    entries: dict[str, dict[str, str]] = {}
+    for _, field in RECIPE_FIELD_ROWS:
+        entries[field] = {
+            "actual_material_used": str(form.get(f"actual_material__{field}") or ""),
+            "batch_lot": str(form.get(f"batch_lot__{field}") or ""),
+        }
+    return entries
 
 
 @app.get("/")
@@ -446,19 +457,16 @@ async def restore_admin_card(
 async def save_admin_production_materials(
     request: Request,
     card_id: int,
-    loaded_version: str = Form(...),
-    actual_raw_material_used: str = Form(""),
-    raw_material_brand_grade: str = Form(""),
-    raw_material_batch_lot: str = Form(""),
 ):
+    form = await request.form()
+    loaded_version = str(form.get("loaded_version") or "")
     parsed_version, material_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        material_result = update_terminal_material_fields(
+        material_result = update_terminal_recipe_actual_entries(
             card_id=card_id,
             loaded_version=parsed_version,
-            actual_raw_material_used=actual_raw_material_used,
-            raw_material_brand_grade=raw_material_brand_grade,
-            raw_material_batch_lot=raw_material_batch_lot,
+            entries=recipe_actual_entries_from_form(form),
+            raw_material_brand_grade=str(form.get("raw_material_brand_grade") or ""),
         )
 
     context = admin_card_detail_context(card_id, material_result=material_result)
@@ -653,8 +661,8 @@ def parse_planning_form(
 
 
 @app.get("/terminal")
-async def terminal(request: Request):
-    return terminal_response(request)
+async def terminal(request: Request, machine_id: int | None = None):
+    return terminal_response(request, selected_machine_id=machine_id)
 
 
 @app.get("/terminal/snapshot")
@@ -671,28 +679,25 @@ async def terminal_card(request: Request, card_id: int):
 async def save_terminal_materials(
     request: Request,
     card_id: int,
-    loaded_version: str = Form(...),
-    actual_raw_material_used: str = Form(""),
-    raw_material_brand_grade: str = Form(""),
-    raw_material_batch_lot: str = Form(""),
 ):
+    form = await request.form()
+    loaded_version = str(form.get("loaded_version") or "")
     try:
         parsed_version = int(loaded_version)
     except ValueError:
         material_result = RuleResult(False, (INVALID_LOADED_VERSION_MESSAGE,))
     else:
-        material_result = update_terminal_material_fields(
+        material_result = update_terminal_recipe_actual_entries(
             card_id=card_id,
             loaded_version=parsed_version,
-            actual_raw_material_used=actual_raw_material_used,
-            raw_material_brand_grade=raw_material_brand_grade,
-            raw_material_batch_lot=raw_material_batch_lot,
+            entries=recipe_actual_entries_from_form(form),
         )
 
-    return terminal_response(
+    return terminal_post_response(
         request,
-        selected_card_id=card_id,
-        material_result=material_result,
+        card_id,
+        "material_result",
+        material_result,
     )
 
 
@@ -707,10 +712,11 @@ async def save_tare_weight(
     if parsed_version is not None:
         roll_result = update_tare_weight(card_id, parsed_version, tare_weight)
 
-    return terminal_response(
+    return terminal_post_response(
         request,
-        selected_card_id=card_id,
-        roll_result=roll_result,
+        card_id,
+        "roll_result",
+        roll_result,
         roll_result_target="tare",
     )
 
@@ -726,10 +732,11 @@ async def add_roll_weight(
     if parsed_version is not None:
         roll_result = add_roll_gross_weight(card_id, parsed_version, gross_weight)
 
-    return terminal_response(
+    return terminal_post_response(
         request,
-        selected_card_id=card_id,
-        roll_result=roll_result,
+        card_id,
+        "roll_result",
+        roll_result,
         roll_result_target="new_roll",
     )
 
@@ -751,10 +758,11 @@ async def save_roll_weight(
             gross_weight=gross_weight,
         )
 
-    return terminal_response(
+    return terminal_post_response(
         request,
-        selected_card_id=card_id,
-        roll_result=roll_result,
+        card_id,
+        "roll_result",
+        roll_result,
         roll_result_target="roll_row",
         roll_result_roll_id=roll_id,
     )
@@ -766,21 +774,55 @@ async def delete_roll_weight(
     card_id: int,
     roll_id: int,
     loaded_version: str = Form(...),
+    confirm_roll_number: str = Form(""),
 ):
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        roll_result = delete_roll_entry(
-            card_id=card_id,
-            roll_id=roll_id,
-            loaded_version=parsed_version,
+        roll_result = delete_terminal_roll_with_confirmation(
+            card_id,
+            roll_id,
+            parsed_version,
+            confirm_roll_number,
         )
 
-    return terminal_response(
+    return terminal_post_response(
         request,
-        selected_card_id=card_id,
-        roll_result=roll_result,
-        roll_result_target="roll_row",
-        roll_result_roll_id=roll_id,
+        card_id,
+        "roll_result",
+        roll_result,
+        roll_result_target="roll_delete",
+    )
+
+
+@app.post("/terminal/cards/{card_id}/rolls/actions/delete-selected")
+async def delete_selected_roll_weight(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+    roll_id: str = Form(""),
+    confirm_roll_number: str = Form(""),
+):
+    parsed_version, roll_result = parse_loaded_version(loaded_version)
+    parsed_roll_id: int | None = None
+    if parsed_version is not None:
+        try:
+            parsed_roll_id = int(roll_id)
+        except ValueError:
+            roll_result = RuleResult(False, ("Изберете валидна ролка за изтриване.",))
+        else:
+            roll_result = delete_terminal_roll_with_confirmation(
+                card_id,
+                parsed_roll_id,
+                parsed_version,
+                confirm_roll_number,
+            )
+
+    return terminal_post_response(
+        request,
+        card_id,
+        "roll_result",
+        roll_result,
+        roll_result_target="roll_delete",
     )
 
 
@@ -794,10 +836,11 @@ async def start_timing(
     if parsed_version is not None:
         timing_result = start_production_timing(card_id, parsed_version)
 
-    return terminal_response(
+    return terminal_post_response(
         request,
-        selected_card_id=card_id,
-        timing_result=timing_result,
+        card_id,
+        "timing_result",
+        timing_result,
     )
 
 
@@ -811,10 +854,11 @@ async def pause_timing(
     if parsed_version is not None:
         timing_result = pause_production_timing(card_id, parsed_version)
 
-    return terminal_response(
+    return terminal_post_response(
         request,
-        selected_card_id=card_id,
-        timing_result=timing_result,
+        card_id,
+        "timing_result",
+        timing_result,
     )
 
 
@@ -828,10 +872,11 @@ async def resume_timing(
     if parsed_version is not None:
         timing_result = resume_production_timing(card_id, parsed_version)
 
-    return terminal_response(
+    return terminal_post_response(
         request,
-        selected_card_id=card_id,
-        timing_result=timing_result,
+        card_id,
+        "timing_result",
+        timing_result,
     )
 
 
@@ -845,10 +890,11 @@ async def finish_terminal_card(
     if parsed_version is not None:
         workflow_result = finish_card(card_id, parsed_version)
 
-    return terminal_response(
+    return terminal_post_response(
         request,
-        selected_card_id=card_id,
-        workflow_result=workflow_result,
+        card_id,
+        "workflow_result",
+        workflow_result,
     )
 
 
@@ -859,32 +905,95 @@ def parse_loaded_version(loaded_version: str) -> tuple[int | None, RuleResult]:
         return None, RuleResult(False, (INVALID_LOADED_VERSION_MESSAGE,))
 
 
+def delete_terminal_roll_with_confirmation(
+    card_id: int,
+    roll_id: int,
+    loaded_version: int,
+    confirm_roll_number: str,
+) -> RuleResult:
+    card = fetch_terminal_card_detail(card_id)
+    if not card:
+        return RuleResult(False, (CARD_NOT_FOUND_MESSAGE,))
+
+    roll = next(
+        (
+            roll_entry
+            for roll_entry in card["roll_entries"]
+            if int(roll_entry["id"]) == roll_id
+        ),
+        None,
+    )
+    if not roll:
+        return RuleResult(False, ("Ролката не е намерена.",))
+
+    expected_roll_number = str(roll["roll_number"])
+    if confirm_roll_number.strip() != expected_roll_number:
+        return RuleResult(False, ("Потвърдете изтриването с номера на ролката.",))
+
+    return delete_roll_entry(card_id, roll_id, loaded_version)
+
+
 def terminal_response(
     request: Request,
     selected_card_id: int | None = None,
+    selected_machine_id: int | None = None,
     **extra: Any,
 ):
     return templates.TemplateResponse(
         request,
         "terminal.html",
-        terminal_context(selected_card_id, **extra),
+        terminal_context(selected_card_id, selected_machine_id, **extra),
+    )
+
+
+def terminal_post_response(
+    request: Request,
+    card_id: int,
+    result_name: str,
+    result: RuleResult,
+    **extra: Any,
+):
+    if result.ok:
+        return RedirectResponse(url=f"/terminal/cards/{card_id}", status_code=303)
+    return terminal_response(
+        request,
+        selected_card_id=card_id,
+        **{result_name: result},
+        **extra,
     )
 
 
 def terminal_context(
     selected_card_id: int | None = None,
+    selected_machine_id: int | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     machine_queues = fetch_machine_queues()
+    machines = fetch_machines()
+    valid_machine_ids = {int(machine["id"]) for machine in machines}
+    if selected_machine_id not in valid_machine_ids:
+        selected_machine_id = None
+
     if selected_card_id is None:
-        selected_card_id = next(
-            (
-                int(queue["focus_card"]["id"])
-                for queue in machine_queues
-                if queue["focus_card"]
-            ),
-            None,
-        )
+        if selected_machine_id is not None:
+            selected_card_id = next(
+                (
+                    int(queue["focus_card"]["id"])
+                    for queue in machine_queues
+                    if int(queue["machine"]["id"]) == selected_machine_id
+                    and queue["focus_card"]
+                ),
+                None,
+            )
+        else:
+            selected_card_id = next(
+                (
+                    int(queue["focus_card"]["id"])
+                    for queue in machine_queues
+                    if queue["focus_card"]
+                ),
+                None,
+            )
 
     selected_card = fetch_terminal_card_detail(selected_card_id) if selected_card_id else None
     if selected_card:
@@ -892,9 +1001,9 @@ def terminal_context(
             selected_card["total_production_seconds"],
         )
         enrich_terminal_card_display(selected_card)
+        selected_machine_id = selected_card["machine_id"]
 
-    selected_machine_id = selected_card["machine_id"] if selected_card else None
-    enriched_queues = enrich_machine_queues(machine_queues, selected_card)
+    enriched_queues = enrich_machine_queues(machine_queues, selected_card, selected_machine_id)
     active_cards = [
         card
         for queue in enriched_queues
@@ -929,6 +1038,7 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
         "errors": {
             "tare": (),
             "new_roll": (),
+            "roll_delete": (),
             "roll_rows": {},
             "material": (),
             "topbar": (),
@@ -981,7 +1091,7 @@ def is_terminal_card_state_error(messages: tuple[str, ...]) -> bool:
 
 def terminal_roll_feedback_target(results: dict[str, Any]) -> str:
     target = str(results.get("roll_result_target") or "new_roll")
-    if target in {"tare", "new_roll", "roll_row"}:
+    if target in {"tare", "new_roll", "roll_row", "roll_delete"}:
         return target
     return "new_roll"
 
@@ -989,9 +1099,11 @@ def terminal_roll_feedback_target(results: dict[str, Any]) -> str:
 def enrich_machine_queues(
     machine_queues: list[dict[str, Any]],
     selected_card: dict[str, Any] | None,
+    selected_machine_id: int | None,
 ) -> list[dict[str, Any]]:
     enriched_queues: list[dict[str, Any]] = []
     for queue in machine_queues:
+        machine_id = int(queue["machine"]["id"])
         enriched_cards = [
             enrich_terminal_list_card(card, selected_card)
             for card in queue["cards"]
@@ -1002,7 +1114,12 @@ def enrich_machine_queues(
                 (card for card in enriched_cards if card["id"] == focus_card["id"]),
                 enrich_terminal_list_card(focus_card, selected_card),
             )
-        enriched_queue = {**queue, "cards": enriched_cards, "focus_card": focus_card}
+        enriched_queue = {
+            **queue,
+            "cards": enriched_cards,
+            "focus_card": focus_card,
+            "is_selected": selected_machine_id == machine_id,
+        }
         enriched_queues.append(enriched_queue)
     return enriched_queues
 
@@ -1039,10 +1156,13 @@ def build_quantity_display(card: dict[str, Any]) -> str:
 
 
 def target_gross_decimal(card: dict[str, Any]) -> Decimal | None:
-    unit = str(card.get("unit_1") or "").strip().casefold()
-    if unit not in {"kg", "kgs", "кг"}:
-        return None
-    return decimal_from_display(card.get("quantity_1"))
+    for index in (1, 2):
+        unit = normalize_quantity_unit(card.get(f"unit_{index}"))
+        if unit in {"kg", "kgs", "кг", "килограм", "килограма"}:
+            target = decimal_from_quantity_text(card.get(f"quantity_{index}"))
+            if target is not None:
+                return target
+    return None
 
 
 def target_gross_display(card: dict[str, Any]) -> str | None:
@@ -1055,7 +1175,7 @@ def remaining_gross_display(card: dict[str, Any]) -> str | None:
     produced = decimal_from_display(card.get("total_gross_weight")) or Decimal("0")
     if target is None:
         return None
-    return decimal_weight_display(target - produced)
+    return decimal_weight_display(max(target - produced, Decimal("0")))
 
 
 def progress_percent(card: dict[str, Any]) -> int:
@@ -1075,6 +1195,24 @@ def decimal_from_display(value: Any) -> Decimal | None:
         return None
     try:
         return Decimal(text)
+    except InvalidOperation:
+        return None
+
+
+def normalize_quantity_unit(value: Any) -> str:
+    return str(value or "").strip().casefold().rstrip(".")
+
+
+def decimal_from_quantity_text(value: Any) -> Decimal | None:
+    direct_value = decimal_from_display(value)
+    if direct_value is not None:
+        return direct_value
+    text = str(value or "").strip().replace(",", ".")
+    match = re.search(r"\d+(?:\.\d+)?", text)
+    if not match:
+        return None
+    try:
+        return Decimal(match.group(0))
     except InvalidOperation:
         return None
 

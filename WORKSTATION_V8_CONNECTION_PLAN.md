@@ -479,11 +479,11 @@ Checkpoint 3 result:
 
 ## Slice 4 - Functional Hardening And Edge Cases
 
-Purpose: fix issues found after the first live V8 connection without drifting into print output.
+Purpose: fix bugs and edge cases found after the first live V8 connection and after the app was launched/accessed, without drifting into print output.
 
 ### Required Work
 
-Address issues found at Checkpoint 3, likely in these areas:
+Address the observed V8 workstation bugs and harden likely edge cases in these areas:
 
 - button disabled/enabled state mismatches
 - paused/finished edge cases
@@ -494,7 +494,7 @@ Address issues found at Checkpoint 3, likely in these areas:
 - text overflow on real terminal viewport
 - route/render test gaps
 
-Do not add new features unless they directly support the confirmed V8 workflow.
+Do not add new features unless they directly support the confirmed V8 workflow. Printing remains out of scope for this slice.
 
 ### Verification
 

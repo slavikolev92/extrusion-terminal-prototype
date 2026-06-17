@@ -432,7 +432,8 @@ select {
 .operational-info-grid input,
 .operational-info-grid textarea,
 .quantity-edit-grid input,
-.admin-recipe-table .cell {
+.admin-recipe-table .cell,
+.admin-recipe-table input {
   width: 100%;
   min-height: 38px;
   border: 1px solid var(--line-strong);
@@ -463,6 +464,16 @@ select {
   border-radius: 7px;
   overflow: hidden;
   background: var(--surface);
+}
+
+.admin-correction-form label {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .recipe-head,
@@ -976,5 +987,20 @@ thead th {
   .recipe-head div:nth-child(n+3),
   .recipe-row > div:nth-child(n+3) {
     display: none;
+  }
+
+  .admin-correction-form .recipe-table {
+    overflow-x: auto;
+  }
+
+  .admin-correction-form .recipe-head,
+  .admin-correction-form .recipe-row {
+    grid-template-columns: 92px minmax(140px, 1fr) minmax(150px, 1fr) minmax(130px, 1fr);
+    min-width: 560px;
+  }
+
+  .admin-correction-form .recipe-head div:nth-child(n+3),
+  .admin-correction-form .recipe-row > div:nth-child(n+3) {
+    display: block;
   }
 }
