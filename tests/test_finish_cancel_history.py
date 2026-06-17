@@ -57,7 +57,12 @@ def import_and_release_card(
                 (order_number,),
             ).fetchone()["id"]
         )
-    assert db.release_card(card_id, machine_id, machine_sequence).ok
+    assert db.release_card(
+        card_id,
+        machine_id,
+        machine_sequence,
+        max_roll_weight="60.0",
+    ).ok
     return card_id
 
 
@@ -101,7 +106,7 @@ def test_finish_blocks_without_tare(connection):
 
     card = db.fetch_terminal_card_detail(card_id)
     assert not result.ok
-    assert result.messages == ("Tare weight is required before finishing.",)
+    assert result.messages == ("Шпула е задължителна преди приключване.",)
     assert card["status"] == STATUS_RUNNING
 
 
@@ -120,7 +125,7 @@ def test_finish_blocks_without_timing_started(connection):
     result = db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"])
 
     assert not result.ok
-    assert result.messages == ("Production timing must be started before finishing.",)
+    assert result.messages == ("Времето трябва да бъде стартирано преди приключване.",)
     assert db.fetch_terminal_card_detail(card_id)["status"] == STATUS_PENDING
 
 
@@ -132,7 +137,7 @@ def test_finish_blocks_without_gross_roll(connection):
     result = db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"])
 
     assert not result.ok
-    assert result.messages == ("At least one gross roll weight is required before finishing.",)
+    assert result.messages == ("Поне едно бруто тегло на ролка е задължително преди приключване.",)
     assert db.fetch_terminal_card_detail(card_id)["status"] == STATUS_RUNNING
 
 
@@ -151,7 +156,7 @@ def test_finish_blocks_empty_roll_gaps(connection):
     result = db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"])
 
     assert not result.ok
-    assert result.messages == ("Empty roll gaps must be corrected before finishing.",)
+    assert result.messages == ("Празните редове между ролките трябва да бъдат коригирани преди приключване.",)
     assert db.fetch_terminal_card_detail(card_id)["status"] == STATUS_RUNNING
 
 
@@ -237,13 +242,13 @@ def test_completed_card_roll_weights_remain_editable(connection):
     assert updated_card["total_net_weight"] == "54.00"
 
 
-def test_cancel_pending_card_moves_it_to_archive(connection):
+def test_cancel_pending_card_moves_it_out_of_workstation_visibility(connection):
     card_id = import_and_release_card("25606")
     loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
 
     result = db.cancel_card(card_id, loaded_version)
 
-    card = db.fetch_terminal_card_detail(card_id)
+    card = db.fetch_admin_card_detail(card_id)
     active_ids = {card["id"] for card in db.fetch_cards_by_status(("pending", "running", "paused"))}
     archive_ids = {card["id"] for card in db.fetch_cards_by_status(("completed", "cancelled"))}
 
@@ -253,6 +258,7 @@ def test_cancel_pending_card_moves_it_to_archive(connection):
     assert card["version"] == loaded_version + 1
     assert card_id not in active_ids
     assert card_id in archive_ids
+    assert db.fetch_terminal_card_detail(card_id) is None
 
 
 def test_cancel_running_card_closes_open_segment(connection):
@@ -262,7 +268,7 @@ def test_cancel_running_card_closes_open_segment(connection):
 
     result = db.cancel_card(card_id, loaded_version)
 
-    card = db.fetch_terminal_card_detail(card_id)
+    card = db.fetch_admin_card_detail(card_id)
     segment = connection.execute(
         """
         SELECT ended_at, end_reason
@@ -281,7 +287,7 @@ def test_cancel_running_card_closes_open_segment(connection):
 def test_restore_cancelled_card_returns_to_pending(connection):
     card_id = import_and_release_card("25608")
     assert db.cancel_card(card_id, db.fetch_terminal_card_detail(card_id)["version"]).ok
-    loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
+    loaded_version = db.fetch_admin_card_detail(card_id)["version"]
 
     result = db.restore_cancelled_card(card_id, loaded_version)
 
@@ -305,14 +311,15 @@ def test_restore_blocks_duplicate_active_machine_sequence(connection):
 
     result = db.restore_cancelled_card(
         cancelled_card_id,
-        db.fetch_terminal_card_detail(cancelled_card_id)["version"],
+        db.fetch_admin_card_detail(cancelled_card_id)["version"],
     )
 
     assert not result.ok
     assert result.messages == (
-        "Machine 2 already has active sequence 1 on order 25610.",
+        "Машина 2 вече има активен ред 1 за поръчка 25610.",
     )
-    assert db.fetch_terminal_card_detail(cancelled_card_id)["status"] == STATUS_CANCELLED
+    assert db.fetch_admin_card_detail(cancelled_card_id)["status"] == STATUS_CANCELLED
+    assert db.fetch_terminal_card_detail(cancelled_card_id) is None
 
 
 def test_stale_finish_cancel_and_restore_edits_are_blocked(connection):
@@ -333,13 +340,13 @@ def test_stale_finish_cancel_and_restore_edits_are_blocked(connection):
 
     assert not stale_finish.ok
     assert stale_finish.messages == (
-        "Card changed after this page was loaded. Reload the card and try again.",
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )
     assert not stale_cancel.ok
     assert stale_cancel.messages == (
-        "Card changed after this page was loaded. Reload the card and try again.",
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )
     assert not stale_restore.ok
     assert stale_restore.messages == (
-        "Card changed after this page was loaded. Reload the card and try again.",
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )

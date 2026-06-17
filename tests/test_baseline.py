@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import csv
 import io
+import shutil
+import sqlite3
+from pathlib import Path
+from uuid import uuid4
 
 from app import db
 from app.constants import (
@@ -69,7 +73,9 @@ def test_csv_import_creates_imported_ready_cards(connection):
         overwrite_existing=False,
     )
 
-    card = connection.execute("SELECT order_number, status, customer FROM cards").fetchone()
+    card = connection.execute(
+        "SELECT order_number, status, customer, max_roll_weight FROM cards"
+    ).fetchone()
 
     assert result.rows_seen == 1
     assert result.rows_imported == 1
@@ -78,10 +84,97 @@ def test_csv_import_creates_imported_ready_cards(connection):
     assert result.row_results[0].row_number == 2
     assert result.row_results[0].order_number == "25278"
     assert result.row_results[0].action == "created"
-    assert result.row_results[0].message == "Created new card; ready for planning."
+    assert result.row_results[0].message == "Създадена нова технологична карта; готова за планиране."
     assert card["order_number"] == "25278"
     assert card["status"] == STATUS_IMPORTED
     assert card["customer"] == "Test Customer"
+    assert card["max_roll_weight"] is None
+
+
+def test_database_initialization_adds_max_roll_weight_to_existing_cards_table(
+    monkeypatch,
+):
+    legacy_data_dir = Path.cwd() / ".test-runtime" / uuid4().hex
+    legacy_data_dir.mkdir(parents=True)
+    legacy_db_path = legacy_data_dir / "legacy.sqlite3"
+    try:
+        with sqlite3.connect(legacy_db_path) as legacy_connection:
+            legacy_connection.execute(
+                """
+                CREATE TABLE cards (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    order_number TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL DEFAULT 'imported',
+                    machine_id INTEGER,
+                    machine_sequence INTEGER
+                )
+                """
+            )
+
+        monkeypatch.setattr(db, "DATA_DIR", legacy_data_dir)
+        monkeypatch.setattr(db, "DB_PATH", legacy_db_path)
+
+        db.init_db()
+        db.init_db()
+
+        with db.connect() as migrated_connection:
+            columns = {
+                row["name"]
+                for row in migrated_connection.execute("PRAGMA table_info(cards)").fetchall()
+            }
+    finally:
+        shutil.rmtree(legacy_data_dir, ignore_errors=True)
+
+    assert "max_roll_weight" in columns
+
+
+def test_csv_import_ignores_max_roll_weight_alias(connection):
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=[
+            "order_number",
+            "customer",
+            "product_type",
+            "quantity_1",
+            "unit_1",
+            "material",
+            "max_roll_weight_kg",
+            "size_thickness",
+            "extrusion_flag",
+            "raw_material_a",
+            "packaging_method",
+        ],
+        lineterminator="\n",
+    )
+    writer.writeheader()
+    writer.writerow(
+        {
+            "order_number": "25290",
+            "customer": "Alias Customer",
+            "product_type": "PE film",
+            "quantity_1": "500",
+            "unit_1": "kg",
+            "material": "LDPE",
+            "max_roll_weight_kg": "75",
+            "size_thickness": "600/0.050",
+            "extrusion_flag": "da",
+            "raw_material_a": "LDPE A",
+            "packaging_method": "rolls",
+        }
+    )
+
+    result = import_cards_from_csv(
+        "alias.csv",
+        output.getvalue().encode("utf-8"),
+        overwrite_existing=False,
+    )
+    card = connection.execute(
+        "SELECT max_roll_weight FROM cards WHERE order_number = '25290'"
+    ).fetchone()
+
+    assert result.rows_imported == 1
+    assert card["max_roll_weight"] is None
 
 
 def test_csv_import_skips_rows_without_extrusion_step(connection):
@@ -105,7 +198,7 @@ def test_csv_import_skips_rows_without_extrusion_step(connection):
     assert result.rows_imported == 0
     assert result.skipped == 1
     assert result.row_results[0].action == "skipped"
-    assert "no extrusion step" in result.row_results[0].message
+    assert "няма екструдиране" in result.row_results[0].message
     assert card is None
 
 
@@ -133,7 +226,7 @@ def test_duplicate_import_is_skipped_by_default(connection):
     assert duplicate.row_results[0].row_number == 2
     assert duplicate.row_results[0].order_number == "25280"
     assert duplicate.row_results[0].action == "skipped"
-    assert "overwrite" in duplicate.row_results[0].message
+    assert "обновяване" in duplicate.row_results[0].message
     assert card["customer"] == "Original Customer"
 
 
@@ -158,7 +251,7 @@ def test_duplicate_row_inside_same_csv_is_reported_and_skipped(connection):
     assert result.duplicate_rows == ["25288"]
     assert [row.action for row in result.row_results] == ["created", "skipped"]
     assert result.row_results[1].row_number == 3
-    assert "inside this CSV" in result.row_results[1].message
+    assert "Дублиран номер на поръчка" in result.row_results[1].message
     assert card["customer"] == "First Customer"
 
 
@@ -177,7 +270,7 @@ def test_missing_order_number_row_is_reported_and_skipped(connection):
     assert result.row_results[0].row_number == 2
     assert result.row_results[0].order_number == ""
     assert result.row_results[0].action == "skipped"
-    assert result.row_results[0].message == "Missing order_number."
+    assert result.row_results[0].message == "Липсва номер на поръчка."
     assert card_count == 0
 
 
@@ -194,13 +287,18 @@ def test_missing_required_columns_are_reported_as_file_level_blocker(connection)
     assert result.rows_imported == 0
     assert result.row_results[0].row_number is None
     assert result.row_results[0].action == "blocked"
-    assert "Missing required CSV columns" in result.row_results[0].message
+    assert "Липсват задължителни CSV колони" in result.row_results[0].message
     assert card_count == 0
 
 
 def test_overwrite_import_updates_imported_fields_and_preserves_production_data(connection):
     card_id = import_one_ready_card("25281")
-    db.release_card(card_id, machine_id=2, machine_sequence=1)
+    db.release_card(
+        card_id,
+        machine_id=2,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    )
 
     connection.execute(
         """
@@ -245,7 +343,7 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
 
     card = connection.execute(
         """
-        SELECT status, machine_id, machine_sequence, customer, raw_material_a,
+        SELECT status, machine_id, machine_sequence, customer, max_roll_weight, raw_material_a,
                tare_weight, actual_raw_material_used, raw_material_brand_grade,
                raw_material_batch_lot, first_started_at
         FROM cards
@@ -269,6 +367,7 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
     assert card["machine_id"] == 2
     assert card["machine_sequence"] == 1
     assert card["customer"] == "Updated Customer"
+    assert card["max_roll_weight"] == "60.0"
     assert card["raw_material_a"] == "Updated LDPE"
     assert card["tare_weight"] == 1.25
     assert card["actual_raw_material_used"] == "Actual LDPE"
@@ -282,10 +381,15 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
 def test_release_succeeds_for_ready_cards(connection):
     card_id = import_one_ready_card("25282")
 
-    result = db.release_card(card_id, machine_id=1, machine_sequence=1)
+    result = db.release_card(
+        card_id,
+        machine_id=1,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    )
 
     card = connection.execute(
-        "SELECT status, machine_id, machine_sequence FROM cards WHERE id = ?",
+        "SELECT status, machine_id, machine_sequence, max_roll_weight FROM cards WHERE id = ?",
         (card_id,),
     ).fetchone()
 
@@ -293,6 +397,23 @@ def test_release_succeeds_for_ready_cards(connection):
     assert card["status"] == STATUS_PENDING
     assert card["machine_id"] == 1
     assert card["machine_sequence"] == 1
+    assert card["max_roll_weight"] == "60.0"
+
+
+def test_release_allows_blank_shift_manager_max_roll_weight(connection):
+    card_id = import_one_ready_card("25291")
+
+    result = db.release_card(card_id, machine_id=1, machine_sequence=1)
+    card = connection.execute(
+        "SELECT status, machine_id, machine_sequence, max_roll_weight FROM cards WHERE id = ?",
+        (card_id,),
+    ).fetchone()
+
+    assert result.ok
+    assert card["status"] == STATUS_PENDING
+    assert card["machine_id"] == 1
+    assert card["machine_sequence"] == 1
+    assert card["max_roll_weight"] in (None, "")
 
 
 def test_release_blocks_cards_without_usable_extrusion_fields(connection):
@@ -324,7 +445,7 @@ def test_release_blocks_cards_without_usable_extrusion_fields(connection):
     ).fetchone()
 
     assert not release_result.ok
-    assert "Card must have a usable extrusion step before release." in release_result.messages
+    assert "Картата трябва да има валидна стъпка за екструдиране преди изпращане." in release_result.messages
     assert card["status"] == STATUS_IMPORTED
     assert card["machine_id"] is None
     assert card["machine_sequence"] is None
@@ -333,9 +454,19 @@ def test_release_blocks_cards_without_usable_extrusion_fields(connection):
 def test_release_inserts_at_existing_position_and_normalizes_machine_sequence(connection):
     first_card_id = import_one_ready_card("25284")
     second_card_id = import_one_ready_card("25285")
-    assert db.release_card(first_card_id, machine_id=3, machine_sequence=1).ok
+    assert db.release_card(
+        first_card_id,
+        machine_id=3,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    ).ok
 
-    insert_result = db.release_card(second_card_id, machine_id=3, machine_sequence=1)
+    insert_result = db.release_card(
+        second_card_id,
+        machine_id=3,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    )
 
     cards = connection.execute(
         """
@@ -357,8 +488,18 @@ def test_release_inserts_at_existing_position_and_normalizes_machine_sequence(co
 def test_released_cards_appear_in_machine_queues(connection):
     first_card_id = import_one_ready_card("25286")
     second_card_id = import_one_ready_card("25287")
-    assert db.release_card(first_card_id, machine_id=4, machine_sequence=2).ok
-    assert db.release_card(second_card_id, machine_id=4, machine_sequence=1).ok
+    assert db.release_card(
+        first_card_id,
+        machine_id=4,
+        machine_sequence=2,
+        max_roll_weight="60.0",
+    ).ok
+    assert db.release_card(
+        second_card_id,
+        machine_id=4,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    ).ok
 
     queues = db.fetch_machine_queues()
     machine_4_cards = [

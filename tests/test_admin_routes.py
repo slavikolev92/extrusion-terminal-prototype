@@ -28,6 +28,15 @@ def test_admin_routes_are_registered():
     assert "/admin/cards/{card_id}/timing-segments/{segment_id}/delete" in route_paths
 
 
+def test_workstation_cancel_restore_routes_are_not_registered():
+    route_paths = {route.path for route in app.routes}
+
+    assert "/admin/cards/{card_id}/cancel" in route_paths
+    assert "/admin/cards/{card_id}/restore" in route_paths
+    assert "/terminal/cards/{card_id}/cancel" not in route_paths
+    assert "/terminal/cards/{card_id}/restore" not in route_paths
+
+
 def test_admin_redirects_to_import():
     response = asyncio.run(admin())
 

@@ -55,7 +55,13 @@ def import_ready_card(order_number: str) -> int:
 def release_ready_card(order_number: str, machine_id: int, machine_sequence: int) -> int:
     card_id = import_ready_card(order_number)
     version = db.fetch_admin_card_detail(card_id)["version"]
-    assert db.release_card(card_id, machine_id, machine_sequence, version).ok
+    assert db.release_card(
+        card_id,
+        machine_id,
+        machine_sequence,
+        version,
+        max_roll_weight="60.0",
+    ).ok
     return card_id
 
 
@@ -121,6 +127,18 @@ def test_terminal_snapshot_marks_selected_card_missing_when_not_terminal_visible
             """,
             (STATUS_IMPORTED, card_id),
         )
+
+    snapshot = db.terminal_snapshot(selected_card_id=card_id)
+
+    assert snapshot["selected_card"] is None
+    assert snapshot["selected_card_missing"] is True
+    assert card_id not in {card["id"] for card in snapshot["active_cards"]}
+    assert f"missing:{card_id}" in snapshot["signature"]
+
+
+def test_terminal_snapshot_marks_cancelled_selected_card_missing(connection):
+    card_id = release_ready_card("25907", machine_id=4, machine_sequence=1)
+    assert db.cancel_card(card_id, card_version(card_id)).ok
 
     snapshot = db.terminal_snapshot(selected_card_id=card_id)
 

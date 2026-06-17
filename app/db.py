@@ -17,10 +17,11 @@ from .constants import (
     STATUS_PAUSED,
     STATUS_PENDING,
     STATUS_RUNNING,
+    TERMINAL_VISIBLE_STATUSES,
 )
 from .rules import RuleResult
 
-STALE_CARD_MESSAGE = "Card changed after this page was loaded. Reload the card and try again."
+STALE_CARD_MESSAGE = "Картата е променена след зареждането на страницата. Презаредете и опитайте отново."
 TIMING_END_REASONS = ("pause", "finish", "correction")
 TIMING_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -73,6 +74,7 @@ CREATE TABLE IF NOT EXISTS cards (
     unit_2 TEXT,
     product_form TEXT,
     material TEXT,
+    max_roll_weight TEXT,
     size_thickness TEXT,
     notes TEXT,
 
@@ -171,6 +173,7 @@ def init_db() -> None:
         connection.executescript(SCHEMA_SQL)
         # Existing pilot databases may still have legacy cards.validation_status;
         # current code ignores it and validates current card fields directly.
+        ensure_column(connection, "cards", "max_roll_weight", "TEXT")
         connection.executemany(
             """
             INSERT INTO machines (id, name, is_operational, display_order)
@@ -181,6 +184,22 @@ def init_db() -> None:
                 updated_at = CURRENT_TIMESTAMP
             """,
             MACHINE_SEED,
+        )
+
+
+def ensure_column(
+    connection: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    column_definition: str,
+) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+    if column_name not in columns:
+        connection.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
         )
 
 
@@ -206,8 +225,15 @@ def fetch_cards_by_status(statuses: tuple[str, ...]) -> list[dict[str, Any]]:
         rows = connection.execute(
             f"""
             SELECT id, order_number, status, machine_id, machine_sequence,
-                   customer, product_type, quantity_1, unit_1, tare_weight,
-                   version, updated_at
+                   customer, product_type, quantity_1, unit_1, quantity_2, unit_2,
+                   product_form, material, size_thickness, max_roll_weight,
+                   tare_weight, finished_at, version, updated_at,
+                   COALESCE((
+                       SELECT SUM(CAST(gross_weight AS NUMERIC))
+                       FROM roll_entries
+                       WHERE roll_entries.card_id = cards.id
+                         AND gross_weight IS NOT NULL
+                   ), 0) AS total_gross_weight
             FROM cards
             WHERE status IN ({placeholders})
             ORDER BY machine_id IS NULL, machine_id, machine_sequence IS NULL,
@@ -219,9 +245,8 @@ def fetch_cards_by_status(statuses: tuple[str, ...]) -> list[dict[str, Any]]:
 
 
 def terminal_snapshot(selected_card_id: int | None = None) -> dict[str, Any]:
-    terminal_visible_statuses = (*ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES)
     active_placeholders = ", ".join("?" for _ in ACTIVE_TERMINAL_STATUSES)
-    visible_placeholders = ", ".join("?" for _ in terminal_visible_statuses)
+    visible_placeholders = ", ".join("?" for _ in TERMINAL_VISIBLE_STATUSES)
 
     with connect() as connection:
         active_rows = connection.execute(
@@ -248,7 +273,7 @@ def terminal_snapshot(selected_card_id: int | None = None) -> dict[str, Any]:
                 WHERE id = ?
                   AND status IN ({visible_placeholders})
                 """,
-                (selected_card_id, *terminal_visible_statuses),
+                (selected_card_id, *TERMINAL_VISIBLE_STATUSES),
             ).fetchone()
             if selected_row:
                 selected_card = dict(selected_row)
@@ -358,7 +383,7 @@ def fetch_admin_card_detail(card_id: int) -> dict[str, Any] | None:
                    machine_sequence, order_date, delivery_date,
                    customer, city, product_type, quantity_1, unit_1,
                    quantity_2, unit_2, product_form, material,
-                   size_thickness, notes, extrusion_flag, extrusion_folding,
+                   max_roll_weight, size_thickness, notes, extrusion_flag, extrusion_folding,
                    extrusion_next_operation, extrusion_treatment,
                    raw_material_a, raw_material_b, raw_material_c,
                    linear_pe, antistatic, masterbatch, chalk,
@@ -394,15 +419,14 @@ def fetch_admin_card_detail(card_id: int) -> dict[str, Any] | None:
 
 
 def fetch_terminal_card_detail(card_id: int) -> dict[str, Any] | None:
-    terminal_statuses = (*ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES)
-    placeholders = ", ".join("?" for _ in terminal_statuses)
+    placeholders = ", ".join("?" for _ in TERMINAL_VISIBLE_STATUSES)
     with connect() as connection:
         row = connection.execute(
             f"""
             SELECT id, order_number, status, machine_id, machine_sequence,
                    order_date, delivery_date, customer, city,
                    product_type, quantity_1, unit_1, quantity_2, unit_2,
-                   product_form, material, size_thickness, notes,
+                   product_form, material, max_roll_weight, size_thickness, notes,
                    extrusion_folding, extrusion_next_operation,
                    extrusion_treatment, raw_material_a, raw_material_b,
                    raw_material_c, linear_pe, antistatic, masterbatch, chalk,
@@ -414,7 +438,7 @@ def fetch_terminal_card_detail(card_id: int) -> dict[str, Any] | None:
             WHERE id = ?
               AND status IN ({placeholders})
             """,
-            (card_id, *terminal_statuses),
+            (card_id, *TERMINAL_VISIBLE_STATUSES),
         ).fetchone()
         if not row:
             return None
@@ -525,7 +549,7 @@ def start_production_timing(card_id: int, loaded_version: int) -> RuleResult:
             card=card,
             loaded_version=loaded_version,
             expected_status=STATUS_PENDING,
-            expected_status_message="Only pending cards can be started.",
+            expected_status_message="Само карти със статус Изчакване могат да бъдат стартирани.",
         )
         if not result.ok:
             return result
@@ -535,13 +559,13 @@ def start_production_timing(card_id: int, loaded_version: int) -> RuleResult:
             return RuleResult(
                 False,
                 (
-                    f"Machine {card['machine_id']} is occupied by order "
+                    f"Машина {card['machine_id']} е заета от поръчка "
                     f"{occupied_card['order_number']}.",
                 ),
             )
 
         if has_open_timing_segment(connection, card_id):
-            return RuleResult(False, ("Card already has an active timing segment.",))
+            return RuleResult(False, ("Картата вече има активен времеви сегмент.",))
 
         now = current_database_timestamp(connection)
         try:
@@ -567,10 +591,10 @@ def start_production_timing(card_id: int, loaded_version: int) -> RuleResult:
             connection.rollback()
             return RuleResult(
                 False,
-                (f"Machine {card['machine_id']} already has a running card.",),
+                (f"Машина {card['machine_id']} вече има карта в изработване.",),
             )
 
-    return RuleResult(True, (f"Production timing started for order {card['order_number']}.",))
+    return RuleResult(True, (f"Времето за поръчка {card['order_number']} е стартирано.",))
 
 
 def pause_production_timing(card_id: int, loaded_version: int) -> RuleResult:
@@ -580,14 +604,14 @@ def pause_production_timing(card_id: int, loaded_version: int) -> RuleResult:
             card=card,
             loaded_version=loaded_version,
             expected_status=STATUS_RUNNING,
-            expected_status_message="Only running cards can be paused.",
+            expected_status_message="Само карти в изработване могат да бъдат паузирани.",
         )
         if not result.ok:
             return result
 
         open_segment = fetch_open_timing_segment(connection, card_id)
         if not open_segment:
-            return RuleResult(False, ("Card has no active timing segment to pause.",))
+            return RuleResult(False, ("Картата няма активен времеви сегмент за пауза.",))
 
         now = current_database_timestamp(connection)
         connection.execute(
@@ -611,7 +635,7 @@ def pause_production_timing(card_id: int, loaded_version: int) -> RuleResult:
             (STATUS_PAUSED, card_id),
         )
 
-    return RuleResult(True, (f"Production timing paused for order {card['order_number']}.",))
+    return RuleResult(True, (f"Времето за поръчка {card['order_number']} е паузирано.",))
 
 
 def resume_production_timing(card_id: int, loaded_version: int) -> RuleResult:
@@ -621,7 +645,7 @@ def resume_production_timing(card_id: int, loaded_version: int) -> RuleResult:
             card=card,
             loaded_version=loaded_version,
             expected_status=STATUS_PAUSED,
-            expected_status_message="Only paused cards can be resumed.",
+            expected_status_message="Само паузирани карти могат да бъдат продължени.",
         )
         if not result.ok:
             return result
@@ -631,13 +655,13 @@ def resume_production_timing(card_id: int, loaded_version: int) -> RuleResult:
             return RuleResult(
                 False,
                 (
-                    f"Machine {card['machine_id']} is occupied by order "
+                    f"Машина {card['machine_id']} е заета от поръчка "
                     f"{occupied_card['order_number']}.",
                 ),
             )
 
         if has_open_timing_segment(connection, card_id):
-            return RuleResult(False, ("Card already has an active timing segment.",))
+            return RuleResult(False, ("Картата вече има активен времеви сегмент.",))
 
         now = current_database_timestamp(connection)
         try:
@@ -662,10 +686,10 @@ def resume_production_timing(card_id: int, loaded_version: int) -> RuleResult:
             connection.rollback()
             return RuleResult(
                 False,
-                (f"Machine {card['machine_id']} already has a running card.",),
+                (f"Машина {card['machine_id']} вече има карта в изработване.",),
             )
 
-    return RuleResult(True, (f"Production timing resumed for order {card['order_number']}.",))
+    return RuleResult(True, (f"Времето за поръчка {card['order_number']} е продължено.",))
 
 
 def finish_card(card_id: int, loaded_version: int) -> RuleResult:
@@ -685,7 +709,7 @@ def finish_card(card_id: int, loaded_version: int) -> RuleResult:
             if card["status"] != STATUS_RUNNING:
                 return RuleResult(
                     False,
-                    ("Paused cards should not have an active timing segment. Reload the card.",),
+                    ("Паузирани карти не трябва да имат активен времеви сегмент. Презаредете картата.",),
                 )
             connection.execute(
                 """
@@ -710,7 +734,7 @@ def finish_card(card_id: int, loaded_version: int) -> RuleResult:
             (STATUS_COMPLETED, now, card_id),
         )
 
-    return RuleResult(True, (f"Order {card['order_number']} finished.",))
+    return RuleResult(True, (f"Поръчка {card['order_number']} е приключена.",))
 
 
 def cancel_card(card_id: int, loaded_version: int) -> RuleResult:
@@ -746,7 +770,7 @@ def cancel_card(card_id: int, loaded_version: int) -> RuleResult:
             (STATUS_CANCELLED, now, card_id),
         )
 
-    return RuleResult(True, (f"Order {card['order_number']} cancelled.",))
+    return RuleResult(True, (f"Поръчка {card['order_number']} е анулирана.",))
 
 
 def restore_cancelled_card(card_id: int, loaded_version: int) -> RuleResult:
@@ -786,8 +810,8 @@ def restore_cancelled_card(card_id: int, loaded_version: int) -> RuleResult:
                 return RuleResult(
                     False,
                     (
-                        f"Machine {card['machine_id']} already has active sequence "
-                        f"{card['machine_sequence']} on order {duplicate['order_number']}.",
+                        f"Машина {card['machine_id']} вече има активен ред "
+                        f"{card['machine_sequence']} за поръчка {duplicate['order_number']}.",
                     ),
                 )
 
@@ -807,10 +831,10 @@ def restore_cancelled_card(card_id: int, loaded_version: int) -> RuleResult:
             connection.rollback()
             return RuleResult(
                 False,
-                ("Restore failed because the machine/sequence is already active.",),
+                ("Възстановяването не бе записано, защото тази машина и ред вече са заети.",),
             )
 
-    return RuleResult(True, (f"Order {card['order_number']} restored to pending.",))
+    return RuleResult(True, (f"Поръчка {card['order_number']} е възстановена със статус Изчакване.",))
 
 
 def add_timing_segment(
@@ -855,9 +879,9 @@ def add_timing_segment(
             touch_card(connection, card_id)
         except sqlite3.IntegrityError:
             connection.rollback()
-            return RuleResult(False, ("Card already has an open timing segment.",))
+            return RuleResult(False, ("Картата вече има отворен времеви сегмент.",))
 
-    return RuleResult(True, (f"Timing segment added for order {card['order_number']}.",))
+    return RuleResult(True, (f"Времеви сегмент е добавен за поръчка {card['order_number']}.",))
 
 
 def update_timing_segment(
@@ -888,7 +912,7 @@ def update_timing_segment(
             (segment_id, card_id),
         ).fetchone()
         if not segment:
-            return RuleResult(False, ("Timing segment was not found.",))
+            return RuleResult(False, ("Времевият сегмент не е намерен.",))
 
         invariant_result = validate_timing_segment_change(
             connection=connection,
@@ -922,9 +946,9 @@ def update_timing_segment(
             touch_card(connection, card_id)
         except sqlite3.IntegrityError:
             connection.rollback()
-            return RuleResult(False, ("Card already has an open timing segment.",))
+            return RuleResult(False, ("Картата вече има отворен времеви сегмент.",))
 
-    return RuleResult(True, ("Timing segment saved.",))
+    return RuleResult(True, ("Времевият сегмент е записан.",))
 
 
 def delete_timing_segment(card_id: int, segment_id: int, loaded_version: int) -> RuleResult:
@@ -944,7 +968,7 @@ def delete_timing_segment(card_id: int, segment_id: int, loaded_version: int) ->
             (segment_id, card_id),
         ).fetchone()
         if not segment:
-            return RuleResult(False, ("Timing segment was not found.",))
+            return RuleResult(False, ("Времевият сегмент не е намерен.",))
 
         delete_result = validate_timing_segment_delete(connection, card, segment_id)
         if not delete_result.ok:
@@ -964,7 +988,7 @@ def delete_timing_segment(card_id: int, segment_id: int, loaded_version: int) ->
             if segment_count <= 1:
                 return RuleResult(
                     False,
-                    ("Completed cards must keep at least one timing segment.",),
+                    ("Завършените карти трябва да запазят поне един времеви сегмент.",),
                 )
 
         connection.execute(
@@ -978,7 +1002,7 @@ def delete_timing_segment(card_id: int, segment_id: int, loaded_version: int) ->
         refresh_card_timing_markers(connection, card_id)
         touch_card(connection, card_id)
 
-    return RuleResult(True, ("Timing segment deleted.",))
+    return RuleResult(True, ("Времевият сегмент е изтрит.",))
 
 
 def parse_timing_segment_values(
@@ -991,21 +1015,21 @@ def parse_timing_segment_values(
     cleaned_end = ended_at.strip()
     cleaned_reason = end_reason.strip()
 
-    parsed_start = parse_timing_timestamp(cleaned_start, "Started at", messages)
+    parsed_start = parse_timing_timestamp(cleaned_start, "Начало", messages)
     parsed_end = None
     if cleaned_end:
-        parsed_end = parse_timing_timestamp(cleaned_end, "Ended at", messages)
+        parsed_end = parse_timing_timestamp(cleaned_end, "Край", messages)
 
     if parsed_start and parsed_end and parsed_end < parsed_start:
-        messages.append("Ended at cannot be earlier than started at.")
+        messages.append("Краят не може да бъде преди началото.")
 
     if cleaned_end:
         if not cleaned_reason:
-            messages.append("End reason is required when ended at is set.")
+            messages.append("Причина е задължителна, когато е въведен край.")
         elif cleaned_reason not in TIMING_END_REASONS:
-            messages.append("End reason must be pause, finish, or correction.")
+            messages.append("Причината трябва да бъде пауза, приключване или корекция.")
     elif cleaned_reason:
-        messages.append("End reason must be blank for an open segment.")
+        messages.append("Причината трябва да е празна за отворен сегмент.")
 
     result = RuleResult(not messages, tuple(messages))
     if not result.ok:
@@ -1025,13 +1049,13 @@ def parse_timing_timestamp(
     messages: list[str],
 ) -> datetime | None:
     if not value:
-        messages.append(f"{label} is required.")
+        messages.append(f"{label} е задължително поле.")
         return None
 
     try:
         return datetime.strptime(value, TIMING_TIMESTAMP_FORMAT)
     except ValueError:
-        messages.append(f"{label} must use YYYY-MM-DD HH:MM:SS.")
+        messages.append(f"{label} трябва да използва формат YYYY-MM-DD HH:MM:SS.")
         return None
 
 
@@ -1042,7 +1066,7 @@ def validate_timing_segment_change(
     segment_id: int | None = None,
 ) -> RuleResult:
     if ended_at is None and card["status"] != STATUS_RUNNING:
-        return RuleResult(False, ("Only running cards can have an open timing segment.",))
+        return RuleResult(False, ("Само карти в изработване могат да имат отворен времеви сегмент.",))
 
     if ended_at is None:
         query = """
@@ -1057,7 +1081,7 @@ def validate_timing_segment_change(
             values.append(segment_id)
         existing_open = connection.execute(query, values).fetchone()
         if existing_open:
-            return RuleResult(False, ("Card already has an open timing segment.",))
+            return RuleResult(False, ("Картата вече има отворен времеви сегмент.",))
     elif card["status"] == STATUS_RUNNING:
         open_segment_count = count_open_timing_segments(
             connection,
@@ -1065,7 +1089,7 @@ def validate_timing_segment_change(
             exclude_segment_id=segment_id,
         )
         if open_segment_count == 0:
-            return RuleResult(False, ("Running cards must keep an open timing segment.",))
+            return RuleResult(False, ("Картите в изработване трябва да запазят отворен времеви сегмент.",))
 
     return RuleResult(True)
 
@@ -1092,7 +1116,7 @@ def validate_timing_segment_delete(
                 exclude_segment_id=segment_id,
             )
             if open_segment_count == 0:
-                return RuleResult(False, ("Running cards must keep an open timing segment.",))
+                return RuleResult(False, ("Картите в изработване трябва да запазят отворен времеви сегмент.",))
 
     return RuleResult(True)
 
@@ -1183,10 +1207,10 @@ def validate_card_ready_to_finish(
     card: sqlite3.Row | None,
 ) -> RuleResult:
     if not card:
-        return RuleResult(False, ("Card was not found in the active terminal queue.",))
+        return RuleResult(False, ("Картата не е намерена в активната опашка на терминала.",))
 
     if card["tare_weight"] is None:
-        return RuleResult(False, ("Tare weight is required before finishing.",))
+        return RuleResult(False, ("Шпула е задължителна преди приключване.",))
 
     segment_count = connection.execute(
         """
@@ -1197,7 +1221,7 @@ def validate_card_ready_to_finish(
         (card_id,),
     ).fetchone()[0]
     if int(segment_count or 0) == 0:
-        return RuleResult(False, ("Production timing must be started before finishing.",))
+        return RuleResult(False, ("Времето трябва да бъде стартирано преди приключване.",))
 
     roll_rows = connection.execute(
         """
@@ -1210,7 +1234,7 @@ def validate_card_ready_to_finish(
     ).fetchall()
     gross_rolls = [roll for roll in roll_rows if roll["gross_weight"] is not None]
     if not gross_rolls:
-        return RuleResult(False, ("At least one gross roll weight is required before finishing.",))
+        return RuleResult(False, ("Поне едно бруто тегло на ролка е задължително преди приключване.",))
 
     found_empty_roll = False
     for roll in roll_rows:
@@ -1219,7 +1243,7 @@ def validate_card_ready_to_finish(
         elif found_empty_roll:
             return RuleResult(
                 False,
-                ("Empty roll gaps must be corrected before finishing.",),
+                ("Празните редове между ролките трябва да бъдат коригирани преди приключване.",),
             )
 
     return RuleResult(True)
@@ -1247,7 +1271,7 @@ def validate_timing_action_card(
     expected_status_message: str,
 ) -> RuleResult:
     if not card:
-        return RuleResult(False, ("Card was not found in the active terminal queue.",))
+        return RuleResult(False, ("Картата не е намерена в активната опашка на терминала.",))
 
     if int(card["version"]) != loaded_version:
         return RuleResult(
@@ -1256,7 +1280,7 @@ def validate_timing_action_card(
         )
 
     if not card["machine_id"]:
-        return RuleResult(False, ("Card must be assigned to a machine before timing starts.",))
+        return RuleResult(False, ("Картата трябва да бъде назначена към машина преди старт на времето.",))
 
     if card["status"] != expected_status:
         return RuleResult(False, (expected_status_message,))
@@ -1327,28 +1351,28 @@ def parse_weight(value: str, field_name: str, *, allow_blank: bool) -> tuple[Dec
     if not cleaned:
         if allow_blank:
             return None, None
-        return None, f"{field_name} is required."
+        return None, f"{field_name} е задължително поле."
 
     try:
         parsed = Decimal(cleaned)
     except InvalidOperation:
-        return None, f"{field_name} must be a number."
+        return None, f"{field_name} трябва да е число."
 
     if not parsed.is_finite():
-        return None, f"{field_name} must be a number."
+        return None, f"{field_name} трябва да е число."
 
     if parsed < 0:
-        return None, f"{field_name} must be 0 or higher."
+        return None, f"{field_name} трябва да е 0 или по-голямо."
 
     if parsed.as_tuple().exponent < -2:
-        return None, f"{field_name} supports at most two decimal places."
+        return None, f"{field_name} поддържа най-много два знака след десетичната запетая."
 
     return parsed, None
 
 
 def validate_loaded_card_version(card: sqlite3.Row | None, loaded_version: int) -> RuleResult:
     if not card:
-        return RuleResult(False, ("Card was not found.",))
+        return RuleResult(False, ("Картата не е намерена.",))
 
     if int(card["version"]) != loaded_version:
         return RuleResult(False, (STALE_CARD_MESSAGE,))
@@ -1369,7 +1393,7 @@ def net_weight_for_gross(gross_weight: Decimal, tare_weight: Decimal | None) -> 
 def update_tare_weight(card_id: int, loaded_version: int, tare_weight: str) -> RuleResult:
     parsed_tare, parse_error = parse_weight(
         tare_weight,
-        "Tare weight",
+        "Шпула",
         allow_blank=True,
     )
     if parse_error:
@@ -1409,7 +1433,7 @@ def update_tare_weight(card_id: int, loaded_version: int, tare_weight: str) -> R
             if parsed_tare is not None and net is None:
                 return RuleResult(
                     False,
-                    ("Tare weight cannot be greater than an existing gross roll weight.",),
+                    ("Шпулата не може да бъде по-голяма от съществуващо бруто тегло на ролка.",),
                 )
             recalculated_rolls.append(
                 (decimal_to_storage(net) if net is not None else None, int(roll["id"]))
@@ -1438,14 +1462,14 @@ def update_tare_weight(card_id: int, loaded_version: int, tare_weight: str) -> R
             recalculated_rolls,
         )
 
-    message = "Tare weight cleared." if parsed_tare is None else "Tare weight saved."
+    message = "Шпулата е изчистена." if parsed_tare is None else "Шпулата е записана."
     return RuleResult(True, (message,))
 
 
 def add_roll_gross_weight(card_id: int, loaded_version: int, gross_weight: str) -> RuleResult:
     parsed_gross, parse_error = parse_weight(
         gross_weight,
-        "Gross weight",
+        "Бруто тегло",
         allow_blank=False,
     )
     if parse_error:
@@ -1467,7 +1491,7 @@ def add_roll_gross_weight(card_id: int, loaded_version: int, gross_weight: str) 
         if tare is not None and net is None:
             return RuleResult(
                 False,
-                ("Gross weight cannot be lower than the tare weight.",),
+                ("Бруто теглото не може да бъде по-малко от шпулата.",),
             )
 
         next_roll_number = int(
@@ -1509,7 +1533,7 @@ def add_roll_gross_weight(card_id: int, loaded_version: int, gross_weight: str) 
             (card_id,),
         )
 
-    return RuleResult(True, (f"Roll {next_roll_number} saved.",))
+    return RuleResult(True, (f"Ролка {next_roll_number} е записана.",))
 
 
 def update_roll_gross_weight(
@@ -1520,7 +1544,7 @@ def update_roll_gross_weight(
 ) -> RuleResult:
     parsed_gross, parse_error = parse_weight(
         gross_weight,
-        "Gross weight",
+        "Бруто тегло",
         allow_blank=True,
     )
     if parse_error:
@@ -1546,7 +1570,7 @@ def update_roll_gross_weight(
             (roll_id, card_id),
         ).fetchone()
         if not roll:
-            return RuleResult(False, ("Roll entry was not found.",))
+            return RuleResult(False, ("Ролката не е намерена.",))
 
         if (
             card["status"] == STATUS_COMPLETED
@@ -1567,7 +1591,7 @@ def update_roll_gross_weight(
             if gross_roll_count <= 1:
                 return RuleResult(
                     False,
-                    ("Completed cards must keep at least one gross roll weight.",),
+                    ("Завършените карти трябва да запазят поне едно бруто тегло на ролка.",),
                 )
 
         tare = decimal_from_database(card["tare_weight"])
@@ -1575,7 +1599,7 @@ def update_roll_gross_weight(
         if tare is not None and parsed_gross is not None and net is None:
             return RuleResult(
                 False,
-                ("Gross weight cannot be lower than the tare weight.",),
+                ("Бруто теглото не може да бъде по-малко от шпулата.",),
             )
 
         connection.execute(
@@ -1602,7 +1626,7 @@ def update_roll_gross_weight(
             (card_id,),
         )
 
-    return RuleResult(True, (f"Roll {roll['roll_number']} saved.",))
+    return RuleResult(True, (f"Ролка {roll['roll_number']} е записана.",))
 
 
 def delete_roll_entry(card_id: int, roll_id: int, loaded_version: int) -> RuleResult:
@@ -1626,7 +1650,7 @@ def delete_roll_entry(card_id: int, roll_id: int, loaded_version: int) -> RuleRe
             (roll_id, card_id),
         ).fetchone()
         if not roll:
-            return RuleResult(False, ("Roll entry was not found.",))
+            return RuleResult(False, ("Ролката не е намерена.",))
 
         if card["status"] == STATUS_COMPLETED and roll["gross_weight"] is not None:
             gross_roll_count = int(
@@ -1643,7 +1667,7 @@ def delete_roll_entry(card_id: int, roll_id: int, loaded_version: int) -> RuleRe
             if gross_roll_count <= 1:
                 return RuleResult(
                     False,
-                    ("Completed cards must keep at least one gross roll weight.",),
+                    ("Завършените карти трябва да запазят поне едно бруто тегло на ролка.",),
                 )
 
         deleted_roll_number = int(roll["roll_number"])
@@ -1697,7 +1721,7 @@ def delete_roll_entry(card_id: int, roll_id: int, loaded_version: int) -> RuleRe
             (card_id,),
         )
 
-    return RuleResult(True, (f"Roll {deleted_roll_number} deleted. Remaining rolls renumbered.",))
+    return RuleResult(True, (f"Ролка {deleted_roll_number} е изтрита. Оставащите ролки са преномерирани.",))
 
 
 def fetch_roll_action_card(
@@ -1718,12 +1742,12 @@ def fetch_roll_action_card(
 
 def validate_card_allows_roll_entry(card: sqlite3.Row | None) -> RuleResult:
     if not card:
-        return RuleResult(False, ("Card was not found for roll entry.",))
+        return RuleResult(False, ("Картата не е намерена за въвеждане на ролка.",))
 
     if card["status"] not in (STATUS_RUNNING, STATUS_COMPLETED):
         return RuleResult(
             False,
-            ("Roll weights can only be changed while the card is running or completed.",),
+            ("Теглата на ролките могат да се променят само когато картата е в изработване или завършена.",),
         )
 
     return RuleResult(True)
@@ -1737,19 +1761,22 @@ def update_admin_imported_fields(
     from .importer import IMPORT_FIELDS, card_has_usable_extrusion_step
 
     cleaned_fields = {field: str(fields.get(field, "")).strip() for field in IMPORT_FIELDS}
+    submitted_max_roll_weight = (
+        str(fields["max_roll_weight"]).strip() if "max_roll_weight" in fields else None
+    )
     if not cleaned_fields["order_number"]:
-        return RuleResult(False, ("Order number is required.",))
+        return RuleResult(False, ("Номерът на поръчката е задължителен.",))
 
     if not card_has_usable_extrusion_step(cleaned_fields):
         return RuleResult(
             False,
-            ("Imported fields must keep a usable extrusion step before saving.",),
+            ("Импортираните полета трябва да запазят валидна стъпка за екструдиране преди запис.",),
         )
 
     with connect() as connection:
         card = connection.execute(
             """
-            SELECT id, order_number, version
+            SELECT id, order_number, max_roll_weight, version
             FROM cards
             WHERE id = ?
             """,
@@ -1769,15 +1796,22 @@ def update_admin_imported_fields(
             (cleaned_fields["order_number"], card_id),
         ).fetchone()
         if duplicate:
-            return RuleResult(False, ("Order number already exists on another card.",))
+            return RuleResult(False, ("Номерът на поръчката вече съществува в друга карта.",))
 
         assignments = [
             *(f"{field} = ?" for field in IMPORT_FIELDS),
+            "max_roll_weight = ?",
             "version = version + 1",
             "updated_at = CURRENT_TIMESTAMP",
         ]
+        max_roll_weight = (
+            submitted_max_roll_weight
+            if submitted_max_roll_weight is not None
+            else str(card["max_roll_weight"] or "").strip()
+        )
         values: list[Any] = [
             *(cleaned_fields[field] for field in IMPORT_FIELDS),
+            max_roll_weight,
             card_id,
         ]
 
@@ -1802,9 +1836,9 @@ def update_admin_imported_fields(
                 )
         except sqlite3.IntegrityError:
             connection.rollback()
-            return RuleResult(False, ("Order number already exists on another card.",))
+            return RuleResult(False, ("Номерът на поръчката вече съществува в друга карта.",))
 
-    return RuleResult(True, ("Imported card fields saved.",))
+    return RuleResult(True, ("Данните на технологичната карта са записани.",))
 
 
 def delete_admin_imported_card(card_id: int, loaded_version: int) -> RuleResult:
@@ -1822,7 +1856,7 @@ def delete_admin_imported_card(card_id: int, loaded_version: int) -> RuleResult:
             return version_result
 
         if card["status"] != STATUS_IMPORTED:
-            return RuleResult(False, ("Only unreleased imported cards can be deleted.",))
+            return RuleResult(False, ("Само неизпратени импортирани технологични карти могат да се изтриват.",))
 
         roll_count = int(
             connection.execute(
@@ -1837,11 +1871,11 @@ def delete_admin_imported_card(card_id: int, loaded_version: int) -> RuleResult:
             ).fetchone()[0]
         )
         if roll_count or segment_count:
-            return RuleResult(False, ("Cards with production data cannot be deleted.",))
+            return RuleResult(False, ("Технологични карти с производствени данни не могат да се изтриват.",))
 
         connection.execute("DELETE FROM cards WHERE id = ?", (card_id,))
 
-    return RuleResult(True, (f"Order {card['order_number']} deleted.",))
+    return RuleResult(True, (f"Поръчка {card['order_number']} е изтрита.",))
 
 
 def update_terminal_material_fields(
@@ -1863,7 +1897,7 @@ def update_terminal_material_fields(
         ).fetchone()
 
         if not card:
-            return RuleResult(False, ("Card was not found.",))
+            return RuleResult(False, ("Картата не е намерена.",))
 
         if int(card["version"]) != loaded_version:
             return RuleResult(
@@ -1889,7 +1923,7 @@ def update_terminal_material_fields(
             ),
         )
 
-    return RuleResult(True, ("Material fields saved.",))
+    return RuleResult(True, ("Материалите са записани.",))
 
 
 def release_card(
@@ -1897,6 +1931,7 @@ def release_card(
     machine_id: int,
     machine_sequence: int,
     loaded_version: int | None = None,
+    max_roll_weight: str | None = None,
 ) -> RuleResult:
     from .importer import IMPORT_FIELDS, card_has_usable_extrusion_step
 
@@ -1906,7 +1941,7 @@ def release_card(
     with connect() as connection:
         card = connection.execute(
             f"""
-            SELECT id, order_number, status, version, {import_columns}
+            SELECT id, order_number, status, version, max_roll_weight, {import_columns}
             FROM cards
             WHERE id = ?
             """,
@@ -1914,7 +1949,7 @@ def release_card(
         ).fetchone()
 
         if not card:
-            return RuleResult(False, ("Card was not found.",))
+            return RuleResult(False, ("Картата не е намерена.",))
 
         if loaded_version is not None:
             version_result = validate_loaded_card_version(card, loaded_version)
@@ -1922,21 +1957,27 @@ def release_card(
                 return version_result
 
         if card["status"] != STATUS_IMPORTED:
-            messages.append("Only imported cards can be released.")
+            messages.append("Само импортирани технологични карти могат да се изпращат.")
 
         card_fields = {field: str(card[field] or "") for field in IMPORT_FIELDS}
         if not card_has_usable_extrusion_step(card_fields):
-            messages.append("Card must have a usable extrusion step before release.")
+            messages.append("Картата трябва да има валидна стъпка за екструдиране преди изпращане.")
+
+        release_max_roll_weight = (
+            str(max_roll_weight).strip()
+            if max_roll_weight is not None
+            else str(card["max_roll_weight"] or "").strip()
+        )
 
         machine_exists = connection.execute(
             "SELECT 1 FROM machines WHERE id = ?",
             (machine_id,),
         ).fetchone()
         if not machine_exists:
-            messages.append("Select a valid machine.")
+            messages.append("Изберете валидна машина.")
 
         if machine_sequence < 1:
-            messages.append("Sequence must be 1 or higher.")
+            messages.append("Редът трябва да е 1 или по-голям.")
 
         if messages:
             return RuleResult(False, tuple(messages))
@@ -1948,10 +1989,17 @@ def release_card(
                 UPDATE cards
                 SET status = ?,
                     machine_id = ?,
-                    machine_sequence = ?
+                    machine_sequence = ?,
+                    max_roll_weight = ?
                 WHERE id = ?
                 """,
-                (STATUS_PENDING, machine_id, temporary_sequence, card_id),
+                (
+                    STATUS_PENDING,
+                    machine_id,
+                    temporary_sequence,
+                    release_max_roll_weight,
+                    card_id,
+                ),
             )
             final_sequence = normalize_machine_queue(
                 connection,
@@ -1963,12 +2011,12 @@ def release_card(
             connection.rollback()
             return RuleResult(
                 False,
-                ("Release failed because the machine/sequence is already active.",),
+                ("Изпращането не бе записано, защото тази машина и ред вече са заети.",),
             )
 
     return RuleResult(
         True,
-        (f"Order {card['order_number']} released to machine {machine_id}, position {final_sequence}.",),
+        (f"Поръчка {card['order_number']} е изпратена към машина {machine_id}, ред {final_sequence}.",),
     )
 
 
@@ -1996,22 +2044,22 @@ def update_card_planning(
         if card["status"] not in ACTIVE_TERMINAL_STATUSES:
             return RuleResult(
                 False,
-                ("Only active terminal cards can be reassigned or resequenced.",),
+                ("Само активни технологични карти могат да се преместват.",),
             )
 
         messages: list[str] = []
         if card["machine_id"] is None:
-            messages.append("Card must already be assigned to a machine before replanning.")
+            messages.append("Картата трябва вече да е назначена към машина преди препланиране.")
 
         machine_exists = connection.execute(
             "SELECT 1 FROM machines WHERE id = ?",
             (machine_id,),
         ).fetchone()
         if not machine_exists:
-            messages.append("Select a valid machine.")
+            messages.append("Изберете валидна машина.")
 
         if machine_sequence < 1:
-            messages.append("Sequence must be 1 or higher.")
+            messages.append("Редът трябва да е 1 или по-голям.")
 
         if (
             card["status"] in (STATUS_RUNNING, STATUS_PAUSED)
@@ -2021,7 +2069,7 @@ def update_card_planning(
             occupied_card = fetch_occupied_machine_card(connection, card_id, machine_id)
             if occupied_card:
                 messages.append(
-                    f"Machine {machine_id} is occupied by order "
+                    f"Машина {machine_id} е заета от поръчка "
                     f"{occupied_card['order_number']}."
                 )
 
@@ -2053,12 +2101,12 @@ def update_card_planning(
             connection.rollback()
             return RuleResult(
                 False,
-                ("Planning update failed because the machine/sequence is already active.",),
+                ("Планирането не бе записано, защото тази машина и ред вече са заети.",),
             )
 
     return RuleResult(
         True,
-        (f"Order {card['order_number']} moved to machine {machine_id}, position {final_sequence}.",),
+        (f"Поръчка {card['order_number']} е преместена към машина {machine_id}, ред {final_sequence}.",),
     )
 
 
