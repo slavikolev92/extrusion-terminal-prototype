@@ -43,7 +43,7 @@ Explicitly out of scope unless the user confirms otherwise:
 - Do not silently discard or overwrite production data.
 - Preserve imported order-card data separately from terminal-entered roll/timing data.
 - Keep workbook automation read-only with respect to existing workbook data.
-- Use simple optimistic conflict detection for admin/terminal edits once editable card details are implemented.
+- Use simple optimistic conflict detection for admin/terminal edits; stale writes should warn and require reload.
 
 ## Implementation Rules
 
@@ -55,7 +55,7 @@ For each feature slice:
 4. Add or update automated checks for the behavior.
 5. Run one manual workflow test through the app.
 6. Review the changed code.
-7. Commit the milestone.
+7. Prepare the milestone for review. Stage or commit only when the user explicitly asks.
 
 Do not leave large uncommitted feature piles. Do not mix unrelated refactors into a feature slice.
 
@@ -85,7 +85,7 @@ Important rules must be enforced in backend code and, where practical, SQLite co
 
 ## Testing Expectations
 
-Before continuing beyond the current import/release milestone, add automated tests for existing behavior:
+Maintain automated tests for existing baseline behavior:
 
 - database initialization seeds machines `1` through `4`
 - CSV import creates imported cards
@@ -147,7 +147,7 @@ npx playwright test
 
 ## Review And Commit Policy
 
-Review every milestone before committing. The review should check:
+Review every milestone before asking to commit or when the user explicitly asks for a commit. The review should check:
 
 - data integrity
 - validation failures and user-visible messages
@@ -155,7 +155,7 @@ Review every milestone before committing. The review should check:
 - direct workflow behavior in `/admin` and `/terminal`
 - whether the change stayed within the confirmed scope
 
-Before each commit, run:
+Before any user-approved commit, run:
 
 - Python syntax/import checks
 - relevant automated tests
@@ -164,7 +164,10 @@ Before each commit, run:
 
 Current baseline test command:
 
-- `.\.test-runtime\codex-venv\Scripts\python.exe -m pytest`
+```bash
+source .venv/bin/activate
+python -m pytest
+```
 
 The automated tests live under `tests/` and must use temporary SQLite database paths. They must not mutate the real runtime database at `data/extrusion_terminal.sqlite3`.
 
