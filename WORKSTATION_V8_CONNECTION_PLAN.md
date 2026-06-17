@@ -60,7 +60,11 @@ If unrelated uncommitted changes exist, inspect and preserve them. Do not revert
 
 ## Slice 1 - Data Contract For Maximum Roll Weight
 
-Purpose: make `Макс. тегло ролка, кг` real imported card data before the V8 template depends on it.
+Status: complete.
+
+Purpose: make `Макс. тегло ролка, кг` real card data before the V8 template depends on it.
+
+Clarification: this value is not imported from the Excel/CSV source. It is entered by the shift manager after import and before release.
 
 ### Required Work
 
@@ -80,34 +84,33 @@ Recommended approach:
 - Add an idempotent helper such as `ensure_column(connection, "cards", "max_roll_weight", "TEXT")` or equivalent inside `init_db()`.
 - Do not rely on `CREATE TABLE IF NOT EXISTS` alone because existing DBs will not gain new columns.
 
-4. Add it to CSV import:
+4. Keep it out of CSV import:
 
-- `IMPORT_FIELDS`
-- `FIELD_ALIASES`
-- `csv_template()`
-- insert/update imported-card paths
-- re-import overwrite behavior
+- do not include it in `IMPORT_FIELDS`
+- do not include it in `FIELD_ALIASES`
+- do not include it in `csv_template()`
+- insert/update import paths must leave it blank/preserved
+- re-import overwrite must preserve the shift-manager-entered value
 
-Suggested aliases:
+5. Add it to shift-manager/admin entry paths:
 
-```text
-max_roll_weight
-maximum_roll_weight
-max_roll_kg
-max_roll_weight_kg
-```
+- admin card detail imported-field form
+- planning release form
+- the value is optional; release must work when it is blank
 
-5. Include it in card fetch helpers:
+6. Include it in card fetch helpers:
 
 - `fetch_admin_card_detail()`
 - `fetch_terminal_card_detail()`
 - any list/helper used by the live V8 template if needed
 
-6. Add/update tests:
+7. Add/update tests:
 
-- Import stores `max_roll_weight`.
-- Re-import updates imported/front-card `max_roll_weight`.
+- Import leaves `max_roll_weight` blank.
+- Re-import preserves shift-manager-entered `max_roll_weight`.
 - Re-import preserves production data: tare, rolls, timing, material corrections, status, machine assignment.
+- Release works when `max_roll_weight` is blank.
+- Release can save optional `max_roll_weight` from the planning form.
 - Terminal detail fetch includes `max_roll_weight`.
 
 ### Verification
@@ -127,8 +130,8 @@ Stop and review before continuing.
 Review questions:
 
 - Does `max_roll_weight` exist in both new and existing SQLite databases?
-- Is it treated as imported card data, not terminal-entered production data?
-- Does re-import update it while preserving production data?
+- Is it treated as shift-manager-entered card data, not CSV-imported data and not terminal-entered production data?
+- Does re-import preserve it while preserving production data?
 - Do tests cover the data contract?
 
 Required checkpoint updates:
@@ -137,6 +140,17 @@ Required checkpoint updates:
 - Update `IMPLEMENTATION_PLAN.md` if the milestone tracker should mention that the max-roll-weight data contract is complete.
 - Commit this slice before moving to Slice 2 if tests pass.
 
+Checkpoint 1 result:
+
+- `max_roll_weight` is present in the `cards` schema for new SQLite databases.
+- Existing SQLite databases receive `cards.max_roll_weight` through an idempotent `init_db()` migration.
+- Corrected after clarification: the field is shift-manager-entered card data, not CSV-imported data.
+- CSV import leaves `max_roll_weight` blank and re-import preserves the shift-manager-entered value while preserving status, machine assignment, tare, rolls, timing, and terminal material corrections.
+- Admin card detail and the planning release form can save optional `max_roll_weight`; release works when it is blank.
+- Admin and terminal card detail fetches include `max_roll_weight`.
+- Verification passed with the Slice 1 compile, focused pytest, and `git diff --check` commands.
+- Deviation from the original Slice 1 wording: CSV import/template/aliases intentionally do not include `max_roll_weight`.
+
 Recommended commit message:
 
 ```text
@@ -144,6 +158,8 @@ Add maximum roll weight data contract
 ```
 
 ## Slice 2 - Terminal Cancellation Cleanup
+
+Status: complete.
 
 Purpose: make the live operator route match the confirmed scope before the V8 connection.
 
@@ -214,7 +230,23 @@ Recommended commit message:
 Remove workstation cancellation controls
 ```
 
+Checkpoint 2 result:
+
+- Removed the workstation POST routes `/terminal/cards/{card_id}/cancel` and `/terminal/cards/{card_id}/restore`.
+- Kept the admin POST routes `/admin/cards/{card_id}/cancel` and `/admin/cards/{card_id}/restore`.
+- Confirmed `app/templates/terminal.html` has no cancel button, restore button, cancelled-card archive wording, or cancelled-card operator list.
+- Chosen helper behavior: cancelled cards are now hidden from workstation-facing detail/sync/archive helpers. `fetch_terminal_card_detail()` and `terminal_snapshot()` treat terminal-visible statuses as active (`pending`, `running`, `paused`) plus completed only. `/terminal` passes only completed cards to the completed-card archive context. `fetch_machine_queues()` was already active-status only and needed no change.
+- Admin/history behavior remains available through admin detail and the existing admin cancel/restore routes.
+- README, AGENTS, and IMPLEMENTATION_PLAN wording remains consistent; no updates were needed there.
+- Verification passed:
+  - `.\.test-runtime\codex-venv\Scripts\python.exe -m compileall app tests`
+  - `.\.test-runtime\codex-venv\Scripts\python.exe -m pytest tests/test_admin_routes.py tests/test_finish_cancel_history.py tests/test_admin_production_corrections.py`
+  - `.\.test-runtime\codex-venv\Scripts\python.exe -m pytest tests/test_terminal_detail.py tests/test_terminal_sync.py`
+  - `git diff --check`
+
 ## Slice 3 - Convert V8 Prototype Into Live Terminal Template
+
+Status: complete.
 
 Purpose: replace the temporary `/terminal` UI with a live server-rendered V8 layout.
 
@@ -425,6 +457,26 @@ Recommended commit message:
 Connect workstation V8 terminal UI
 ```
 
+Checkpoint 3 result:
+
+- Replaced the temporary `/terminal` layout with a live server-rendered V8 workstation template based on `ui-prototypes/workstation-v8.html`.
+- `/terminal` now selects the first live machine focus card by default when one exists; direct machine, queue, and completed-card links load full server-rendered card state.
+- Top machine navigation renders the four fixed machines from `machine_queues`, with running/paused focus preferred over pending and selected machine/card state visually emphasized.
+- Queue and completed drawers are rendered from live data. Queue rows are navigation-only links grouped by machine. Completed lookup is filterable client-side over rendered completed rows.
+- Cancelled cards remain absent from the workstation queue, completed lookup, selected-card detail, and terminal snapshot behavior. Workstation cancel/restore routes remain absent; admin cancel/restore routes remain available.
+- Selected card details, recipe rows, material correction fields, tare/core weight, roll entry/correction, gross/net/remaining totals, timing actions, max roll weight, and update banner are live data.
+- `Макс. тегло ролка, кг` is displayed read-only in the details pane and remains informational only.
+- Remaining gross weight is shown only when `quantity_1` has a kg-style unit; otherwise the workstation shows `-`.
+- Roll deletion remains supported by the backend route but is not exposed as a prominent V8 workstation control.
+- Every workstation write form rendered by the template includes `loaded_version`.
+- Print/reprint appears only as a disabled overflow placeholder; no print route, printable template, or print output was implemented.
+- Verification passed:
+  - `.\.test-runtime\codex-venv\Scripts\python.exe -m compileall app tests`
+  - `.\.test-runtime\codex-venv\Scripts\python.exe -m pytest`
+  - `git diff --check`
+- Manual temporary-DB browser check passed on `http://127.0.0.1:18080/terminal` using `.test-runtime\manual-v8\manual-v8.sqlite3`: verified four machine tiles, live selected card details, read-only max roll weight, queue row server-side selection, start/pause/resume/tare/roll/finish workflow, completed lookup, cancelled-card absence, disabled completed-card production actions, and no workstation cancel/restore controls.
+- Deviation noted: the existing data model has one order-level terminal material/brand/batch correction set. The visible recipe table keeps the V8 four-column shape; the first row binds the real actual-material and batch inputs, the existing brand value is preserved as hidden form data, and the other recipe-row inputs are visual placeholders until per-component actual-material fields are confirmed.
+
 ## Slice 4 - Functional Hardening And Edge Cases
 
 Purpose: fix issues found after the first live V8 connection without drifting into print output.
@@ -484,7 +536,7 @@ Harden workstation V8 terminal workflow
 
 Before starting print output, all of these must be true:
 
-- `max_roll_weight` exists in the database, importer, admin fetch, terminal fetch, and terminal UI.
+- `max_roll_weight` exists in the database, shift-manager entry/release workflow, admin fetch, terminal fetch, and terminal UI.
 - `/terminal` uses the V8 layout with live data.
 - The terminal exposes no cancel/restore controls or routes.
 - Cancelled cards do not appear in workstation queue/completed lookup.

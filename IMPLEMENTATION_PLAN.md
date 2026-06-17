@@ -280,15 +280,16 @@ Implementation bundles:
    - Technical walkthrough complete with a temporary database: import, admin review/edit, planning/resequence, terminal timing/tare/roll/finish, archive visibility, stale-write blocking, admin production correction, admin cancel/restore, and running-card timing invariant checks passed.
 
 6. Workstation V8 terminal UI connection
-   - Replace the current temporary `/terminal` layout with a live implementation based on `ui-prototypes/workstation-v8.html`.
+   - Slice 1 data contract complete: optional `max_roll_weight` is now shift-manager-entered card data with SQLite schema/migration support, admin/planning entry, admin and terminal detail fetches, and focused tests. CSV import leaves it blank, re-import preserves it, and release still requires machine sequence.
+   - Slice 3 live terminal connection complete: `/terminal` now uses a server-rendered V8 workstation layout based on `ui-prototypes/workstation-v8.html`, with live four-machine navigation, selected-card detail, recipe rows, material correction fields, tare/roll controls, totals, active queue drawer, completed lookup, and sync banner behavior.
    - Treat `ui-prototypes/workstation-v7.html` as the checkpoint before the top-machine-navigation restructure; do not reconnect V4.
    - Preserve existing backend routes, database rules, loaded-version conflict checks, terminal sync awareness, and production invariants.
-   - Remove prototype demo data/client-only state and wire the UI to live server-rendered cards, forms, active queue, completed-card lookup, timing actions, material fields, tare, rolls, finish, print/reprint access, and update banner behavior.
+   - Prototype demo data/client-only card switching has been removed from the live route; queue and completed rows are navigation-only links that load full server-rendered card state.
    - Do not expose card cancellation or restore controls on the workstation; shift-manager/admin remains responsible for cancellation and restoration.
-   - Add the imported maximum roll weight field to the live workstation detail pane as read-only operator information.
-   - Add/update focused tests for route rendering and required controls.
-   - Run syntax/import checks, automated tests, `git diff --check`, and a focused browser/manual check with a temporary database.
-   - Commit before starting print output.
+   - The maximum roll weight field is visible in the live workstation detail pane as read-only operator information.
+   - Focused V8 render tests were added for route rendering, machine controls, live selected-card fields, max roll weight, queue/completed content, cancelled-card absence, versioned write forms, and absence of workstation cancel/restore controls.
+   - Slice 3 verification passed with syntax/import checks, the full automated suite, `git diff --check`, and a focused in-app browser manual check with a temporary database.
+   - Next step: Slice 4 functional hardening and edge cases. Do not start print output yet.
 
 Milestone 9 commit strategy:
 
