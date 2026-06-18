@@ -298,6 +298,24 @@ Implementation bundles:
    - The app has been launched/accessed successfully with the live V8 workstation, but bugs were observed after launch.
    - Next step: Slice 4 V8 workstation bug fixing, functional hardening, and edge cases. Do not start print output yet.
 
+7. Admin completed-card detail redesign - done
+   - `/admin/cards/{card_id}` now uses a compact summary-first correction layout.
+   - Order/imported fields are edited in one compact order-details form.
+   - Separate recipe and machine-material sections were replaced by one unified materials ledger with a section-level save.
+   - Duplicated read-only roll display and per-roll correction forms were replaced by one roll ledger with tare, roll edits, deletes, and new-roll entry.
+   - Duplicated timing display and per-segment correction forms were replaced by one timing ledger with segment edits, deletes, and new-segment entry.
+   - System data is collapsed into a lower-emphasis details section, while admin cancel/restore and imported-card delete behavior remain available.
+   - Section-level material, roll, and timing saves preserve loaded-version conflict checks and production-data invariants.
+   - Verification passed with focused redesign tests, existing admin/production behavior suites, the full Python suite, `git diff --check`, and Playwright screenshots against a temporary database.
+   - Next step remains Slice 4 V8 workstation bug fixing, functional hardening, and edge cases before print output starts.
+
+8. Admin completed-card detail cleanup - done
+   - Order details were grouped into order, client, product, operations, and notes subsections while keeping one save action.
+   - The materials ledger now keeps row-level material data in the table and no longer exposes the legacy `Марка / клас` field in the admin UI.
+   - Roll and timing deletion now use explicit red X row actions with confirmation prompts instead of checkbox-plus-save deletion.
+   - Admin detail POST actions return to section anchors for order, materials, rolls, and timing.
+   - Verification passed with focused render/backend tests, the full Python suite, `git diff --check`, and Playwright screenshots against a temporary database.
+
 Milestone 9 commit strategy:
 
 - Prefer one commit per implementation bundle if each bundle is complete and verified.

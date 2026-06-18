@@ -85,419 +85,357 @@
     {% endif %}
   {% endfor %}
 
+  <section class="section admin-summary-panel">
+    <div class="section-head">
+      <h2>Общо произведено</h2>
+      <span>{{ card.finished_at or card.updated_at }}</span>
+    </div>
+    <dl class="admin-summary-grid">
+      <div>
+        <dt>Бруто</dt>
+        <dd>{{ card.total_gross_weight }} кг</dd>
+      </div>
+      <div>
+        <dt>Нето</dt>
+        <dd>
+          {% if card.total_net_weight is not none %}
+            {{ card.total_net_weight }} кг
+          {% else %}
+            -
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>Шпула</dt>
+        <dd>{{ card.tare_weight if card.tare_weight is not none else "-" }} кг</dd>
+      </div>
+      <div>
+        <dt>Ролки</dt>
+        <dd>{{ card.roll_count }}</dd>
+      </div>
+      <div>
+        <dt>Време</dt>
+        <dd>{{ card.total_production_duration }}</dd>
+      </div>
+      <div>
+        <dt>Машина</dt>
+        <dd>
+          {% if card.machine_id %}
+            {{ card.machine_id }}{% if card.machine_sequence %} / ред {{ card.machine_sequence }}{% endif %}
+          {% else %}
+            -
+          {% endif %}
+        </dd>
+      </div>
+    </dl>
+  </section>
+
   <form class="admin-operational-form" action="/admin/cards/{{ card.id }}/imported-fields" method="post">
     <input type="hidden" name="loaded_version" value="{{ card.version }}">
 
-    <section class="section operational-panel">
+    <section class="section operational-panel admin-compact-card" id="order">
       <div class="section-head">
-        <h2>Технологична карта</h2>
-        <button type="submit">Запази корекциите</button>
+        <h2>Данни по поръчката</h2>
+        <button type="submit">Запази данните</button>
       </div>
-      <div class="operational-info-grid">
-        <label>
-          <span>№ поръчка</span>
-          <input name="order_number" value="{{ card.order_number or '' }}" required>
-        </label>
-        <label>
-          <span>Дата</span>
-          <input name="order_date" value="{{ card.order_date or '' }}">
-        </label>
-        <label>
-          <span>Дата доставка</span>
-          <input name="delivery_date" value="{{ card.delivery_date or '' }}">
-        </label>
-        <label>
-          <span>Клиент</span>
-          <input name="customer" value="{{ card.customer or '' }}">
-        </label>
-        <label>
-          <span>Град</span>
-          <input name="city" value="{{ card.city or '' }}">
-        </label>
-        <label>
-          <span>Вид изделие</span>
-          <input name="product_type" value="{{ card.product_type or '' }}">
-        </label>
-        <div class="quantity-group">
-          <span class="field-label">Количество</span>
-          <div class="quantity-edit-grid">
-            <label>
-              <span>Основно</span>
+      <div class="admin-order-groups">
+        <fieldset class="admin-order-group">
+          <legend>Поръчка</legend>
+          <div class="admin-compact-grid">
+            <label class="field-short">
+              <span>№ поръчка</span>
+              <input name="order_number" value="{{ card.order_number or '' }}" required>
+            </label>
+            <label class="field-short">
+              <span>Дата</span>
+              <input name="order_date" value="{{ card.order_date or '' }}">
+            </label>
+            <label class="field-short">
+              <span>Дата доставка</span>
+              <input name="delivery_date" value="{{ card.delivery_date or '' }}">
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="admin-order-group">
+          <legend>Клиент</legend>
+          <div class="admin-compact-grid">
+            <label class="field-wide">
+              <span>Клиент</span>
+              <input name="customer" value="{{ card.customer or '' }}">
+            </label>
+            <label class="field-medium">
+              <span>Град</span>
+              <input name="city" value="{{ card.city or '' }}">
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="admin-order-group">
+          <legend>Изделие</legend>
+          <div class="admin-compact-grid">
+            <label class="field-wide">
+              <span>Вид изделие</span>
+              <input name="product_type" value="{{ card.product_type or '' }}">
+            </label>
+            <label class="field-short">
+              <span>Количество</span>
               <input name="quantity_1" value="{{ card.quantity_1 or '' }}">
             </label>
-            <label>
+            <label class="field-short">
               <span>Мярка</span>
               <input name="unit_1" value="{{ card.unit_1 or '' }}">
             </label>
-            <label>
+            <label class="field-short">
               <span>Допълнително</span>
               <input name="quantity_2" value="{{ card.quantity_2 or '' }}">
             </label>
-            <label>
+            <label class="field-short">
               <span>Мярка</span>
               <input name="unit_2" value="{{ card.unit_2 or '' }}">
             </label>
+            <label class="field-medium">
+              <span>Размер/дебелина</span>
+              <input name="size_thickness" value="{{ card.size_thickness or '' }}">
+            </label>
+            <label class="field-medium">
+              <span>Вид заготовка</span>
+              <input name="product_form" value="{{ card.product_form or '' }}">
+            </label>
+            <label class="field-medium">
+              <span>Материал</span>
+              <input name="material" value="{{ card.material or '' }}">
+            </label>
+            <label class="field-short">
+              <span>Макс. тегло ролка, кг</span>
+              <input name="max_roll_weight" value="{{ card.max_roll_weight or '' }}">
+            </label>
           </div>
-        </div>
-        <label>
-          <span>Размер/дебелина</span>
-          <input name="size_thickness" value="{{ card.size_thickness or '' }}">
-        </label>
-        <label>
-          <span>Вид заготовка</span>
-          <input name="product_form" value="{{ card.product_form or '' }}">
-        </label>
-        <label>
-          <span>Материал</span>
-          <input name="material" value="{{ card.material or '' }}">
-        </label>
-        <label>
-          <span>Макс. тегло ролка, кг</span>
-          <input name="max_roll_weight" value="{{ card.max_roll_weight or '' }}">
-        </label>
-        <label class="wide">
-          <span>Забележки</span>
-          <textarea name="notes" rows="4">{{ card.notes or "" }}</textarea>
-        </label>
-      </div>
-    </section>
+        </fieldset>
 
-    <section class="section operational-panel">
-      <div class="section-head">
-        <h2>Екструзия</h2>
-        <span>Операционни полета от работната книга</span>
-      </div>
-      <div class="operational-info-grid compact">
-        <label>
-          <span>Екструзия</span>
-          <input name="extrusion_flag" value="{{ card.extrusion_flag or '' }}">
-        </label>
-        <label>
-          <span>Фалцоване</span>
-          <input name="extrusion_folding" value="{{ card.extrusion_folding or '' }}">
-        </label>
-        <label>
-          <span>Следваща операция</span>
-          <input name="extrusion_next_operation" value="{{ card.extrusion_next_operation or '' }}">
-        </label>
-        <label>
-          <span>Третиране</span>
-          <input name="extrusion_treatment" value="{{ card.extrusion_treatment or '' }}">
-        </label>
-        <label>
-          <span>Опаковка</span>
-          <input name="packaging_method" value="{{ card.packaging_method or '' }}">
-        </label>
-      </div>
-    </section>
-
-    <section class="section operational-panel">
-      <div class="section-head">
-        <h2>Рецепта</h2>
-        <span>Марка и партида са текущият терминален запис</span>
-      </div>
-      <div class="recipe-table admin-recipe-table">
-        <div class="recipe-head">
-          <div>Позиция</div>
-          <div>Вид суровина</div>
-          <div>Марка №</div>
-          <div>Партиден №</div>
-        </div>
-        {% for row in recipe_rows %}
-          <div class="recipe-row">
-            <div class="component">{{ row.label }}</div>
-            <div>
-              <input class="cell" name="{{ row.field }}" value="{{ row.planned }}">
-              {% if row.actual_material %}
-                <small>Реално: {{ row.actual_material }}</small>
-              {% endif %}
-            </div>
-            <div class="readonly-cell">{{ row.brand or "-" }}</div>
-            <div class="readonly-cell">{{ row.batch or "-" }}</div>
+        <fieldset class="admin-order-group">
+          <legend>Операции</legend>
+          <div class="admin-compact-grid">
+            <label class="field-short">
+              <span>Екструзия</span>
+              <input name="extrusion_flag" value="{{ card.extrusion_flag or '' }}">
+            </label>
+            <label class="field-medium">
+              <span>Фалцоване</span>
+              <input name="extrusion_folding" value="{{ card.extrusion_folding or '' }}">
+            </label>
+            <label class="field-medium">
+              <span>Следваща операция</span>
+              <input name="extrusion_next_operation" value="{{ card.extrusion_next_operation or '' }}">
+            </label>
+            <label class="field-medium">
+              <span>Третиране</span>
+              <input name="extrusion_treatment" value="{{ card.extrusion_treatment or '' }}">
+            </label>
+            <label class="field-medium">
+              <span>Опаковка</span>
+              <input name="packaging_method" value="{{ card.packaging_method or '' }}">
+            </label>
           </div>
-        {% endfor %}
+        </fieldset>
+
+        <fieldset class="admin-order-group">
+          <legend>Забележки</legend>
+          <div class="admin-compact-grid">
+            <label class="field-full">
+              <span>Забележки</span>
+              <textarea name="notes" rows="3">{{ card.notes or "" }}</textarea>
+            </label>
+          </div>
+        </fieldset>
       </div>
-      <p class="secondary-note">
-        Терминалът пази реално използван материал и партида по редове, отделно от заложената рецепта.
-      </p>
     </section>
   </form>
 
-  <section class="section operational-panel">
-    <div class="section-head">
-      <h2>Материал на машината</h2>
-      <span>Корекции по редове от рецептата</span>
-    </div>
-    <form class="admin-correction-form" action="/admin/cards/{{ card.id }}/production-materials" method="post">
+  <section class="section operational-panel" id="materials">
+    <form class="admin-ledger-form" action="/admin/cards/{{ card.id }}/materials-ledger" method="post">
       <input type="hidden" name="loaded_version" value="{{ card.version }}">
-      <div class="recipe-table admin-recipe-table">
-        <div class="recipe-head">
+      <div class="section-head">
+        <h2>Материали</h2>
+        <button type="submit">Запази материалите</button>
+      </div>
+      <div class="admin-ledger-table material-ledger">
+        <div class="admin-ledger-head">
           <div>Позиция</div>
-          <div>Заложена суровина</div>
-          <div>Използван материал</div>
-          <div>Партиден №</div>
+          <div>По карта</div>
+          <div>Реално използвано</div>
+          <div>Партида</div>
         </div>
         {% for row in recipe_rows %}
-          <div class="recipe-row">
+          <div class="admin-ledger-row material-ledger-row">
             <div class="component">{{ row.label }}</div>
-            <div class="readonly-cell">{{ row.planned or "-" }}</div>
             <div>
-              <input name="actual_material__{{ row.field }}" value="{{ row.actual_material or '' }}" aria-label="{{ row.label }} използван материал">
+              <input name="planned_material__{{ row.field }}" value="{{ row.planned }}">
             </div>
             <div>
-              <input name="batch_lot__{{ row.field }}" value="{{ row.batch or '' }}" aria-label="{{ row.label }} партида">
+              <input name="actual_material__{{ row.field }}" value="{{ row.actual_material or '' }}">
+            </div>
+            <div>
+              <input name="batch_lot__{{ row.field }}" value="{{ row.batch or '' }}">
             </div>
           </div>
         {% endfor %}
       </div>
-      <label>
-        Марка / клас за ред A
-        <input name="raw_material_brand_grade" value="{{ card.raw_material_brand_grade or '' }}">
-      </label>
-      <button type="submit">Запази материалите</button>
     </form>
   </section>
 
-  <div class="admin-review-grid">
-    <section class="section operational-panel">
-      <div class="section-head">
-        <h2>Произведено количество</h2>
-        <span>{{ card.roll_count }} ролки</span>
-      </div>
-      <dl class="total-grid">
-        <div>
-          <dt>Бруто общо</dt>
-          <dd>{{ card.total_gross_weight }} кг</dd>
-        </div>
-        <div>
-          <dt>Нето общо</dt>
-          <dd>
-            {% if card.total_net_weight is not none %}
-              {{ card.total_net_weight }} кг
-            {% else %}
-              Без шпула
-            {% endif %}
-          </dd>
-        </div>
-        <div>
-          <dt>Ролки</dt>
-          <dd>{{ card.roll_count }}</dd>
-        </div>
-      </dl>
-    </section>
-
-    <section class="section operational-panel">
+  <section class="section operational-panel" id="rolls">
+    <form class="admin-ledger-form" action="/admin/cards/{{ card.id }}/roll-ledger" method="post">
+      <input type="hidden" name="loaded_version" value="{{ card.version }}">
       <div class="section-head">
         <h2>Ролки</h2>
-        <span>Корекции на шпула и ролки</span>
+        <button type="submit">Запази ролките</button>
       </div>
-      <dl class="detail-grid single-column roll-tare">
-        <div>
-          <dt>Шпула</dt>
-          <dd>{{ card.tare_weight if card.tare_weight is not none else "-" }}</dd>
-        </div>
-      </dl>
-      {% set can_edit_rolls = card.status in ["running", "completed"] %}
-      <form class="field-form tare-form admin-inline-form" action="/admin/cards/{{ card.id }}/tare" method="post">
-        <input type="hidden" name="loaded_version" value="{{ card.version }}">
+
+      <div class="admin-roll-toolbar">
         <label>
-          Шпула, кг
+          <span>Шпула, кг</span>
           <input type="number" name="tare_weight" min="0" step="0.01" value="{{ card.tare_weight if card.tare_weight is not none else '' }}">
         </label>
-        <button type="submit">Запази шпула</button>
-      </form>
-
-      <form class="roll-entry admin-inline-form" action="/admin/cards/{{ card.id }}/rolls" method="post">
-        <input type="hidden" name="loaded_version" value="{{ card.version }}">
         <label>
-          Бруто тегло за ролка {{ card.next_roll_number }}
-          <input type="number" name="gross_weight" min="0" step="0.01" {% if not can_edit_rolls %}disabled{% endif %}>
+          <span>Нова ролка, кг</span>
+          <input type="number" name="new_gross_weight" min="0" step="0.01" placeholder="Бруто">
         </label>
-        <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Добави ролка</button>
-      </form>
+      </div>
 
       {% if card.roll_entries %}
-        <table class="compact-table">
-          <thead>
-            <tr>
-              <th>№</th>
-              <th>Бруто тегло, кг</th>
-              <th>Нето тегло, кг</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for roll in card.roll_entries %}
-              <tr>
-                <td>{{ roll.roll_number }}</td>
-                <td>{{ roll.gross_weight if roll.gross_weight is not none else "-" }}</td>
-                <td>{{ roll.net_weight if roll.net_weight is not none else "-" }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        <div class="admin-roll-corrections">
+        <div class="admin-ledger-table roll-ledger">
+          <div class="admin-ledger-head">
+            <div>№</div>
+            <div>Бруто, кг</div>
+            <div>Нето, кг</div>
+            <div><span class="visually-hidden">Изтриване</span></div>
+          </div>
           {% for roll in card.roll_entries %}
-            <div class="admin-roll-correction-row">
-              <span>Ролка {{ roll.roll_number }}</span>
-              <form class="inline-roll-form" action="/admin/cards/{{ card.id }}/rolls/{{ roll.id }}" method="post">
-                <input type="hidden" name="loaded_version" value="{{ card.version }}">
-                <input type="number" name="gross_weight" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %}>
-                <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Запази</button>
-              </form>
-              {% if can_edit_rolls and not (card.status == "completed" and card.roll_count <= 1 and roll.gross_weight is not none) %}
-                <form class="roll-delete-form" action="/admin/cards/{{ card.id }}/rolls/{{ roll.id }}/delete" method="post">
-                  <input type="hidden" name="loaded_version" value="{{ card.version }}">
-                  <button type="submit">Изтрий</button>
-                </form>
-              {% endif %}
+            <div class="admin-ledger-row admin-roll-ledger-row">
+              <div>{{ roll.roll_number }}</div>
+              <div>
+                <input type="number" name="gross_weight__{{ roll.id }}" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}">
+              </div>
+              <div class="readonly-cell">{{ roll.net_weight if roll.net_weight is not none else "-" }}</div>
+              <div class="ledger-row-actions">
+                <button class="admin-row-delete-button" type="submit" form="roll-delete-{{ roll.id }}" aria-label="Изтрий ролка {{ roll.roll_number }}">×</button>
+              </div>
             </div>
           {% endfor %}
         </div>
       {% else %}
         <p class="empty">Няма въведени ролки.</p>
       {% endif %}
-    </section>
-  </div>
+    </form>
+    {% for roll in card.roll_entries %}
+      <form id="roll-delete-{{ roll.id }}" class="ledger-delete-form" action="/admin/cards/{{ card.id }}/rolls/{{ roll.id }}/delete" method="post" onsubmit="return confirm('Да се изтрие ли ролка {{ roll.roll_number }} с бруто {{ roll.gross_weight if roll.gross_weight is not none else '-' }} кг?');">
+        <input type="hidden" name="loaded_version" value="{{ card.version }}">
+      </form>
+    {% endfor %}
+  </section>
 
-  <section class="section operational-panel">
-    <div class="section-head">
-      <h2>Време</h2>
-      <span>{{ card.total_production_duration }}</span>
-    </div>
-    <dl class="detail-grid timing-summary">
-      <div>
-        <dt>Общо време</dt>
-        <dd>{{ card.total_production_duration }}</dd>
+  <section class="section operational-panel" id="timing">
+    <form class="admin-ledger-form" action="/admin/cards/{{ card.id }}/timing-ledger" method="post">
+      <input type="hidden" name="loaded_version" value="{{ card.version }}">
+      <div class="section-head">
+        <h2>Време</h2>
+        <button type="submit">Запази времето</button>
       </div>
-      <div>
-        <dt>Първи старт</dt>
-        <dd>{{ card.first_started_at or "-" }}</dd>
-      </div>
-      <div>
-        <dt>{{ status_labels.completed }}</dt>
-        <dd>{{ card.finished_at or "-" }}</dd>
-      </div>
-      <div>
-        <dt>{{ status_labels.cancelled }}</dt>
-        <dd>{{ card.cancelled_at or "-" }}</dd>
-      </div>
-      <div>
-        <dt>Активен сегмент</dt>
-        <dd>{{ card.active_segment_started_at or "-" }}</dd>
-      </div>
-    </dl>
-    {% if card.timing_segments %}
-      <table class="compact-table">
-        <thead>
-          <tr>
-            <th>Старт</th>
-            <th>Край</th>
-            <th>Причина</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for segment in card.timing_segments %}
-            <tr>
-              <td>{{ segment.started_at }}</td>
-              <td>{{ segment.ended_at or "В ход" }}</td>
-              <td>{{ timing_reason_labels.get(segment.end_reason, segment.end_reason) if segment.end_reason else "-" }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      <div class="admin-timing-corrections">
+
+      <dl class="detail-grid timing-summary">
+        <div>
+          <dt>Общо време</dt>
+          <dd>{{ card.total_production_duration }}</dd>
+        </div>
+        <div>
+          <dt>Първи старт</dt>
+          <dd>{{ card.first_started_at or "-" }}</dd>
+        </div>
+        <div>
+          <dt>{{ status_labels.completed }}</dt>
+          <dd>{{ card.finished_at or "-" }}</dd>
+        </div>
+      </dl>
+
+      <div class="admin-ledger-table timing-ledger">
+        <div class="admin-ledger-head">
+          <div>Начало</div>
+          <div>Край</div>
+          <div>Причина</div>
+          <div><span class="visually-hidden">Изтриване</span></div>
+        </div>
         {% for segment in card.timing_segments %}
-          <div class="admin-timing-correction-row">
-            <form class="timing-correction-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}" method="post">
-              <input type="hidden" name="loaded_version" value="{{ card.version }}">
-              <label>
-                Начало
-                <input name="started_at" value="{{ segment.started_at }}">
-              </label>
-              <label>
-                Край
-                <input name="ended_at" value="{{ segment.ended_at or '' }}">
-              </label>
-              <label>
-                Причина
-                <select name="end_reason">
-                  <option value="" {% if not segment.end_reason %}selected{% endif %}>В ход</option>
-                  <option value="pause" {% if segment.end_reason == "pause" %}selected{% endif %}>пауза</option>
-                  <option value="finish" {% if segment.end_reason == "finish" %}selected{% endif %}>приключване</option>
-                  <option value="correction" {% if segment.end_reason == "correction" %}selected{% endif %}>корекция</option>
-                </select>
-              </label>
-              <button type="submit">Запази</button>
-            </form>
-            {% if card.status != "completed" or card.timing_segments|length > 1 %}
-              <form class="timing-delete-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}/delete" method="post">
-                <input type="hidden" name="loaded_version" value="{{ card.version }}">
-                <button type="submit">Изтрий</button>
-              </form>
-            {% endif %}
+          <div class="admin-ledger-row admin-timing-ledger-row">
+            <div><input name="started_at__{{ segment.id }}" value="{{ segment.started_at }}"></div>
+            <div><input name="ended_at__{{ segment.id }}" value="{{ segment.ended_at or '' }}"></div>
+            <div>
+              <select name="end_reason__{{ segment.id }}">
+                <option value="" {% if not segment.end_reason %}selected{% endif %}>В ход</option>
+                <option value="pause" {% if segment.end_reason == "pause" %}selected{% endif %}>пауза</option>
+                <option value="finish" {% if segment.end_reason == "finish" %}selected{% endif %}>приключване</option>
+                <option value="correction" {% if segment.end_reason == "correction" %}selected{% endif %}>корекция</option>
+              </select>
+            </div>
+            <div class="ledger-row-actions">
+              <button class="admin-row-delete-button" type="submit" form="timing-delete-{{ segment.id }}" aria-label="Изтрий времеви сегмент {{ loop.index }}">×</button>
+            </div>
           </div>
         {% endfor %}
+        <div class="admin-ledger-row admin-timing-ledger-row new-row">
+          <div><input name="new_started_at" placeholder="YYYY-MM-DD HH:MM:SS"></div>
+          <div><input name="new_ended_at" placeholder="YYYY-MM-DD HH:MM:SS"></div>
+          <div>
+            <select name="new_end_reason">
+              <option value="">В ход</option>
+              <option value="pause">пауза</option>
+              <option value="finish">приключване</option>
+              <option value="correction">корекция</option>
+            </select>
+          </div>
+          <div class="readonly-cell">Нов</div>
+        </div>
       </div>
-    {% else %}
-      <p class="empty">Няма времеви сегменти.</p>
-    {% endif %}
-
-    <form class="timing-correction-form add-timing-form" action="/admin/cards/{{ card.id }}/timing-segments" method="post">
-      <input type="hidden" name="loaded_version" value="{{ card.version }}">
-      <label>
-        Начало
-        <input name="started_at" placeholder="YYYY-MM-DD HH:MM:SS">
-      </label>
-      <label>
-        Край
-        <input name="ended_at" placeholder="YYYY-MM-DD HH:MM:SS">
-      </label>
-      <label>
-        Причина
-        <select name="end_reason">
-          <option value="">В ход</option>
-          <option value="pause">пауза</option>
-          <option value="finish">приключване</option>
-          <option value="correction">корекция</option>
-        </select>
-      </label>
-      <button type="submit">Добави сегмент</button>
     </form>
+    {% for segment in card.timing_segments %}
+      <form id="timing-delete-{{ segment.id }}" class="ledger-delete-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}/delete" method="post" onsubmit="return confirm('Да се изтрие ли времеви сегмент {{ loop.index }}: {{ segment.started_at }} - {{ segment.ended_at or 'в ход' }}?');">
+        <input type="hidden" name="loaded_version" value="{{ card.version }}">
+      </form>
+    {% endfor %}
   </section>
 
   <section class="section admin-system-section">
-    <div class="section-head">
-      <h2>Системни данни</h2>
-      <span>Вторична информация</span>
-    </div>
-    <dl class="detail-grid">
-      <div>
-        <dt>Статус</dt>
-        <dd>{{ status_labels.get(card.status, card.status) }}</dd>
-      </div>
-      <div>
-        <dt>Импорт</dt>
-        <dd>{{ card.import_batch_id or "-" }}</dd>
-      </div>
-      <div>
-        <dt>Версия</dt>
-        <dd>{{ card.version }}</dd>
-      </div>
-      <div>
-        <dt>Създадена</dt>
-        <dd>{{ card.created_at }}</dd>
-      </div>
-      <div>
-        <dt>Обновена</dt>
-        <dd>{{ card.updated_at }}</dd>
-      </div>
-    </dl>
-    {% if card.status == "imported" and not card.roll_entries and not card.timing_segments %}
-      <form class="danger-form" action="/admin/cards/{{ card.id }}/delete" method="post">
-        <input type="hidden" name="loaded_version" value="{{ card.version }}">
-        <button type="submit">Изтрий невъзложена технологична карта</button>
-      </form>
-    {% endif %}
+    <details>
+      <summary>Системни данни</summary>
+      <dl class="detail-grid">
+        <div>
+          <dt>Статус</dt>
+          <dd>{{ status_labels.get(card.status, card.status) }}</dd>
+        </div>
+        <div>
+          <dt>Импорт</dt>
+          <dd>{{ card.import_batch_id or "-" }}</dd>
+        </div>
+        <div>
+          <dt>Версия</dt>
+          <dd>{{ card.version }}</dd>
+        </div>
+        <div>
+          <dt>Създадена</dt>
+          <dd>{{ card.created_at }}</dd>
+        </div>
+        <div>
+          <dt>Обновена</dt>
+          <dd>{{ card.updated_at }}</dd>
+        </div>
+      </dl>
+      {% if card.status == "imported" and not card.roll_entries and not card.timing_segments %}
+        <form class="danger-form" action="/admin/cards/{{ card.id }}/delete" method="post">
+          <input type="hidden" name="loaded_version" value="{{ card.version }}">
+          <button type="submit">Изтрий невъзложена технологична карта</button>
+        </form>
+      {% endif %}
+    </details>
   </section>
 </main>
 {% endblock %}

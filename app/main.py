@@ -46,6 +46,9 @@ from .db import (
     terminal_snapshot as fetch_terminal_snapshot,
     update_timing_segment,
     update_admin_imported_fields,
+    update_admin_material_ledger,
+    update_admin_roll_ledger,
+    update_admin_timing_ledger,
     update_card_planning,
     update_roll_gross_weight,
     update_tare_weight,
@@ -171,9 +174,11 @@ def admin_card_post_response(
     card_id: int,
     result_name: str,
     result: RuleResult,
+    anchor: str | None = None,
 ):
     if result.ok:
-        return RedirectResponse(url=f"/admin/cards/{card_id}", status_code=303)
+        suffix = f"#{anchor}" if anchor else ""
+        return RedirectResponse(url=f"/admin/cards/{card_id}{suffix}", status_code=303)
 
     context = admin_card_detail_context(card_id, **{result_name: result})
     if context is None:
@@ -242,6 +247,66 @@ def recipe_actual_entries_from_form(form: Any) -> dict[str, dict[str, str]]:
             "batch_lot": str(form.get(f"batch_lot__{field}") or ""),
         }
     return entries
+
+
+def material_ledger_from_form(
+    form: Any,
+) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+    planned_materials: dict[str, str] = {}
+    actual_entries: dict[str, dict[str, str]] = {}
+    for _, field in RECIPE_FIELD_ROWS:
+        planned_materials[field] = str(form.get(f"planned_material__{field}") or "")
+        actual_entries[field] = {
+            "actual_material_used": str(form.get(f"actual_material__{field}") or ""),
+            "batch_lot": str(form.get(f"batch_lot__{field}") or ""),
+        }
+    return planned_materials, actual_entries
+
+
+def roll_ledger_from_form(form: Any) -> tuple[str, dict[int, str], set[int], list[str]]:
+    roll_updates: dict[int, str] = {}
+    delete_roll_ids: set[int] = set()
+    new_gross_weights: list[str] = []
+
+    for key, value in form.multi_items():
+        text_value = str(value or "")
+        if key.startswith("gross_weight__"):
+            roll_updates[int(key.removeprefix("gross_weight__"))] = text_value
+        elif key == "delete_roll_id":
+            delete_roll_ids.add(int(text_value))
+        elif key == "new_gross_weight":
+            new_gross_weights.append(text_value)
+
+    return (
+        str(form.get("tare_weight") or ""),
+        roll_updates,
+        delete_roll_ids,
+        new_gross_weights,
+    )
+
+
+def timing_ledger_from_form(
+    form: Any,
+) -> tuple[dict[int, dict[str, str]], set[int], list[dict[str, str]]]:
+    segment_updates: dict[int, dict[str, str]] = {}
+    delete_segment_ids: set[int] = set()
+    new_segment = {
+        "started_at": str(form.get("new_started_at") or ""),
+        "ended_at": str(form.get("new_ended_at") or ""),
+        "end_reason": str(form.get("new_end_reason") or ""),
+    }
+
+    for key, value in form.multi_items():
+        text_value = str(value or "")
+        if key == "delete_segment_id":
+            delete_segment_ids.add(int(text_value))
+        elif "__" in key:
+            field_name, segment_id_text = key.split("__", 1)
+            if field_name in {"started_at", "ended_at", "end_reason"}:
+                segment_id = int(segment_id_text)
+                segment_updates.setdefault(segment_id, {})[field_name] = text_value
+
+    return segment_updates, delete_segment_ids, [new_segment]
 
 
 @app.get("/")
@@ -352,10 +417,25 @@ async def save_admin_imported_fields(request: Request, card_id: int):
         str(form.get("loaded_version", ""))
     )
     if parsed_version is not None:
+        submitted_fields = {key: str(value) for key, value in form.multi_items()}
+        current_card = fetch_admin_card_detail(card_id)
+        preserved_fields = {
+            field: str(current_card[field] or "") if current_card is not None else ""
+            for field in IMPORT_FIELDS
+        }
+        preserved_fields.update(
+            {
+                field: submitted_fields[field]
+                for field in IMPORT_FIELDS
+                if field in submitted_fields
+            }
+        )
+        if "max_roll_weight" in submitted_fields:
+            preserved_fields["max_roll_weight"] = submitted_fields["max_roll_weight"]
         imported_field_result = update_admin_imported_fields(
             card_id=card_id,
             loaded_version=parsed_version,
-            fields={field: str(form.get(field, "")) for field in IMPORT_FIELDS},
+            fields=preserved_fields,
         )
 
     return admin_card_post_response(
@@ -363,6 +443,7 @@ async def save_admin_imported_fields(request: Request, card_id: int):
         card_id,
         "imported_field_result",
         imported_field_result,
+        anchor="order",
     )
 
 
@@ -484,11 +565,16 @@ async def save_admin_production_materials(
     loaded_version = str(form.get("loaded_version") or "")
     parsed_version, material_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
+        raw_material_brand_grade = (
+            str(form.get("raw_material_brand_grade") or "")
+            if "raw_material_brand_grade" in form
+            else None
+        )
         material_result = update_terminal_recipe_actual_entries(
             card_id=card_id,
             loaded_version=parsed_version,
             entries=recipe_actual_entries_from_form(form),
-            raw_material_brand_grade=str(form.get("raw_material_brand_grade") or ""),
+            raw_material_brand_grade=raw_material_brand_grade,
         )
 
     return admin_card_post_response(
@@ -496,6 +582,31 @@ async def save_admin_production_materials(
         card_id,
         "material_result",
         material_result,
+        anchor="materials",
+    )
+
+
+@app.post("/admin/cards/{card_id}/materials-ledger")
+async def save_admin_materials_ledger(request: Request, card_id: int):
+    form = await request.form()
+    parsed_version, material_result = parse_loaded_version(
+        str(form.get("loaded_version") or "")
+    )
+    if parsed_version is not None:
+        planned_materials, actual_entries = material_ledger_from_form(form)
+        material_result = update_admin_material_ledger(
+            card_id=card_id,
+            loaded_version=parsed_version,
+            planned_materials=planned_materials,
+            actual_entries=actual_entries,
+        )
+
+    return admin_card_post_response(
+        request,
+        card_id,
+        "material_result",
+        material_result,
+        anchor="materials",
     )
 
 
@@ -515,6 +626,7 @@ async def save_admin_tare_weight(
         card_id,
         "roll_result",
         roll_result,
+        anchor="rolls",
     )
 
 
@@ -534,6 +646,39 @@ async def add_admin_roll_weight(
         card_id,
         "roll_result",
         roll_result,
+        anchor="rolls",
+    )
+
+
+@app.post("/admin/cards/{card_id}/roll-ledger")
+async def save_admin_roll_ledger(request: Request, card_id: int):
+    form = await request.form()
+    parsed_version, roll_result = parse_loaded_version(
+        str(form.get("loaded_version") or "")
+    )
+    if parsed_version is not None:
+        try:
+            tare_weight, roll_updates, delete_roll_ids, new_gross_weights = (
+                roll_ledger_from_form(form)
+            )
+        except ValueError:
+            roll_result = RuleResult(False, ("Формата съдържа невалидна ролка.",))
+        else:
+            roll_result = update_admin_roll_ledger(
+                card_id=card_id,
+                loaded_version=parsed_version,
+                tare_weight=tare_weight,
+                roll_updates=roll_updates,
+                delete_roll_ids=delete_roll_ids,
+                new_gross_weights=new_gross_weights,
+            )
+
+    return admin_card_post_response(
+        request,
+        card_id,
+        "roll_result",
+        roll_result,
+        anchor="rolls",
     )
 
 
@@ -559,6 +704,7 @@ async def save_admin_roll_weight(
         card_id,
         "roll_result",
         roll_result,
+        anchor="rolls",
     )
 
 
@@ -582,6 +728,7 @@ async def delete_admin_roll_weight(
         card_id,
         "roll_result",
         roll_result,
+        anchor="rolls",
     )
 
 
@@ -609,6 +756,38 @@ async def add_admin_timing_segment(
         card_id,
         "timing_result",
         timing_result,
+        anchor="timing",
+    )
+
+
+@app.post("/admin/cards/{card_id}/timing-ledger")
+async def save_admin_timing_ledger(request: Request, card_id: int):
+    form = await request.form()
+    parsed_version, timing_result = parse_loaded_version(
+        str(form.get("loaded_version") or "")
+    )
+    if parsed_version is not None:
+        try:
+            segment_updates, delete_segment_ids, new_segments = (
+                timing_ledger_from_form(form)
+            )
+        except ValueError:
+            timing_result = RuleResult(False, ("Формата съдържа невалиден времеви сегмент.",))
+        else:
+            timing_result = update_admin_timing_ledger(
+                card_id=card_id,
+                loaded_version=parsed_version,
+                segment_updates=segment_updates,
+                delete_segment_ids=delete_segment_ids,
+                new_segments=new_segments,
+            )
+
+    return admin_card_post_response(
+        request,
+        card_id,
+        "timing_result",
+        timing_result,
+        anchor="timing",
     )
 
 
@@ -638,6 +817,7 @@ async def save_admin_timing_segment(
         card_id,
         "timing_result",
         timing_result,
+        anchor="timing",
     )
 
 
@@ -661,6 +841,7 @@ async def delete_admin_timing_segment(
         card_id,
         "timing_result",
         timing_result,
+        anchor="timing",
     )
 
 

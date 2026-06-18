@@ -139,11 +139,16 @@ def add_roll(card_id: int, gross_weight: str = "25.00") -> None:
     assert db.add_roll_gross_weight(card_id, card_version(card_id), gross_weight).ok
 
 
+class FormData(dict):
+    def multi_items(self) -> list[tuple[str, str]]:
+        return list(self.items())
+
+
 class FormRequest:
     def __init__(self, data: dict[str, str]) -> None:
-        self.data = data
+        self.data = FormData(data)
 
-    async def form(self) -> dict[str, str]:
+    async def form(self) -> FormData:
         return self.data
 
     def url_for(self, name: str, **path_params: str) -> str:
@@ -278,7 +283,7 @@ def test_admin_material_correction_route_updates_recipe_actual_entries(connectio
     context = admin_card_detail_context(card_id)
 
     assert response.status_code == 303
-    assert response.headers["location"] == f"/admin/cards/{card_id}"
+    assert response.headers["location"] == f"/admin/cards/{card_id}#materials"
     assert card["recipe_actual_entries"]["raw_material_a"]["actual_material_used"] == "Admin A"
     assert card["recipe_actual_entries"]["raw_material_a"]["batch_lot"] == "Admin Batch A"
     assert card["recipe_actual_entries"]["raw_material_b"]["actual_material_used"] == "Terminal B"
@@ -288,6 +293,53 @@ def test_admin_material_correction_route_updates_recipe_actual_entries(connectio
     assert context["recipe_rows"][0]["actual_material"] == "Admin A"
     assert context["recipe_rows"][0]["batch"] == "Admin Batch A"
     assert context["recipe_rows"][1]["actual_material"] == "Terminal B"
+
+
+def test_admin_material_correction_route_preserves_legacy_brand_when_omitted(connection):
+    card_id = import_ready_card("26016", raw_material_b="LDPE B")
+    assert db.release_card(
+        card_id,
+        machine_id=1,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    ).ok
+    assert db.update_terminal_recipe_actual_entries(
+        card_id,
+        card_version(card_id),
+        recipe_actual_entries(),
+        raw_material_brand_grade="Legacy Grade A",
+    ).ok
+
+    response = asyncio.run(
+        save_admin_production_materials(
+            FormRequest(
+                {
+                    "loaded_version": str(card_version(card_id)),
+                    "actual_material__raw_material_a": "Admin A",
+                    "batch_lot__raw_material_a": "Admin Batch A",
+                    "actual_material__raw_material_b": "Terminal B",
+                    "batch_lot__raw_material_b": "Terminal Batch B",
+                    "actual_material__raw_material_c": "",
+                    "batch_lot__raw_material_c": "",
+                    "actual_material__linear_pe": "",
+                    "batch_lot__linear_pe": "",
+                    "actual_material__antistatic": "",
+                    "batch_lot__antistatic": "",
+                    "actual_material__masterbatch": "",
+                    "batch_lot__masterbatch": "",
+                    "actual_material__chalk": "",
+                    "batch_lot__chalk": "",
+                }
+            ),
+            card_id,
+        )
+    )
+    card = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 303
+    assert card["actual_raw_material_used"] == "Admin A"
+    assert card["raw_material_brand_grade"] == "Legacy Grade A"
+    assert card["raw_material_batch_lot"] == "Admin Batch A"
 
 
 def test_admin_successful_detail_correction_routes_redirect_to_canonical_get(connection):
@@ -332,9 +384,15 @@ def test_admin_successful_detail_correction_routes_redirect_to_canonical_get(con
     )
     after = db.fetch_admin_card_detail(card_id)
 
-    for response in (imported_response, tare_response, roll_response, timing_response):
+    expected_locations = (
+        (imported_response, f"/admin/cards/{card_id}#order"),
+        (tare_response, f"/admin/cards/{card_id}#rolls"),
+        (roll_response, f"/admin/cards/{card_id}#rolls"),
+        (timing_response, f"/admin/cards/{card_id}#timing"),
+    )
+    for response, expected_location in expected_locations:
         assert response.status_code == 303
-        assert response.headers["location"] == f"/admin/cards/{card_id}"
+        assert response.headers["location"] == expected_location
     assert after["customer"] == "PRG Customer"
     assert after["tare_weight"] == 2
     assert after["roll_entries"][0]["gross_weight"] == 27
@@ -357,7 +415,7 @@ def test_admin_successful_roll_add_redirects_and_get_refresh_does_not_repeat(con
     card = db.fetch_admin_card_detail(card_id)
 
     assert response.status_code == 303
-    assert response.headers["location"] == f"/admin/cards/{card_id}"
+    assert response.headers["location"] == f"/admin/cards/{card_id}#rolls"
     assert refresh.status_code == 200
     assert card["roll_count"] == 2
     assert [roll["gross_weight"] for roll in card["roll_entries"]] == [25, 30]
@@ -381,7 +439,7 @@ def test_admin_successful_roll_delete_redirects_and_get_refresh_does_not_repeat(
     after = db.fetch_admin_card_detail(card_id)
 
     assert response.status_code == 303
-    assert response.headers["location"] == f"/admin/cards/{card_id}"
+    assert response.headers["location"] == f"/admin/cards/{card_id}#rolls"
     assert refresh.status_code == 200
     assert after["roll_count"] == 1
     assert [roll["gross_weight"] for roll in after["roll_entries"]] == [25]
@@ -416,11 +474,11 @@ def test_admin_successful_timing_segment_add_delete_redirect_and_get_refresh_is_
     after = db.fetch_admin_card_detail(card_id)
 
     assert add_response.status_code == 303
-    assert add_response.headers["location"] == f"/admin/cards/{card_id}"
+    assert add_response.headers["location"] == f"/admin/cards/{card_id}#timing"
     assert add_refresh.status_code == 200
     assert len(card["timing_segments"]) == 1
     assert delete_response.status_code == 303
-    assert delete_response.headers["location"] == f"/admin/cards/{card_id}"
+    assert delete_response.headers["location"] == f"/admin/cards/{card_id}#timing"
     assert delete_refresh.status_code == 200
     assert after["timing_segments"] == []
 
@@ -674,7 +732,7 @@ def test_admin_timing_correction_blocks_stale_loaded_version(connection):
     )
 
 
-def test_completed_admin_detail_hides_unsafe_delete_controls(connection):
+def test_completed_admin_detail_uses_explicit_delete_controls(connection):
     card_id = prepare_completed_card("26011")
     card = db.fetch_admin_card_detail(card_id)
     roll_id = card["roll_entries"][0]["id"]
@@ -688,8 +746,10 @@ def test_completed_admin_detail_hides_unsafe_delete_controls(connection):
     context = admin_card_detail_context(card_id)
     html = env.get_template("admin_card_detail.html").render(**context)
 
-    assert f"/admin/cards/{card_id}/rolls/{roll_id}/delete" not in html
-    assert f"/admin/cards/{card_id}/timing-segments/{segment_id}/delete" not in html
+    assert f"/admin/cards/{card_id}/rolls/{roll_id}/delete" in html
+    assert f"/admin/cards/{card_id}/timing-segments/{segment_id}/delete" in html
+    assert html.count('name="loaded_version"') >= 2
+    assert "admin-row-delete-button" in html
 
 
 def test_admin_production_correction_routes_are_registered():

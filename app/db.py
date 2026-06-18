@@ -185,6 +185,8 @@ RECIPE_COMPONENT_FIELDS = (
     ("chalk", "Креда"),
 )
 
+ADMIN_MATERIAL_FIELDS = tuple(field for field, _ in RECIPE_COMPONENT_FIELDS)
+
 
 def connect() -> sqlite3.Connection:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -1049,6 +1051,224 @@ def delete_timing_segment(card_id: int, segment_id: int, loaded_version: int) ->
     return RuleResult(True, ("Времевият сегмент е изтрит.",))
 
 
+def update_admin_timing_ledger(
+    card_id: int,
+    loaded_version: int,
+    segment_updates: dict[int, dict[str, str]],
+    delete_segment_ids: set[int],
+    new_segments: list[dict[str, str]],
+) -> RuleResult:
+    with connect() as connection:
+        card = fetch_admin_production_action_card(connection, card_id)
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        existing_segments = connection.execute(
+            """
+            SELECT id, started_at, ended_at, end_reason
+            FROM production_time_segments
+            WHERE card_id = ?
+            ORDER BY started_at, id
+            """,
+            (card_id,),
+        ).fetchall()
+        existing_ids = {int(row["id"]) for row in existing_segments}
+        unknown_ids = (set(segment_updates) | delete_segment_ids) - existing_ids
+        if unknown_ids:
+            return RuleResult(False, ("Избран времеви сегмент не принадлежи към тази карта.",))
+
+        parsed_updates: dict[int, dict[str, str | None]] = {}
+        for segment_id, values in segment_updates.items():
+            if segment_id in delete_segment_ids:
+                continue
+            parsed, result = parse_timing_segment_values(
+                values.get("started_at", ""),
+                values.get("ended_at", ""),
+                values.get("end_reason", ""),
+            )
+            if not result.ok:
+                return result
+            parsed_updates[segment_id] = parsed
+
+        parsed_new: list[dict[str, str | None]] = []
+        for segment in new_segments:
+            if not (
+                str(segment.get("started_at") or "").strip()
+                or str(segment.get("ended_at") or "").strip()
+            ):
+                continue
+            parsed, result = parse_timing_segment_values(
+                segment.get("started_at", ""),
+                segment.get("ended_at", ""),
+                segment.get("end_reason", ""),
+            )
+            if not result.ok:
+                return result
+            parsed_new.append(parsed)
+
+        final_open_count = 0
+        final_segment_count = len(parsed_new)
+        for row in existing_segments:
+            segment_id = int(row["id"])
+            if segment_id in delete_segment_ids:
+                continue
+            values = parsed_updates.get(
+                segment_id,
+                {
+                    "started_at": str(row["started_at"]),
+                    "ended_at": row["ended_at"],
+                    "end_reason": row["end_reason"],
+                },
+            )
+            final_segment_count += 1
+            if values["ended_at"] is None:
+                final_open_count += 1
+        final_open_count += sum(1 for segment in parsed_new if segment["ended_at"] is None)
+
+        if str(card["status"]) == STATUS_COMPLETED and final_segment_count < 1:
+            return RuleResult(False, ("Завършена карта трябва да има поне един времеви сегмент.",))
+
+        if str(card["status"]) != STATUS_RUNNING and final_open_count > 0:
+            return RuleResult(False, ("Само карти в изработване могат да имат отворен времеви сегмент.",))
+
+        if str(card["status"]) == STATUS_RUNNING and final_open_count != 1:
+            return RuleResult(
+                False,
+                ("Картите в изработване трябва да запазят един отворен времеви сегмент.",),
+            )
+
+        try:
+            for segment_id in delete_segment_ids:
+                connection.execute(
+                    """
+                    DELETE FROM production_time_segments
+                    WHERE id = ?
+                      AND card_id = ?
+                    """,
+                    (segment_id, card_id),
+                )
+
+            closing_updates = [
+                (segment_id, parsed)
+                for segment_id, parsed in parsed_updates.items()
+                if parsed["ended_at"] is not None
+            ]
+            opening_updates = [
+                (segment_id, parsed)
+                for segment_id, parsed in parsed_updates.items()
+                if parsed["ended_at"] is None
+            ]
+            closing_new_segments = [
+                parsed for parsed in parsed_new if parsed["ended_at"] is not None
+            ]
+            opening_new_segments = [
+                parsed for parsed in parsed_new if parsed["ended_at"] is None
+            ]
+
+            for segment_id, parsed in closing_updates:
+                connection.execute(
+                    """
+                    UPDATE production_time_segments
+                    SET started_at = ?,
+                        ended_at = ?,
+                        end_reason = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                      AND card_id = ?
+                    """,
+                    (
+                        parsed["started_at"],
+                        parsed["ended_at"],
+                        parsed["end_reason"],
+                        segment_id,
+                        card_id,
+                    ),
+                )
+
+            for parsed in closing_new_segments:
+                connection.execute(
+                    """
+                    INSERT INTO production_time_segments (
+                        card_id,
+                        started_at,
+                        ended_at,
+                        end_reason
+                    )
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        card_id,
+                        parsed["started_at"],
+                        parsed["ended_at"],
+                        parsed["end_reason"],
+                    ),
+                )
+
+            for segment_id, parsed in opening_updates:
+                connection.execute(
+                    """
+                    UPDATE production_time_segments
+                    SET started_at = ?,
+                        ended_at = ?,
+                        end_reason = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                      AND card_id = ?
+                    """,
+                    (
+                        parsed["started_at"],
+                        parsed["ended_at"],
+                        parsed["end_reason"],
+                        segment_id,
+                        card_id,
+                    ),
+                )
+
+            for parsed in opening_new_segments:
+                connection.execute(
+                    """
+                    INSERT INTO production_time_segments (
+                        card_id,
+                        started_at,
+                        ended_at,
+                        end_reason
+                    )
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        card_id,
+                        parsed["started_at"],
+                        parsed["ended_at"],
+                        parsed["end_reason"],
+                    ),
+                )
+
+            connection.execute(
+                """
+                UPDATE cards
+                SET finished_at = CASE
+                        WHEN status = ?
+                        THEN (
+                            SELECT MAX(ended_at)
+                            FROM production_time_segments
+                            WHERE card_id = ? AND ended_at IS NOT NULL
+                        )
+                        ELSE finished_at
+                    END
+                WHERE id = ?
+                """,
+                (STATUS_COMPLETED, card_id, card_id),
+            )
+            refresh_card_timing_markers(connection, card_id)
+            touch_card(connection, card_id)
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return RuleResult(False, ("Картата вече има отворен времеви сегмент.",))
+
+    return RuleResult(True, ("Времето е записано.",))
+
+
 def parse_timing_segment_values(
     started_at: str,
     ended_at: str,
@@ -1768,6 +1988,221 @@ def delete_roll_entry(card_id: int, roll_id: int, loaded_version: int) -> RuleRe
     return RuleResult(True, (f"Ролка {deleted_roll_number} е изтрита. Оставащите ролки са преномерирани.",))
 
 
+def update_admin_roll_ledger(
+    card_id: int,
+    loaded_version: int,
+    tare_weight: str,
+    roll_updates: dict[int, str],
+    delete_roll_ids: set[int],
+    new_gross_weights: list[str],
+) -> RuleResult:
+    parsed_tare, parse_error = parse_weight(tare_weight, "Шпула", allow_blank=True)
+    if parse_error:
+        return RuleResult(False, (parse_error,))
+
+    with connect() as connection:
+        card = connection.execute(
+            """
+            SELECT id, order_number, status, tare_weight, version
+            FROM cards
+            WHERE id = ?
+              AND status IN (?, ?, ?, ?, ?)
+            """,
+            (card_id, *ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES),
+        ).fetchone()
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        existing_rolls = connection.execute(
+            """
+            SELECT id, roll_number, gross_weight
+            FROM roll_entries
+            WHERE card_id = ?
+            ORDER BY roll_number
+            """,
+            (card_id,),
+        ).fetchall()
+        existing_ids = {int(row["id"]) for row in existing_rolls}
+        unknown_ids = (set(roll_updates) | delete_roll_ids) - existing_ids
+        if unknown_ids:
+            return RuleResult(False, ("Избрана ролка не принадлежи към тази карта.",))
+        existing_gross_by_id = {
+            int(row["id"]): decimal_from_database(row["gross_weight"])
+            for row in existing_rolls
+        }
+
+        parsed_updates: dict[int, Decimal | None] = {}
+        for roll_id, gross_weight in roll_updates.items():
+            if roll_id in delete_roll_ids:
+                continue
+            parsed_gross, parse_error = parse_weight(
+                gross_weight,
+                "Бруто тегло",
+                allow_blank=True,
+            )
+            if parse_error:
+                return RuleResult(False, (parse_error,))
+            parsed_updates[roll_id] = parsed_gross
+
+        parsed_new: list[Decimal] = []
+        for gross_weight in new_gross_weights:
+            if not str(gross_weight).strip():
+                continue
+            parsed_gross, parse_error = parse_weight(
+                gross_weight,
+                "Бруто тегло",
+                allow_blank=False,
+            )
+            if parse_error:
+                return RuleResult(False, (parse_error,))
+            assert parsed_gross is not None
+            parsed_new.append(parsed_gross)
+
+        roll_mutation_requested = bool(delete_roll_ids or parsed_new)
+        if not roll_mutation_requested:
+            roll_mutation_requested = any(
+                parsed_gross != existing_gross_by_id[roll_id]
+                for roll_id, parsed_gross in parsed_updates.items()
+            )
+
+        if roll_mutation_requested:
+            roll_entry_result = validate_card_allows_roll_entry(card)
+            if not roll_entry_result.ok:
+                return roll_entry_result
+
+        remaining_updates: dict[int, tuple[Decimal | None, Decimal | None]] = {}
+        gross_roll_count = len(parsed_new)
+        for roll in existing_rolls:
+            roll_id = int(roll["id"])
+            if roll_id in delete_roll_ids:
+                continue
+            gross = parsed_updates.get(
+                roll_id,
+                decimal_from_database(roll["gross_weight"]),
+            )
+            if gross is not None:
+                gross_roll_count += 1
+            net = net_weight_for_gross(gross, parsed_tare) if gross is not None else None
+            if parsed_tare is not None and gross is not None and net is None:
+                return RuleResult(
+                    False,
+                    ("Бруто теглото не може да бъде по-малко от шпулата.",),
+                )
+            remaining_updates[roll_id] = (gross, net)
+
+        for gross in parsed_new:
+            net = net_weight_for_gross(gross, parsed_tare)
+            if parsed_tare is not None and net is None:
+                return RuleResult(
+                    False,
+                    ("Бруто теглото не може да бъде по-малко от шпулата.",),
+                )
+
+        if str(card["status"]) == STATUS_COMPLETED and gross_roll_count < 1:
+            return RuleResult(
+                False,
+                ("Завършените карти трябва да запазят поне едно бруто тегло на ролка.",),
+            )
+
+        connection.execute(
+            """
+            UPDATE cards
+            SET tare_weight = ?,
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                decimal_to_storage(parsed_tare) if parsed_tare is not None else None,
+                card_id,
+            ),
+        )
+
+        for roll_id in delete_roll_ids:
+            connection.execute(
+                """
+                DELETE FROM roll_entries
+                WHERE id = ?
+                  AND card_id = ?
+                """,
+                (roll_id, card_id),
+            )
+
+        for roll_id, (gross, net) in remaining_updates.items():
+            connection.execute(
+                """
+                UPDATE roll_entries
+                SET gross_weight = ?,
+                    net_weight = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                  AND card_id = ?
+                """,
+                (
+                    decimal_to_storage(gross) if gross is not None else None,
+                    decimal_to_storage(net) if net is not None else None,
+                    roll_id,
+                    card_id,
+                ),
+            )
+
+        next_roll_number = int(
+            connection.execute(
+                """
+                SELECT COALESCE(MAX(roll_number), 0) + 1 AS next_roll_number
+                FROM roll_entries
+                WHERE card_id = ?
+                """,
+                (card_id,),
+            ).fetchone()["next_roll_number"]
+        )
+        for gross in parsed_new:
+            net = net_weight_for_gross(gross, parsed_tare)
+            connection.execute(
+                """
+                INSERT INTO roll_entries (
+                    card_id,
+                    order_number,
+                    roll_number,
+                    gross_weight,
+                    net_weight
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    card_id,
+                    str(card["order_number"]),
+                    next_roll_number,
+                    decimal_to_storage(gross),
+                    decimal_to_storage(net) if net is not None else None,
+                ),
+            )
+            next_roll_number += 1
+
+        remaining_rolls = connection.execute(
+            """
+            SELECT id
+            FROM roll_entries
+            WHERE card_id = ?
+            ORDER BY roll_number, id
+            """,
+            (card_id,),
+        ).fetchall()
+        for roll_number, roll in enumerate(remaining_rolls, start=1):
+            connection.execute(
+                """
+                UPDATE roll_entries
+                SET roll_number = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (roll_number, int(roll["id"])),
+            )
+
+    return RuleResult(True, ("Ролките са записани.",))
+
+
 def fetch_roll_action_card(
     connection: sqlite3.Connection,
     card_id: int,
@@ -2077,6 +2512,106 @@ def update_terminal_recipe_actual_entries(
                 card_id,
             ),
         )
+
+    return RuleResult(True, ("Материалите са записани.",))
+
+
+def update_admin_material_ledger(
+    card_id: int,
+    loaded_version: int,
+    planned_materials: dict[str, str],
+    actual_entries: dict[str, dict[str, str]],
+    raw_material_brand_grade: str | None = None,
+) -> RuleResult:
+    component_labels = dict(RECIPE_COMPONENT_FIELDS)
+    unknown_keys = sorted((set(planned_materials) | set(actual_entries)) - set(component_labels))
+    if unknown_keys:
+        return RuleResult(False, ("Формата съдържа непознат ред от рецептата.",))
+
+    import_columns = ", ".join(ADMIN_MATERIAL_FIELDS)
+    with connect() as connection:
+        card = connection.execute(
+            f"""
+            SELECT id, version, raw_material_brand_grade, {import_columns}
+            FROM cards
+            WHERE id = ?
+              AND status IN (?, ?, ?, ?, ?)
+            """,
+            (card_id, *ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES),
+        ).fetchone()
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        cleaned_planned = {
+            field: str(planned_materials.get(field) or "").strip()
+            for field in ADMIN_MATERIAL_FIELDS
+        }
+        raw_material_entry = actual_entries.get("raw_material_a", {})
+        raw_material_used = str(
+            raw_material_entry.get("actual_material_used") or ""
+        ).strip()
+        raw_material_batch_lot = str(raw_material_entry.get("batch_lot") or "").strip()
+        if raw_material_brand_grade is None:
+            raw_material_brand_grade = str(card["raw_material_brand_grade"] or "")
+
+        connection.execute(
+            """
+            UPDATE cards
+            SET raw_material_a = ?,
+                raw_material_b = ?,
+                raw_material_c = ?,
+                linear_pe = ?,
+                antistatic = ?,
+                masterbatch = ?,
+                chalk = ?,
+                actual_raw_material_used = ?,
+                raw_material_brand_grade = ?,
+                raw_material_batch_lot = ?,
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                cleaned_planned["raw_material_a"],
+                cleaned_planned["raw_material_b"],
+                cleaned_planned["raw_material_c"],
+                cleaned_planned["linear_pe"],
+                cleaned_planned["antistatic"],
+                cleaned_planned["masterbatch"],
+                cleaned_planned["chalk"],
+                raw_material_used,
+                raw_material_brand_grade.strip(),
+                raw_material_batch_lot,
+                card_id,
+            ),
+        )
+
+        for component_key, component_label in RECIPE_COMPONENT_FIELDS:
+            entry = actual_entries.get(component_key, {})
+            connection.execute(
+                """
+                INSERT INTO recipe_actual_entries (
+                    card_id, component_key, component_label, planned_material,
+                    actual_material_used, batch_lot
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(card_id, component_key) DO UPDATE SET
+                    component_label = excluded.component_label,
+                    planned_material = excluded.planned_material,
+                    actual_material_used = excluded.actual_material_used,
+                    batch_lot = excluded.batch_lot,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    card_id,
+                    component_key,
+                    component_label,
+                    cleaned_planned.get(component_key, ""),
+                    str(entry.get("actual_material_used") or "").strip(),
+                    str(entry.get("batch_lot") or "").strip(),
+                ),
+            )
 
     return RuleResult(True, ("Материалите са записани.",))
 
