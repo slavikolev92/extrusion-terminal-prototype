@@ -41,11 +41,14 @@
             </div>
           </div>
 
-          <div class="front-row front-product-row" aria-label="Изделие и количество">
+          <div class="front-row front-product-row" aria-label="Изделие">
             <div class="front-field front-product-type">
               <span class="front-label">ВИД ИЗДЕЛИЕ</span>
               <span class="front-value">{{ print_data.front.product_type }}</span>
             </div>
+          </div>
+
+          <div class="front-row front-quantity-row" aria-label="Количество">
             <div class="front-field front-quantity">
               <span class="front-label">КОЛИЧЕСТВО</span>
               <span class="front-value">
@@ -60,6 +63,7 @@
           <div class="front-section-title">ЕКСТРУДИРАНЕ</div>
 
           <div class="front-request-grid" aria-label="Заявена заготовка">
+            <div class="front-request-title">ЗАЯВЕНО ИЗДЕЛИЕ</div>
             <div class="front-field">
               <span class="front-label">ВИД ЗАГОТОВКА</span>
               <span class="front-value">{{ print_data.front.product_form }}</span>
@@ -86,50 +90,88 @@
             </div>
           </div>
 
-          <table class="front-recipe-table" aria-label="Рецепта и вложени материали">
-            <thead>
-              <tr>
-                <th class="front-recipe-label">Материал</th>
-                <th>Планирано</th>
-                <th>Реално вложен материал / марка</th>
-                <th>Партида</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in print_data.front.recipe_rows %}
-                <tr data-front-recipe-row="{{ row.component_key }}">
-                  <th>{{ row.label }}</th>
-                  <td data-front-recipe-planned="{{ row.component_key }}">{{ row.planned_material }}</td>
-                  <td data-front-recipe-actual="{{ row.component_key }}">{{ row.actual_material_used }}</td>
-                  <td data-front-recipe-batch="{{ row.component_key }}">{{ row.batch_lot }}</td>
+          <div class="front-recipe-panel" aria-label="Рецепта и вложени материали">
+            <table class="front-planned-table" aria-label="Заявено изделие">
+              <thead>
+                <tr>
+                  <th colspan="4">ЗАЯВЕНО ИЗДЕЛИЕ</th>
                 </tr>
-              {% endfor %}
-            </tbody>
-          </table>
+                <tr>
+                  <th></th>
+                  <th>A</th>
+                  <th>B</th>
+                  <th>C</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="front-raw-materials-row">
+                  <th>ВИД СУРОВИНА</th>
+                  {% for row in print_data.front.recipe_rows[:3] %}
+                    <td data-front-recipe-planned="{{ row.component_key }}">{{ row.planned_material }}</td>
+                  {% endfor %}
+                </tr>
+                {% for row in print_data.front.recipe_rows[3:] %}
+                  <tr data-front-recipe-row="{{ row.component_key }}">
+                    <th>{{ row.label }}</th>
+                    <td data-front-recipe-planned="{{ row.component_key }}">{{ row.planned_material }}</td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
 
-          <div class="front-notes-grid" aria-label="Забележки и опаковка">
-            <div class="front-field front-notes">
-              <span class="front-label">ЗАБЕЛЕЖКИ</span>
-              <span class="front-value">{{ print_data.front.notes }}</span>
-            </div>
-            <div class="front-field front-packaging">
-              <span class="front-label">НАЧИН НА ОПАКОВАНЕ</span>
-              <span class="front-value">{{ print_data.front.packaging_method }}</span>
-            </div>
+            <table class="front-actual-table" aria-label="Вложени суровини и добавки">
+              <thead>
+                <tr>
+                  <th colspan="3">ВЛОЖЕНИ СУРОВИНИ И ДОБАВКИ</th>
+                </tr>
+                <tr>
+                  <th>КОЛИЧЕСТВО [kg]</th>
+                  <th>МАРКА №</th>
+                  <th>ПАРТИДЕН №</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in print_data.front.recipe_rows %}
+                  <tr>
+                    <th>{{ row.label }}</th>
+                    <td data-front-recipe-actual="{{ row.component_key }}">{{ row.actual_material_used }}</td>
+                    <td data-front-recipe-batch="{{ row.component_key }}">{{ row.batch_lot }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
           </div>
 
-          <div class="front-legacy-grid" aria-label="Наследени полета">
-            <div class="front-field front-legacy-spools">
-              <span class="front-label">ШПУЛИ</span>
-              <span class="front-value"></span>
+          <div class="front-bottom-grid" aria-label="Забележки, опаковка и наследени полета">
+            <div class="front-notes-area">
+              <div class="front-notes-title">ЗАБЕЛЕЖКИ :</div>
+              <div class="front-packaging-line">
+                <div class="front-field front-packaging-label">
+                  <span class="front-label">НАЧИН НА ОПАКОВАНЕ</span>
+                </div>
+                <div class="front-field front-packaging">
+                  <span class="front-value">{{ print_data.front.packaging_method }}</span>
+                </div>
+              </div>
+              <div class="front-field front-notes">
+                <span class="front-value">{{ print_data.front.notes }}</span>
+              </div>
             </div>
-            <div class="front-field front-legacy-waste">
-              <span class="front-label">БРАК</span>
-              <span class="front-value"></span>
-            </div>
-            <div class="front-field front-legacy-foil">
-              <span class="front-label">ФОЛИО [kg]</span>
-              <span class="front-value"></span>
+            <div class="front-legacy-grid" aria-label="Наследени полета">
+              <div class="front-field front-legacy-spools" data-front-legacy-section="front-legacy-spools">
+                <span class="front-label">ШПУЛИ</span>
+                <span class="front-value" data-front-legacy-value="front-legacy-spools"></span>
+              </div>
+              <div class="front-field front-legacy-waste" data-front-legacy-section="front-legacy-waste">
+                <span class="front-label">БРАК</span>
+                <span class="front-value" data-front-legacy-value="front-legacy-waste"></span>
+              </div>
+              <div class="front-field front-legacy-foil" data-front-legacy-section="front-legacy-foil">
+                <span class="front-label">ФОЛИО [kg]</span>
+                <span class="front-value" data-front-legacy-value="front-legacy-foil"></span>
+              </div>
             </div>
           </div>
         </div>
@@ -170,33 +212,49 @@
                     <td class="roll-gross" data-roll-gross="{{ roll_number }}">{{ slot.gross_display }}</td>
                   </tr>
                 {% endfor %}
+                <tr class="roll-group-total" data-roll-group-total="{{ group_start }}-{{ group_end }}">
+                  <th colspan="2">Общо</th>
+                  <td data-roll-group-total-value="{{ group_start }}-{{ group_end }}"></td>
+                </tr>
               </tbody>
             </table>
           {% endfor %}
         </div>
 
-        <table class="print-summary">
-          <tbody>
-            <tr>
-              <th>Старт производство</th>
-              <td data-summary-field="start">{{ print_data.back.start_display }}</td>
-              <th>Стоп производство</th>
-              <td data-summary-field="stop">{{ print_data.back.stop_display }}</td>
-            </tr>
-            <tr>
-              <th>Време за изработка</th>
-              <td data-summary-field="duration">{{ print_data.back.duration_display }}</td>
-              <th>Шпула /кг/</th>
-              <td data-summary-field="tare">{{ print_data.back.tare_display }}</td>
-            </tr>
-            <tr>
-              <th>Произведено кол. бруто /кг/</th>
-              <td data-summary-field="total-gross">{{ print_data.back.total_gross_display }}</td>
-              <th>Произведено кол. нето /кг/</th>
-              <td data-summary-field="total-net">{{ print_data.back.total_net_display }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="print-summary" aria-label="Производствено обобщение">
+          <table class="print-summary-timing">
+            <tbody>
+              <tr>
+                <th>Старт производство</th>
+                <td data-summary-field="start">{{ print_data.back.start_display }}</td>
+              </tr>
+              <tr>
+                <th>Стоп производство</th>
+                <td data-summary-field="stop">{{ print_data.back.stop_display }}</td>
+              </tr>
+              <tr>
+                <th>Време за изработка</th>
+                <td data-summary-field="duration">{{ print_data.back.duration_display }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <table class="print-summary-weights">
+            <tbody>
+              <tr>
+                <th>Шпула /кг/</th>
+                <td data-summary-field="tare">{{ print_data.back.tare_display }}</td>
+              </tr>
+              <tr>
+                <th>Произведено кол. бруто /кг/</th>
+                <td data-summary-field="total-gross">{{ print_data.back.total_gross_display }}</td>
+              </tr>
+              <tr>
+                <th>Произведено кол. нето /кг/</th>
+                <td data-summary-field="total-net">{{ print_data.back.total_net_display }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </section>
     </main>
 

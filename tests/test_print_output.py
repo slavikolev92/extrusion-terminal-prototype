@@ -430,10 +430,6 @@ def roll_row(html: str, roll_number: int) -> str:
     return data_block(html, "data-roll-number", str(roll_number))
 
 
-def front_recipe_row(html: str, component_key: str) -> str:
-    return data_block(html, "data-front-recipe-row", component_key)
-
-
 def direct_td_count(fragment: str) -> int:
     return len(re.findall(r"<td\b", fragment, flags=re.IGNORECASE))
 
@@ -540,8 +536,7 @@ def test_print_route_front_page_renders_planned_recipe_values(connection):
         "chalk": "0%",
     }
     for component_key, expected_value in expected_values.items():
-        row = front_recipe_row(response.text, component_key)
-        planned_cell = data_block(row, "data-front-recipe-planned", component_key)
+        planned_cell = data_block(response.text, "data-front-recipe-planned", component_key)
         assert rendered_text(planned_cell) == expected_value
 
 
@@ -576,9 +571,8 @@ def test_print_route_front_page_renders_actual_material_and_batch_values(
         "masterbatch": ("Actual MB", "LOT-MB"),
     }
     for component_key, (expected_actual, expected_batch) in expected_values.items():
-        row = front_recipe_row(response.text, component_key)
-        actual_cell = data_block(row, "data-front-recipe-actual", component_key)
-        batch_cell = data_block(row, "data-front-recipe-batch", component_key)
+        actual_cell = data_block(response.text, "data-front-recipe-actual", component_key)
+        batch_cell = data_block(response.text, "data-front-recipe-batch", component_key)
         assert rendered_text(actual_cell) == expected_actual
         assert rendered_text(batch_cell) == expected_batch
 
@@ -599,9 +593,8 @@ def test_print_route_front_page_blank_actual_recipe_fields_stay_blank(connection
 
     assert response.status_code == 200
     for component_key in ("raw_material_c", "chalk"):
-        row = front_recipe_row(response.text, component_key)
-        actual_cell = data_block(row, "data-front-recipe-actual", component_key)
-        batch_cell = data_block(row, "data-front-recipe-batch", component_key)
+        actual_cell = data_block(response.text, "data-front-recipe-actual", component_key)
+        batch_cell = data_block(response.text, "data-front-recipe-batch", component_key)
         assert rendered_text(actual_cell) == ""
         assert rendered_text(batch_cell) == ""
 
@@ -631,6 +624,23 @@ def test_print_route_excludes_app_only_planning_fields(connection):
     assert "machine_sequence" not in response.text
     assert "Машина" not in text
     assert "ред 9" not in text
+
+
+def test_print_route_front_page_renders_legacy_sections_as_blank_fields(connection):
+    card_id = make_completed_printable_card("27027")
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    expected_sections = {
+        "front-legacy-spools": "ШПУЛИ",
+        "front-legacy-waste": "БРАК",
+        "front-legacy-foil": "ФОЛИО [kg]",
+    }
+    for class_name, label in expected_sections.items():
+        section = data_block(response.text, "data-front-legacy-section", class_name)
+        assert label in rendered_text(section)
+        assert rendered_text(data_block(section, "data-front-legacy-value", class_name)) == ""
 
 
 def test_print_route_title_uses_order_number_not_internal_card_id(connection):
@@ -674,6 +684,18 @@ def test_print_route_back_page_renders_three_roll_groups_with_120_numbers(connec
     assert 'data-roll-group="81-120"' in groups[2]
     for roll_number in range(1, 121):
         assert f'data-roll-number="{roll_number}"' in response.text
+
+
+def test_print_route_back_page_renders_blank_total_row_for_each_roll_group(connection):
+    card_id = make_completed_printable_card("27026", roll_count=2)
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    for group in ("1-40", "41-80", "81-120"):
+        total_row = data_block(response.text, "data-roll-group-total", group)
+        assert "Общо" in rendered_text(total_row)
+        assert rendered_text(data_block(total_row, "data-roll-group-total-value", group)) == ""
 
 
 def test_print_route_back_page_roll_slots_after_produced_count_are_blank(

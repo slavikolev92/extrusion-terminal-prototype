@@ -323,7 +323,7 @@ Milestone 9 commit strategy:
 
 ## Milestone 10 - Print Output
 
-Status: software implementation complete; physical printer rehearsal still required before pilot readiness
+Status: software implementation and template-fidelity pass complete; physical printer rehearsal still required before pilot readiness
 
 Scope:
 
@@ -332,8 +332,8 @@ Scope:
 - admin completed-card print/reprint access exists from card detail and the admin card list.
 - print route uses app data and server-rendered HTML/CSS; it does not fill or print from Excel at runtime.
 - output renders exactly two A4 portrait pages: extrusion front card and roll/summary back page.
-- front page preserves the extrusion-card structure: order/header fields, product/quantity, extrusion requested fields, planned and actual recipe/material rows, notes/packaging, and blank legacy boxes for `ШПУЛИ`, `БРАК`, and `ФОЛИО [kg]`.
-- back page keeps the three-group 120-roll grid with blank `Дата / смяна` cells.
+- front page preserves the extrusion-card structure and has been tuned against `source-files/print-template.pdf`: order/header fields, product/quantity rows, extrusion requested fields, split planned/actual material blocks, notes/packaging, and blank legacy boxes for `ШПУЛИ`, `БРАК`, and `ФОЛИО [kg]`.
+- back page keeps the three-group 120-roll grid with blank `Дата / смяна` cells and blank per-group `Общо` rows.
 - roll grid prints gross weights only.
 - summary prints start, stop, active production duration excluding pauses, tare, total gross, and total net.
 - print readiness is rechecked at print time and blocks missing critical production data, non-completed/cancelled cards, open timing segments, and more than 120 rolls.
@@ -349,14 +349,26 @@ Verification completed:
   - `artifacts/ui-checks/print-output-preview.pdf`
 - `pdfinfo artifacts/ui-checks/print-output-preview.pdf` reported 2 pages and A4 page size.
 - Browser verification checked two print pages, front/back landmarks, 120 roll rows, blank date/shift cells, gross-only roll values, summary labels, front labels, and app-only field absence.
+- Template-fidelity pass added repeatable local verification helpers:
+  - `scripts/create_print_template_fixture.py` creates a dense completed-card fixture only under `.test-runtime/`.
+  - `scripts/render_print_template.mjs` renders the print route to browser screenshots, PDF, page PNGs, and `pdfinfo` metadata only under `artifacts/ui-checks/`.
+- Additional template-fidelity artifacts from temporary-DB browser/PDF checks:
+  - `artifacts/ui-checks/template-reference/print-template-1.png`
+  - `artifacts/ui-checks/template-reference/print-template-2.png`
+  - `artifacts/ui-checks/template-tuning/front-pass-4/current-print-output.pdf`
+  - `artifacts/ui-checks/template-tuning/front-pass-4/current-print-output-1.png`
+  - `artifacts/ui-checks/template-tuning/front-pass-4/current-print-output-2.png`
+  - `artifacts/ui-checks/template-tuning/front-pass-4/current-print-output.metadata.json`
 
 Accepted v1 deviations / notes:
 
 - Browser print/PDF rendering is the v1 output path; silent/kiosk printing remains deployment configuration, not application behavior.
 - Excel template fidelity deviations accepted for v1:
   - The output is rebuilt as HTML/CSS instead of using Excel cell geometry at runtime.
-  - Back-page roll cells print gross weight only, not the legacy gross/net combined sample values.
-  - App-added production summary values are placed in the existing back-page summary area.
+  - The tuned output is visually close to the reference PDF but is not a pixel-perfect Excel clone.
+  - Margins are intentionally smaller than the reference PDF where that helps preserve clean two-page output.
+  - Back-page roll cells print gross weight only.
+  - App-added production summary values are placed in the existing back-page summary area as separate timing and weight blocks.
   - Legacy front-page sections without confirmed app data remain visually present but blank.
 - Browser margin handling:
   - The print CSS uses `@page { size: A4 portrait; margin: 0; }` and each `.print-page` defines its own internal padding.
@@ -372,7 +384,7 @@ Accepted v1 deviations / notes:
 
 Review checkpoint:
 
-- software implementation and PDF/browser rehearsal are ready for review.
+- software implementation, template-fidelity pass, and PDF/browser rehearsal are ready for review.
 - physical printer rehearsal remains open.
 - commit only when explicitly requested.
 
