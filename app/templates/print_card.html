@@ -255,20 +255,25 @@
       </section>
 
       <section class="print-page print-page-back" aria-label="Задна страница">
-        <div class="print-back-header" aria-label="Данни за поръчка">
-          <div class="print-back-field print-back-order">
-            <span class="print-label">ПОРЪЧКА №</span>
-            <span class="print-value">{{ print_data.back.order_number }}</span>
-          </div>
-          <div class="print-back-field print-back-customer">
-            <span class="print-label">ФИРМА</span>
-            <span class="print-value">{{ print_data.back.customer }}</span>
-          </div>
-          <div class="print-back-field print-back-product">
-            <span class="print-label">ВИД ИЗДЕЛИЕ</span>
-            <span class="print-value">{{ print_data.back.product_type }}</span>
-          </div>
-        </div>
+        <table class="print-back-header" aria-label="Данни за поръчка" data-print-back-header="order">
+          <colgroup>
+            <col class="print-back-order-col">
+            <col class="print-back-customer-col">
+            <col class="print-back-product-col">
+          </colgroup>
+          <tbody>
+            <tr>
+              <th>ПОРЪЧКА №</th>
+              <th>ФИРМА</th>
+              <th>ВИД ИЗДЕЛИЕ</th>
+            </tr>
+            <tr>
+              <td data-back-header-value="order">{{ print_data.back.order_number }}</td>
+              <td data-back-header-value="customer">{{ print_data.back.customer }}</td>
+              <td data-back-header-value="product">{{ print_data.back.product_type }}</td>
+            </tr>
+          </tbody>
+        </table>
 
         <div class="print-back-roll-groups" aria-label="Ролки">
           {% for group_start, group_end in [(1, 40), (41, 80), (81, 120)] %}
@@ -299,7 +304,7 @@
         </div>
 
         <div class="print-summary" aria-label="Производствено обобщение">
-          <table class="print-summary-timing">
+          <table class="print-summary-timing" data-summary-table="timing">
             <tbody>
               <tr>
                 <th>Старт производство</th>
@@ -315,7 +320,7 @@
               </tr>
             </tbody>
           </table>
-          <table class="print-summary-weights">
+          <table class="print-summary-weights" data-summary-table="weights">
             <tbody>
               <tr>
                 <th>Шпула /кг/</th>

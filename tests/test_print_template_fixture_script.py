@@ -99,3 +99,29 @@ def test_print_template_renderer_rejects_output_dir_outside_ui_artifacts(tmp_pat
     assert result.returncode != 0
     assert "render output dir must be under artifacts/ui-checks" in result.stderr
     assert not unsafe_output_dir.exists()
+
+
+def test_print_template_renderer_rejects_output_dir_without_creating_outside_parent(
+    tmp_path,
+):
+    unsafe_parent = tmp_path / "outside-parent"
+    unsafe_output_dir = unsafe_parent / "render-output"
+
+    result = subprocess.run(
+        [
+            "node",
+            "scripts/render_print_template.mjs",
+            "--card-id",
+            "1",
+            "--output-dir",
+            str(unsafe_output_dir),
+        ],
+        cwd=ROOT_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "render output dir must be under artifacts/ui-checks" in result.stderr
+    assert not unsafe_parent.exists()

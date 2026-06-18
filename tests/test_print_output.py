@@ -6,6 +6,7 @@ import io
 import re
 from dataclasses import dataclass
 from html import unescape
+from pathlib import Path
 
 import pytest
 
@@ -26,6 +27,8 @@ from app.printing import (
     format_duration,
     format_weight,
 )
+
+PRINT_CSS_PATH = Path(__file__).resolve().parent.parent / "app/static/css/print.css"
 
 
 def csv_bytes(*rows: dict[str, str]) -> bytes:
@@ -821,6 +824,22 @@ def test_print_route_back_page_renders_three_roll_groups_with_120_numbers(connec
         assert f'data-roll-number="{roll_number}"' in response.text
 
 
+def test_print_route_back_page_header_uses_label_and_value_rows(connection):
+    card_id = make_completed_printable_card("27033")
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    header = data_block(response.text, "data-print-back-header", "order")
+    assert header.count("<tr") == 2
+    for field_name, expected_value in {
+        "order": "27033",
+        "customer": "Print Customer",
+        "product": "PE film",
+    }.items():
+        assert rendered_text(data_block(header, "data-back-header-value", field_name)) == expected_value
+
+
 def test_print_route_back_page_renders_blank_total_row_for_each_roll_group(connection):
     card_id = make_completed_printable_card("27026", roll_count=2)
 
@@ -896,6 +915,35 @@ def test_print_route_back_page_date_shift_cells_are_blank(connection):
     for roll_number in (1, 2, 40, 41, 80, 81, 120):
         cell = data_block(response.text, "data-roll-date-shift", str(roll_number))
         assert rendered_text(cell) == ""
+
+
+def test_print_css_centers_roll_gross_and_reduces_date_shift_width():
+    css = PRINT_CSS_PATH.read_text(encoding="utf-8")
+
+    assert re.search(
+        r"\.roll-date-heading,\s*\.roll-date-shift\s*\{[^}]*width:\s*13mm;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.roll-grid td\.roll-gross\s*\{[^}]*text-align:\s*center;",
+        css,
+        flags=re.DOTALL,
+    )
+
+
+def test_print_route_back_page_summary_fields_render_in_two_side_by_side_tables(connection):
+    card_id = make_completed_printable_card("27034")
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    timing_table = data_block(response.text, "data-summary-table", "timing")
+    weights_table = data_block(response.text, "data-summary-table", "weights")
+    assert timing_table.count("<tr") == 3
+    assert weights_table.count("<tr") == 3
+    for field_name in ("start", "stop", "duration", "tare", "total-gross", "total-net"):
+        assert f'data-summary-field="{field_name}"' in response.text
 
 
 def test_print_route_auto_mode_calls_window_print(connection):

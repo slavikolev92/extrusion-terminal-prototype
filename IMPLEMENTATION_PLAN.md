@@ -335,6 +335,7 @@ Scope:
 - front page preserves the extrusion-card structure and has been tuned against `source-files/print-template.pdf`: order/header fields, product/quantity rows, extrusion requested fields, split planned/actual material blocks, notes/packaging, and blank legacy boxes for `ШПУЛИ`, `БРАК`, and `ФОЛИО [kg]`.
 - corrective template-fidelity pass rebuilt the front page as a fixed Excel-like HTML table skeleton so blank template cells remain visible instead of being omitted when no app data exists.
 - back page keeps the three-group 120-roll grid with blank `Дата / смяна` cells and blank per-group `Общо` rows.
+- final back-page polish restored the header as a two-row table, narrowed `Дата / смяна`, centered roll gross `кг.` values, and restored separate left/right timing and weight summary tables.
 - roll grid prints gross weights only.
 - summary prints start, stop, active production duration excluding pauses, tare, total gross, and total net.
 - print readiness is rechecked at print time and blocks missing critical production data, non-completed/cancelled cards, open timing segments, and more than 120 rolls.
@@ -365,6 +366,18 @@ Verification completed:
   - `artifacts/ui-checks/template-tuning/front-grid-final-r2/current-print-output-1.png`
   - `artifacts/ui-checks/template-tuning/front-grid-final-r2/current-print-output-2.png`
   - `artifacts/ui-checks/template-tuning/front-grid-final-r2/current-print-output.metadata.json`
+- Final review found no Critical or Important findings. One Minor renderer containment finding was fixed so rejected output directories outside `artifacts/ui-checks/` do not create outside parent directories.
+- Final review verification:
+  - `source .venv/bin/activate && python -m pytest tests/test_print_output.py tests/test_print_template_fixture_script.py` passed: 45 tests.
+  - `source .venv/bin/activate && python -m pytest` passed: 209 tests.
+  - `git diff --check` passed.
+  - temporary-DB browser verification used `.test-runtime/print-final-review/extrusion_terminal.sqlite3`, not `data/extrusion_terminal.sqlite3`.
+  - runtime DB safety check found no fixture rows matching `PRINT-TEMPLATE-%`, `27033`, or `27034` in `data/extrusion_terminal.sqlite3`.
+- Final review artifacts from temporary-DB browser/PDF checks:
+  - `artifacts/ui-checks/template-tuning/final-review/current-print-output.pdf`
+  - `artifacts/ui-checks/template-tuning/final-review/current-print-output-1.png`
+  - `artifacts/ui-checks/template-tuning/final-review/current-print-output-2.png`
+  - `artifacts/ui-checks/template-tuning/final-review/current-print-output.metadata.json`
 
 Accepted v1 deviations / notes:
 

@@ -409,39 +409,49 @@ body {
 }
 
 .print-back-header {
-  display: grid;
-  grid-template-columns: 17mm 56mm 1fr;
-  border-top: 2px solid #111;
-  border-left: 2px solid #111;
+  width: 100%;
+  border: 2px solid #111;
+  border-collapse: collapse;
+  table-layout: fixed;
   font-size: 9pt;
   line-height: 1.05;
 }
 
-.print-back-field {
-  min-height: 15mm;
-  border-right: 2px solid #111;
-  border-bottom: 2px solid #111;
-  padding: 1.2mm 1.5mm;
+.print-back-header th,
+.print-back-header td {
+  border: 2px solid #111;
+  padding: 0.8mm 1.5mm;
   text-align: center;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
 }
 
-.print-back-field .print-label {
-  display: block;
-  margin-bottom: 3mm;
+.print-back-header th {
+  height: 4.5mm;
   font-size: 7pt;
   font-weight: 700;
   text-transform: uppercase;
 }
 
-.print-back-field .print-value {
-  display: block;
-  min-height: 5mm;
+.print-back-header td {
+  height: 10.5mm;
   font-size: 9.5pt;
   font-weight: 500;
-  overflow-wrap: anywhere;
 }
 
-.print-back-order .print-value {
+.print-back-order-col {
+  width: 17mm;
+}
+
+.print-back-customer-col {
+  width: 56mm;
+}
+
+.print-back-product-col {
+  width: auto;
+}
+
+.print-back-header td:first-child {
   font-size: 8.6pt;
   font-weight: 700;
 }
@@ -476,7 +486,7 @@ body {
 
 .roll-date-heading,
 .roll-date-shift {
-  width: 16mm;
+  width: 13mm;
 }
 
 .roll-number-heading,
@@ -486,7 +496,7 @@ body {
 
 .roll-weight-heading,
 .roll-gross {
-  width: 22mm;
+  width: 25mm;
 }
 
 .roll-number {
@@ -494,7 +504,7 @@ body {
 }
 
 .roll-grid td.roll-gross {
-  text-align: right;
+  text-align: center;
   font-weight: 600;
 }
 
@@ -512,35 +522,50 @@ body {
 
 .print-summary {
   display: grid;
-  grid-template-columns: 63mm 63mm;
-  justify-content: center;
-  gap: 7mm;
-  margin-top: 0;
-  font-size: 8.4pt;
+  grid-template-columns: 63mm 75mm;
+  justify-content: space-between;
+  gap: 0;
+  width: 174mm;
+  margin: 1.6mm auto 0;
+  font-size: 7.6pt;
   line-height: 1.05;
+}
+
+.print-summary table {
+  width: 100%;
+  table-layout: fixed;
 }
 
 .print-summary th,
 .print-summary td {
   height: 4.6mm;
-  padding: 0.5mm 1mm;
+  padding: 0.45mm 0.8mm;
+  text-align: left;
+  white-space: nowrap;
 }
 
 .print-summary th {
-  width: 39mm;
   font-weight: 700;
 }
 
 .print-summary td {
-  width: 24mm;
   font-weight: 700;
-  text-align: right;
 }
 
-.print-summary tr:last-child th,
-.print-summary tr:last-child td {
-  border-top-width: 2px;
-  font-weight: 700;
+.print-summary-timing th {
+  width: 35mm;
+}
+
+.print-summary-timing td {
+  width: 28mm;
+}
+
+.print-summary-weights th {
+  width: 52mm;
+}
+
+.print-summary-weights td {
+  width: 23mm;
 }
 
 .print-blocked {

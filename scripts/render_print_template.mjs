@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright";
 
@@ -23,13 +23,24 @@ const outputDir = path.resolve(rootDir, rawOutputDir);
 const uiChecksDir = path.resolve(rootDir, "artifacts/ui-checks");
 mkdirSync(uiChecksDir, { recursive: true });
 const realUiChecksDir = realpathSync(uiChecksDir);
-const existingOutputParent = path.dirname(outputDir);
-mkdirSync(existingOutputParent, { recursive: true });
-const realOutputParent = realpathSync(existingOutputParent);
+
+function nearestExistingAncestor(candidatePath) {
+  let currentPath = candidatePath;
+  while (!existsSync(currentPath)) {
+    const parentPath = path.dirname(currentPath);
+    if (parentPath === currentPath) {
+      return currentPath;
+    }
+    currentPath = parentPath;
+  }
+  return currentPath;
+}
+
+const realOutputAncestor = realpathSync(nearestExistingAncestor(path.dirname(outputDir)));
 
 if (
-  realOutputParent !== realUiChecksDir &&
-  !realOutputParent.startsWith(`${realUiChecksDir}${path.sep}`)
+  realOutputAncestor !== realUiChecksDir &&
+  !realOutputAncestor.startsWith(`${realUiChecksDir}${path.sep}`)
 ) {
   throw new Error("render output dir must be under artifacts/ui-checks");
 }
