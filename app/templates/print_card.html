@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="bg">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if print_data %}Печат поръчка {{ print_data.front.order_number }}{% else %}Печат карта{% endif %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/css/print.css') }}">
+</head>
+<body>
+  {% if readiness.ok and print_data %}
+    <div class="screen-only print-controls">
+      <button type="button" onclick="print()">Печат</button>
+      <a href="{{ preview_url }}">Преглед за печат</a>
+    </div>
+
+    <main class="print-card" aria-label="Операционна карта за печат">
+      <section class="print-page print-page-front" aria-label="Предна страница">
+        <div class="front-card-frame">
+          <div class="front-title">Технологична карта</div>
+
+          <div class="front-row front-order-row" aria-label="Данни за поръчка">
+            <div class="front-field front-order-number">
+              <span class="front-label">ПОРЪЧКА №</span>
+              <span class="front-value">{{ print_data.front.order_number }}</span>
+            </div>
+            <div class="front-field front-order-date">
+              <span class="front-label">ДАТА</span>
+              <span class="front-value">{{ print_data.front.order_date }}</span>
+            </div>
+            <div class="front-field front-delivery-date">
+              <span class="front-label">ДАТА НА ДОСТАВКА</span>
+              <span class="front-value">{{ print_data.front.delivery_date }}</span>
+            </div>
+            <div class="front-field front-customer">
+              <span class="front-label">ФИРМА</span>
+              <span class="front-value">{{ print_data.front.customer }}</span>
+            </div>
+            <div class="front-field front-city">
+              <span class="front-label">ГРАД</span>
+              <span class="front-value">{{ print_data.front.city }}</span>
+            </div>
+          </div>
+
+          <div class="front-row front-product-row" aria-label="Изделие и количество">
+            <div class="front-field front-product-type">
+              <span class="front-label">ВИД ИЗДЕЛИЕ</span>
+              <span class="front-value">{{ print_data.front.product_type }}</span>
+            </div>
+            <div class="front-field front-quantity">
+              <span class="front-label">КОЛИЧЕСТВО</span>
+              <span class="front-value">
+                {{ print_data.front.quantity_1 }} {{ print_data.front.unit_1 }}
+                {% if print_data.front.quantity_2 or print_data.front.unit_2 %}
+                  / {{ print_data.front.quantity_2 }} {{ print_data.front.unit_2 }}
+                {% endif %}
+              </span>
+            </div>
+          </div>
+
+          <div class="front-section-title">ЕКСТРУДИРАНЕ</div>
+
+          <div class="front-request-grid" aria-label="Заявена заготовка">
+            <div class="front-field">
+              <span class="front-label">ВИД ЗАГОТОВКА</span>
+              <span class="front-value">{{ print_data.front.product_form }}</span>
+            </div>
+            <div class="front-field">
+              <span class="front-label">МАТЕРИАЛ</span>
+              <span class="front-value">{{ print_data.front.material }}</span>
+            </div>
+            <div class="front-field">
+              <span class="front-label">РАЗМЕР/ДЕБЕЛИНА [mm]</span>
+              <span class="front-value">{{ print_data.front.size_thickness }}</span>
+            </div>
+            <div class="front-field">
+              <span class="front-label">ФАЛДИРАНЕ</span>
+              <span class="front-value">{{ print_data.front.extrusion_folding }}</span>
+            </div>
+            <div class="front-field">
+              <span class="front-label">СЛЕДВАЩА ОПЕРАЦИЯ</span>
+              <span class="front-value">{{ print_data.front.extrusion_next_operation }}</span>
+            </div>
+            <div class="front-field">
+              <span class="front-label">ТРЕТИРАНЕ</span>
+              <span class="front-value">{{ print_data.front.extrusion_treatment }}</span>
+            </div>
+          </div>
+
+          <table class="front-recipe-table" aria-label="Рецепта и вложени материали">
+            <thead>
+              <tr>
+                <th class="front-recipe-label">Материал</th>
+                <th>Планирано</th>
+                <th>Реално вложен материал / марка</th>
+                <th>Партида</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in print_data.front.recipe_rows %}
+                <tr data-front-recipe-row="{{ row.component_key }}">
+                  <th>{{ row.label }}</th>
+                  <td data-front-recipe-planned="{{ row.component_key }}">{{ row.planned_material }}</td>
+                  <td data-front-recipe-actual="{{ row.component_key }}">{{ row.actual_material_used }}</td>
+                  <td data-front-recipe-batch="{{ row.component_key }}">{{ row.batch_lot }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+
+          <div class="front-notes-grid" aria-label="Забележки и опаковка">
+            <div class="front-field front-notes">
+              <span class="front-label">ЗАБЕЛЕЖКИ</span>
+              <span class="front-value">{{ print_data.front.notes }}</span>
+            </div>
+            <div class="front-field front-packaging">
+              <span class="front-label">НАЧИН НА ОПАКОВАНЕ</span>
+              <span class="front-value">{{ print_data.front.packaging_method }}</span>
+            </div>
+          </div>
+
+          <div class="front-legacy-grid" aria-label="Наследени полета">
+            <div class="front-field front-legacy-spools">
+              <span class="front-label">ШПУЛИ</span>
+              <span class="front-value"></span>
+            </div>
+            <div class="front-field front-legacy-waste">
+              <span class="front-label">БРАК</span>
+              <span class="front-value"></span>
+            </div>
+            <div class="front-field front-legacy-foil">
+              <span class="front-label">ФОЛИО [kg]</span>
+              <span class="front-value"></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="print-page print-page-back" aria-label="Задна страница">
+        <div class="print-back-header" aria-label="Данни за поръчка">
+          <div class="print-back-field print-back-order">
+            <span class="print-label">ПОРЪЧКА №</span>
+            <span class="print-value">{{ print_data.back.order_number }}</span>
+          </div>
+          <div class="print-back-field print-back-customer">
+            <span class="print-label">ФИРМА</span>
+            <span class="print-value">{{ print_data.back.customer }}</span>
+          </div>
+          <div class="print-back-field print-back-product">
+            <span class="print-label">ВИД ИЗДЕЛИЕ</span>
+            <span class="print-value">{{ print_data.back.product_type }}</span>
+          </div>
+        </div>
+
+        <div class="print-back-roll-groups" aria-label="Ролки">
+          {% for group_start, group_end in [(1, 40), (41, 80), (81, 120)] %}
+            <table class="roll-grid" data-roll-group="{{ group_start }}-{{ group_end }}">
+              <thead>
+                <tr>
+                  <th class="roll-date-heading">Дата / смяна</th>
+                  <th class="roll-number-heading">№</th>
+                  <th class="roll-weight-heading">кг.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for roll_number in range(group_start, group_end + 1) %}
+                  {% set slot = print_data.roll_slots[roll_number - 1] %}
+                  <tr data-roll-number="{{ roll_number }}">
+                    <td class="roll-date-shift" data-roll-date-shift="{{ roll_number }}">{{ slot.date_shift_display }}</td>
+                    <td class="roll-number">{{ slot.roll_number }}</td>
+                    <td class="roll-gross" data-roll-gross="{{ roll_number }}">{{ slot.gross_display }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% endfor %}
+        </div>
+
+        <table class="print-summary">
+          <tbody>
+            <tr>
+              <th>Старт производство</th>
+              <td data-summary-field="start">{{ print_data.back.start_display }}</td>
+              <th>Стоп производство</th>
+              <td data-summary-field="stop">{{ print_data.back.stop_display }}</td>
+            </tr>
+            <tr>
+              <th>Време за изработка</th>
+              <td data-summary-field="duration">{{ print_data.back.duration_display }}</td>
+              <th>Шпула /кг/</th>
+              <td data-summary-field="tare">{{ print_data.back.tare_display }}</td>
+            </tr>
+            <tr>
+              <th>Произведено кол. бруто /кг/</th>
+              <td data-summary-field="total-gross">{{ print_data.back.total_gross_display }}</td>
+              <th>Произведено кол. нето /кг/</th>
+              <td data-summary-field="total-net">{{ print_data.back.total_net_display }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+
+    {% if auto_print %}
+      <script>
+        window.addEventListener("load", function () {
+          window.print();
+        });
+      </script>
+    {% endif %}
+  {% else %}
+    <main class="screen-only print-blocked" aria-live="polite">
+      <h1>Печатът е блокиран</h1>
+      <p>Картата не може да бъде отпечатана, докато не се коригират следните условия:</p>
+      <ul>
+        {% for message in readiness.messages %}
+          <li>{{ message }}</li>
+        {% endfor %}
+      </ul>
+      <a href="{{ return_url }}">{{ return_label }}</a>
+    </main>
+  {% endif %}
+</body>
+</html>

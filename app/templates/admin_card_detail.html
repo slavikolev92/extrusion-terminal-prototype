@@ -24,6 +24,9 @@
     <div class="actions">
       <a class="nav-link" href="/admin/cards">Технологични карти</a>
       <a class="nav-link" href="/terminal">Терминал</a>
+      {% if card.status == "completed" %}
+        <a class="nav-link" href="/cards/{{ card.id }}/print" target="_blank" rel="noopener">Печат / препечат</a>
+      {% endif %}
       {% if card.status in ["pending", "running", "paused"] %}
         <form action="/admin/cards/{{ card.id }}/cancel" method="post">
           <input type="hidden" name="loaded_version" value="{{ card.version }}">

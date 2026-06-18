@@ -323,24 +323,58 @@ Milestone 9 commit strategy:
 
 ## Milestone 10 - Print Output
 
-Status: in progress
+Status: software implementation complete; physical printer rehearsal still required before pilot readiness
 
 Scope:
 
-- create and agree the printable card template before final print implementation.
-- completed-card print route.
-- two A4 pages: extrusion front and back page.
-- back page keeps 120-roll grid.
-- include confirmed additions: start time, stop/finish time, tare weight, total gross weight, total net weight.
-- print only allowed after completion.
+- completed-card print/reprint route implemented as `GET /cards/{card_id}/print`.
+- terminal completed-card print action opens `/cards/{card_id}/print?auto=1` and calls browser print.
+- admin completed-card print/reprint access exists from card detail and the admin card list.
+- print route uses app data and server-rendered HTML/CSS; it does not fill or print from Excel at runtime.
+- output renders exactly two A4 portrait pages: extrusion front card and roll/summary back page.
+- front page preserves the extrusion-card structure: order/header fields, product/quantity, extrusion requested fields, planned and actual recipe/material rows, notes/packaging, and blank legacy boxes for `ШПУЛИ`, `БРАК`, and `ФОЛИО [kg]`.
+- back page keeps the three-group 120-roll grid with blank `Дата / смяна` cells.
+- roll grid prints gross weights only.
+- summary prints start, stop, active production duration excluding pauses, tare, total gross, and total net.
+- print readiness is rechecked at print time and blocks missing critical production data, non-completed/cancelled cards, open timing segments, and more than 120 rolls.
+- app-only workflow fields such as machine, sequence, status, queue position, internal card id, and max roll weight are not printed.
+
+Verification completed:
+
+- `source .venv/bin/activate && python -m pytest` passed: 194 tests.
+- `git diff --check` passed.
+- temporary-DB browser verification used `.test-runtime/print-ui-check/extrusion_terminal_print_verify.sqlite3`, not `data/extrusion_terminal.sqlite3`.
+- Playwright/browser artifacts:
+  - `artifacts/ui-checks/print-output-preview.png`
+  - `artifacts/ui-checks/print-output-preview.pdf`
+- `pdfinfo artifacts/ui-checks/print-output-preview.pdf` reported 2 pages and A4 page size.
+- Browser verification checked two print pages, front/back landmarks, 120 roll rows, blank date/shift cells, gross-only roll values, summary labels, front labels, and app-only field absence.
+
+Accepted v1 deviations / notes:
+
+- Browser print/PDF rendering is the v1 output path; silent/kiosk printing remains deployment configuration, not application behavior.
+- Excel template fidelity deviations accepted for v1:
+  - The output is rebuilt as HTML/CSS instead of using Excel cell geometry at runtime.
+  - Back-page roll cells print gross weight only, not the legacy gross/net combined sample values.
+  - App-added production summary values are placed in the existing back-page summary area.
+  - Legacy front-page sections without confirmed app data remain visually present but blank.
+- Browser margin handling:
+  - The print CSS uses `@page { size: A4 portrait; margin: 0; }` and each `.print-page` defines its own internal padding.
+  - Browser print headers/footers must be disabled in the browser/printer dialog to preserve the two-page layout.
+  - Duplex/front-back handling depends on printer/browser settings and is not controlled by the app.
+- Text wrapping/shrinking behavior:
+  - Long text wraps inside fixed boxes with `overflow-wrap`; sections are not expanded beyond the two-page structure.
+  - No dynamic shrink-to-fit algorithm is implemented in v1; physical calibration may identify specific fields needing smaller CSS font sizes.
+- Printer setup notes:
+  - Use A4 portrait, default scale/100%, print backgrounds enabled, and browser headers/footers disabled.
+  - Silent/kiosk printing remains a future deployment configuration after the physical terminal environment is known.
+- Physical printer calibration is not yet performed. Before pilot readiness, print the generated PDF/page on the target printer, compare it against `source-files/print-template.xlsx`, and record the result under `artifacts/ui-checks/` or this plan.
 
 Review checkpoint:
 
-- print blocked before completion.
-- completed card print view renders.
-- output visually compared against Excel operational card.
-- tests/manual print rehearsal pass.
-- commit.
+- software implementation and PDF/browser rehearsal are ready for review.
+- physical printer rehearsal remains open.
+- commit only when explicitly requested.
 
 ## Milestone 11 - Pilot Rehearsal
 

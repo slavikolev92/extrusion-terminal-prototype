@@ -1,0 +1,380 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f2f2f2;
+  color: #111;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.screen-only {
+  margin: 12px;
+}
+
+.print-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.print-controls button,
+.print-controls a {
+  border: 1px solid #222;
+  background: #fff;
+  color: #111;
+  padding: 6px 10px;
+  font: inherit;
+  text-decoration: none;
+}
+
+.print-card {
+  display: grid;
+  gap: 12px;
+  justify-content: center;
+  padding: 12px 0;
+}
+
+.print-page {
+  width: 210mm;
+  min-height: 297mm;
+  padding: 10mm;
+  background: #fff;
+  border: 1px solid #222;
+  page-break-after: always;
+}
+
+.print-page-back {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 4mm;
+  page-break-after: auto;
+}
+
+.print-section {
+  margin-bottom: 1rem;
+}
+
+.print-grid,
+.roll-grid,
+.print-summary {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.print-grid th,
+.print-grid td,
+.roll-grid th,
+.roll-grid td,
+.print-summary th,
+.print-summary td {
+  border: 1px solid #222;
+  padding: 1.6mm;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.print-page-front {
+  font-size: 8.6pt;
+  line-height: 1.15;
+}
+
+.front-card-frame {
+  display: grid;
+  grid-template-rows: 13mm 17mm 15mm 9mm 54mm 72mm 50mm 45mm;
+  width: 100%;
+  min-height: 277mm;
+  border-top: 2px solid #111;
+  border-left: 2px solid #111;
+}
+
+.front-title,
+.front-section-title,
+.front-field,
+.front-recipe-table th,
+.front-recipe-table td {
+  border-right: 2px solid #111;
+  border-bottom: 2px solid #111;
+}
+
+.front-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18pt;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.front-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #eee;
+  font-size: 12pt;
+  font-weight: 700;
+}
+
+.front-row,
+.front-request-grid,
+.front-notes-grid,
+.front-legacy-grid {
+  display: grid;
+}
+
+.front-order-row {
+  grid-template-columns: 24mm 28mm 35mm 1fr 25mm;
+}
+
+.front-product-row {
+  grid-template-columns: 1fr 58mm;
+}
+
+.front-request-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.front-notes-grid {
+  grid-template-columns: 1fr 62mm;
+}
+
+.front-legacy-grid {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.front-field {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-width: 0;
+  padding: 1.3mm 1.6mm;
+}
+
+.front-label {
+  display: block;
+  margin-bottom: 0.9mm;
+  font-size: 6.8pt;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.front-value {
+  display: block;
+  min-width: 0;
+  align-self: start;
+  font-size: 9.2pt;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.front-customer .front-value,
+.front-product-type .front-value,
+.front-notes .front-value,
+.front-packaging .front-value {
+  font-size: 8.7pt;
+}
+
+.front-recipe-table {
+  width: 100%;
+  height: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 8.2pt;
+  line-height: 1.1;
+}
+
+.front-recipe-table th,
+.front-recipe-table td {
+  padding: 1.1mm 1.4mm;
+  text-align: left;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+
+.front-recipe-table thead th {
+  height: 8mm;
+  background: #eee;
+  font-size: 7.2pt;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.front-recipe-table tbody th {
+  width: 25mm;
+  font-weight: 700;
+}
+
+.front-recipe-table tbody tr {
+  height: 8mm;
+}
+
+.front-recipe-table th:nth-child(1) {
+  width: 25mm;
+}
+
+.front-recipe-table th:nth-child(2),
+.front-recipe-table td:nth-child(2) {
+  width: 49mm;
+}
+
+.front-recipe-table th:nth-child(3),
+.front-recipe-table td:nth-child(3) {
+  width: 78mm;
+}
+
+.front-recipe-table th:nth-child(4),
+.front-recipe-table td:nth-child(4) {
+  width: 38mm;
+}
+
+.front-notes .front-value,
+.front-packaging .front-value {
+  font-weight: 500;
+}
+
+.print-back-header {
+  display: grid;
+  grid-template-columns: 33mm 1fr 1fr;
+  border-top: 2px solid #111;
+  border-left: 2px solid #111;
+  font-size: 10pt;
+  line-height: 1.15;
+}
+
+.print-back-field {
+  min-height: 13mm;
+  border-right: 2px solid #111;
+  border-bottom: 2px solid #111;
+  padding: 2mm;
+}
+
+.print-back-field .print-label {
+  display: block;
+  margin-bottom: 1.2mm;
+  font-size: 7.5pt;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.print-back-field .print-value {
+  display: block;
+  min-height: 5mm;
+  font-size: 11pt;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.print-back-roll-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 2.5mm;
+}
+
+.roll-grid {
+  table-layout: fixed;
+  border: 2px solid #111;
+  font-size: 7.2pt;
+  line-height: 1;
+}
+
+.roll-grid th,
+.roll-grid td {
+  height: 4.68mm;
+  padding: 0.45mm 0.7mm;
+  text-align: center;
+}
+
+.roll-grid th {
+  height: 6mm;
+  font-size: 6.8pt;
+  font-weight: 700;
+}
+
+.roll-date-heading,
+.roll-date-shift {
+  width: 54%;
+}
+
+.roll-number-heading,
+.roll-number {
+  width: 16%;
+}
+
+.roll-weight-heading,
+.roll-gross {
+  width: 30%;
+}
+
+.roll-number {
+  font-weight: 700;
+}
+
+.roll-grid td.roll-gross {
+  text-align: right;
+  font-weight: 700;
+}
+
+.print-summary {
+  table-layout: fixed;
+  border: 2px solid #111;
+  font-size: 8.4pt;
+  line-height: 1.15;
+}
+
+.print-summary th,
+.print-summary td {
+  height: 8mm;
+  padding: 1.1mm 1.4mm;
+}
+
+.print-summary th {
+  width: 28%;
+  font-weight: 700;
+}
+
+.print-summary td {
+  width: 22%;
+  font-weight: 700;
+}
+
+.print-blocked {
+  max-width: 720px;
+}
+
+@page {
+  size: A4 portrait;
+  margin: 0;
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .screen-only {
+    display: none;
+  }
+
+  .print-card {
+    display: block;
+    padding: 0;
+  }
+
+  .print-page {
+    width: 210mm;
+    height: 297mm;
+    min-height: 297mm;
+    border: 0;
+    overflow: hidden;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .print-page-back {
+    break-after: auto;
+    page-break-after: auto;
+  }
+}

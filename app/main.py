@@ -55,6 +55,7 @@ from .db import (
     update_terminal_recipe_actual_entries,
 )
 from .importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
+from .printing import build_print_readiness
 from .rules import RuleResult
 
 APP_DIR = Path(__file__).resolve().parent
@@ -321,6 +322,34 @@ async def health() -> dict:
         "status": "ok",
         **summary,
     }
+
+
+@app.get("/cards/{card_id}/print")
+async def print_card(
+    request: Request,
+    card_id: int,
+    auto: str | None = None,
+    source: str | None = None,
+):
+    readiness = build_print_readiness(card_id)
+    terminal_source = source == "terminal"
+    return templates.TemplateResponse(
+        request,
+        "print_card.html",
+        {
+            "card_id": card_id,
+            "readiness": readiness,
+            "print_data": readiness.data,
+            "auto_print": auto == "1",
+            "preview_url": (
+                f"/cards/{card_id}/print?source=terminal"
+                if terminal_source
+                else f"/cards/{card_id}/print"
+            ),
+            "return_url": "/terminal" if terminal_source else f"/admin/cards/{card_id}",
+            "return_label": "Към терминала" if terminal_source else "Към картата",
+        },
+    )
 
 
 @app.get("/admin")

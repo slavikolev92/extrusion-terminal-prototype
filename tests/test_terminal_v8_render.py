@@ -353,11 +353,31 @@ def test_terminal_v8_write_forms_include_loaded_version_and_no_operator_cancel_r
 
     assert terminal_write_forms
     assert all('name="loaded_version"' in form for form in terminal_write_forms)
-    assert "Аннулирай" not in html
+    assert "Анулирай" not in html
+    assert "Възстанови" not in html
     assert "Cancel" not in html
     assert "Restore" not in html
     assert f"/terminal/cards/{card_id}/cancel" not in html
     assert f"/terminal/cards/{card_id}/restore" not in html
+    assert f"/admin/cards/{card_id}/cancel" not in html
+    assert f"/admin/cards/{card_id}/restore" not in html
+
+
+def test_terminal_v8_print_link_is_available_only_for_completed_cards(connection):
+    completed_id = release_ready_card("26180", machine_id=1, sequence=1)
+    complete_card(completed_id)
+    pending_id = release_ready_card("26181", machine_id=2, sequence=1)
+
+    completed_html = render_terminal(completed_id)
+    pending_html = render_terminal(pending_id)
+
+    assert (
+        f'<a href="/cards/{completed_id}/print?auto=1&amp;source=terminal" '
+        'target="_blank" rel="noopener">Печат / препечат</a>'
+    ) in completed_html
+    assert "Печат / препечат" in completed_html
+    assert f"/cards/{pending_id}/print" not in pending_html
+    assert "Печат / препечат" not in pending_html
 
 
 def test_terminal_v8_success_result_renders_one_dismissible_toast(connection):

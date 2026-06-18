@@ -61,7 +61,7 @@
             <th>Изделие</th>
             <th>Машина / ред</th>
             <th>Обновена</th>
-            <th>Преглед</th>
+            <th>Действия</th>
           </tr>
         </thead>
         <tbody>
@@ -73,7 +73,12 @@
               <td>{{ card.product_type or "-" }}</td>
               <td>{{ card.machine_id or "-" }} / {{ card.machine_sequence or "-" }}</td>
               <td>{{ card.updated_at }}</td>
-              <td><a href="/admin/cards/{{ card.id }}">Отвори</a></td>
+              <td>
+                <a href="/admin/cards/{{ card.id }}">Отвори</a>
+                {% if card.status == "completed" %}
+                  <a href="/cards/{{ card.id }}/print" target="_blank" rel="noopener">Печат</a>
+                {% endif %}
+              </td>
             </tr>
           {% endfor %}
         </tbody>

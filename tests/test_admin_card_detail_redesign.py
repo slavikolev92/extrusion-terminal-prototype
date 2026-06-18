@@ -7,6 +7,7 @@ import io
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app import db
+from app.constants import CARD_STATUSES, STATUS_LABELS
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 from app.main import (
     admin_card_detail_context,
@@ -144,6 +145,23 @@ def render_admin_detail(card_id: int, **extra: object) -> str:
     return env.get_template("admin_card_detail.html").render(**context)
 
 
+def render_admin_cards_list(**extra: object) -> str:
+    env = Environment(
+        loader=FileSystemLoader("app/templates"),
+        autoescape=select_autoescape(["html"]),
+    )
+    env.globals["url_for"] = lambda name, **kwargs: f"/static{kwargs.get('path', '')}"
+    context = {
+        "cards": db.fetch_admin_cards({}),
+        "filters": {"order_number": "", "customer": "", "product": "", "status": ""},
+        "card_statuses": CARD_STATUSES,
+        "status_labels": STATUS_LABELS,
+        "summary": db.database_summary(),
+    }
+    context.update(extra)
+    return env.get_template("admin_cards.html").render(**context)
+
+
 class MultiItemForm:
     def __init__(self, items: list[tuple[str, str]]) -> None:
         self.items = items
@@ -183,6 +201,60 @@ def test_admin_detail_combines_recipe_and_machine_materials(connection):
     assert html.count('name="actual_material__raw_material_a"') == 1
     assert html.count('name="batch_lot__raw_material_a"') == 1
     assert 'name="raw_material_brand_grade"' not in html
+
+
+def test_admin_detail_print_link_is_available_only_for_completed_cards(connection):
+    completed_id = prepare_dense_completed_card("27040", roll_count=1)
+    cancelled_id = import_ready_card("27041")
+    assert db.release_card(
+        cancelled_id,
+        machine_id=1,
+        machine_sequence=1,
+        loaded_version=card_version(cancelled_id),
+        max_roll_weight="62.50",
+    ).ok
+    assert db.cancel_card(cancelled_id, card_version(cancelled_id)).ok
+
+    completed_html = render_admin_detail(completed_id)
+    cancelled_html = render_admin_detail(cancelled_id)
+
+    assert (
+        f'<a class="nav-link" href="/cards/{completed_id}/print" '
+        'target="_blank" rel="noopener">Печат / препечат</a>'
+    ) in completed_html
+    assert "Печат / препечат" in completed_html
+    assert f"/cards/{cancelled_id}/print" not in cancelled_html
+    assert "Печат / препечат" not in cancelled_html
+
+
+def test_admin_cards_list_print_link_is_completed_only(connection):
+    completed_id = prepare_dense_completed_card("27042", roll_count=1)
+    pending_id = import_ready_card("27043")
+    assert db.release_card(
+        pending_id,
+        machine_id=1,
+        machine_sequence=1,
+        loaded_version=card_version(pending_id),
+        max_roll_weight="62.50",
+    ).ok
+    cancelled_id = import_ready_card("27044")
+    assert db.release_card(
+        cancelled_id,
+        machine_id=2,
+        machine_sequence=1,
+        loaded_version=card_version(cancelled_id),
+        max_roll_weight="62.50",
+    ).ok
+    assert db.cancel_card(cancelled_id, card_version(cancelled_id)).ok
+
+    html = render_admin_cards_list()
+
+    assert (
+        f'<a href="/cards/{completed_id}/print" target="_blank" '
+        'rel="noopener">Печат</a>'
+    ) in html
+    assert f"/cards/{pending_id}/print" not in html
+    assert f"/cards/{cancelled_id}/print" not in html
 
 
 def test_admin_detail_uses_single_roll_ledger_without_repeated_save_buttons(connection):
