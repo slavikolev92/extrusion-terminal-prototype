@@ -520,6 +520,141 @@ def test_print_route_rendered_page_includes_front_and_back_template_labels(
     assert "Старт производство" in response.text
 
 
+def test_print_route_front_page_preserves_fixed_header_and_quantity_cells(
+    connection,
+):
+    card_id = make_completed_printable_card("27028")
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    expected_cells = {
+        "order-number": "27028",
+        "order-date": "18.06.2026",
+        "delivery-date": "25.06.2026",
+        "customer": "Print Customer",
+        "city": "Sofia",
+        "product-type": "PE film",
+        "quantity-1": "500.555",
+        "unit-1": "kg",
+        "quantity-2": "12 rolls",
+        "unit-2": "",
+        "quantity-empty": "",
+    }
+    for cell_name, expected_value in expected_cells.items():
+        cell = data_block(response.text, "data-front-template-cell", cell_name)
+        assert rendered_text(cell) == expected_value
+
+
+def test_print_route_front_page_preserves_requested_product_grid_cells(connection):
+    card_id = make_completed_printable_card("27029")
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    expected_cells = {
+        "product-form": "sleeve",
+        "material": "LDPE",
+        "size-thickness": "600/0.050",
+        "extrusion-folding": "C",
+        "extrusion-next-operation": "cutting",
+        "extrusion-treatment": "corona",
+    }
+    for cell_name, expected_value in expected_cells.items():
+        cell = data_block(response.text, "data-front-template-cell", cell_name)
+        assert rendered_text(cell) == expected_value
+
+
+def test_print_route_front_page_preserves_planned_material_abc_grid(connection):
+    card_id = make_completed_printable_card("27030")
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    expected_values = {
+        ("raw_material_a", "A"): "LDPE A",
+        ("raw_material_b", "B"): "LLDPE B",
+        ("raw_material_c", "C"): "MB C",
+        ("linear_pe", "A"): "10%",
+        ("linear_pe", "B"): "",
+        ("linear_pe", "C"): "",
+        ("antistatic", "A"): "1%",
+        ("masterbatch", "A"): "2%",
+        ("chalk", "A"): "0%",
+    }
+    for (component_key, column_name), expected_value in expected_values.items():
+        cell = data_block(
+            response.text,
+            "data-front-planned-cell",
+            f"{component_key}-{column_name}",
+        )
+        assert rendered_text(cell) == expected_value
+
+
+def test_print_route_front_page_preserves_actual_material_quantity_brand_batch_grid(
+    connection,
+):
+    card_id = make_completed_printable_card("27031")
+    set_recipe_actual_entries(
+        card_id,
+        {
+            "raw_material_a": {
+                "actual_material_used": "Actual LDPE A",
+                "batch_lot": "LOT-A",
+            },
+            "raw_material_b": {
+                "actual_material_used": "Actual LLDPE B",
+                "batch_lot": "LOT-B",
+            },
+        },
+    )
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    expected_values = {
+        "raw_material_a-quantity": "A",
+        "raw_material_a-brand": "Actual LDPE A",
+        "raw_material_a-batch": "LOT-A",
+        "raw_material_b-quantity": "B",
+        "raw_material_b-brand": "Actual LLDPE B",
+        "raw_material_b-batch": "LOT-B",
+        "raw_material_c-quantity": "C",
+        "raw_material_c-brand": "",
+        "raw_material_c-batch": "",
+        "linear_pe-quantity": "",
+        "linear_pe-brand": "",
+        "linear_pe-batch": "",
+    }
+    for cell_name, expected_value in expected_values.items():
+        cell = data_block(response.text, "data-front-actual-cell", cell_name)
+        assert rendered_text(cell) == expected_value
+
+
+def test_print_route_front_page_actual_material_table_has_fixed_columns(connection):
+    card_id = make_completed_printable_card("27032")
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    actual_table_match = re.search(
+        r"<table\b[^>]*\bclass=\"front-actual-table\"[^>]*>.*?</table>",
+        response.text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    assert actual_table_match is not None
+    assert re.findall(
+        r"<col\b[^>]*\bclass=\"([^\"]+)\"",
+        actual_table_match.group(0),
+        flags=re.IGNORECASE,
+    ) == [
+        "front-actual-quantity-label-col",
+        "front-actual-quantity-value-col",
+        "front-actual-brand-col",
+        "front-actual-batch-col",
+    ]
+
+
 def test_print_route_front_page_renders_planned_recipe_values(connection):
     card_id = make_completed_printable_card("27020")
 

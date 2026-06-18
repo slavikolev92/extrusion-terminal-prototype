@@ -18,80 +18,109 @@
         <div class="front-card-frame">
           <div class="front-title">Технологична карта</div>
 
-          <div class="front-row front-order-row" aria-label="Данни за поръчка">
-            <div class="front-field front-order-number">
-              <span class="front-label">ПОРЪЧКА №</span>
-              <span class="front-value">{{ print_data.front.order_number }}</span>
-            </div>
-            <div class="front-field front-order-date">
-              <span class="front-label">ДАТА</span>
-              <span class="front-value">{{ print_data.front.order_date }}</span>
-            </div>
-            <div class="front-field front-delivery-date">
-              <span class="front-label">ДАТА НА ДОСТАВКА</span>
-              <span class="front-value">{{ print_data.front.delivery_date }}</span>
-            </div>
-            <div class="front-field front-customer">
-              <span class="front-label">ФИРМА</span>
-              <span class="front-value">{{ print_data.front.customer }}</span>
-            </div>
-            <div class="front-field front-city">
-              <span class="front-label">ГРАД</span>
-              <span class="front-value">{{ print_data.front.city }}</span>
-            </div>
-          </div>
+          <table class="front-template-table front-order-table" aria-label="Данни за поръчка">
+            <colgroup>
+              <col class="front-order-number-col">
+              <col class="front-order-date-col">
+              <col class="front-delivery-date-col">
+              <col class="front-customer-col">
+              <col class="front-city-col">
+            </colgroup>
+            <tbody>
+              <tr class="front-label-row">
+                <th>ПОРЪЧКА №</th>
+                <th>ДАТА</th>
+                <th>ДАТА НА ДОСТАВКА</th>
+                <th>ФИРМА</th>
+                <th>ГРАД</th>
+              </tr>
+              <tr class="front-value-row">
+                <td data-front-template-cell="order-number">{{ print_data.front.order_number }}</td>
+                <td data-front-template-cell="order-date">{{ print_data.front.order_date }}</td>
+                <td data-front-template-cell="delivery-date">{{ print_data.front.delivery_date }}</td>
+                <td data-front-template-cell="customer">{{ print_data.front.customer }}</td>
+                <td data-front-template-cell="city">{{ print_data.front.city }}</td>
+              </tr>
+            </tbody>
+          </table>
 
-          <div class="front-row front-product-row" aria-label="Изделие">
-            <div class="front-field front-product-type">
-              <span class="front-label">ВИД ИЗДЕЛИЕ</span>
-              <span class="front-value">{{ print_data.front.product_type }}</span>
-            </div>
-          </div>
+          <table class="front-template-table front-product-table" aria-label="Изделие">
+            <colgroup>
+              <col class="front-product-label-col">
+              <col>
+            </colgroup>
+            <tbody>
+              <tr>
+                <th>ВИД ИЗДЕЛИЕ</th>
+                <td data-front-template-cell="product-type">{{ print_data.front.product_type }}</td>
+              </tr>
+            </tbody>
+          </table>
 
-          <div class="front-row front-quantity-row" aria-label="Количество">
-            <div class="front-field front-quantity">
-              <span class="front-label">КОЛИЧЕСТВО</span>
-              <span class="front-value">
-                {{ print_data.front.quantity_1 }} {{ print_data.front.unit_1 }}
-                {% if print_data.front.quantity_2 or print_data.front.unit_2 %}
-                  / {{ print_data.front.quantity_2 }} {{ print_data.front.unit_2 }}
-                {% endif %}
-              </span>
-            </div>
-          </div>
+          <table class="front-template-table front-quantity-table" aria-label="Количество">
+            <colgroup>
+              <col class="front-quantity-label-col">
+              <col class="front-quantity-value-col">
+              <col class="front-quantity-unit-col">
+              <col class="front-quantity-value-col">
+              <col class="front-quantity-unit-col">
+              <col>
+            </colgroup>
+            <tbody>
+              <tr>
+                <th>КОЛИЧЕСТВО</th>
+                <td data-front-template-cell="quantity-1">{{ print_data.front.quantity_1 }}</td>
+                <td data-front-template-cell="unit-1">{{ print_data.front.unit_1 }}</td>
+                <td data-front-template-cell="quantity-2">{{ print_data.front.quantity_2 }}</td>
+                <td data-front-template-cell="unit-2">{{ print_data.front.unit_2 }}</td>
+                <td data-front-template-cell="quantity-empty"></td>
+              </tr>
+            </tbody>
+          </table>
 
           <div class="front-section-title">ЕКСТРУДИРАНЕ</div>
 
-          <div class="front-request-grid" aria-label="Заявена заготовка">
-            <div class="front-request-title">ЗАЯВЕНО ИЗДЕЛИЕ</div>
-            <div class="front-field">
-              <span class="front-label">ВИД ЗАГОТОВКА</span>
-              <span class="front-value">{{ print_data.front.product_form }}</span>
-            </div>
-            <div class="front-field">
-              <span class="front-label">МАТЕРИАЛ</span>
-              <span class="front-value">{{ print_data.front.material }}</span>
-            </div>
-            <div class="front-field">
-              <span class="front-label">РАЗМЕР/ДЕБЕЛИНА [mm]</span>
-              <span class="front-value">{{ print_data.front.size_thickness }}</span>
-            </div>
-            <div class="front-field">
-              <span class="front-label">ФАЛДИРАНЕ</span>
-              <span class="front-value">{{ print_data.front.extrusion_folding }}</span>
-            </div>
-            <div class="front-field">
-              <span class="front-label">СЛЕДВАЩА ОПЕРАЦИЯ</span>
-              <span class="front-value">{{ print_data.front.extrusion_next_operation }}</span>
-            </div>
-            <div class="front-field">
-              <span class="front-label">ТРЕТИРАНЕ</span>
-              <span class="front-value">{{ print_data.front.extrusion_treatment }}</span>
-            </div>
-          </div>
+          <table class="front-template-table front-request-table" aria-label="Заявена заготовка">
+            <colgroup>
+              <col class="front-request-form-col">
+              <col class="front-request-material-col">
+              <col class="front-request-size-col">
+              <col class="front-request-folding-col">
+              <col class="front-request-operation-col">
+              <col class="front-request-treatment-col">
+            </colgroup>
+            <tbody>
+              <tr>
+                <th class="front-request-title" colspan="6">ЗАЯВЕНО ИЗДЕЛИЕ</th>
+              </tr>
+              <tr class="front-label-row">
+                <th>ВИД ЗАГОТОВКА</th>
+                <th>МАТЕРИАЛ</th>
+                <th>РАЗМЕР/ДЕБЕЛИНА [mm]</th>
+                <th>ФАЛДИРАНЕ</th>
+                <th>СЛЕДВАЩА ОПЕРАЦИЯ</th>
+                <th>ТРЕТИРАНЕ</th>
+              </tr>
+              <tr class="front-value-row">
+                <td data-front-template-cell="product-form">{{ print_data.front.product_form }}</td>
+                <td data-front-template-cell="material">{{ print_data.front.material }}</td>
+                <td data-front-template-cell="size-thickness">{{ print_data.front.size_thickness }}</td>
+                <td data-front-template-cell="extrusion-folding">{{ print_data.front.extrusion_folding }}</td>
+                <td data-front-template-cell="extrusion-next-operation">{{ print_data.front.extrusion_next_operation }}</td>
+                <td data-front-template-cell="extrusion-treatment">{{ print_data.front.extrusion_treatment }}</td>
+              </tr>
+            </tbody>
+          </table>
 
           <div class="front-recipe-panel" aria-label="Рецепта и вложени материали">
             <table class="front-planned-table" aria-label="Заявено изделие">
+              {% set raw_a = print_data.front.recipe_rows[0] %}
+              {% set raw_b = print_data.front.recipe_rows[1] %}
+              {% set raw_c = print_data.front.recipe_rows[2] %}
+              {% set linear = print_data.front.recipe_rows[3] %}
+              {% set antistatic = print_data.front.recipe_rows[4] %}
+              {% set masterbatch = print_data.front.recipe_rows[5] %}
+              {% set chalk = print_data.front.recipe_rows[6] %}
               <thead>
                 <tr>
                   <th colspan="4">ЗАЯВЕНО ИЗДЕЛИЕ</th>
@@ -106,38 +135,68 @@
               <tbody>
                 <tr class="front-raw-materials-row">
                   <th>ВИД СУРОВИНА</th>
-                  {% for row in print_data.front.recipe_rows[:3] %}
-                    <td data-front-recipe-planned="{{ row.component_key }}">{{ row.planned_material }}</td>
-                  {% endfor %}
+                  <td data-front-recipe-planned="{{ raw_a.component_key }}" data-front-planned-cell="{{ raw_a.component_key }}-A">{{ raw_a.planned_material }}</td>
+                  <td data-front-recipe-planned="{{ raw_b.component_key }}" data-front-planned-cell="{{ raw_b.component_key }}-B">{{ raw_b.planned_material }}</td>
+                  <td data-front-recipe-planned="{{ raw_c.component_key }}" data-front-planned-cell="{{ raw_c.component_key }}-C">{{ raw_c.planned_material }}</td>
                 </tr>
-                {% for row in print_data.front.recipe_rows[3:] %}
-                  <tr data-front-recipe-row="{{ row.component_key }}">
-                    <th>{{ row.label }}</th>
-                    <td data-front-recipe-planned="{{ row.component_key }}">{{ row.planned_material }}</td>
-                    <td></td>
-                    <td></td>
-                  </tr>
-                {% endfor %}
+                <tr data-front-recipe-row="{{ linear.component_key }}">
+                  <th>{{ linear.label }}</th>
+                  <td data-front-recipe-planned="{{ linear.component_key }}" data-front-planned-cell="{{ linear.component_key }}-A">{{ linear.planned_material }}</td>
+                  <td data-front-planned-cell="{{ linear.component_key }}-B"></td>
+                  <td data-front-planned-cell="{{ linear.component_key }}-C"></td>
+                </tr>
+                <tr data-front-recipe-row="{{ antistatic.component_key }}">
+                  <th>{{ antistatic.label }}</th>
+                  <td data-front-recipe-planned="{{ antistatic.component_key }}" data-front-planned-cell="{{ antistatic.component_key }}-A">{{ antistatic.planned_material }}</td>
+                  <td data-front-planned-cell="{{ antistatic.component_key }}-B"></td>
+                  <td data-front-planned-cell="{{ antistatic.component_key }}-C"></td>
+                </tr>
+                <tr data-front-recipe-row="{{ masterbatch.component_key }}">
+                  <th>{{ masterbatch.label }}</th>
+                  <td data-front-recipe-planned="{{ masterbatch.component_key }}" data-front-planned-cell="{{ masterbatch.component_key }}-A">{{ masterbatch.planned_material }}</td>
+                  <td data-front-planned-cell="{{ masterbatch.component_key }}-B"></td>
+                  <td data-front-planned-cell="{{ masterbatch.component_key }}-C"></td>
+                </tr>
+                <tr data-front-recipe-row="{{ chalk.component_key }}">
+                  <th>{{ chalk.label }}</th>
+                  <td data-front-recipe-planned="{{ chalk.component_key }}" data-front-planned-cell="{{ chalk.component_key }}-A">{{ chalk.planned_material }}</td>
+                  <td data-front-planned-cell="{{ chalk.component_key }}-B"></td>
+                  <td data-front-planned-cell="{{ chalk.component_key }}-C"></td>
+                </tr>
               </tbody>
             </table>
 
             <table class="front-actual-table" aria-label="Вложени суровини и добавки">
+              <colgroup>
+                <col class="front-actual-quantity-label-col">
+                <col class="front-actual-quantity-value-col">
+                <col class="front-actual-brand-col">
+                <col class="front-actual-batch-col">
+              </colgroup>
               <thead>
                 <tr>
-                  <th colspan="3">ВЛОЖЕНИ СУРОВИНИ И ДОБАВКИ</th>
+                  <th colspan="4">ВЛОЖЕНИ СУРОВИНИ И ДОБАВКИ</th>
                 </tr>
                 <tr>
-                  <th>КОЛИЧЕСТВО [kg]</th>
+                  <th colspan="2">КОЛИЧЕСТВО [kg]</th>
                   <th>МАРКА №</th>
                   <th>ПАРТИДЕН №</th>
                 </tr>
               </thead>
               <tbody>
-                {% for row in print_data.front.recipe_rows %}
+                {% for row in print_data.front.recipe_rows[:3] %}
                   <tr>
-                    <th>{{ row.label }}</th>
-                    <td data-front-recipe-actual="{{ row.component_key }}">{{ row.actual_material_used }}</td>
-                    <td data-front-recipe-batch="{{ row.component_key }}">{{ row.batch_lot }}</td>
+                    <th data-front-actual-cell="{{ row.component_key }}-quantity">{{ row.label }}</th>
+                    <td data-front-actual-cell="{{ row.component_key }}-quantity-value"></td>
+                    <td data-front-recipe-actual="{{ row.component_key }}" data-front-actual-cell="{{ row.component_key }}-brand">{{ row.actual_material_used }}</td>
+                    <td data-front-recipe-batch="{{ row.component_key }}" data-front-actual-cell="{{ row.component_key }}-batch">{{ row.batch_lot }}</td>
+                  </tr>
+                {% endfor %}
+                {% for row in print_data.front.recipe_rows[3:] %}
+                  <tr>
+                    <th colspan="2" data-front-actual-cell="{{ row.component_key }}-quantity"></th>
+                    <td data-front-recipe-actual="{{ row.component_key }}" data-front-actual-cell="{{ row.component_key }}-brand">{{ row.actual_material_used }}</td>
+                    <td data-front-recipe-batch="{{ row.component_key }}" data-front-actual-cell="{{ row.component_key }}-batch">{{ row.batch_lot }}</td>
                   </tr>
                 {% endfor %}
               </tbody>
@@ -145,34 +204,52 @@
           </div>
 
           <div class="front-bottom-grid" aria-label="Забележки, опаковка и наследени полета">
-            <div class="front-notes-area">
-              <div class="front-notes-title">ЗАБЕЛЕЖКИ :</div>
-              <div class="front-packaging-line">
-                <div class="front-field front-packaging-label">
-                  <span class="front-label">НАЧИН НА ОПАКОВАНЕ</span>
-                </div>
-                <div class="front-field front-packaging">
-                  <span class="front-value">{{ print_data.front.packaging_method }}</span>
-                </div>
-              </div>
-              <div class="front-field front-notes">
-                <span class="front-value">{{ print_data.front.notes }}</span>
-              </div>
-            </div>
-            <div class="front-legacy-grid" aria-label="Наследени полета">
-              <div class="front-field front-legacy-spools" data-front-legacy-section="front-legacy-spools">
-                <span class="front-label">ШПУЛИ</span>
-                <span class="front-value" data-front-legacy-value="front-legacy-spools"></span>
-              </div>
-              <div class="front-field front-legacy-waste" data-front-legacy-section="front-legacy-waste">
-                <span class="front-label">БРАК</span>
-                <span class="front-value" data-front-legacy-value="front-legacy-waste"></span>
-              </div>
-              <div class="front-field front-legacy-foil" data-front-legacy-section="front-legacy-foil">
-                <span class="front-label">ФОЛИО [kg]</span>
-                <span class="front-value" data-front-legacy-value="front-legacy-foil"></span>
-              </div>
-            </div>
+            <table class="front-template-table front-notes-table">
+              <colgroup>
+                <col class="front-bottom-packaging-label-col">
+                <col>
+              </colgroup>
+              <tbody>
+                <tr class="front-notes-title-row">
+                  <th class="front-notes-title" colspan="2">ЗАБЕЛЕЖКИ :</th>
+                </tr>
+                <tr class="front-bottom-packaging-row">
+                  <th>НАЧИН НА ОПАКОВАНЕ</th>
+                  <td>{{ print_data.front.packaging_method }}</td>
+                </tr>
+                <tr>
+                  <td class="front-notes-value" colspan="2">{{ print_data.front.notes }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <table class="front-template-table front-legacy-table">
+              <colgroup>
+                <col class="front-bottom-legacy-label-col">
+                <col>
+              </colgroup>
+              <tbody>
+                <tr class="front-legacy-spools-row">
+                  <td data-front-legacy-section="front-legacy-spools">
+                    <span class="front-label">ШПУЛИ</span>
+                    <span data-front-legacy-value="front-legacy-spools"></span>
+                  </td>
+                  <td data-front-legacy-value="front-legacy-spools"></td>
+                </tr>
+                <tr class="front-legacy-waste-row">
+                  <th class="front-legacy-waste-label" data-front-legacy-section="front-legacy-waste" colspan="2">
+                    <span>БРАК</span>
+                    <span data-front-legacy-value="front-legacy-waste"></span>
+                  </th>
+                </tr>
+                <tr class="front-legacy-foil-row">
+                  <td data-front-legacy-section="front-legacy-foil">
+                    <span class="front-label">ФОЛИО [kg]</span>
+                    <span data-front-legacy-value="front-legacy-foil"></span>
+                  </td>
+                  <td data-front-legacy-value="front-legacy-foil"></td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </section>

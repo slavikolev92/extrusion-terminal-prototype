@@ -78,21 +78,17 @@ body {
 }
 
 .print-page-front {
-  padding: 16mm 18mm 10mm;
-  font-size: 8pt;
+  padding: 15mm 17mm 9mm;
+  font-size: 8.2pt;
   line-height: 1.1;
 }
 
 .front-card-frame {
   display: grid;
-  grid-template-rows: 17mm 19mm 10mm 10mm 12mm 28mm 84mm 47mm;
+  grid-template-rows: 18mm 23mm 10mm 10mm 10mm 28mm 84mm 47mm;
+  row-gap: 4mm;
   width: 100%;
-  min-height: 271mm;
-}
-
-.front-title,
-.front-section-title {
-  border: 2px solid #111;
+  height: 269mm;
 }
 
 .front-title {
@@ -101,7 +97,7 @@ body {
   justify-content: center;
   border: 0;
   font-family: "Times New Roman", Times, serif;
-  font-size: 17pt;
+  font-size: 17.5pt;
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1;
@@ -112,132 +108,175 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: 4mm;
+  border: 2px solid #111;
   font-size: 15pt;
   font-weight: 700;
   font-style: italic;
   letter-spacing: 0;
 }
 
-.front-row,
-.front-request-grid,
-.front-bottom-grid,
-.front-legacy-grid,
-.front-packaging-line {
-  display: grid;
-}
-
-.front-order-row {
-  grid-template-columns: 32mm 34mm 36mm 1fr 27mm;
-  border-top: 2px solid #111;
-  border-left: 2px solid #111;
-}
-
-.front-product-row {
-  grid-template-columns: 1fr;
-  margin-top: 4mm;
-  border-top: 2px solid #111;
-  border-left: 2px solid #111;
-}
-
-.front-quantity-row {
-  grid-template-columns: 1fr;
-  margin-top: 4mm;
-  border-top: 2px solid #111;
-  border-left: 2px solid #111;
-}
-
-.front-product-type,
-.front-quantity {
-  grid-template-columns: 32mm 1fr;
-  grid-template-rows: 1fr;
-  align-items: center;
-}
-
-.front-request-grid {
-  margin-top: 4mm;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  border-top: 2px solid #111;
-  border-left: 2px solid #111;
-}
-
-.front-request-title {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 9mm;
-  border-right: 2px solid #111;
-  border-bottom: 2px solid #111;
-  font-size: 12pt;
-  font-style: italic;
-  font-weight: 500;
-}
-
-.front-field {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  min-width: 0;
-  border-right: 2px solid #111;
-  border-bottom: 2px solid #111;
-  padding: 1mm 1.3mm;
-}
-
-.front-label {
-  display: block;
-  margin-bottom: 0.6mm;
-  font-size: 6.5pt;
-  font-weight: 700;
-  line-height: 1;
-  text-align: center;
-}
-
-.front-value {
-  display: block;
-  min-width: 0;
-  align-self: center;
-  font-size: 9.2pt;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-  white-space: normal;
-  text-align: center;
-}
-
-.front-customer .front-value,
-.front-product-type .front-value,
-.front-notes .front-value,
-.front-packaging .front-value {
-  font-size: 8.3pt;
-}
-
-.front-recipe-panel {
-  display: grid;
-  grid-template-columns: 1fr 1.1fr;
-  margin-top: 5mm;
-  border-top: 2px solid #111;
-  border-left: 2px solid #111;
-}
-
+.front-template-table,
 .front-planned-table,
 .front-actual-table {
   width: 100%;
   height: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 8pt;
+  border: 2px solid #111;
+  font-size: 8.2pt;
   line-height: 1.1;
 }
 
+.front-template-table th,
+.front-template-table td,
 .front-planned-table th,
 .front-planned-table td,
 .front-actual-table th,
 .front-actual-table td {
-  border-right: 2px solid #111;
-  border-bottom: 2px solid #111;
-  padding: 0.9mm 1mm;
+  border: 1.6px solid #111;
+  padding: 0.8mm 1mm;
   text-align: center;
   vertical-align: middle;
   overflow-wrap: anywhere;
+}
+
+.front-template-table th {
+  font-weight: 600;
+}
+
+.front-template-table td,
+.front-planned-table td {
+  font-weight: 700;
+}
+
+.front-label-row th {
+  font-size: 7pt;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.front-value-row td,
+.front-product-table td,
+.front-quantity-table td,
+.front-request-table .front-value-row td {
+  font-size: 11pt;
+  font-weight: 700;
+}
+
+.front-order-table .front-label-row {
+  height: 8.5mm;
+}
+
+.front-order-table .front-value-row {
+  height: 14.5mm;
+}
+
+.front-order-number-col {
+  width: 18.5%;
+}
+
+.front-order-date-col {
+  width: 20%;
+}
+
+.front-delivery-date-col {
+  width: 18.4%;
+}
+
+.front-customer-col {
+  width: 27.4%;
+}
+
+.front-city-col {
+  width: 15.7%;
+}
+
+.front-product-label-col,
+.front-quantity-label-col {
+  width: 32mm;
+}
+
+.front-product-table th,
+.front-quantity-table th {
+  font-size: 7.2pt;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.front-product-table td {
+  font-size: 10.4pt;
+}
+
+.front-quantity-value-col {
+  width: 34mm;
+}
+
+.front-quantity-unit-col {
+  width: 16mm;
+}
+
+.front-request-title {
+  height: 9mm;
+  font-size: 12pt;
+  font-style: italic;
+  font-weight: 500;
+}
+
+.front-request-table .front-label-row {
+  height: 10mm;
+}
+
+.front-request-table .front-value-row {
+  height: 9mm;
+}
+
+.front-request-form-col {
+  width: 18.5%;
+}
+
+.front-request-material-col {
+  width: 20%;
+}
+
+.front-request-size-col {
+  width: 18.4%;
+}
+
+.front-request-folding-col {
+  width: 18.4%;
+}
+
+.front-request-operation-col {
+  width: 18.4%;
+}
+
+.front-request-treatment-col {
+  width: 6.3%;
+}
+
+.front-request-table th {
+  font-size: 7pt;
+  font-weight: 500;
+}
+
+.front-request-table td {
+  font-size: 10.2pt;
+}
+
+.front-recipe-panel {
+  display: grid;
+  grid-template-columns: 48% 52%;
+  border: 2px solid #111;
+}
+
+.front-planned-table,
+.front-actual-table {
+  border: 0;
+  font-size: 8pt;
+}
+
+.front-planned-table {
+  border-right: 2px solid #111;
 }
 
 .front-planned-table thead tr:first-child th,
@@ -262,11 +301,11 @@ body {
 
 .front-planned-table tbody tr,
 .front-actual-table tbody tr {
-  height: 8.6mm;
+  height: 8.3mm;
 }
 
 .front-planned-table .front-raw-materials-row {
-  height: 28mm;
+  height: 27mm;
 }
 
 .front-planned-table th:first-child,
@@ -274,87 +313,99 @@ body {
   width: 31mm;
 }
 
-.front-planned-table td {
-  font-weight: 700;
+.front-actual-quantity-label-col {
+  width: 17%;
 }
 
-.front-actual-table th:first-child {
-  width: 24mm;
+.front-actual-quantity-value-col {
+  width: 17%;
 }
 
-.front-actual-table td:nth-child(2) {
-  width: 35mm;
+.front-actual-brand-col {
+  width: 35%;
 }
 
-.front-bottom-grid {
-  grid-template-columns: 1fr 1.08fr;
-  margin-top: 6mm;
-  border-top: 2px solid #111;
-  border-left: 2px solid #111;
-}
-
-.front-notes-area {
-  display: grid;
-  grid-template-rows: 5mm 12mm 1fr;
+.front-actual-batch-col {
+  width: 31%;
 }
 
 .front-notes-title {
-  border-right: 2px solid #111;
-  border-bottom: 1px solid #111;
   font-size: 9.4pt;
   font-style: italic;
   font-weight: 700;
-  line-height: 1.1;
-  text-align: center;
 }
 
-.front-packaging-line {
-  grid-template-columns: 32mm 1fr;
+.front-bottom-packaging-label-col {
+  width: 31mm;
 }
 
-.front-packaging-label .front-label {
-  align-self: center;
-  margin: 0;
+.front-bottom-legacy-label-col {
+  width: 31mm;
 }
 
-.front-packaging .front-value,
-.front-notes .front-value {
-  align-self: start;
-  font-weight: 600;
-  text-align: left;
+.front-bottom-grid {
+  display: grid;
+  grid-template-columns: 48% 52%;
+  align-items: start;
 }
 
-.front-notes .front-value {
-  font-size: 9pt;
-  line-height: 1.25;
+.front-notes-table {
+  height: 100%;
 }
 
-.front-legacy-grid {
-  grid-template-rows: 12mm 8mm 12mm;
+.front-notes-title-row {
+  height: 5mm;
 }
 
-.front-legacy-spools,
-.front-legacy-waste,
-.front-legacy-foil {
-  grid-template-rows: 1fr;
-  grid-template-columns: 32mm 1fr;
+.front-notes-table .front-bottom-packaging-row {
+  height: 12mm;
 }
 
-.front-legacy-spools .front-label,
-.front-legacy-waste .front-label,
-.front-legacy-foil .front-label {
-  align-self: center;
-  margin: 0;
+.front-legacy-table {
+  height: 31mm;
 }
 
-.front-legacy-waste .front-label {
-  font-size: 10pt;
-  font-style: italic;
+.front-legacy-spools-row {
+  height: 12mm;
+}
+
+.front-legacy-waste-row {
+  height: 7mm;
+}
+
+.front-legacy-foil-row {
+  height: 12mm;
+}
+
+.front-bottom-grid th {
+  font-size: 8.6pt;
   font-weight: 700;
 }
 
-.front-legacy-foil {
-  grid-template-columns: 48mm 1fr;
+.front-bottom-grid td {
+  font-size: 9pt;
+  font-weight: 600;
+}
+
+.front-bottom-grid .front-notes-value {
+  padding: 1.2mm;
+  text-align: left;
+  vertical-align: top;
+  font-size: 9.2pt;
+  line-height: 1.25;
+}
+
+.front-bottom-grid .front-label {
+  display: block;
+  font-size: 8.7pt;
+  font-weight: 500;
+  text-align: center;
+}
+
+.front-legacy-waste-label {
+  font-size: 12pt;
+  font-style: italic;
+  letter-spacing: 0;
 }
 
 .print-back-header {

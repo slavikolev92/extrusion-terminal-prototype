@@ -333,6 +333,7 @@ Scope:
 - print route uses app data and server-rendered HTML/CSS; it does not fill or print from Excel at runtime.
 - output renders exactly two A4 portrait pages: extrusion front card and roll/summary back page.
 - front page preserves the extrusion-card structure and has been tuned against `source-files/print-template.pdf`: order/header fields, product/quantity rows, extrusion requested fields, split planned/actual material blocks, notes/packaging, and blank legacy boxes for `ШПУЛИ`, `БРАК`, and `ФОЛИО [kg]`.
+- corrective template-fidelity pass rebuilt the front page as a fixed Excel-like HTML table skeleton so blank template cells remain visible instead of being omitted when no app data exists.
 - back page keeps the three-group 120-roll grid with blank `Дата / смяна` cells and blank per-group `Общо` rows.
 - roll grid prints gross weights only.
 - summary prints start, stop, active production duration excluding pauses, tare, total gross, and total net.
@@ -359,6 +360,11 @@ Verification completed:
   - `artifacts/ui-checks/template-tuning/front-pass-4/current-print-output-1.png`
   - `artifacts/ui-checks/template-tuning/front-pass-4/current-print-output-2.png`
   - `artifacts/ui-checks/template-tuning/front-pass-4/current-print-output.metadata.json`
+- Corrective front-grid pass artifacts from temporary-DB browser/PDF checks:
+  - `artifacts/ui-checks/template-tuning/front-grid-final-r2/current-print-output.pdf`
+  - `artifacts/ui-checks/template-tuning/front-grid-final-r2/current-print-output-1.png`
+  - `artifacts/ui-checks/template-tuning/front-grid-final-r2/current-print-output-2.png`
+  - `artifacts/ui-checks/template-tuning/front-grid-final-r2/current-print-output.metadata.json`
 
 Accepted v1 deviations / notes:
 
@@ -367,6 +373,7 @@ Accepted v1 deviations / notes:
   - The output is rebuilt as HTML/CSS instead of using Excel cell geometry at runtime.
   - The tuned output is visually close to the reference PDF but is not a pixel-perfect Excel clone.
   - Margins are intentionally smaller than the reference PDF where that helps preserve clean two-page output.
+  - The front page now uses fixed table geometry for visible template boxes, including blank legacy/template-only cells.
   - Back-page roll cells print gross weight only.
   - App-added production summary values are placed in the existing back-page summary area as separate timing and weight blocks.
   - Legacy front-page sections without confirmed app data remain visually present but blank.
