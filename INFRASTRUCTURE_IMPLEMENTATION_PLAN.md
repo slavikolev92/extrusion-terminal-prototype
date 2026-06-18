@@ -748,19 +748,15 @@ Status: deferred
 
 Goal: create production workstation/kiosk after terminal UI is stable enough.
 
-Candidate approaches:
+Confirmed direction:
 
-1. Windows kiosk mode:
-   - create restricted kiosk account.
-   - configure assigned access / kiosk browser.
-   - open only `/terminal`.
-
-2. Linux kiosk mode:
-   - install Ubuntu Desktop or lightweight Linux.
-   - create kiosk user.
-   - configure auto-login.
-   - launch Chromium with kiosk flags.
-   - point to:
+- Use Linux kiosk mode, not Windows kiosk mode.
+- Install Debian 13.x on the workstation.
+- Use the Debian `amd64` netinst installer, currently `debian-13.5.0-amd64-netinst.iso`.
+- Create the installer USB with Rufus in DD image mode.
+- It is normal for Windows to stop showing the USB as a normal readable drive after Rufus writes the Debian installer in DD image mode.
+- Start with a normal Debian installation, then apply workstation kiosk provisioning later.
+- Kiosk provisioning should eventually create a kiosk user, configure auto-login, launch a browser in kiosk mode, and point to:
 
 ```text
 http://APP-VM-IP:8000/terminal
@@ -784,10 +780,12 @@ Acceptance:
 - Operator sees only the terminal workflow.
 - Admin access is not exposed from the terminal UI.
 
-Record later:
+Record:
 
 ```text
-Workstation OS:
+Workstation OS: Debian 13.x, using debian-13.5.0-amd64-netinst.iso for current install media
+Install media: USB written with Rufus in DD image mode
+Kiosk approach: Linux kiosk mode; normal Debian install first, provisioning script later
 Browser:
 Kiosk command/config:
 Resolution:
@@ -798,7 +796,7 @@ Reboot behavior:
 Notes:
 
 ```text
-
+The Debian installer USB may appear unreadable or may not mount in Windows after being written in DD image mode. This is expected and does not mean the installer failed.
 ```
 
 ## Phase 12 - Final Pre-Pilot Infrastructure Rehearsal
@@ -890,5 +888,4 @@ Will the app VM use Debian or Ubuntu Server?
 Will Proxmox/app VM use static IPs or DHCP reservations?
 Where should backups be copied outside the VM?
 Will Tailscale be installed on Proxmox host, app VM, or both?
-Will the final workstation use Windows kiosk mode or Linux kiosk mode?
 ```
