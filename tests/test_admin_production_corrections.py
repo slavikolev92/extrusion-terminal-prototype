@@ -10,7 +10,22 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from app import db
 from app.constants import STATUS_CANCELLED, STATUS_COMPLETED, STATUS_PENDING, STATUS_RUNNING
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
-from app.main import admin_card_detail_context, app, save_admin_production_materials
+from app.main import (
+    add_admin_roll_weight,
+    add_admin_timing_segment,
+    admin_card_detail,
+    admin_card_detail_context,
+    app,
+    cancel_admin_card,
+    delete_admin_roll_weight,
+    delete_admin_timing_segment,
+    restore_admin_card,
+    save_admin_imported_fields,
+    save_admin_production_materials,
+    save_admin_roll_weight,
+    save_admin_tare_weight,
+    save_admin_timing_segment,
+)
 
 
 def csv_bytes(*rows: dict[str, str]) -> bytes:
@@ -104,6 +119,12 @@ def recipe_actual_entries(**overrides: dict[str, str]) -> dict[str, dict[str, st
 
 def card_version(card_id: int) -> int:
     return int(db.fetch_admin_card_detail(card_id)["version"])
+
+
+def current_imported_fields(card_id: int) -> dict[str, str]:
+    card = db.fetch_admin_card_detail(card_id)
+    assert card is not None
+    return {field: str(card[field] or "") for field in IMPORT_FIELDS}
 
 
 def start_card(card_id: int) -> None:
@@ -256,7 +277,8 @@ def test_admin_material_correction_route_updates_recipe_actual_entries(connectio
     card = db.fetch_admin_card_detail(card_id)
     context = admin_card_detail_context(card_id)
 
-    assert response.status_code == 200
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/admin/cards/{card_id}"
     assert card["recipe_actual_entries"]["raw_material_a"]["actual_material_used"] == "Admin A"
     assert card["recipe_actual_entries"]["raw_material_a"]["batch_lot"] == "Admin Batch A"
     assert card["recipe_actual_entries"]["raw_material_b"]["actual_material_used"] == "Terminal B"
@@ -266,6 +288,188 @@ def test_admin_material_correction_route_updates_recipe_actual_entries(connectio
     assert context["recipe_rows"][0]["actual_material"] == "Admin A"
     assert context["recipe_rows"][0]["batch"] == "Admin Batch A"
     assert context["recipe_rows"][1]["actual_material"] == "Terminal B"
+
+
+def test_admin_successful_detail_correction_routes_redirect_to_canonical_get(connection):
+    card_id = prepare_completed_card("26021")
+    card = db.fetch_admin_card_detail(card_id)
+    fields = current_imported_fields(card_id)
+    fields["loaded_version"] = str(card["version"])
+    fields["customer"] = "PRG Customer"
+
+    imported_response = asyncio.run(
+        save_admin_imported_fields(FormRequest(fields), card_id)
+    )
+    tare_response = asyncio.run(
+        save_admin_tare_weight(
+            FormRequest({}),
+            card_id,
+            str(card_version(card_id)),
+            "2.00",
+        )
+    )
+    card = db.fetch_admin_card_detail(card_id)
+    roll_response = asyncio.run(
+        save_admin_roll_weight(
+            FormRequest({}),
+            card_id,
+            card["roll_entries"][0]["id"],
+            str(card["version"]),
+            "27.00",
+        )
+    )
+    card = db.fetch_admin_card_detail(card_id)
+    timing_response = asyncio.run(
+        save_admin_timing_segment(
+            FormRequest({}),
+            card_id,
+            card["timing_segments"][0]["id"],
+            str(card["version"]),
+            card["timing_segments"][0]["started_at"],
+            card["timing_segments"][0]["ended_at"],
+            "correction",
+        )
+    )
+    after = db.fetch_admin_card_detail(card_id)
+
+    for response in (imported_response, tare_response, roll_response, timing_response):
+        assert response.status_code == 303
+        assert response.headers["location"] == f"/admin/cards/{card_id}"
+    assert after["customer"] == "PRG Customer"
+    assert after["tare_weight"] == 2
+    assert after["roll_entries"][0]["gross_weight"] == 27
+    assert after["timing_segments"][0]["end_reason"] == "correction"
+
+
+def test_admin_successful_roll_add_redirects_and_get_refresh_does_not_repeat(connection):
+    card_id = prepare_completed_card("26016")
+    loaded_version = card_version(card_id)
+
+    response = asyncio.run(
+        add_admin_roll_weight(
+            FormRequest({}),
+            card_id,
+            str(loaded_version),
+            "30.00",
+        )
+    )
+    refresh = asyncio.run(admin_card_detail(FormRequest({}), card_id))
+    card = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/admin/cards/{card_id}"
+    assert refresh.status_code == 200
+    assert card["roll_count"] == 2
+    assert [roll["gross_weight"] for roll in card["roll_entries"]] == [25, 30]
+
+
+def test_admin_successful_roll_delete_redirects_and_get_refresh_does_not_repeat(connection):
+    card_id = prepare_completed_card("26017")
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "30.00").ok
+    card = db.fetch_admin_card_detail(card_id)
+    roll_id = card["roll_entries"][1]["id"]
+
+    response = asyncio.run(
+        delete_admin_roll_weight(
+            FormRequest({}),
+            card_id,
+            roll_id,
+            str(card["version"]),
+        )
+    )
+    refresh = asyncio.run(admin_card_detail(FormRequest({}), card_id))
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/admin/cards/{card_id}"
+    assert refresh.status_code == 200
+    assert after["roll_count"] == 1
+    assert [roll["gross_weight"] for roll in after["roll_entries"]] == [25]
+
+
+def test_admin_successful_timing_segment_add_delete_redirect_and_get_refresh_is_safe(connection):
+    card_id = release_ready_card("26018")
+
+    add_response = asyncio.run(
+        add_admin_timing_segment(
+            FormRequest({}),
+            card_id,
+            str(card_version(card_id)),
+            "2026-06-14 08:00:00",
+            "2026-06-14 09:00:00",
+            "pause",
+        )
+    )
+    add_refresh = asyncio.run(admin_card_detail(FormRequest({}), card_id))
+    card = db.fetch_admin_card_detail(card_id)
+    segment_id = card["timing_segments"][0]["id"]
+
+    delete_response = asyncio.run(
+        delete_admin_timing_segment(
+            FormRequest({}),
+            card_id,
+            segment_id,
+            str(card["version"]),
+        )
+    )
+    delete_refresh = asyncio.run(admin_card_detail(FormRequest({}), card_id))
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert add_response.status_code == 303
+    assert add_response.headers["location"] == f"/admin/cards/{card_id}"
+    assert add_refresh.status_code == 200
+    assert len(card["timing_segments"]) == 1
+    assert delete_response.status_code == 303
+    assert delete_response.headers["location"] == f"/admin/cards/{card_id}"
+    assert delete_refresh.status_code == 200
+    assert after["timing_segments"] == []
+
+
+def test_admin_successful_cancel_restore_redirect_and_get_refresh_does_not_toggle(connection):
+    card_id = release_ready_card("26019")
+
+    cancel_response = asyncio.run(
+        cancel_admin_card(FormRequest({}), card_id, str(card_version(card_id)))
+    )
+    cancel_refresh = asyncio.run(admin_card_detail(FormRequest({}), card_id))
+    cancelled = db.fetch_admin_card_detail(card_id)
+
+    restore_response = asyncio.run(
+        restore_admin_card(FormRequest({}), card_id, str(cancelled["version"]))
+    )
+    restore_refresh = asyncio.run(admin_card_detail(FormRequest({}), card_id))
+    restored = db.fetch_admin_card_detail(card_id)
+
+    assert cancel_response.status_code == 303
+    assert cancel_response.headers["location"] == f"/admin/cards/{card_id}"
+    assert cancel_refresh.status_code == 200
+    assert cancelled["status"] == STATUS_CANCELLED
+    assert restore_response.status_code == 303
+    assert restore_response.headers["location"] == f"/admin/cards/{card_id}"
+    assert restore_refresh.status_code == 200
+    assert restored["status"] == STATUS_PENDING
+
+
+def test_admin_stale_roll_add_still_renders_inline_without_redirect(connection):
+    card_id = prepare_completed_card("26020")
+    loaded_version = card_version(card_id)
+    assert db.update_tare_weight(card_id, loaded_version, "2.00").ok
+
+    response = asyncio.run(
+        add_admin_roll_weight(
+            FormRequest({}),
+            card_id,
+            str(loaded_version),
+            "30.00",
+        )
+    )
+
+    assert response.status_code == 200
+    assert "location" not in response.headers
+    assert "roll_result" in response.context
+    assert response.context["roll_result"].messages == (
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
+    )
 
 
 def test_admin_tare_correction_recalculates_net_weights_and_blocks_invalid_tare(connection):

@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import asyncio
 
-from app.main import admin, app
+from starlette.requests import Request
+
+from app.importer import import_cards_from_csv
+from app.main import admin, admin_planning, app
+from tests.test_admin_planning import csv_bytes, extrusion_row
 
 
 def test_admin_routes_are_registered():
@@ -42,3 +46,34 @@ def test_admin_redirects_to_import():
 
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/import"
+
+
+def test_admin_planning_renders_unreleased_cards_and_machine_options(connection):
+    result = import_cards_from_csv(
+        "planning-route.csv",
+        csv_bytes(extrusion_row("25900")),
+        overwrite_existing=False,
+    )
+    assert result.rows_imported == 1
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/admin/planning",
+            "headers": [],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "client": ("testclient", 50000),
+            "scheme": "http",
+            "app": app,
+        }
+    )
+    response = asyncio.run(admin_planning(request))
+
+    assert response.status_code == 200
+    page = response.body.decode("utf-8")
+    assert "25900" in page
+    for machine_id in range(1, 5):
+        assert f'<option value="{machine_id}"' in page
+        assert f"Машина {machine_id}" in page

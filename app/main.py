@@ -134,10 +134,11 @@ def admin_import_context(**extra: Any) -> dict[str, Any]:
 
 
 def admin_planning_context(**extra: Any) -> dict[str, Any]:
+    machine_queues = fetch_machine_queues()
     context: dict[str, Any] = {
         "draft_cards": fetch_cards_by_status((STATUS_IMPORTED,)),
-        "machine_queues": fetch_machine_queues(),
-        "machines": machines,
+        "machine_queues": machine_queues,
+        "machines": [queue["machine"] for queue in machine_queues],
         "summary": database_summary(),
         "status_labels": STATUS_LABELS,
     }
@@ -163,6 +164,21 @@ def admin_card_detail_context(card_id: int, **extra: Any) -> dict[str, Any] | No
     }
     context.update(extra)
     return context
+
+
+def admin_card_post_response(
+    request: Request,
+    card_id: int,
+    result_name: str,
+    result: RuleResult,
+):
+    if result.ok:
+        return RedirectResponse(url=f"/admin/cards/{card_id}", status_code=303)
+
+    context = admin_card_detail_context(card_id, **{result_name: result})
+    if context is None:
+        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
+    return templates.TemplateResponse(request, "admin_card_detail.html", context)
 
 
 def build_quantity_lines(card: dict[str, Any]) -> list[dict[str, str]]:
@@ -342,10 +358,12 @@ async def save_admin_imported_fields(request: Request, card_id: int):
             fields={field: str(form.get(field, "")) for field in IMPORT_FIELDS},
         )
 
-    context = admin_card_detail_context(card_id, imported_field_result=imported_field_result)
-    if context is None:
-        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
-    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+    return admin_card_post_response(
+        request,
+        card_id,
+        "imported_field_result",
+        imported_field_result,
+    )
 
 
 @app.post("/admin/cards/{card_id}/delete")
@@ -431,10 +449,12 @@ async def cancel_admin_card(
     if parsed_version is not None:
         workflow_result = cancel_card(card_id, parsed_version)
 
-    context = admin_card_detail_context(card_id, workflow_result=workflow_result)
-    if context is None:
-        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
-    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+    return admin_card_post_response(
+        request,
+        card_id,
+        "workflow_result",
+        workflow_result,
+    )
 
 
 @app.post("/admin/cards/{card_id}/restore")
@@ -447,10 +467,12 @@ async def restore_admin_card(
     if parsed_version is not None:
         workflow_result = restore_cancelled_card(card_id, parsed_version)
 
-    context = admin_card_detail_context(card_id, workflow_result=workflow_result)
-    if context is None:
-        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
-    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+    return admin_card_post_response(
+        request,
+        card_id,
+        "workflow_result",
+        workflow_result,
+    )
 
 
 @app.post("/admin/cards/{card_id}/production-materials")
@@ -469,10 +491,12 @@ async def save_admin_production_materials(
             raw_material_brand_grade=str(form.get("raw_material_brand_grade") or ""),
         )
 
-    context = admin_card_detail_context(card_id, material_result=material_result)
-    if context is None:
-        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
-    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+    return admin_card_post_response(
+        request,
+        card_id,
+        "material_result",
+        material_result,
+    )
 
 
 @app.post("/admin/cards/{card_id}/tare")
@@ -486,10 +510,12 @@ async def save_admin_tare_weight(
     if parsed_version is not None:
         roll_result = update_tare_weight(card_id, parsed_version, tare_weight)
 
-    context = admin_card_detail_context(card_id, roll_result=roll_result)
-    if context is None:
-        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
-    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+    return admin_card_post_response(
+        request,
+        card_id,
+        "roll_result",
+        roll_result,
+    )
 
 
 @app.post("/admin/cards/{card_id}/rolls")
@@ -503,10 +529,12 @@ async def add_admin_roll_weight(
     if parsed_version is not None:
         roll_result = add_roll_gross_weight(card_id, parsed_version, gross_weight)
 
-    context = admin_card_detail_context(card_id, roll_result=roll_result)
-    if context is None:
-        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
-    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+    return admin_card_post_response(
+        request,
+        card_id,
+        "roll_result",
+        roll_result,
+    )
 
 
 @app.post("/admin/cards/{card_id}/rolls/{roll_id}")
@@ -526,10 +554,12 @@ async def save_admin_roll_weight(
             gross_weight=gross_weight,
         )
 
-    context = admin_card_detail_context(card_id, roll_result=roll_result)
-    if context is None:
-        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
-    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+    return admin_card_post_response(
+        request,
+        card_id,
+        "roll_result",
+        roll_result,
+    )
 
 
 @app.post("/admin/cards/{card_id}/rolls/{roll_id}/delete")
@@ -547,10 +577,12 @@ async def delete_admin_roll_weight(
             loaded_version=parsed_version,
         )
 
-    context = admin_card_detail_context(card_id, roll_result=roll_result)
-    if context is None:
-        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
-    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+    return admin_card_post_response(
+        request,
+        card_id,
+        "roll_result",
+        roll_result,
+    )
 
 
 @app.post("/admin/cards/{card_id}/timing-segments")
@@ -572,10 +604,12 @@ async def add_admin_timing_segment(
             end_reason=end_reason,
         )
 
-    context = admin_card_detail_context(card_id, timing_result=timing_result)
-    if context is None:
-        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
-    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+    return admin_card_post_response(
+        request,
+        card_id,
+        "timing_result",
+        timing_result,
+    )
 
 
 @app.post("/admin/cards/{card_id}/timing-segments/{segment_id}")
@@ -599,10 +633,12 @@ async def save_admin_timing_segment(
             end_reason=end_reason,
         )
 
-    context = admin_card_detail_context(card_id, timing_result=timing_result)
-    if context is None:
-        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
-    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+    return admin_card_post_response(
+        request,
+        card_id,
+        "timing_result",
+        timing_result,
+    )
 
 
 @app.post("/admin/cards/{card_id}/timing-segments/{segment_id}/delete")
@@ -620,10 +656,12 @@ async def delete_admin_timing_segment(
             loaded_version=parsed_version,
         )
 
-    context = admin_card_detail_context(card_id, timing_result=timing_result)
-    if context is None:
-        return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
-    return templates.TemplateResponse(request, "admin_card_detail.html", context)
+    return admin_card_post_response(
+        request,
+        card_id,
+        "timing_result",
+        timing_result,
+    )
 
 
 def parse_planning_form(
