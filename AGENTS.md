@@ -210,5 +210,5 @@ Completed and committed:
 
 Next recommended milestone:
 
-- Continue with Slice 4 from `WORKSTATION_V8_CONNECTION_PLAN.md`: fix V8 workstation bugs, then harden functional edge cases for the live workstation. The app has been launched/accessed successfully, but observed V8 bugs must be fixed before print output starts.
+- Proceed with Milestone 10 print output on the `print-output` branch using `PRINT_OUTPUT_SPEC_AND_PLAN.md` as the active specification and implementation plan.
 - Keep `workstation-v7.html` as the checkpoint before the top-machine-navigation restructure. The V8 workstation must not expose cancellation or restore controls; cancellation remains an admin/shift-manager action.

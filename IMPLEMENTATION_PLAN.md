@@ -295,8 +295,7 @@ Implementation bundles:
    - The maximum roll weight field is visible in the live workstation detail pane as read-only operator information.
    - Focused V8 render tests were added for route rendering, machine controls, live selected-card fields, max roll weight, queue/completed content, cancelled-card absence, versioned write forms, and absence of workstation cancel/restore controls.
    - Slice 3 verification passed with syntax/import checks, the full automated suite, `git diff --check`, and a focused in-app browser manual check with a temporary database.
-   - The app has been launched/accessed successfully with the live V8 workstation, but bugs were observed after launch.
-   - Next step: Slice 4 V8 workstation bug fixing, functional hardening, and edge cases. Do not start print output yet.
+   - The app has been launched/accessed successfully with the live V8 workstation, and the follow-up hardening/admin cleanup work has been completed enough to move into print output.
 
 7. Admin completed-card detail redesign - done
    - `/admin/cards/{card_id}` now uses a compact summary-first correction layout.
@@ -307,7 +306,7 @@ Implementation bundles:
    - System data is collapsed into a lower-emphasis details section, while admin cancel/restore and imported-card delete behavior remain available.
    - Section-level material, roll, and timing saves preserve loaded-version conflict checks and production-data invariants.
    - Verification passed with focused redesign tests, existing admin/production behavior suites, the full Python suite, `git diff --check`, and Playwright screenshots against a temporary database.
-   - Next step remains Slice 4 V8 workstation bug fixing, functional hardening, and edge cases before print output starts.
+   - This closes the pre-print admin correction cleanup needed before print output starts.
 
 8. Admin completed-card detail cleanup - done
    - Order details were grouped into order, client, product, operations, and notes subsections while keeping one save action.
@@ -324,7 +323,7 @@ Milestone 9 commit strategy:
 
 ## Milestone 10 - Print Output
 
-Status: pending
+Status: in progress
 
 Scope:
 

@@ -568,8 +568,11 @@ Likely files to modify:
 
   ```bash
   source .venv/bin/activate
-  python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+  mkdir -p .test-runtime/print-ui-check
+  EXTRUSION_DB_PATH=.test-runtime/print-ui-check/extrusion_terminal_print.sqlite3 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
   ```
+
+  Do not run print UI checks against `data/extrusion_terminal.sqlite3`.
 
 - [ ] Use Playwright/browser verification against a completed sample card.
 
