@@ -829,6 +829,7 @@ async def delete_roll_weight(
         "roll_result",
         roll_result,
         roll_result_target="roll_delete",
+        roll_delete_selected_roll_id=roll_id,
     )
 
 
@@ -861,6 +862,7 @@ async def delete_selected_roll_weight(
         "roll_result",
         roll_result,
         roll_result_target="roll_delete",
+        roll_delete_selected_roll_id=parsed_roll_id,
     )
 
 
@@ -1073,6 +1075,7 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
         "toast": None,
         "scroll_rolls_to_bottom": False,
         "refresh_required": False,
+        "roll_delete_selected_roll_id": results.get("roll_delete_selected_roll_id"),
         "errors": {
             "tare": (),
             "new_roll": (),

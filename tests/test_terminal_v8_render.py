@@ -537,6 +537,40 @@ def test_terminal_roll_delete_requires_matching_roll_number_confirmation(connect
     ] == [(1, 10), (2, 30)]
 
 
+def test_terminal_failed_selected_roll_delete_preserves_selected_roll(connection):
+    card_id = release_ready_card("26174", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
+    for gross_weight in ("10.00", "20.00", "30.00"):
+        assert db.add_roll_gross_weight(card_id, card_version(card_id), gross_weight).ok
+    card = db.fetch_terminal_card_detail(card_id)
+    first_roll = card["roll_entries"][0]
+    middle_roll = card["roll_entries"][1]
+
+    response = asyncio.run(
+        delete_selected_roll_weight(
+            make_test_request(f"/terminal/cards/{card_id}/rolls/actions/delete-selected"),
+            card_id,
+            str(card["version"]),
+            str(middle_roll["id"]),
+            "1",
+        )
+    )
+    page = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert "Потвърдете изтриването с номера на ролката." in page
+    assert 'class="roll-delete-panel" id="roll-delete-panel" hidden' not in page
+    assert re.search(
+        rf'<option value="{middle_roll["id"]}" selected>№{middle_roll["roll_number"]}',
+        page,
+    )
+    assert not re.search(
+        rf'<option value="{first_roll["id"]}" selected>№{first_roll["roll_number"]}',
+        page,
+    )
+
+
 def test_terminal_v8_material_error_renders_under_recipe_table(connection):
     card_id = release_ready_card("26111", machine_id=1, sequence=1)
 

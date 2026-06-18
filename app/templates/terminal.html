@@ -2032,7 +2032,7 @@
                         <span class="field-label">Ролка</span>
                         <select name="roll_id">
                           {% for roll in selected_card.roll_entries %}
-                            <option value="{{ roll.id }}">№{{ roll.roll_number }}{% if roll.gross_weight is not none %} - {{ roll.gross_weight }} кг{% endif %}</option>
+                            <option value="{{ roll.id }}"{% if terminal_feedback.roll_delete_selected_roll_id == roll.id %} selected{% endif %}>№{{ roll.roll_number }}{% if roll.gross_weight is not none %} - {{ roll.gross_weight }} кг{% endif %}</option>
                           {% endfor %}
                         </select>
                       </label>

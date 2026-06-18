@@ -1,0 +1,727 @@
+{
+  "viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "scroll": {
+    "width": 1440,
+    "height": 9506
+  },
+  "headings": [
+    "Поръчка № UX-AUDIT-60",
+    "Технологична карта",
+    "Екструзия",
+    "Рецепта",
+    "Материал на машината",
+    "Произведено количество",
+    "Ролки",
+    "Време",
+    "Системни данни"
+  ],
+  "counts": {
+    "forms": 137,
+    "buttons": 137,
+    "inputs": 254,
+    "textareas": 1,
+    "selects": 7,
+    "rollCorrectionRows": 60,
+    "timingCorrectionRows": 6,
+    "compactTableRows": 66
+  },
+  "repeatedButtonTextCounts": {
+    "Запази корекциите": 1,
+    "Запази материалите": 1,
+    "Запази шпула": 1,
+    "Добави ролка": 1,
+    "Запази": 66,
+    "Изтрий": 66,
+    "Добави сегмент": 1
+  },
+  "forms": [
+    {
+      "action": "/admin/cards/1/imported-fields",
+      "button": "Запази корекциите",
+      "controls": 29
+    },
+    {
+      "action": "/admin/cards/1/production-materials",
+      "button": "Запази материалите",
+      "controls": 17
+    },
+    {
+      "action": "/admin/cards/1/tare",
+      "button": "Запази шпула",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls",
+      "button": "Добави ролка",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/1",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/1/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/2",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/2/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/3",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/3/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/4",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/4/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/5",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/5/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/6",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/6/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/7",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/7/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/8",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/8/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/9",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/9/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/10",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/10/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/11",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/11/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/12",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/12/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/13",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/13/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/14",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/14/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/15",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/15/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/16",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/16/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/17",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/17/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/18",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/18/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/19",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/19/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/20",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/20/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/21",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/21/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/22",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/22/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/23",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/23/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/24",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/24/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/25",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/25/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/26",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/26/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/27",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/27/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/28",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/28/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/29",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/29/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/30",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/30/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/31",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/31/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/32",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/32/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/33",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/33/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/34",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/34/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/35",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/35/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/36",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/36/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/37",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/37/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/38",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/38/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/39",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/39/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/40",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/40/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/41",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/41/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/42",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/42/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/43",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/43/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/44",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/44/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/45",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/45/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/46",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/46/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/47",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/47/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/48",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/48/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/49",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/49/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/50",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/50/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/51",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/51/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/52",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/52/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/53",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/53/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/54",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/54/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/55",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/55/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/56",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/56/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/57",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/57/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/58",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/58/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/59",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/59/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/rolls/60",
+      "button": "Запази",
+      "controls": 3
+    },
+    {
+      "action": "/admin/cards/1/rolls/60/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/timing-segments/1",
+      "button": "Запази",
+      "controls": 5
+    },
+    {
+      "action": "/admin/cards/1/timing-segments/1/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/timing-segments/2",
+      "button": "Запази",
+      "controls": 5
+    },
+    {
+      "action": "/admin/cards/1/timing-segments/2/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/timing-segments/3",
+      "button": "Запази",
+      "controls": 5
+    },
+    {
+      "action": "/admin/cards/1/timing-segments/3/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/timing-segments/4",
+      "button": "Запази",
+      "controls": 5
+    },
+    {
+      "action": "/admin/cards/1/timing-segments/4/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/timing-segments/5",
+      "button": "Запази",
+      "controls": 5
+    },
+    {
+      "action": "/admin/cards/1/timing-segments/5/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/timing-segments/6",
+      "button": "Запази",
+      "controls": 5
+    },
+    {
+      "action": "/admin/cards/1/timing-segments/6/delete",
+      "button": "Изтрий",
+      "controls": 2
+    },
+    {
+      "action": "/admin/cards/1/timing-segments",
+      "button": "Добави сегмент",
+      "controls": 5
+    }
+  ]
+}
