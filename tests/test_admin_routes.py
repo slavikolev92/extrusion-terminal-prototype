@@ -10,11 +10,13 @@ from app import db
 from app.importer import import_cards_from_csv
 from app.main import (
     admin,
+    admin_card_detail,
     admin_import,
     admin_planning,
     app,
     import_csv as post_admin_import,
     release_card_to_terminal,
+    unrelease_admin_card,
     update_admin_card_planning,
 )
 from tests.test_admin_planning import csv_bytes, extrusion_row
@@ -30,6 +32,7 @@ def test_admin_routes_are_registered():
     assert "/admin/cards/{card_id}" in route_paths
     assert "/admin/cards/{card_id}/imported-fields" in route_paths
     assert "/admin/cards/{card_id}/planning" in route_paths
+    assert "/admin/cards/{card_id}/unrelease" in route_paths
     assert "/admin/cards/{card_id}/delete" in route_paths
     assert "/admin/cards/{card_id}/cancel" in route_paths
     assert "/admin/cards/{card_id}/restore" in route_paths
@@ -318,3 +321,198 @@ def test_failed_release_and_planning_still_render_inline_without_redirect(connec
     assert invalid_planning.context["planning_result"].messages == (
         "Редът трябва да е 1 или по-голям.",
     )
+
+
+def test_successful_unrelease_from_planning_redirects_to_planning_get_and_refresh_does_not_resubmit(connection):
+    card_id = import_route_card("25920")
+    assert db.release_card(
+        card_id,
+        machine_id=1,
+        machine_sequence=1,
+        loaded_version=card_version(card_id),
+        max_roll_weight="60.0",
+    ).ok
+    loaded_version = card_version(card_id)
+
+    response = asyncio.run(
+        unrelease_admin_card(
+            make_request(f"/admin/cards/{card_id}/unrelease"),
+            card_id=card_id,
+            loaded_version=str(loaded_version),
+            return_to="planning",
+        )
+    )
+    after_unrelease = db.fetch_admin_card_detail(card_id)
+    refresh_response = asyncio.run(admin_planning(make_request("/admin/planning", method="GET")))
+    after_refresh = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/planning"
+    assert refresh_response.status_code == 200
+    assert after_unrelease["status"] == "imported"
+    assert after_unrelease["machine_id"] is None
+    assert after_unrelease["machine_sequence"] is None
+    assert after_refresh["version"] == after_unrelease["version"]
+    assert after_refresh["status"] == "imported"
+
+
+def test_successful_unrelease_from_detail_redirects_to_card_detail(connection):
+    card_id = import_route_card("25921")
+    assert db.release_card(
+        card_id,
+        machine_id=2,
+        machine_sequence=1,
+        loaded_version=card_version(card_id),
+        max_roll_weight="60.0",
+    ).ok
+    loaded_version = card_version(card_id)
+
+    response = asyncio.run(
+        unrelease_admin_card(
+            make_request(f"/admin/cards/{card_id}/unrelease"),
+            card_id=card_id,
+            loaded_version=str(loaded_version),
+            return_to="detail",
+        )
+    )
+    card = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/admin/cards/{card_id}"
+    assert card["status"] == "imported"
+    assert card["machine_id"] is None
+    assert card["machine_sequence"] is None
+
+
+def test_failed_unrelease_from_planning_renders_planning_inline(connection):
+    card_id = import_route_card("25922")
+    assert db.release_card(
+        card_id,
+        machine_id=3,
+        machine_sequence=1,
+        loaded_version=card_version(card_id),
+        max_roll_weight="60.0",
+    ).ok
+    loaded_version = card_version(card_id)
+    assert db.update_tare_weight(card_id, loaded_version, "1.25").ok
+
+    response = asyncio.run(
+        unrelease_admin_card(
+            make_request(f"/admin/cards/{card_id}/unrelease"),
+            card_id=card_id,
+            loaded_version=str(loaded_version),
+            return_to="planning",
+        )
+    )
+    card = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 200
+    assert "location" not in response.headers
+    assert "planning_result" in response.context
+    assert response.context["planning_result"].messages == (db.STALE_CARD_MESSAGE,)
+    assert card["status"] == "pending"
+    assert card["machine_id"] == 3
+    assert card["machine_sequence"] == 1
+
+
+def test_failed_unrelease_from_detail_renders_detail_inline(connection):
+    card_id = import_route_card("25923")
+    assert db.release_card(
+        card_id,
+        machine_id=4,
+        machine_sequence=1,
+        loaded_version=card_version(card_id),
+        max_roll_weight="60.0",
+    ).ok
+    loaded_version = card_version(card_id)
+    assert db.start_production_timing(card_id, loaded_version).ok
+
+    response = asyncio.run(
+        unrelease_admin_card(
+            make_request(f"/admin/cards/{card_id}/unrelease"),
+            card_id=card_id,
+            loaded_version=str(card_version(card_id)),
+            return_to="detail",
+        )
+    )
+    card = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 200
+    assert "location" not in response.headers
+    assert "workflow_result" in response.context
+    assert response.context["workflow_result"].messages == (
+        "Само изчакващи технологични карти могат да се връщат за планиране.",
+    )
+    assert card["status"] == "running"
+    assert card["machine_id"] == 4
+    assert card["machine_sequence"] == 1
+
+
+def test_admin_planning_renders_unrelease_form_for_pending_queue_cards_only(connection):
+    pending_id = import_route_card("25924")
+    running_id = import_route_card("25925")
+    assert db.release_card(
+        pending_id,
+        machine_id=1,
+        machine_sequence=1,
+        loaded_version=card_version(pending_id),
+        max_roll_weight="60.0",
+    ).ok
+    assert db.release_card(
+        running_id,
+        machine_id=1,
+        machine_sequence=2,
+        loaded_version=card_version(running_id),
+        max_roll_weight="60.0",
+    ).ok
+    assert db.start_production_timing(running_id, card_version(running_id)).ok
+
+    response = asyncio.run(admin_planning(make_request("/admin/planning", method="GET")))
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert f'action="/admin/cards/{pending_id}/unrelease"' in html
+    assert f'action="/admin/cards/{running_id}/unrelease"' not in html
+    assert '<input type="hidden" name="return_to" value="planning">' in html
+    assert "Върни в неизпратени" in html
+
+
+def test_admin_detail_renders_unrelease_form_for_pending_card_only(connection):
+    pending_id = import_route_card("25926")
+    running_id = import_route_card("25927")
+    imported_id = import_route_card("25928")
+    assert db.release_card(
+        pending_id,
+        machine_id=2,
+        machine_sequence=1,
+        loaded_version=card_version(pending_id),
+        max_roll_weight="60.0",
+    ).ok
+    assert db.release_card(
+        running_id,
+        machine_id=2,
+        machine_sequence=2,
+        loaded_version=card_version(running_id),
+        max_roll_weight="60.0",
+    ).ok
+    assert db.start_production_timing(running_id, card_version(running_id)).ok
+
+    pending_response = asyncio.run(
+        admin_card_detail(make_request(f"/admin/cards/{pending_id}", method="GET"), pending_id)
+    )
+    running_response = asyncio.run(
+        admin_card_detail(make_request(f"/admin/cards/{running_id}", method="GET"), running_id)
+    )
+    imported_response = asyncio.run(
+        admin_card_detail(make_request(f"/admin/cards/{imported_id}", method="GET"), imported_id)
+    )
+
+    pending_html = pending_response.body.decode("utf-8")
+    running_html = running_response.body.decode("utf-8")
+    imported_html = imported_response.body.decode("utf-8")
+
+    assert f'action="/admin/cards/{pending_id}/unrelease"' in pending_html
+    assert '<input type="hidden" name="return_to" value="detail">' in pending_html
+    assert "Върни в планиране" in pending_html
+    assert f'action="/admin/cards/{running_id}/unrelease"' not in running_html
+    assert f'action="/admin/cards/{imported_id}/unrelease"' not in imported_html

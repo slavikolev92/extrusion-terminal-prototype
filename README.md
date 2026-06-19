@@ -87,7 +87,7 @@ Lifecycle states:
 | State | Meaning |
 | --- | --- |
 | `imported` / `draft` | Order/card exists in the app database after CSV import. It can be reviewed in the app, but is not yet released to the terminal execution view. |
-| `pending` | Order/card has been released by the shift manager and is visible in the terminal queue, but production timing is not currently running. |
+| `pending` | Order/card has been released by the shift manager and is visible in the terminal queue, but production timing has not started. A pending card can be returned to the unreleased planning pool by the shift manager. |
 | `running` | Operators started production timing for the card. Multiple cards may be running at once. |
 | `paused` | Production timing was paused for the card. |
 | `completed` / `finished` | Operators have finished the order/card. It moves from the active terminal queue to the terminal completed section and remains available in app history/details. |
@@ -296,6 +296,7 @@ Admin page behavior:
 - The shift manager can edit any field on an imported card/order from the admin page.
 - Admin editing is broader than terminal editing; terminal editing is intentionally limited.
 - The shift manager can cancel and restore terminal-visible cards from the admin card detail page.
+- The shift manager can return a `pending` card to the unreleased planning pool. This clears machine assignment and queue position, removes the card from the terminal queue, and is only allowed before production has started. `running`, `paused`, `completed`, and `cancelled` cards cannot be returned to the pool.
 - The shift manager can correct terminal-side material fields, tare weight, roll gross weights, and timing segments from the admin card detail page.
 - Admin production corrections use the same loaded-version conflict checks as terminal edits, so stale correction forms are blocked and require reload.
 - The admin page should provide a simple machine planning view split into four machine columns.
@@ -305,6 +306,7 @@ Admin page behavior:
 - Release, reassignment, and resequencing normalize each affected active machine queue to contiguous positions starting at `1`.
 - Entering a position already used by another active card inserts the card there and shifts the other active cards.
 - Release/submit can be one draft at a time. Do not add bulk release unless it becomes clearly necessary.
+- Returning a pending card to the unreleased pool is the inverse of release for scheduling mistakes or deferment. It must not be used after timing starts; cancellation remains the separate action for truly cancelled work.
 
 ## Explicitly Out Of Scope For Now
 

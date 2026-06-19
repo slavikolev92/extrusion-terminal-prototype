@@ -157,3 +157,19 @@ def test_terminal_snapshot_route_is_registered_and_returns_snapshot(connection):
     assert "/terminal/snapshot" in route_paths
     assert snapshot["selected_card"]["id"] == card_id
     assert snapshot["active_cards"][0]["order_number"] == "25906"
+
+
+def test_terminal_snapshot_marks_unreleased_selected_card_missing(connection):
+    card_id = release_ready_card("25908", machine_id=2, machine_sequence=1)
+    before = db.terminal_snapshot(selected_card_id=card_id)
+
+    result = db.unrelease_pending_card(card_id, card_version(card_id))
+    after = db.terminal_snapshot(selected_card_id=card_id)
+
+    assert result.ok
+    assert before["selected_card"]["id"] == card_id
+    assert before["selected_card"]["status"] == "pending"
+    assert after["selected_card"] is None
+    assert after["selected_card_missing"] is True
+    assert card_id not in {card["id"] for card in after["active_cards"]}
+    assert f"missing:{card_id}" in after["signature"]

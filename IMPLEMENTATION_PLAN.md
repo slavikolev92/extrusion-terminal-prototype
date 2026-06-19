@@ -412,6 +412,24 @@ Review checkpoint:
 
 Status: pending
 
+Completed audit follow-up before rehearsal:
+
+- Implemented pending-card return-to-planning behavior from full workflow audit issue #7: pending cards can be returned to the unreleased planning pool with version checks, queue normalization, terminal removal, and admin planning/detail controls. Started cards (`running` or `paused`) remain in execution and cannot be returned to the pool.
+
+Verification completed for this follow-up:
+
+- `python -m pytest tests/test_admin_planning.py -k unrelease -q` passed.
+- `python -m pytest tests/test_admin_planning.py tests/test_production_timing.py -q` passed.
+- `python -m pytest tests/test_admin_routes.py -k "unrelease or routes_are_registered" -q` passed.
+- `python -m pytest tests/test_admin_routes.py tests/test_admin_planning.py -q` passed.
+- `python -m pytest tests/test_admin_routes.py -q` passed.
+- `python -m pytest tests/test_terminal_sync.py -q` passed.
+- `python -m pytest tests/test_admin_planning.py tests/test_admin_routes.py tests/test_terminal_sync.py -q` passed.
+- `python -m pytest` passed.
+- `python -m compileall app` passed.
+- `git diff --check` passed.
+- Live Playwright check against temporary SQLite database `.test-runtime/unrelease-ui/extrusion_terminal-issue7-20260619-001.sqlite3` passed: imported two ready cards, released both to one machine, confirmed terminal visibility, returned one pending card to the unreleased pool from `/admin/planning`, confirmed queue normalization and terminal removal, started the remaining card, confirmed `/admin/cards/{id}` did not show return-to-planning for the running card, and confirmed `/terminal/snapshot` marked the returned selected card missing. Screenshot: `artifacts/ui-checks/pending-unrelease-planning.png`.
+
 Scope:
 
 - run full workflow with real exported workbook rows.

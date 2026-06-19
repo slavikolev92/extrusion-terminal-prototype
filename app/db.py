@@ -983,6 +983,53 @@ def restore_cancelled_card(card_id: int, loaded_version: int) -> RuleResult:
     return RuleResult(True, (f"Поръчка {card['order_number']} е възстановена със статус Изчакване.",))
 
 
+def unrelease_pending_card(card_id: int, loaded_version: int) -> RuleResult:
+    with connect() as connection:
+        card = connection.execute(
+            """
+            SELECT id, order_number, status, machine_id, machine_sequence, version
+            FROM cards
+            WHERE id = ?
+            """,
+            (card_id,),
+        ).fetchone()
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        if card["status"] != STATUS_PENDING:
+            return RuleResult(
+                False,
+                ("Само изчакващи технологични карти могат да се връщат за планиране.",),
+            )
+
+        old_machine_id = int(card["machine_id"]) if card["machine_id"] is not None else None
+        cursor = connection.execute(
+            """
+            UPDATE cards
+            SET status = ?,
+                machine_id = NULL,
+                machine_sequence = NULL,
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND status = ?
+              AND version = ?
+            """,
+            (STATUS_IMPORTED, card_id, STATUS_PENDING, loaded_version),
+        )
+        if cursor.rowcount == 0:
+            return RuleResult(False, (STALE_CARD_MESSAGE,))
+
+        if old_machine_id is not None:
+            normalize_machine_queue(connection, machine_id=old_machine_id)
+
+    return RuleResult(
+        True,
+        (f"Поръчка {card['order_number']} е върната в неизпратени технологични карти.",),
+    )
+
+
 def add_timing_segment(
     card_id: int,
     loaded_version: int,

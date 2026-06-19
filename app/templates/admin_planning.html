@@ -126,6 +126,13 @@
                   <input name="machine_sequence" inputmode="numeric" pattern="[0-9]*" value="{{ card.machine_sequence or '' }}" aria-label="Нов ред за поръчка {{ card.order_number }}">
                   <button type="submit">Запази</button>
                 </form>
+                {% if card.status == "pending" %}
+                  <form class="planning-form" action="/admin/cards/{{ card.id }}/unrelease" method="post">
+                    <input type="hidden" name="loaded_version" value="{{ card.version }}">
+                    <input type="hidden" name="return_to" value="planning">
+                    <button type="submit">Върни в неизпратени</button>
+                  </form>
+                {% endif %}
               </div>
             {% endfor %}
           {% else %}

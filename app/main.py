@@ -54,6 +54,7 @@ from .db import (
     update_roll_gross_weight,
     update_tare_weight,
     update_terminal_recipe_actual_entries,
+    unrelease_pending_card,
 )
 from .importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
 from .printing import build_print_readiness
@@ -563,6 +564,35 @@ async def update_admin_card_planning(
         request,
         "admin_planning.html",
         admin_planning_context(planning_result=planning_result),
+    )
+
+
+@app.post("/admin/cards/{card_id}/unrelease")
+async def unrelease_admin_card(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+    return_to: str = Form("planning"),
+):
+    parsed_version, workflow_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        workflow_result = unrelease_pending_card(card_id, parsed_version)
+
+    if return_to == "detail":
+        return admin_card_post_response(
+            request,
+            card_id,
+            "workflow_result",
+            workflow_result,
+        )
+
+    if workflow_result.ok:
+        return RedirectResponse(url="/admin/planning", status_code=303)
+
+    return templates.TemplateResponse(
+        request,
+        "admin_planning.html",
+        admin_planning_context(planning_result=workflow_result),
     )
 
 

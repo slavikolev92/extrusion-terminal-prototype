@@ -4,7 +4,7 @@ import csv
 import io
 
 from app import db
-from app.constants import STATUS_PENDING, STATUS_RUNNING
+from app.constants import STATUS_IMPORTED, STATUS_PAUSED, STATUS_PENDING, STATUS_RUNNING
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 
 
@@ -260,3 +260,137 @@ def test_planning_preserves_production_data(connection):
     assert after["roll_entries"][0]["gross_weight"] == 20
     assert len(after["timing_segments"]) == len(before["timing_segments"])
     assert after["version"] == before["version"] + 1
+
+
+def test_unrelease_pending_card_returns_it_to_unreleased_pool_and_preserves_data(connection):
+    card_id = release_ready_card("25820", machine_id=2, machine_sequence=1)
+    before = db.fetch_admin_card_detail(card_id)
+    assert before["status"] == STATUS_PENDING
+    assert before["machine_id"] == 2
+    assert before["machine_sequence"] == 1
+    assert before["max_roll_weight"] == "60.0"
+
+    result = db.unrelease_pending_card(card_id, card_version(card_id))
+    after = db.fetch_admin_card_detail(card_id)
+    draft_cards = db.fetch_cards_by_status((STATUS_IMPORTED,))
+    queues = db.fetch_machine_queues()
+
+    assert result.ok
+    assert result.messages == ("Поръчка 25820 е върната в неизпратени технологични карти.",)
+    assert after["status"] == STATUS_IMPORTED
+    assert after["machine_id"] is None
+    assert after["machine_sequence"] is None
+    assert after["max_roll_weight"] == "60.0"
+    assert after["customer"] == before["customer"]
+    assert after["raw_material_a"] == before["raw_material_a"]
+    assert after["version"] == before["version"] + 1
+    assert card_id in {card["id"] for card in draft_cards}
+    assert all(
+        card["id"] != card_id
+        for queue in queues
+        for card in queue["cards"]
+    )
+
+
+def test_unrelease_pending_card_normalizes_old_machine_queue(connection):
+    first_id = release_ready_card("25821", machine_id=1, machine_sequence=1)
+    removed_id = release_ready_card("25822", machine_id=1, machine_sequence=2)
+    third_id = release_ready_card("25823", machine_id=1, machine_sequence=3)
+
+    result = db.unrelease_pending_card(removed_id, card_version(removed_id))
+
+    first = db.fetch_admin_card_detail(first_id)
+    removed = db.fetch_admin_card_detail(removed_id)
+    third = db.fetch_admin_card_detail(third_id)
+    machine_1_cards = [
+        (card["order_number"], card["machine_sequence"])
+        for queue in db.fetch_machine_queues()
+        if queue["machine"]["id"] == 1
+        for card in queue["cards"]
+    ]
+
+    assert result.ok
+    assert first["status"] == STATUS_PENDING
+    assert first["machine_sequence"] == 1
+    assert removed["status"] == STATUS_IMPORTED
+    assert removed["machine_id"] is None
+    assert removed["machine_sequence"] is None
+    assert third["status"] == STATUS_PENDING
+    assert third["machine_sequence"] == 2
+    assert machine_1_cards == [("25821", 1), ("25823", 2)]
+
+
+def test_unrelease_pending_card_blocks_stale_loaded_version(connection):
+    card_id = release_ready_card("25824", machine_id=3, machine_sequence=1)
+    loaded_version = card_version(card_id)
+    assert db.update_tare_weight(card_id, loaded_version, "1.25").ok
+
+    result = db.unrelease_pending_card(card_id, loaded_version)
+    card = db.fetch_admin_card_detail(card_id)
+
+    assert not result.ok
+    assert result.messages == (
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
+    )
+    assert card["status"] == STATUS_PENDING
+    assert card["machine_id"] == 3
+    assert card["machine_sequence"] == 1
+
+
+def test_unrelease_blocks_running_and_paused_cards(connection):
+    running_id = release_ready_card("25825", machine_id=4, machine_sequence=1)
+    paused_id = release_ready_card("25826", machine_id=4, machine_sequence=2)
+    assert db.start_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.pause_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.start_production_timing(running_id, card_version(running_id)).ok
+
+    running_result = db.unrelease_pending_card(running_id, card_version(running_id))
+    paused_result = db.unrelease_pending_card(paused_id, card_version(paused_id))
+    running = db.fetch_admin_card_detail(running_id)
+    paused = db.fetch_admin_card_detail(paused_id)
+
+    assert not running_result.ok
+    assert running_result.messages == (
+        "Само изчакващи технологични карти могат да се връщат за планиране.",
+    )
+    assert not paused_result.ok
+    assert paused_result.messages == (
+        "Само изчакващи технологични карти могат да се връщат за планиране.",
+    )
+    assert running["status"] == STATUS_RUNNING
+    assert running["machine_id"] == 4
+    assert running["machine_sequence"] == 1
+    assert paused["status"] == STATUS_PAUSED
+    assert paused["machine_id"] == 4
+    assert paused["machine_sequence"] == 2
+
+
+def test_unrelease_blocks_imported_completed_and_cancelled_cards(connection):
+    imported_id = import_ready_card("25827")
+    completed_id = release_ready_card("25828", machine_id=2, machine_sequence=1)
+    cancelled_id = release_ready_card("25829", machine_id=2, machine_sequence=2)
+    assert db.start_production_timing(completed_id, card_version(completed_id)).ok
+    assert db.update_tare_weight(completed_id, card_version(completed_id), "1.00").ok
+    assert db.add_roll_gross_weight(completed_id, card_version(completed_id), "20.00").ok
+    assert db.finish_card(completed_id, card_version(completed_id)).ok
+    assert db.cancel_card(cancelled_id, card_version(cancelled_id)).ok
+
+    imported_result = db.unrelease_pending_card(imported_id, card_version(imported_id))
+    completed_result = db.unrelease_pending_card(completed_id, card_version(completed_id))
+    cancelled_result = db.unrelease_pending_card(cancelled_id, card_version(cancelled_id))
+
+    assert not imported_result.ok
+    assert imported_result.messages == (
+        "Само изчакващи технологични карти могат да се връщат за планиране.",
+    )
+    assert not completed_result.ok
+    assert completed_result.messages == (
+        "Само изчакващи технологични карти могат да се връщат за планиране.",
+    )
+    assert not cancelled_result.ok
+    assert cancelled_result.messages == (
+        "Само изчакващи технологични карти могат да се връщат за планиране.",
+    )
+    assert db.fetch_admin_card_detail(imported_id)["status"] == STATUS_IMPORTED
+    assert db.fetch_admin_card_detail(completed_id)["status"] == "completed"
+    assert db.fetch_admin_card_detail(cancelled_id)["status"] == "cancelled"
