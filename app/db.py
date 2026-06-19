@@ -34,6 +34,40 @@ def _sql_list(values: tuple[str, ...]) -> str:
     return ", ".join(f"'{value}'" for value in values)
 
 
+CARD_IMPORT_SOURCE_FIELDS = (
+    "order_number",
+    "order_date",
+    "delivery_date",
+    "customer",
+    "city",
+    "product_type",
+    "quantity_1",
+    "unit_1",
+    "quantity_2",
+    "unit_2",
+    "product_form",
+    "material",
+    "size_thickness",
+    "notes",
+    "extrusion_flag",
+    "extrusion_folding",
+    "extrusion_next_operation",
+    "extrusion_treatment",
+    "raw_material_a",
+    "raw_material_b",
+    "raw_material_c",
+    "linear_pe",
+    "antistatic",
+    "masterbatch",
+    "chalk",
+    "packaging_method",
+)
+
+
+def _sql_text_columns(values: tuple[str, ...]) -> str:
+    return ",\n    ".join(f"{value} TEXT" for value in values)
+
+
 SCHEMA_SQL = f"""
 PRAGMA foreign_keys = ON;
 
@@ -104,6 +138,14 @@ CREATE TABLE IF NOT EXISTS cards (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS card_import_sources (
+    card_id INTEGER PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE,
+    import_batch_id INTEGER REFERENCES import_batches(id) ON DELETE SET NULL,
+    {_sql_text_columns(CARD_IMPORT_SOURCE_FIELDS)},
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS roll_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
@@ -152,6 +194,9 @@ WHERE status IN ({_sql_list(ACTIVE_TERMINAL_STATUSES)})
 
 CREATE INDEX IF NOT EXISTS idx_cards_status_machine_sequence
 ON cards(status, machine_id, machine_sequence);
+
+CREATE INDEX IF NOT EXISTS idx_card_import_sources_order_number
+ON card_import_sources(order_number);
 
 CREATE INDEX IF NOT EXISTS idx_roll_entries_card_roll
 ON roll_entries(card_id, roll_number);
@@ -202,6 +247,7 @@ def init_db() -> None:
         # Existing pilot databases may still have legacy cards.validation_status;
         # current code ignores it and validates current card fields directly.
         ensure_column(connection, "cards", "max_roll_weight", "TEXT")
+        backfill_card_import_sources(connection)
         connection.executemany(
             """
             INSERT INTO machines (id, name, is_operational, display_order)
@@ -229,6 +275,37 @@ def ensure_column(
         connection.execute(
             f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
         )
+
+
+def backfill_card_import_sources(connection: sqlite3.Connection) -> None:
+    card_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(cards)").fetchall()
+    }
+    required_columns = {"id", "import_batch_id", *CARD_IMPORT_SOURCE_FIELDS}
+    if not required_columns.issubset(card_columns):
+        return
+
+    columns = ("card_id", "import_batch_id", *CARD_IMPORT_SOURCE_FIELDS)
+    select_values = (
+        "id",
+        "import_batch_id",
+        *(f"COALESCE({field}, '')" for field in CARD_IMPORT_SOURCE_FIELDS),
+    )
+    # Older databases did not store source values separately, so their first
+    # baseline can only be the current card values at migration time.
+    connection.execute(
+        f"""
+        INSERT INTO card_import_sources ({", ".join(columns)})
+        SELECT {", ".join(select_values)}
+        FROM cards
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM card_import_sources
+            WHERE card_import_sources.card_id = cards.id
+        )
+        """
+    )
 
 
 def rows_to_dicts(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:

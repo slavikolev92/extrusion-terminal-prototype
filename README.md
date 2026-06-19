@@ -694,7 +694,8 @@ Validation direction:
 - If a row has no extrusion flag or empty/missing extrusion data, the app should notify the shift manager with a message such as `no extrusion step` and skip that row without saving a card.
 - This validation belongs to CSV import review so unusable rows do not enter planning or the terminal queue.
 - If an imported order number already exists, the app should warn and allow the shift manager to overwrite/re-import.
-- Overwrite/re-import should update only imported/front-card/order information.
+- Overwrite/re-import should update only imported/front-card/order information when those fields have not been admin-corrected since the last import source baseline.
+- If a stale import would replace admin-corrected imported/front-card fields, the row should be blocked for review instead of silently overwriting those corrections.
 - Overwrite/re-import must not overwrite existing roll entries, gross weights, timing data, or other back-page/workstation-entered production data.
 
 Important caveat:
@@ -743,7 +744,7 @@ Database-design direction:
 - On draft submission, the app must check whether the order has already been submitted/imported previously.
 - If submitting/importing would duplicate an existing order number, the app should prompt/warn the shift manager.
 - The shift manager may choose to overwrite/re-import the order data after warning.
-- Re-import overwrite must preserve existing roll/timing/workstation data.
+- Re-import overwrite must preserve existing roll/timing/workstation data and must block stale source rows that would replace admin-corrected imported/front-card fields.
 - Duplicate detection should use order number alone.
 - The exact database columns should be defined during implementation from the confirmed conceptual schema above.
 

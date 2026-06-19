@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -91,6 +92,12 @@ TRUE_EXTRUSION_FLAGS = {
     "дa",
     "ð´ð°",
 }
+
+
+STALE_IMPORT_MESSAGE = (
+    "Блокиран ред: картата има коригирани от администратор данни след последния импорт. "
+    "Прегледайте картата преди повторен импорт."
+)
 
 
 @dataclass
@@ -229,10 +236,11 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
 
             seen_order_numbers.add(order_number)
 
-            existing = connection.execute(
-                "SELECT id FROM cards WHERE order_number = ?",
-                (order_number,),
-            ).fetchone()
+            existing = find_existing_import_card(connection, order_number)
+
+            if existing and existing["order_number"] != order_number:
+                block_import_row(result, row_number, order_number, STALE_IMPORT_MESSAGE)
+                continue
 
             if existing and not overwrite_existing:
                 message = "Пропусната съществуваща поръчка. Отметнете обновяване, за да обновите данните от импорта."
@@ -249,6 +257,9 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                 continue
 
             if existing:
+                if has_stale_import_overwrite_conflict(connection, int(existing["id"]), card):
+                    block_import_row(result, row_number, order_number, STALE_IMPORT_MESSAGE)
+                    continue
                 update_imported_card_fields(connection, int(existing["id"]), int(result.batch_id), card)
                 result.updated += 1
                 action = "updated"
@@ -279,6 +290,24 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
         )
 
     return result
+
+
+def block_import_row(
+    result: ImportResult,
+    row_number: int,
+    order_number: str,
+    message: str,
+) -> None:
+    result.skipped += 1
+    result.row_errors.append(f"Ред {row_number}: {message} {order_number}.")
+    result.row_results.append(
+        ImportRowResult(
+            row_number=row_number,
+            order_number=order_number,
+            action="blocked",
+            message=message,
+        )
+    )
 
 
 def import_success_message(*, updated: bool) -> str:
@@ -354,13 +383,14 @@ def insert_imported_card(connection, batch_id: int, card: dict[str, str]) -> Non
     ]
     placeholders = ", ".join("?" for _ in columns)
 
-    connection.execute(
+    cursor = connection.execute(
         f"""
         INSERT INTO cards ({", ".join(columns)})
         VALUES ({placeholders})
         """,
         values,
     )
+    upsert_card_import_source(connection, int(cursor.lastrowid), batch_id, card)
 
 
 def update_imported_card_fields(connection, card_id: int, batch_id: int, card: dict[str, str]) -> None:
@@ -381,6 +411,107 @@ def update_imported_card_fields(connection, card_id: int, batch_id: int, card: d
         UPDATE cards
         SET {", ".join(assignments)}
         WHERE id = ?
+        """,
+        values,
+    )
+    upsert_card_import_source(connection, card_id, batch_id, card)
+
+
+def find_existing_import_card(
+    connection: sqlite3.Connection,
+    order_number: str,
+) -> sqlite3.Row | None:
+    existing = connection.execute(
+        "SELECT id, order_number FROM cards WHERE order_number = ?",
+        (order_number,),
+    ).fetchone()
+    if existing:
+        return existing
+
+    return connection.execute(
+        """
+        SELECT cards.id, cards.order_number
+        FROM card_import_sources
+        JOIN cards ON cards.id = card_import_sources.card_id
+        WHERE card_import_sources.order_number = ?
+        """,
+        (order_number,),
+    ).fetchone()
+
+
+def has_stale_import_overwrite_conflict(
+    connection: sqlite3.Connection,
+    card_id: int,
+    incoming_card: dict[str, str],
+) -> bool:
+    current = fetch_import_field_values(connection, "cards", "id", card_id)
+    source = fetch_import_field_values(connection, "card_import_sources", "card_id", card_id)
+    if source is None:
+        source = current
+
+    if current is None:
+        return False
+
+    for field in IMPORT_FIELDS:
+        current_value = normalize_import_value(current[field])
+        source_value = normalize_import_value(source[field])
+        incoming_value = normalize_import_value(incoming_card[field])
+        if current_value != source_value and incoming_value != current_value:
+            return True
+    return False
+
+
+def fetch_import_field_values(
+    connection: sqlite3.Connection,
+    table_name: str,
+    id_column: str,
+    id_value: int,
+) -> sqlite3.Row | None:
+    return connection.execute(
+        f"""
+        SELECT {", ".join(IMPORT_FIELDS)}
+        FROM {table_name}
+        WHERE {id_column} = ?
+        """,
+        (id_value,),
+    ).fetchone()
+
+
+def normalize_import_value(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def upsert_card_import_source(
+    connection: sqlite3.Connection,
+    card_id: int,
+    batch_id: int,
+    card: dict[str, str],
+) -> None:
+    columns = (
+        "card_id",
+        "import_batch_id",
+        *IMPORT_FIELDS,
+    )
+    placeholders = ", ".join("?" for _ in columns)
+    update_assignments = [
+        "import_batch_id = excluded.import_batch_id",
+        *(f"{field} = excluded.{field}" for field in IMPORT_FIELDS),
+        "updated_at = CURRENT_TIMESTAMP",
+    ]
+    values = [
+        card_id,
+        batch_id,
+        *(card[field] for field in IMPORT_FIELDS),
+    ]
+
+    connection.execute(
+        f"""
+        INSERT INTO card_import_sources ({", ".join(columns)})
+        VALUES ({placeholders})
+        ON CONFLICT(card_id) DO UPDATE SET
+            {", ".join(update_assignments)}
         """,
         values,
     )
