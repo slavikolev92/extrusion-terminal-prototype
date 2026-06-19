@@ -380,6 +380,55 @@ def test_terminal_v8_print_link_is_available_only_for_completed_cards(connection
     assert "Печат / препечат" not in pending_html
 
 
+def test_terminal_v8_action_and_roll_add_buttons_render_decorative_icons(connection):
+    card_id = release_ready_card("26182", machine_id=1, sequence=1)
+
+    def form_block(html: str, action: str) -> str:
+        match = re.search(
+            rf'<form action="{re.escape(action)}".*?</form>',
+            html,
+            flags=re.S,
+        )
+        assert match is not None
+        return match.group(0)
+
+    pending_html = render_terminal(card_id)
+    start_form = form_block(
+        pending_html,
+        f"/terminal/cards/{card_id}/timing/start",
+    )
+    assert 'data-icon="play"' in start_form
+    assert 'aria-hidden="true"' in start_form
+    assert "Старт" in start_form
+    assert 'data-icon="pause"' in pending_html
+    assert 'data-icon="check-circle"' in pending_html
+    assert 'data-icon="plus"' in pending_html
+
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    running_html = render_terminal(card_id)
+    pause_form = form_block(
+        running_html,
+        f"/terminal/cards/{card_id}/timing/pause",
+    )
+    finish_form = form_block(running_html, f"/terminal/cards/{card_id}/finish")
+    roll_form = form_block(running_html, f"/terminal/cards/{card_id}/rolls")
+    assert 'data-icon="pause"' in pause_form
+    assert "Пауза" in pause_form
+    assert 'data-icon="check-circle"' in finish_form
+    assert "Приключи" in finish_form
+    assert 'data-icon="plus"' in roll_form
+    assert "Добави" in roll_form
+
+    assert db.pause_production_timing(card_id, card_version(card_id)).ok
+    paused_html = render_terminal(card_id)
+    resume_form = form_block(
+        paused_html,
+        f"/terminal/cards/{card_id}/timing/resume",
+    )
+    assert 'data-icon="play"' in resume_form
+    assert "Продължи" in resume_form
+
+
 def test_terminal_v8_success_result_renders_one_dismissible_toast(connection):
     card_id = release_ready_card("26107", machine_id=1, sequence=1)
 

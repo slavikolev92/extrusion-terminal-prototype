@@ -1,3 +1,27 @@
+{% macro button_icon(name) -%}
+  <span class="button-icon" data-icon="{{ name }}" aria-hidden="true">
+    {% if name == "play" -%}
+      <svg viewBox="0 0 24 24" focusable="false">
+        <polygon points="6 4 20 12 6 20 6 4"></polygon>
+      </svg>
+    {%- elif name == "pause" -%}
+      <svg viewBox="0 0 24 24" focusable="false">
+        <path d="M10 5v14"></path>
+        <path d="M14 5v14"></path>
+      </svg>
+    {%- elif name == "check-circle" -%}
+      <svg viewBox="0 0 24 24" focusable="false">
+        <circle cx="12" cy="12" r="9"></circle>
+        <path d="m9 12 2 2 4-4"></path>
+      </svg>
+    {%- elif name == "plus" -%}
+      <svg viewBox="0 0 24 24" focusable="false">
+        <path d="M5 12h14"></path>
+        <path d="M12 5v14"></path>
+      </svg>
+    {%- endif %}
+  </span>
+{%- endmacro %}
 <!doctype html>
 <html lang="bg">
 <head>
@@ -59,6 +83,34 @@
       color: #8a96a5;
       background: #f1f3f5;
       border-color: #d9e0e7;
+    }
+
+    .action-button,
+    .roll-entry button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .button-icon {
+      width: 18px;
+      height: 18px;
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .button-icon svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2.4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
 
     input {
@@ -1810,33 +1862,33 @@
               {% if selected_card and selected_card.status == "pending" %}
                 <form action="/terminal/cards/{{ selected_card.id }}/timing/start" method="post">
                   <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                  <button class="action-primary" type="submit">Старт</button>
+                  <button class="action-button action-primary" type="submit">{{ button_icon("play") }}<span>Старт</span></button>
                 </form>
               {% else %}
-                <button type="button" disabled>Старт</button>
+                <button class="action-button" type="button" disabled>{{ button_icon("play") }}<span>Старт</span></button>
               {% endif %}
 
               {% if selected_card and selected_card.status == "running" %}
                 <form action="/terminal/cards/{{ selected_card.id }}/timing/pause" method="post">
                   <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                  <button class="action-secondary" type="submit">Пауза</button>
+                  <button class="action-button action-secondary" type="submit">{{ button_icon("pause") }}<span>Пауза</span></button>
                 </form>
               {% elif selected_card and selected_card.status == "paused" %}
                 <form action="/terminal/cards/{{ selected_card.id }}/timing/resume" method="post">
                   <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                  <button class="action-primary" type="submit">Продължи</button>
+                  <button class="action-button action-primary" type="submit">{{ button_icon("play") }}<span>Продължи</span></button>
                 </form>
               {% else %}
-                <button type="button" disabled>Пауза</button>
+                <button class="action-button" type="button" disabled>{{ button_icon("pause") }}<span>Пауза</span></button>
               {% endif %}
 
               {% if selected_card and selected_card.status in ["running", "paused"] %}
                 <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post">
                   <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                  <button class="{% if selected_card.status == 'running' %}action-primary{% else %}action-secondary{% endif %}" type="submit">Приключи</button>
+                  <button class="action-button {% if selected_card.status == 'running' %}action-primary{% else %}action-secondary{% endif %}" type="submit">{{ button_icon("check-circle") }}<span>Приключи</span></button>
                 </form>
               {% else %}
-                <button type="button" disabled>Приключи</button>
+                <button class="action-button" type="button" disabled>{{ button_icon("check-circle") }}<span>Приключи</span></button>
               {% endif %}
 
               {% set show_roll_correction = selected_card and selected_card.roll_entries and selected_card.status in ["running", "completed"] %}
@@ -1981,13 +2033,13 @@
                       {% endif %}
                     </div>
                   </form>
-                  <form class="add-roll-form" action="/terminal/cards/{{ selected_card.id }}/rolls" method="post">
+                  <form action="/terminal/cards/{{ selected_card.id }}/rolls" class="add-roll-form" method="post">
                     <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                     <label>
                       <span class="field-label">Нова ролка, кг</span>
                       <input type="number" name="gross_weight" min="0" step="0.01" {% if not can_edit_rolls %}disabled{% endif %}>
                     </label>
-                    <button type="submit" {% if not can_edit_rolls %}disabled{% endif %}>Добави</button>
+                    <button class="roll-add-button" type="submit" {% if not can_edit_rolls %}disabled{% endif %}>{{ button_icon("plus") }}<span>Добави</span></button>
                     <div class="field-error-slot" data-feedback-target="new_roll">
                       {% if terminal_feedback.errors.new_roll %}
                         <div class="inline-error" role="alert">
