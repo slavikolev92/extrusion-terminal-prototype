@@ -177,7 +177,21 @@ def test_timing_actions_block_stale_loaded_versions(connection):
     assert card["status"] == STATUS_RUNNING
 
 
-def test_start_blocks_when_machine_has_running_or_paused_card(connection):
+def open_segment_count(connection, card_id: int) -> int:
+    return int(
+        connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM production_time_segments
+            WHERE card_id = ?
+              AND ended_at IS NULL
+            """,
+            (card_id,),
+        ).fetchone()[0]
+    )
+
+
+def test_start_blocks_when_machine_has_running_card(connection):
     running_card_id = import_and_release_card("25404", machine_id=1, machine_sequence=1)
     blocked_card_id = import_and_release_card("25405", machine_id=1, machine_sequence=2)
     assert db.start_production_timing(
@@ -194,28 +208,82 @@ def test_start_blocks_when_machine_has_running_or_paused_card(connection):
         "SELECT status FROM cards WHERE id = ?",
         (blocked_card_id,),
     ).fetchone()
-    blocked_segments = connection.execute(
-        "SELECT COUNT(*) FROM production_time_segments WHERE card_id = ?",
-        (blocked_card_id,),
-    ).fetchone()[0]
 
     assert not blocked_result.ok
     assert blocked_result.messages == ("Машина 1 е заета от поръчка 25404.",)
     assert blocked_card["status"] == STATUS_PENDING
-    assert blocked_segments == 0
+    assert open_segment_count(connection, blocked_card_id) == 0
 
+
+def test_start_allows_another_card_when_existing_card_is_paused(connection):
+    paused_card_id = import_and_release_card("25406", machine_id=1, machine_sequence=1)
+    next_card_id = import_and_release_card("25407", machine_id=1, machine_sequence=2)
+    assert db.start_production_timing(
+        paused_card_id,
+        db.fetch_terminal_card_detail(paused_card_id)["version"],
+    ).ok
     assert db.pause_production_timing(
+        paused_card_id,
+        db.fetch_terminal_card_detail(paused_card_id)["version"],
+    ).ok
+
+    start_result = db.start_production_timing(
+        next_card_id,
+        db.fetch_terminal_card_detail(next_card_id)["version"],
+    )
+
+    paused_card = connection.execute(
+        "SELECT status FROM cards WHERE id = ?",
+        (paused_card_id,),
+    ).fetchone()
+    next_card = connection.execute(
+        "SELECT status FROM cards WHERE id = ?",
+        (next_card_id,),
+    ).fetchone()
+
+    assert start_result.ok
+    assert paused_card["status"] == STATUS_PAUSED
+    assert next_card["status"] == STATUS_RUNNING
+    assert open_segment_count(connection, paused_card_id) == 0
+    assert open_segment_count(connection, next_card_id) == 1
+
+
+def test_resume_paused_card_blocks_when_another_card_is_running_on_machine(connection):
+    paused_card_id = import_and_release_card("25408", machine_id=1, machine_sequence=1)
+    running_card_id = import_and_release_card("25409", machine_id=1, machine_sequence=2)
+    assert db.start_production_timing(
+        paused_card_id,
+        db.fetch_terminal_card_detail(paused_card_id)["version"],
+    ).ok
+    assert db.pause_production_timing(
+        paused_card_id,
+        db.fetch_terminal_card_detail(paused_card_id)["version"],
+    ).ok
+    assert db.start_production_timing(
         running_card_id,
         db.fetch_terminal_card_detail(running_card_id)["version"],
     ).ok
 
-    paused_blocked_result = db.start_production_timing(
-        blocked_card_id,
-        db.fetch_terminal_card_detail(blocked_card_id)["version"],
+    resume_result = db.resume_production_timing(
+        paused_card_id,
+        db.fetch_terminal_card_detail(paused_card_id)["version"],
     )
 
-    assert not paused_blocked_result.ok
-    assert paused_blocked_result.messages == ("Машина 1 е заета от поръчка 25404.",)
+    paused_card = connection.execute(
+        "SELECT status FROM cards WHERE id = ?",
+        (paused_card_id,),
+    ).fetchone()
+    running_card = connection.execute(
+        "SELECT status FROM cards WHERE id = ?",
+        (running_card_id,),
+    ).fetchone()
+
+    assert not resume_result.ok
+    assert resume_result.messages == ("Машина 1 е заета от поръчка 25409.",)
+    assert paused_card["status"] == STATUS_PAUSED
+    assert running_card["status"] == STATUS_RUNNING
+    assert open_segment_count(connection, paused_card_id) == 0
+    assert open_segment_count(connection, running_card_id) == 1
 
 
 def test_total_production_seconds_sums_segments_without_pauses(connection):
