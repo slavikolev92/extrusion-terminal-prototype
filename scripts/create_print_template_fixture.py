@@ -104,10 +104,10 @@ def create_dense_completed_card(order_number: str = "PRINT-TEMPLATE-001") -> int
                 'да',
                 'C-фалда',
                 'Печат',
-                'Корона',
-                'LDPE 2420H',
-                'LLDPE 118W',
-                'mLLDPE C6',
+                'Двустранно',
+                'LDPE 2420H Exxon',
+                'LLDPE 118W Rompetrol',
+                'mLLDPE C6 Metallocene',
                 '12%',
                 '1%',
                 'Син мастербач 3%',
@@ -123,13 +123,13 @@ def create_dense_completed_card(order_number: str = "PRINT-TEMPLATE-001") -> int
         card_id = int(cursor.lastrowid)
 
         recipe_rows = (
-            ("raw_material_a", "Вид суровина A", "LDPE 2420H", "LDPE 2420H реално", "LOT-A-25279"),
-            ("raw_material_b", "Вид суровина B", "LLDPE 118W", "LLDPE 118W реално", "LOT-B-25279"),
-            ("raw_material_c", "Вид суровина C", "mLLDPE C6", "mLLDPE C6 реално", "LOT-C-25279"),
-            ("linear_pe", "Линеен /mLLDPE/", "12%", "", ""),
-            ("antistatic", "Антистатик", "1%", "", ""),
-            ("masterbatch", "Мастербач", "Син мастербач 3%", "MB Blue 3000", "LOT-MB-25279"),
-            ("chalk", "Креда", "0%", "", ""),
+            ("raw_material_a", "Вид суровина A", "LDPE 2420H Exxon", "LDPE Exxon Mobil 2420H", "LOT-A-25279-BG"),
+            ("raw_material_b", "Вид суровина B", "LLDPE 118W Rompetrol", "LLDPE Rompetrol 118W", "LOT-B-25279-BG"),
+            ("raw_material_c", "Вид суровина C", "mLLDPE C6 Metallocene", "mLLDPE C6 Metallocene", "LOT-C-25279-BG"),
+            ("linear_pe", "Линеен /mLLDPE/", "12% без добавки", "mLLDPE C6 добавка", "LOT-LIN-25279"),
+            ("antistatic", "Антистатик", "1%", "Antistatic B80", "LOT-AS-25279"),
+            ("masterbatch", "Мастербач", "Син мастербач 3%", "Masterbatch Blue 3000", "LOT-MB-25279"),
+            ("chalk", "Креда", "0%", "Chalk concentrate full", "LOT-CH-25279"),
         )
         connection.executemany(
             """

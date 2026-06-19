@@ -932,6 +932,86 @@ def test_print_css_centers_roll_gross_and_reduces_date_shift_width():
     )
 
 
+def test_print_css_front_page_uses_measured_dense_recipe_layout():
+    css = PRINT_CSS_PATH.read_text(encoding="utf-8")
+
+    assert re.search(
+        r"\.print-page-front\s*\{[^}]*padding:\s*12mm\s+13mm\s+7mm;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.front-card-frame\s*\{[^}]*grid-template-rows:\s*12mm\s+22mm\s+9mm\s+9mm\s+9mm\s+27mm\s+96mm\s+47mm;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.front-card-frame\s*\{[^}]*row-gap:\s*3mm;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.front-request-treatment-col\s*\{[^}]*width:\s*14\.5%;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.front-actual-quantity-label-col\s*\{[^}]*width:\s*14%;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.front-actual-quantity-value-col\s*\{[^}]*width:\s*7%;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.front-actual-brand-col\s*\{[^}]*width:\s*41%;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.front-actual-batch-col\s*\{[^}]*width:\s*38%;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.front-bottom-grid\s*\{[^}]*grid-template-columns:\s*58%\s+42%;",
+        css,
+        flags=re.DOTALL,
+    )
+
+
+def test_print_css_front_page_uses_reference_weight_borders():
+    css = PRINT_CSS_PATH.read_text(encoding="utf-8")
+
+    assert re.search(
+        r"\.front-section-title\s*\{[^}]*border:\s*1\.5px\s+solid\s+#111;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.front-template-table,\s*\.front-planned-table,\s*\.front-actual-table\s*\{[^}]*border:\s*1\.5px\s+solid\s+#111;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.front-template-table th,[^}]*\.front-actual-table td\s*\{[^}]*border:\s*1px\s+solid\s+#111;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.front-recipe-panel\s*\{[^}]*border:\s*1\.5px\s+solid\s+#111;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.front-planned-table\s*\{[^}]*border-right:\s*1\.5px\s+solid\s+#111;",
+        css,
+        flags=re.DOTALL,
+    )
+
+
 def test_print_route_back_page_summary_fields_render_in_two_side_by_side_tables(connection):
     card_id = make_completed_printable_card("27034")
 

@@ -76,6 +76,10 @@ def test_print_template_fixture_creates_completed_printable_temp_card(
     assert readiness.data is not None
     assert readiness.data["front"]["order_number"] == "PRINT-FIXTURE-TEST"
     assert len(readiness.data["roll_slots"]) == 120
+    for row in readiness.data["front"]["recipe_rows"]:
+        assert row["planned_material"]
+        assert row["actual_material_used"]
+        assert row["batch_lot"]
 
 
 def test_print_template_renderer_rejects_output_dir_outside_ui_artifacts(tmp_path):
