@@ -32,6 +32,7 @@ from .db import (
     fetch_cards_by_status,
     fetch_admin_card_detail,
     fetch_admin_cards,
+    fetch_import_batch_result,
     fetch_terminal_card_detail,
     fetch_machine_queues,
     fetch_machines,
@@ -358,11 +359,15 @@ async def admin() -> RedirectResponse:
 
 
 @app.get("/admin/import")
-async def admin_import(request: Request):
+async def admin_import(request: Request, batch_id: int | None = None):
+    import_result = fetch_import_batch_result(batch_id)
     return templates.TemplateResponse(
         request,
         "admin_import.html",
-        admin_import_context(import_action_labels=IMPORT_ACTION_LABELS),
+        admin_import_context(
+            import_result=import_result,
+            import_action_labels=IMPORT_ACTION_LABELS,
+        ),
     )
 
 
@@ -387,6 +392,12 @@ async def import_csv(
         content=content,
         overwrite_existing=overwrite_existing,
     )
+
+    if result.batch_id is not None:
+        return RedirectResponse(
+            url=f"/admin/import?batch_id={result.batch_id}",
+            status_code=303,
+        )
 
     return templates.TemplateResponse(
         request,
@@ -516,6 +527,9 @@ async def release_card_to_terminal(
                 max_roll_weight=max_roll_weight,
             )
 
+    if release_result.ok:
+        return RedirectResponse(url="/admin/planning", status_code=303)
+
     return templates.TemplateResponse(
         request,
         "admin_planning.html",
@@ -541,6 +555,9 @@ async def update_admin_card_planning(
                 machine_id=parsed_planning["machine_id"],
                 machine_sequence=parsed_planning["machine_sequence"],
             )
+
+    if planning_result.ok:
+        return RedirectResponse(url="/admin/planning", status_code=303)
 
     return templates.TemplateResponse(
         request,

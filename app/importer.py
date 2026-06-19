@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .constants import STATUS_IMPORTED
-from .db import connect
+from .db import connect, insert_import_batch_row
 
 
 IMPORT_FIELDS = (
@@ -122,6 +122,37 @@ class ImportResult:
     batch_id: int | None = None
 
 
+def record_import_row_result(
+    result: ImportResult,
+    row_number: int | None,
+    order_number: str,
+    action: str,
+    message: str,
+    connection: Any | None = None,
+    is_duplicate_row: bool = False,
+    row_error: str | None = None,
+) -> None:
+    row_result = ImportRowResult(
+        row_number=row_number,
+        order_number=order_number,
+        action=action,
+        message=message,
+    )
+    result.row_results.append(row_result)
+    if connection is not None and result.batch_id is not None:
+        insert_import_batch_row(
+            connection,
+            int(result.batch_id),
+            len(result.row_results),
+            row_number,
+            order_number,
+            action,
+            message,
+            is_duplicate_row,
+            row_error,
+        )
+
+
 def csv_template() -> str:
     sample_values = {
         "order_number": "25278",
@@ -150,14 +181,7 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
     if not reader.fieldnames:
         message = "CSV файлът няма заглавен ред."
         result.row_errors.append(message)
-        result.row_results.append(
-            ImportRowResult(
-                row_number=None,
-                order_number="",
-                action="blocked",
-                message=message,
-            )
-        )
+        record_import_row_result(result, None, "", "blocked", message)
         return result
 
     header_map = build_header_map(reader.fieldnames)
@@ -165,14 +189,7 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
     if missing_required:
         message = f"Липсват задължителни CSV колони: {', '.join(missing_required)}."
         result.row_errors.append(message)
-        result.row_results.append(
-            ImportRowResult(
-                row_number=None,
-                order_number="",
-                action="blocked",
-                message=message,
-            )
-        )
+        record_import_row_result(result, None, "", "blocked", message)
         return result
 
     with connect() as connection:
@@ -194,28 +211,32 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
             if not order_number:
                 message = "Липсва номер на поръчка."
                 result.skipped += 1
-                result.row_errors.append(f"Ред {row_number}: {message}")
-                result.row_results.append(
-                    ImportRowResult(
-                        row_number=row_number,
-                        order_number="",
-                        action="skipped",
-                        message=message,
-                    )
+                row_error = f"Ред {row_number}: {message}"
+                result.row_errors.append(row_error)
+                record_import_row_result(
+                    result,
+                    row_number,
+                    "",
+                    "skipped",
+                    message,
+                    connection,
+                    row_error=row_error,
                 )
                 continue
 
             if not card_has_usable_extrusion_step(card):
                 message = "Пропуснат ред: няма екструдиране."
                 result.skipped += 1
-                result.row_errors.append(f"Ред {row_number}: {message}")
-                result.row_results.append(
-                    ImportRowResult(
-                        row_number=row_number,
-                        order_number=order_number,
-                        action="skipped",
-                        message=message,
-                    )
+                row_error = f"Ред {row_number}: {message}"
+                result.row_errors.append(row_error)
+                record_import_row_result(
+                    result,
+                    row_number,
+                    order_number,
+                    "skipped",
+                    message,
+                    connection,
+                    row_error=row_error,
                 )
                 continue
 
@@ -223,14 +244,17 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                 message = "Дублиран номер на поръчка в този CSV файл."
                 result.skipped += 1
                 result.duplicate_rows.append(order_number)
-                result.row_errors.append(f"Ред {row_number}: {message} {order_number}.")
-                result.row_results.append(
-                    ImportRowResult(
-                        row_number=row_number,
-                        order_number=order_number,
-                        action="skipped",
-                        message=message,
-                    )
+                row_error = f"Ред {row_number}: {message} {order_number}."
+                result.row_errors.append(row_error)
+                record_import_row_result(
+                    result,
+                    row_number,
+                    order_number,
+                    "skipped",
+                    message,
+                    connection,
+                    is_duplicate_row=True,
+                    row_error=row_error,
                 )
                 continue
 
@@ -239,26 +263,27 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
             existing = find_existing_import_card(connection, order_number)
 
             if existing and existing["order_number"] != order_number:
-                block_import_row(result, row_number, order_number, STALE_IMPORT_MESSAGE)
+                block_import_row(result, row_number, order_number, STALE_IMPORT_MESSAGE, connection)
                 continue
 
             if existing and not overwrite_existing:
                 message = "Пропусната съществуваща поръчка. Отметнете обновяване, за да обновите данните от импорта."
                 result.skipped += 1
                 result.duplicate_rows.append(order_number)
-                result.row_results.append(
-                    ImportRowResult(
-                        row_number=row_number,
-                        order_number=order_number,
-                        action="skipped",
-                        message=message,
-                    )
+                record_import_row_result(
+                    result,
+                    row_number,
+                    order_number,
+                    "skipped",
+                    message,
+                    connection,
+                    is_duplicate_row=True,
                 )
                 continue
 
             if existing:
                 if has_stale_import_overwrite_conflict(connection, int(existing["id"]), card):
-                    block_import_row(result, row_number, order_number, STALE_IMPORT_MESSAGE)
+                    block_import_row(result, row_number, order_number, STALE_IMPORT_MESSAGE, connection)
                     continue
                 update_imported_card_fields(connection, int(existing["id"]), int(result.batch_id), card)
                 result.updated += 1
@@ -271,14 +296,7 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                 message = import_success_message(updated=False)
 
             result.rows_imported += 1
-            result.row_results.append(
-                ImportRowResult(
-                    row_number=row_number,
-                    order_number=order_number,
-                    action=action,
-                    message=message,
-                )
-            )
+            record_import_row_result(result, row_number, order_number, action, message, connection)
 
         connection.execute(
             """
@@ -297,16 +315,19 @@ def block_import_row(
     row_number: int,
     order_number: str,
     message: str,
+    connection: Any | None = None,
 ) -> None:
     result.skipped += 1
-    result.row_errors.append(f"Ред {row_number}: {message} {order_number}.")
-    result.row_results.append(
-        ImportRowResult(
-            row_number=row_number,
-            order_number=order_number,
-            action="blocked",
-            message=message,
-        )
+    row_error = f"Ред {row_number}: {message} {order_number}."
+    result.row_errors.append(row_error)
+    record_import_row_result(
+        result,
+        row_number,
+        order_number,
+        "blocked",
+        message,
+        connection,
+        row_error=row_error,
     )
 
 

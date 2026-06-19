@@ -508,6 +508,109 @@ def test_overwrite_import_blocks_stale_row_without_blocking_other_rows(connectio
     assert created["customer"] == "Second Customer"
 
 
+def test_import_batch_result_reconstructs_processed_rows_after_redirect(connection):
+    result = import_cards_from_csv(
+        "route-result.csv",
+        csv_bytes(
+            extrusion_row("25296"),
+            extrusion_row(
+                "32999",
+                extrusion_flag="не",
+                raw_material_a="",
+                packaging_method="",
+            ),
+        ),
+        overwrite_existing=False,
+    )
+
+    detail = db.fetch_import_batch_result(result.batch_id)
+
+    assert result.batch_id is not None
+    assert detail is not None
+    assert detail["batch_id"] == result.batch_id
+    assert detail["filename"] == "route-result.csv"
+    assert detail["rows_seen"] == 2
+    assert detail["rows_imported"] == 1
+    assert detail["created"] == 1
+    assert detail["updated"] == 0
+    assert detail["skipped"] == 1
+    assert [row["row_number"] for row in detail["row_results"]] == [2, 3]
+    assert [row["order_number"] for row in detail["row_results"]] == ["25296", "32999"]
+    assert [row["action"] for row in detail["row_results"]] == ["created", "skipped"]
+    assert detail["row_results"][0]["message"] == (
+        "Създадена нова технологична карта; готова за планиране."
+    )
+    assert detail["row_results"][1]["message"] == "Пропуснат ред: няма екструдиране."
+    assert "Ред 3: Пропуснат ред: няма екструдиране." in detail["row_errors"]
+
+
+def test_import_batch_result_persists_blocked_stale_overwrite_rows(connection):
+    card_id = import_one_ready_card("25297")
+    fields = current_import_fields(connection, card_id)
+    fields["city"] = "Corrected City"
+    card = db.fetch_admin_card_detail(card_id)
+    assert db.update_admin_imported_fields(card_id, card["version"], fields).ok
+
+    result = import_cards_from_csv(
+        "blocked-result.csv",
+        csv_bytes(extrusion_row("25297")),
+        overwrite_existing=True,
+    )
+
+    detail = db.fetch_import_batch_result(result.batch_id)
+
+    assert result.batch_id is not None
+    assert detail is not None
+    assert detail["rows_seen"] == 1
+    assert detail["rows_imported"] == 0
+    assert detail["created"] == 0
+    assert detail["updated"] == 0
+    assert detail["skipped"] == 1
+    assert len(detail["row_results"]) == 1
+    assert detail["row_results"][0]["row_number"] == 2
+    assert detail["row_results"][0]["order_number"] == "25297"
+    assert detail["row_results"][0]["action"] == "blocked"
+    assert "администратор" in detail["row_results"][0]["message"].casefold()
+    assert "Ред 2:" in detail["row_errors"][0]
+
+
+def test_import_batch_result_preserves_duplicate_and_error_summaries(connection):
+    import_one_ready_card("25310")
+
+    result = import_cards_from_csv(
+        "mixed-summary-result.csv",
+        csv_bytes(
+            extrusion_row("25310"),
+            extrusion_row("25311"),
+            extrusion_row(
+                "33010",
+                extrusion_flag="не",
+                raw_material_a="",
+                packaging_method="",
+            ),
+            extrusion_row("25311"),
+        ),
+        overwrite_existing=False,
+    )
+
+    detail = db.fetch_import_batch_result(result.batch_id)
+
+    assert result.duplicate_rows == ["25310", "25311"]
+    assert result.row_errors == [
+        "Ред 4: Пропуснат ред: няма екструдиране.",
+        "Ред 5: Дублиран номер на поръчка в този CSV файл. 25311.",
+    ]
+    assert detail is not None
+    assert detail["duplicate_rows"] == result.duplicate_rows
+    assert detail["row_errors"] == result.row_errors
+    assert [row["order_number"] for row in detail["row_results"]] == [
+        "25310",
+        "25311",
+        "33010",
+        "25311",
+    ]
+
+
 def test_release_succeeds_for_ready_cards(connection):
     card_id = import_one_ready_card("25282")
 

@@ -89,6 +89,19 @@ CREATE TABLE IF NOT EXISTS import_batches (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS import_batch_rows (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_batch_id INTEGER NOT NULL REFERENCES import_batches(id) ON DELETE CASCADE,
+    display_order INTEGER NOT NULL CHECK (display_order >= 1),
+    row_number INTEGER,
+    order_number TEXT,
+    action TEXT NOT NULL,
+    message TEXT NOT NULL,
+    is_duplicate_row INTEGER NOT NULL DEFAULT 0 CHECK (is_duplicate_row IN (0, 1)),
+    row_error TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS cards (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_number TEXT NOT NULL UNIQUE,
@@ -198,6 +211,9 @@ ON cards(status, machine_id, machine_sequence);
 CREATE INDEX IF NOT EXISTS idx_card_import_sources_order_number
 ON card_import_sources(order_number);
 
+CREATE INDEX IF NOT EXISTS idx_import_batch_rows_batch_order
+ON import_batch_rows(import_batch_id, display_order, id);
+
 CREATE INDEX IF NOT EXISTS idx_roll_entries_card_roll
 ON roll_entries(card_id, roll_number);
 
@@ -248,6 +264,13 @@ def init_db() -> None:
         # current code ignores it and validates current card fields directly.
         ensure_column(connection, "cards", "max_roll_weight", "TEXT")
         backfill_card_import_sources(connection)
+        ensure_column(
+            connection,
+            "import_batch_rows",
+            "is_duplicate_row",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (is_duplicate_row IN (0, 1))",
+        )
+        ensure_column(connection, "import_batch_rows", "row_error", "TEXT")
         connection.executemany(
             """
             INSERT INTO machines (id, name, is_operational, display_order)
@@ -2995,6 +3018,111 @@ def fetch_recent_import_batches(limit: int = 8) -> list[dict[str, Any]]:
             (limit,),
         ).fetchall()
         return rows_to_dicts(rows)
+
+
+def insert_import_batch_row(
+    connection: sqlite3.Connection,
+    import_batch_id: int,
+    display_order: int,
+    row_number: int | None,
+    order_number: str,
+    action: str,
+    message: str,
+    is_duplicate_row: bool = False,
+    row_error: str | None = None,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO import_batch_rows (
+            import_batch_id,
+            display_order,
+            row_number,
+            order_number,
+            action,
+            message,
+            is_duplicate_row,
+            row_error
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            import_batch_id,
+            display_order,
+            row_number,
+            order_number,
+            action,
+            message,
+            1 if is_duplicate_row else 0,
+            row_error,
+        ),
+    )
+
+
+def fetch_import_batch_result(batch_id: int | None) -> dict[str, Any] | None:
+    if batch_id is None:
+        return None
+
+    with connect() as connection:
+        batch = connection.execute(
+            """
+            SELECT id, source_filename, rows_seen, rows_imported
+            FROM import_batches
+            WHERE id = ?
+            """,
+            (batch_id,),
+        ).fetchone()
+        if batch is None:
+            return None
+
+        rows = rows_to_dicts(
+            connection.execute(
+                """
+                SELECT
+                    row_number,
+                    order_number,
+                    action,
+                    message,
+                    is_duplicate_row,
+                    row_error
+                FROM import_batch_rows
+                WHERE import_batch_id = ?
+                ORDER BY display_order, id
+                """,
+                (batch_id,),
+            ).fetchall()
+        )
+
+    created = sum(1 for row in rows if row["action"] == "created")
+    updated = sum(1 for row in rows if row["action"] == "updated")
+    skipped = sum(1 for row in rows if row["action"] in ("skipped", "blocked"))
+    duplicate_rows = [
+        str(row["order_number"] or "")
+        for row in rows
+        if row["is_duplicate_row"] and str(row["order_number"] or "")
+    ]
+    row_errors = [str(row["row_error"]) for row in rows if row["row_error"]]
+    row_results = [
+        {
+            "row_number": row["row_number"],
+            "order_number": row["order_number"],
+            "action": row["action"],
+            "message": row["message"],
+        }
+        for row in rows
+    ]
+
+    return {
+        "batch_id": int(batch["id"]),
+        "filename": str(batch["source_filename"] or ""),
+        "rows_seen": int(batch["rows_seen"] or 0),
+        "rows_imported": int(batch["rows_imported"] or 0),
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "duplicate_rows": duplicate_rows,
+        "row_errors": row_errors,
+        "row_results": row_results,
+    }
 
 
 def database_summary() -> dict[str, Any]:
