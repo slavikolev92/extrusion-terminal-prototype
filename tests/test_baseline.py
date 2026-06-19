@@ -57,6 +57,19 @@ def import_one_ready_card(order_number: str = "25278") -> int:
         )
 
 
+def current_import_fields(connection, card_id: int) -> dict[str, str]:
+    row = connection.execute(
+        f"""
+        SELECT {", ".join(IMPORT_FIELDS)}
+        FROM cards
+        WHERE id = ?
+        """,
+        (card_id,),
+    ).fetchone()
+    assert row is not None
+    return {field: str(row[field] or "") for field in IMPORT_FIELDS}
+
+
 def test_database_initialization_seeds_machines_1_through_4(temp_db_path):
     assert temp_db_path.exists()
 
@@ -376,6 +389,123 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
     assert card["first_started_at"] == "2026-06-12T08:00:00"
     assert roll_count == 1
     assert segment_count == 1
+
+
+def test_overwrite_import_blocks_stale_source_after_admin_imported_field_correction(connection):
+    card_id = import_one_ready_card("25291")
+    fields = current_import_fields(connection, card_id)
+    fields["city"] = "Corrected City"
+    fields["product_type"] = "Corrected Product"
+    fields["raw_material_a"] = "Corrected LDPE"
+    card = db.fetch_admin_card_detail(card_id)
+    assert db.update_admin_imported_fields(card_id, card["version"], fields).ok
+    corrected = db.fetch_admin_card_detail(card_id)
+
+    result = import_cards_from_csv(
+        "stale-overwrite.csv",
+        csv_bytes(extrusion_row("25291")),
+        overwrite_existing=True,
+    )
+
+    unchanged = db.fetch_admin_card_detail(card_id)
+    assert result.rows_imported == 0
+    assert result.updated == 0
+    assert result.skipped == 1
+    assert result.row_results[0].action == "blocked"
+    assert "администратор" in result.row_results[0].message.casefold()
+    assert "преглед" in result.row_results[0].message.casefold()
+    assert unchanged["city"] == "Corrected City"
+    assert unchanged["product_type"] == "Corrected Product"
+    assert unchanged["raw_material_a"] == "Corrected LDPE"
+    assert unchanged["version"] == corrected["version"]
+    assert unchanged["import_batch_id"] == corrected["import_batch_id"]
+
+
+def test_overwrite_import_allows_when_current_fields_match_incoming_after_admin_correction(connection):
+    card_id = import_one_ready_card("25292")
+    fields = current_import_fields(connection, card_id)
+    fields["product_type"] = "Corrected Product"
+    card = db.fetch_admin_card_detail(card_id)
+    assert db.update_admin_imported_fields(card_id, card["version"], fields).ok
+
+    matching_result = import_cards_from_csv(
+        "matching-correction.csv",
+        csv_bytes(extrusion_row("25292", product_type="Corrected Product")),
+        overwrite_existing=True,
+    )
+    assert matching_result.rows_imported == 1
+    assert matching_result.updated == 1
+    assert matching_result.row_results[0].action == "updated"
+
+    source = connection.execute(
+        """
+        SELECT product_type
+        FROM card_import_sources
+        WHERE card_id = ?
+        """,
+        (card_id,),
+    ).fetchone()
+
+    assert source["product_type"] == "Corrected Product"
+
+
+def test_overwrite_import_blocks_old_order_number_after_admin_order_number_correction(connection):
+    card_id = import_one_ready_card("25293")
+    fields = current_import_fields(connection, card_id)
+    fields["order_number"] = "25293A"
+    card = db.fetch_admin_card_detail(card_id)
+    assert db.update_admin_imported_fields(card_id, card["version"], fields).ok
+    corrected = db.fetch_admin_card_detail(card_id)
+
+    result = import_cards_from_csv(
+        "old-order.csv",
+        csv_bytes(extrusion_row("25293")),
+        overwrite_existing=True,
+    )
+    cards = connection.execute(
+        "SELECT id, order_number, version, import_batch_id FROM cards ORDER BY id"
+    ).fetchall()
+
+    assert result.rows_imported == 0
+    assert result.updated == 0
+    assert result.skipped == 1
+    assert result.row_results[0].action == "blocked"
+    assert "администратор" in result.row_results[0].message.casefold()
+    assert len(cards) == 1
+    assert cards[0]["id"] == card_id
+    assert cards[0]["order_number"] == "25293A"
+    assert cards[0]["version"] == corrected["version"]
+    assert cards[0]["import_batch_id"] == corrected["import_batch_id"]
+
+
+def test_overwrite_import_blocks_stale_row_without_blocking_other_rows(connection):
+    card_id = import_one_ready_card("25294")
+    fields = current_import_fields(connection, card_id)
+    fields["city"] = "Corrected City"
+    card = db.fetch_admin_card_detail(card_id)
+    assert db.update_admin_imported_fields(card_id, card["version"], fields).ok
+
+    result = import_cards_from_csv(
+        "mixed-overwrite.csv",
+        csv_bytes(
+            extrusion_row("25294"),
+            extrusion_row("25295", customer="Second Customer"),
+        ),
+        overwrite_existing=True,
+    )
+    unchanged = db.fetch_admin_card_detail(card_id)
+    created = connection.execute(
+        "SELECT customer FROM cards WHERE order_number = '25295'"
+    ).fetchone()
+
+    assert result.rows_seen == 2
+    assert result.rows_imported == 1
+    assert result.created == 1
+    assert result.updated == 0
+    assert result.skipped == 1
+    assert [row.action for row in result.row_results] == ["blocked", "created"]
+    assert unchanged["city"] == "Corrected City"
+    assert created["customer"] == "Second Customer"
 
 
 def test_release_succeeds_for_ready_cards(connection):
