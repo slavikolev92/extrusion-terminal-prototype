@@ -1580,11 +1580,11 @@ def fetch_occupied_machine_card(
         FROM cards
         WHERE id <> ?
           AND machine_id = ?
-          AND status IN (?, ?)
+          AND status = ?
         ORDER BY machine_sequence IS NULL, machine_sequence, id
         LIMIT 1
         """,
-        (card_id, machine_id, STATUS_RUNNING, STATUS_PAUSED),
+        (card_id, machine_id, STATUS_RUNNING),
     ).fetchone()
 
 

@@ -62,7 +62,7 @@ Confirmed model:
 - The main terminal queue/list should make it clear which cards are pending, running, or paused.
 - The terminal should have a fixed four-machine quick navigation strip.
 - Each machine tile should show only key information: machine number, current or next order, customer, progress, and status color.
-- Clicking a machine tile should open the running/paused card for that machine if one exists; otherwise it should open the next pending card for that machine by sequence.
+- Clicking a machine tile should open the running card for that machine if one exists; otherwise it should open the next active card for that machine by sequence, including paused cards that remain in the queue.
 - The completed section lets operators view previous completed cards, fix mistakes, and reprint when needed.
 - Users should be able to click an order/card from the list to view it.
 - `Finished` means the order/card is closed for workflow/status purposes, not locked for editing.
@@ -72,7 +72,9 @@ Confirmed model:
 - The terminal may have multiple running cards at the same time.
 - A machine cannot have more than one running card at the same time.
 - A machine can have many pending cards.
-- If a card is paused, treat that machine as occupied until the card is completed, cancelled by the shift manager, or reassigned.
+- A running card occupies its machine.
+- A paused card remains active and visible, but it does not occupy the physical machine for starting another pending card.
+- Resuming a paused card must be blocked if another card is currently running on that machine.
 - Operators should see machine queues in the shift-manager sequence. The app should keep corrections possible if real production changes.
 - Running cards should be visually obvious, for example highlighted green, so operators do not forget that time is being tracked.
 - There are no named users or logins for the pilot.
