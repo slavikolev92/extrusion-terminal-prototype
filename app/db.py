@@ -3047,10 +3047,11 @@ def fetch_machine_queues() -> list[dict[str, Any]]:
 
 
 def select_machine_focus_card(cards: list[dict[str, Any]]) -> dict[str, Any] | None:
-    for card in cards:
-        if card["status"] in (STATUS_RUNNING, STATUS_PAUSED):
-            return card
-    return cards[0] if cards else None
+    for status in (STATUS_RUNNING, STATUS_PAUSED, STATUS_PENDING):
+        for card in cards:
+            if card["status"] == status:
+                return card
+    return None
 
 
 def fetch_recent_import_batches(limit: int = 8) -> list[dict[str, Any]]:

@@ -78,6 +78,18 @@ DRAFT_SORT_LABELS = {
 }
 SAFE_ANCHOR_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
+TERMINAL_NOTICE_MESSAGES = {
+    "materials_saved": ("Материалите са записани.",),
+    "tare_saved": ("Шпула е записана.",),
+    "roll_saved": ("Ролката е записана.",),
+    "roll_updated": ("Ролката е коригирана.",),
+    "roll_deleted": ("Ролката е изтрита.",),
+    "timing_started": ("Времето е стартирано.",),
+    "timing_paused": ("Времето е паузирано.",),
+    "timing_resumed": ("Времето е продължено.",),
+    "card_finished": ("Картата е приключена.",),
+}
+
 IMPORT_ACTION_LABELS = {
     "blocked": "блокиран",
     "created": "създаден",
@@ -1069,8 +1081,16 @@ def parse_planning_form(
 
 
 @app.get("/terminal")
-async def terminal(request: Request, machine_id: int | None = None):
-    return terminal_response(request, selected_machine_id=machine_id)
+async def terminal(
+    request: Request,
+    machine_id: int | None = None,
+    notice: str | None = None,
+):
+    return terminal_response(
+        request,
+        selected_machine_id=machine_id,
+        terminal_notice=notice,
+    )
 
 
 @app.get("/terminal/snapshot")
@@ -1079,8 +1099,16 @@ async def terminal_snapshot_route(selected_card_id: int | None = None):
 
 
 @app.get("/terminal/cards/{card_id}")
-async def terminal_card(request: Request, card_id: int):
-    return terminal_response(request, selected_card_id=card_id)
+async def terminal_card(
+    request: Request,
+    card_id: int,
+    notice: str | None = None,
+):
+    return terminal_response(
+        request,
+        selected_card_id=card_id,
+        terminal_notice=notice,
+    )
 
 
 @app.post("/terminal/cards/{card_id}/materials")
@@ -1106,6 +1134,7 @@ async def save_terminal_materials(
         card_id,
         "material_result",
         material_result,
+        notice_code="materials_saved",
     )
 
 
@@ -1125,6 +1154,7 @@ async def save_tare_weight(
         card_id,
         "roll_result",
         roll_result,
+        notice_code="tare_saved",
         roll_result_target="tare",
     )
 
@@ -1145,6 +1175,7 @@ async def add_roll_weight(
         card_id,
         "roll_result",
         roll_result,
+        notice_code="roll_saved",
         roll_result_target="new_roll",
     )
 
@@ -1171,6 +1202,7 @@ async def save_roll_weight(
         card_id,
         "roll_result",
         roll_result,
+        notice_code="roll_updated",
         roll_result_target="roll_row",
         roll_result_roll_id=roll_id,
     )
@@ -1198,6 +1230,7 @@ async def delete_roll_weight(
         card_id,
         "roll_result",
         roll_result,
+        notice_code="roll_deleted",
         roll_result_target="roll_delete",
         roll_delete_selected_roll_id=roll_id,
     )
@@ -1231,6 +1264,7 @@ async def delete_selected_roll_weight(
         card_id,
         "roll_result",
         roll_result,
+        notice_code="roll_deleted",
         roll_result_target="roll_delete",
         roll_delete_selected_roll_id=parsed_roll_id,
     )
@@ -1251,6 +1285,7 @@ async def start_timing(
         card_id,
         "timing_result",
         timing_result,
+        notice_code="timing_started",
     )
 
 
@@ -1269,6 +1304,7 @@ async def pause_timing(
         card_id,
         "timing_result",
         timing_result,
+        notice_code="timing_paused",
     )
 
 
@@ -1287,6 +1323,7 @@ async def resume_timing(
         card_id,
         "timing_result",
         timing_result,
+        notice_code="timing_resumed",
     )
 
 
@@ -1305,6 +1342,7 @@ async def finish_terminal_card(
         card_id,
         "workflow_result",
         workflow_result,
+        notice_code="card_finished",
     )
 
 
@@ -1361,16 +1399,34 @@ def terminal_post_response(
     card_id: int,
     result_name: str,
     result: RuleResult,
+    notice_code: str | None = None,
     **extra: Any,
 ):
     if result.ok:
-        return RedirectResponse(url=f"/terminal/cards/{card_id}", status_code=303)
+        return RedirectResponse(
+            url=terminal_redirect_url(card_id, notice_code),
+            status_code=303,
+        )
     return terminal_response(
         request,
         selected_card_id=card_id,
         **{result_name: result},
         **extra,
     )
+
+
+def terminal_redirect_url(card_id: int, notice_code: str | None = None) -> str:
+    base_url = f"/terminal/cards/{card_id}"
+    if not notice_code:
+        return base_url
+    return f"{base_url}?{urlencode({'notice': notice_code})}"
+
+
+def terminal_notice_result(notice_code: str | None) -> RuleResult | None:
+    messages = TERMINAL_NOTICE_MESSAGES.get(str(notice_code or ""))
+    if not messages:
+        return None
+    return RuleResult(True, messages)
 
 
 def terminal_context(
@@ -1455,6 +1511,10 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
             "topbar": (),
         },
     }
+
+    notice_result = terminal_notice_result(results.get("terminal_notice"))
+    if notice_result is not None:
+        feedback["toast"] = {"messages": notice_result.messages}
 
     for result_name, target in (
         ("workflow_result", "topbar"),

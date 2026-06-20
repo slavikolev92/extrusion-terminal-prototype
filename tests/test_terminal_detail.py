@@ -4,7 +4,7 @@ import csv
 import io
 
 from app import db
-from app.constants import STATUS_PAUSED
+from app.constants import STATUS_PAUSED, STATUS_RUNNING
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 
 
@@ -101,6 +101,49 @@ def test_machine_queue_focus_prefers_occupied_card_over_next_pending(connection)
 
     assert machine_2["focus_card"]["order_number"] == "25302"
     assert [card["order_number"] for card in machine_2["cards"]] == ["25301", "25302"]
+
+
+def test_machine_queue_focus_prefers_running_over_earlier_paused(connection):
+    paused_card_id = import_ready_card("25305")
+    pending_card_id = import_ready_card("25306")
+    running_card_id = import_ready_card("25307")
+    assert db.release_card(
+        paused_card_id,
+        machine_id=2,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    ).ok
+    assert db.release_card(
+        pending_card_id,
+        machine_id=2,
+        machine_sequence=2,
+        max_roll_weight="60.0",
+    ).ok
+    assert db.release_card(
+        running_card_id,
+        machine_id=2,
+        machine_sequence=3,
+        max_roll_weight="60.0",
+    ).ok
+    connection.execute(
+        "UPDATE cards SET status = ? WHERE id = ?",
+        (STATUS_PAUSED, paused_card_id),
+    )
+    connection.execute(
+        "UPDATE cards SET status = ? WHERE id = ?",
+        (STATUS_RUNNING, running_card_id),
+    )
+    connection.commit()
+
+    queues = db.fetch_machine_queues()
+    machine_2 = next(queue for queue in queues if queue["machine"]["id"] == 2)
+
+    assert machine_2["focus_card"]["order_number"] == "25307"
+    assert [card["order_number"] for card in machine_2["cards"]] == [
+        "25305",
+        "25306",
+        "25307",
+    ]
 
 
 def test_terminal_material_field_update_checks_loaded_version(connection):

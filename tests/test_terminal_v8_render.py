@@ -17,7 +17,9 @@ from app.main import (
     finish_terminal_card,
     progress_percent,
     remaining_gross_display,
+    save_tare_weight,
     target_gross_decimal,
+    terminal_card,
     terminal_context,
 )
 from app.rules import RuleResult
@@ -207,6 +209,34 @@ def test_terminal_v8_selects_requested_machine_focus_card(connection):
     assert context["selected_machine_id"] == 2
     assert "Машина 2: №26116" in html
     assert "Няма активна поръчка за Машина 2." not in html
+
+
+def test_terminal_v8_machine_card_and_machine_default_prefer_running_over_paused(
+    connection,
+):
+    paused_id = release_ready_card("26145", machine_id=2, sequence=1)
+    release_ready_card("26146", machine_id=2, sequence=2)
+    running_id = release_ready_card("26147", machine_id=2, sequence=3)
+    assert db.start_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.pause_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.start_production_timing(running_id, card_version(running_id)).ok
+
+    context = terminal_context(selected_machine_id=2)
+    html = render_terminal(machine_id=2)
+
+    assert context["selected_card"]["id"] == running_id
+    assert context["selected_card"]["order_number"] == "26147"
+    assert f'href="/terminal/cards/{running_id}"' in html
+    assert "Машина 2: №26147" in html
+    machine_tab_match = re.search(
+        rf'<a class="machine-tab running selected" href="/terminal/cards/{running_id}">.*?</a>',
+        html,
+        flags=re.S,
+    )
+    assert machine_tab_match is not None
+    machine_tab = machine_tab_match.group(0)
+    assert "Изработване" in machine_tab
+    assert "V8 Customer 26147" in machine_tab
 
 
 def test_terminal_v8_renders_selected_card_details_and_max_roll_weight(connection):
@@ -498,6 +528,60 @@ def test_terminal_v8_success_result_renders_one_dismissible_toast(connection):
     assert 'class="roll-list" data-scroll-bottom="true"' in html
 
 
+def test_terminal_v8_notice_code_renders_one_dismissible_toast(connection):
+    card_id = release_ready_card("26191", machine_id=1, sequence=1)
+
+    html = render_terminal(card_id, terminal_notice="tare_saved")
+
+    assert html.count('class="terminal-toast"') == 1
+    assert "Шпула е записана." in html
+    assert 'class="terminal-toast-close"' in html
+    assert html.count('role="alert"') == 0
+
+
+def test_terminal_card_notice_query_renders_one_dismissible_toast(connection):
+    card_id = release_ready_card("26193", machine_id=1, sequence=1)
+
+    response = asyncio.run(
+        terminal_card(
+            make_test_request(
+                f"/terminal/cards/{card_id}?notice=tare_saved",
+                method="GET",
+            ),
+            card_id,
+            notice="tare_saved",
+        )
+    )
+    html = response.body.decode("utf-8")
+
+    assert html.count('class="terminal-toast"') == 1
+    assert "Шпула е записана." in html
+
+
+def test_terminal_v8_unknown_notice_code_is_ignored(connection):
+    card_id = release_ready_card("26192", machine_id=1, sequence=1)
+
+    html = render_terminal(card_id, terminal_notice="not_a_real_notice")
+
+    assert 'class="terminal-toast"' not in html
+    assert "not_a_real_notice" not in html
+
+    response = asyncio.run(
+        terminal_card(
+            make_test_request(
+                f"/terminal/cards/{card_id}?notice=not_a_real_notice",
+                method="GET",
+            ),
+            card_id,
+            notice="not_a_real_notice",
+        )
+    )
+    route_html = response.body.decode("utf-8")
+
+    assert 'class="terminal-toast"' not in route_html
+    assert "not_a_real_notice" not in route_html
+
+
 def test_terminal_v8_failed_tare_result_renders_under_tare_field(connection):
     card_id = release_ready_card("26108", machine_id=1, sequence=1)
 
@@ -651,7 +735,9 @@ def test_terminal_roll_delete_requires_matching_roll_number_confirmation(connect
     after_deleted = db.fetch_terminal_card_detail(card_id)
 
     assert deleted.status_code == 303
-    assert deleted.headers["location"] == f"/terminal/cards/{card_id}"
+    assert deleted.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=roll_deleted"
+    )
     assert after_deleted["roll_count"] == 2
     assert [
         (roll["roll_number"], roll["gross_weight"])
@@ -743,10 +829,31 @@ def test_terminal_finish_success_redirects_to_canonical_get(connection):
     card = db.fetch_terminal_card_detail(card_id)
     assert card["status"] == "completed"
     assert response.status_code == 303
-    assert response.headers["location"] == f"/terminal/cards/{card_id}"
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=card_finished"
+    )
     assert "Действието не беше записано" not in refresh_html
     assert "Картата не е намерена." not in refresh_html
     assert f"№{card['order_number']}" in refresh_html
+
+
+def test_terminal_success_post_redirects_with_notice_query(connection):
+    card_id = release_ready_card("26190", machine_id=1, sequence=1)
+    loaded_version = card_version(card_id)
+
+    response = asyncio.run(
+        save_tare_weight(
+            make_test_request(f"/terminal/cards/{card_id}/tare"),
+            card_id,
+            str(loaded_version),
+            "1.20",
+        )
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=tare_saved"
+    )
 
 
 def test_terminal_finish_failure_renders_inline_without_redirect(connection):
@@ -766,6 +873,7 @@ def test_terminal_finish_failure_renders_inline_without_redirect(connection):
     assert response.context["workflow_result"].messages == (
         "Шпула е задължителна преди приключване.",
     )
+    assert 'class="terminal-toast"' not in response.body.decode("utf-8")
 
 
 def test_terminal_v8_refresh_alert_hook_exists_and_old_sync_ui_is_absent(connection):
