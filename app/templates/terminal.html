@@ -1980,7 +1980,7 @@
 
                 <div class="recipe-section">
                   <div class="recipe-title">Рецепта</div>
-                  <form class="recipe-table" action="/terminal/cards/{{ selected_card.id }}/materials" method="post">
+                  <form class="recipe-table" action="/terminal/cards/{{ selected_card.id }}/materials" method="post" data-recipe-autosave="true">
                     <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                     <div class="recipe-head">
                       <div>Вид суровина</div>
@@ -2166,6 +2166,92 @@
       if (toast) {
         window.setTimeout(closeToast, 3000);
       }
+    })();
+
+    (() => {
+      const recipeForm = document.querySelector('form[data-recipe-autosave="true"]');
+      if (!recipeForm) {
+        return;
+      }
+
+      const recipeInputs = Array.from(
+        recipeForm.querySelectorAll("input:not([type='hidden']):not([disabled])"),
+      );
+      if (recipeInputs.length === 0) {
+        return;
+      }
+
+      const initialValues = new Map(
+        recipeInputs.map((input) => [input.name, input.value]),
+      );
+      let recipeSubmitting = false;
+
+      const isRecipeDirty = () => recipeInputs.some(
+        (input) => input.value !== initialValues.get(input.name),
+      );
+
+      const rememberRecipeValues = () => {
+        recipeInputs.forEach((input) => {
+          initialValues.set(input.name, input.value);
+        });
+      };
+
+      const submitRecipeIfDirty = () => {
+        if (recipeSubmitting || !isRecipeDirty()) {
+          return false;
+        }
+        recipeSubmitting = true;
+        recipeForm.requestSubmit();
+        return true;
+      };
+
+      recipeForm.addEventListener("submit", () => {
+        recipeSubmitting = true;
+        rememberRecipeValues();
+      });
+
+      recipeInputs.forEach((input) => {
+        input.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            submitRecipeIfDirty();
+          }
+        });
+
+        input.addEventListener("blur", (event) => {
+          const nextTarget = event.relatedTarget;
+          if (nextTarget && recipeForm.contains(nextTarget)) {
+            return;
+          }
+          submitRecipeIfDirty();
+        });
+      });
+
+      document.addEventListener("click", (event) => {
+        const target = event.target;
+        if (target instanceof Node && recipeForm.contains(target)) {
+          return;
+        }
+        if (recipeSubmitting) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        if (!isRecipeDirty()) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        submitRecipeIfDirty();
+      }, true);
+
+      window.addEventListener("beforeunload", (event) => {
+        if (recipeSubmitting || !isRecipeDirty()) {
+          return;
+        }
+        event.preventDefault();
+        event.returnValue = "";
+      });
     })();
 
     (() => {

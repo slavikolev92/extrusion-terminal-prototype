@@ -129,6 +129,16 @@ def data_block(html: str, attribute: str, value: str) -> str:
     return match.group(0)
 
 
+def form_block(html: str, action: str) -> str:
+    match = re.search(
+        rf'<form[^>]* action="{re.escape(action)}"[^>]*>.*?</form>',
+        html,
+        flags=re.S,
+    )
+    assert match is not None
+    return match.group(0)
+
+
 def roll_row_block(html: str, roll_id: int) -> str:
     start_marker = f'<div class="roll-row" data-roll-id="{roll_id}">'
     start = html.find(start_marker)
@@ -290,6 +300,49 @@ def test_terminal_v8_recipe_inputs_are_named_for_all_rows(connection):
         assert f'value="{entry["batch_lot"]}"' in html
     assert 'name="actual_raw_material_used"' not in html
     assert 'name="raw_material_batch_lot"' not in html
+
+
+def test_terminal_v8_recipe_form_marks_exit_autosave_contract(connection):
+    card_id = release_ready_card("26143", machine_id=1, sequence=1)
+
+    html = render_terminal(card_id)
+
+    recipe_form = form_block(
+        html,
+        f"/terminal/cards/{card_id}/materials",
+    )
+    assert 'data-recipe-autosave="true"' in recipe_form
+    assert 'name="actual_material__raw_material_a"' in recipe_form
+    assert 'name="batch_lot__raw_material_a"' in recipe_form
+    assert '<button type="submit" hidden>Запази материал</button>' in recipe_form
+
+
+def test_terminal_v8_recipe_autosave_script_tracks_dirty_exit_and_beforeunload(
+    connection,
+):
+    card_id = release_ready_card("26144", machine_id=1, sequence=1)
+
+    html = render_terminal(card_id)
+
+    assert 'form[data-recipe-autosave="true"]' in html
+    assert "const isRecipeDirty" in html
+    assert "submitRecipeIfDirty" in html
+    assert 'event.key === "Enter"' in html
+    assert "recipeForm.contains(nextTarget)" in html
+    assert 'document.addEventListener("click"' in html
+    assert "event.stopPropagation()" in html
+    assert re.search(
+        r"if \(target instanceof Node && recipeForm\.contains\(target\)\) {\s*"
+        r"return;\s*"
+        r"}\s*"
+        r"if \(recipeSubmitting\) {\s*"
+        r"event\.preventDefault\(\);\s*"
+        r"event\.stopPropagation\(\);\s*"
+        r"return;\s*"
+        r"}",
+        html,
+    )
+    assert 'window.addEventListener("beforeunload"' in html
 
 
 def test_target_gross_resolves_from_quantity_2_and_remaining_clamps(connection):

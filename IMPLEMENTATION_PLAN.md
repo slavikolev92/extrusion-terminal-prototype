@@ -420,6 +420,7 @@ Completed audit follow-up before rehearsal:
 
 - Implemented pending-card return-to-planning behavior from full workflow audit issue #7: pending cards can be returned to the unreleased planning pool with version checks, queue normalization, terminal removal, and admin planning/detail controls. Started cards (`running` or `paused`) remain in execution and cannot be returned to the pool.
 - admin planning unreleased-queue cleanup: compact single-row release table, delivery-date column, scoped control sizing, and PRG anchor return after release.
+- terminal recipe-field autosave/silent data-loss prevention: dirty recipe fields save through the existing materials form POST on Enter or first attempted exit from the recipe area, first dirty external clicks save instead of navigating or firing actions, and browser refresh/close uses the native unsaved-change warning as a fallback.
 
 Verification completed for this follow-up:
 
@@ -434,6 +435,7 @@ Verification completed for this follow-up:
 - `python -m compileall app` passed.
 - `git diff --check` passed.
 - Live Playwright check against temporary SQLite database `.test-runtime/unrelease-ui/extrusion_terminal-issue7-20260619-001.sqlite3` passed: imported two ready cards, released both to one machine, confirmed terminal visibility, returned one pending card to the unreleased pool from `/admin/planning`, confirmed queue normalization and terminal removal, started the remaining card, confirmed `/admin/cards/{id}` did not show return-to-planning for the running card, and confirmed `/terminal/snapshot` marked the returned selected card missing. Screenshot: `artifacts/ui-checks/pending-unrelease-planning.png`.
+- terminal recipe autosave verification passed: focused render/detail/sync tests and full Python suite passed, `git diff --check` passed, and Playwright against temporary SQLite database `.test-runtime/terminal-recipe-autosave/extrusion_terminal.sqlite3` verified first dirty machine click saved recipe fields and stayed on the card, while the second click navigated. Screenshot: `artifacts/ui-checks/terminal-recipe-autosave/recipe-autosave-persisted.png`.
 
 Scope:
 
