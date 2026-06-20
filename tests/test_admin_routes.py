@@ -16,6 +16,7 @@ from app.main import (
     app,
     import_csv as post_admin_import,
     release_card_to_terminal,
+    sorted_draft_cards,
     unrelease_admin_card,
     update_admin_card_planning,
 )
@@ -103,6 +104,11 @@ def import_route_card(order_number: str) -> int:
 
 def card_version(card_id: int) -> int:
     return int(db.fetch_admin_card_detail(card_id)["version"])
+
+
+def assert_html_order(html: str, *needles: str) -> None:
+    positions = [html.index(needle) for needle in needles]
+    assert positions == sorted(positions)
 
 
 def test_successful_admin_import_redirects_to_batch_result_get(connection):
@@ -211,7 +217,171 @@ def test_admin_planning_renders_unreleased_cards_and_machine_options(connection)
         assert f"Машина {machine_id}" in page
 
 
-def test_successful_release_redirects_to_planning_get_and_refresh_does_not_resubmit(connection):
+def test_admin_planning_renders_compact_unreleased_release_table(connection):
+    result = import_cards_from_csv(
+        "planning-compact-route.csv",
+        csv_bytes(
+            extrusion_row(
+                "25902",
+                delivery_date="2026-06-25",
+                customer="Compact Customer",
+                product_type="Long product type that should stay in the product column",
+            ),
+            extrusion_row(
+                "25903",
+                delivery_date="2026-06-26",
+                customer="Second Compact Customer",
+                product_type="Second product",
+            ),
+        ),
+        overwrite_existing=False,
+    )
+    assert result.rows_imported == 2
+
+    response = asyncio.run(admin_planning(make_request("/admin/planning", method="GET")))
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert '<section class="section" id="unreleased-queue">' in html
+    assert '<th class="col-order" aria-sort="ascending">' in html
+    assert 'href="/admin/planning?draft_sort=order_number&amp;draft_dir=desc#unreleased-queue"' in html
+    assert 'href="/admin/planning?draft_sort=delivery_date&amp;draft_dir=asc#unreleased-queue"' in html
+    assert 'href="/admin/planning?draft_sort=customer&amp;draft_dir=asc#unreleased-queue"' in html
+    assert 'href="/admin/planning?draft_sort=product_type&amp;draft_dir=asc#unreleased-queue"' in html
+    assert ">Поръчка" in html
+    assert ">Доставка" in html
+    assert ">Клиент" in html
+    assert ">Изделие" in html
+    assert '<th class="col-max-roll">Макс. кг/ролка</th>' in html
+    assert '<th class="col-sequence">Ред</th>' in html
+    assert '<th class="col-machine">Машина</th>' in html
+    assert '<th class="col-action">Действие</th>' in html
+    assert "2026-06-25" in html
+    assert "2026-06-26" in html
+    assert 'id="draft-card-' in html
+    assert 'class="unreleased-table compact-table"' in html
+    assert 'class="release-control release-control-max-roll"' in html
+    assert 'class="release-control release-control-sequence"' in html
+    assert 'class="release-control release-control-machine"' in html
+    assert 'class="release-submit-button"' in html
+    assert 'name="return_anchor" value="draft-card-' in html
+    assert 'name="return_anchor" value="unreleased-queue"' in html
+    assert '<span>Макс. тегло ролка, кг</span>' not in html
+    assert '<span>Ред <span class="required-marker">*</span></span>' not in html
+    assert '<span>Машина <span class="required-marker">*</span></span>' not in html
+
+
+def test_admin_planning_sorts_unreleased_cards_with_header_links(connection):
+    result = import_cards_from_csv(
+        "planning-sort-route.csv",
+        csv_bytes(
+            extrusion_row(
+                "25941",
+                delivery_date="2026-06-22",
+                customer="Beta Customer",
+                product_type="Zeta Product",
+            ),
+            extrusion_row(
+                "25940",
+                delivery_date="2026-06-21",
+                customer="Alpha Customer",
+                product_type="Omega Product",
+            ),
+            extrusion_row(
+                "25942",
+                delivery_date="2026-06-20",
+                customer="Gamma Customer",
+                product_type="Alpha Product",
+            ),
+        ),
+        overwrite_existing=False,
+    )
+    assert result.rows_imported == 3
+
+    customer_response = asyncio.run(
+        admin_planning(
+            make_request("/admin/planning", method="GET"),
+            draft_sort="customer",
+            draft_dir="asc",
+        )
+    )
+    customer_html = customer_response.body.decode("utf-8")
+
+    assert customer_response.status_code == 200
+    assert_html_order(customer_html, "25940", "25941", "25942")
+    assert 'href="/admin/planning?draft_sort=customer&amp;draft_dir=desc#unreleased-queue"' in customer_html
+    assert 'aria-sort="ascending"' in customer_html
+
+    delivery_response = asyncio.run(
+        admin_planning(
+            make_request("/admin/planning", method="GET"),
+            draft_sort="delivery_date",
+            draft_dir="desc",
+        )
+    )
+    delivery_html = delivery_response.body.decode("utf-8")
+
+    assert delivery_response.status_code == 200
+    assert_html_order(delivery_html, "25941", "25940", "25942")
+    assert 'href="/admin/planning?draft_sort=delivery_date&amp;draft_dir=asc#unreleased-queue"' in delivery_html
+    assert 'aria-sort="descending"' in delivery_html
+
+
+def test_admin_planning_delivery_date_sort_keeps_missing_dates_last():
+    cards = [
+        {"id": 1, "order_number": "25961", "delivery_date": "2026-06-21"},
+        {"id": 2, "order_number": "25962", "delivery_date": ""},
+        {"id": 3, "order_number": "25963", "delivery_date": "2026-06-20"},
+        {"id": 4, "order_number": "25964", "delivery_date": None},
+        {"id": 5, "order_number": "25965", "delivery_date": "22/06/2026"},
+    ]
+
+    ascending = sorted_draft_cards(cards, "delivery_date", "asc")
+    descending = sorted_draft_cards(cards, "delivery_date", "desc")
+
+    assert [card["order_number"] for card in ascending] == [
+        "25963",
+        "25961",
+        "25965",
+        "25962",
+        "25964",
+    ]
+    assert [card["order_number"] for card in descending] == [
+        "25965",
+        "25961",
+        "25963",
+        "25962",
+        "25964",
+    ]
+
+
+def test_admin_planning_ignores_invalid_unreleased_sort_values(connection):
+    result = import_cards_from_csv(
+        "planning-invalid-sort-route.csv",
+        csv_bytes(
+            extrusion_row("25951", customer="First Customer"),
+            extrusion_row("25950", customer="Second Customer"),
+        ),
+        overwrite_existing=False,
+    )
+    assert result.rows_imported == 2
+
+    response = asyncio.run(
+        admin_planning(
+            make_request("/admin/planning", method="GET"),
+            draft_sort='customer" onclick="alert(1)',
+            draft_dir="sideways",
+        )
+    )
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert_html_order(html, "25950", "25951")
+    assert 'onclick="alert(1)' not in html
+    assert 'draft_dir=sideways' not in html
+
+
+def test_successful_release_redirects_to_planning_anchor_and_refresh_does_not_resubmit(connection):
     card_id = import_route_card("25910")
     loaded_version = card_version(card_id)
 
@@ -223,6 +393,7 @@ def test_successful_release_redirects_to_planning_get_and_refresh_does_not_resub
             max_roll_weight="60.0",
             machine_id="1",
             machine_sequence="1",
+            return_anchor="draft-card-999",
         )
     )
     after_release = db.fetch_admin_card_detail(card_id)
@@ -230,7 +401,7 @@ def test_successful_release_redirects_to_planning_get_and_refresh_does_not_resub
     after_refresh = db.fetch_admin_card_detail(card_id)
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/admin/planning"
+    assert response.headers["location"] == "/admin/planning#draft-card-999"
     assert refresh_response.status_code == 200
     assert after_release["status"] == "pending"
     assert after_release["machine_id"] == 1
@@ -238,6 +409,26 @@ def test_successful_release_redirects_to_planning_get_and_refresh_does_not_resub
     assert after_refresh["version"] == after_release["version"]
     assert after_refresh["machine_id"] == 1
     assert after_refresh["machine_sequence"] == 1
+
+
+def test_successful_release_ignores_unsafe_return_anchor(connection):
+    card_id = import_route_card("25913")
+    loaded_version = card_version(card_id)
+
+    response = asyncio.run(
+        release_card_to_terminal(
+            make_request(f"/admin/cards/{card_id}/release"),
+            card_id=card_id,
+            loaded_version=str(loaded_version),
+            max_roll_weight="60.0",
+            machine_id="1",
+            machine_sequence="1",
+            return_anchor='draft-card-1" onclick="alert(1)',
+        )
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/planning#unreleased-queue"
 
 
 def test_successful_replanning_redirects_to_planning_get_and_refresh_does_not_resubmit(connection):
@@ -474,7 +665,15 @@ def test_admin_planning_renders_unrelease_form_for_pending_queue_cards_only(conn
     assert f'action="/admin/cards/{pending_id}/unrelease"' in html
     assert f'action="/admin/cards/{running_id}/unrelease"' not in html
     assert '<input type="hidden" name="return_to" value="planning">' in html
-    assert "Върни в неизпратени" in html
+    assert 'class="queue-card-header"' in html
+    assert 'class="queue-return-form"' in html
+    assert 'class="queue-return-button"' in html
+    assert 'aria-label="Върни поръчка 25924 в неизпратени"' in html
+    assert ">↩ Върни</button>" in html
+    assert "Върни в неизпратени" not in html
+    assert "4 машини в системата" not in html
+    assert '<span class="planning-field-label">Машина</span>' in html
+    assert '<span class="planning-field-label">Ред</span>' in html
 
 
 def test_admin_detail_renders_unrelease_form_for_pending_card_only(connection):

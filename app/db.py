@@ -352,7 +352,7 @@ def fetch_cards_by_status(statuses: tuple[str, ...]) -> list[dict[str, Any]]:
     with connect() as connection:
         rows = connection.execute(
             f"""
-            SELECT id, order_number, status, machine_id, machine_sequence,
+            SELECT id, order_number, delivery_date, status, machine_id, machine_sequence,
                    customer, product_type, quantity_1, unit_1, quantity_2, unit_2,
                    product_form, material, size_thickness, max_roll_weight,
                    tare_weight, finished_at, version, updated_at,

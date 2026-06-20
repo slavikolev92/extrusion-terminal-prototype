@@ -243,6 +243,97 @@ select {
   font: inherit;
 }
 
+.unreleased-table {
+  table-layout: fixed;
+}
+
+.unreleased-table th {
+  white-space: nowrap;
+}
+
+.unreleased-table .sort-link {
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  text-decoration: none;
+}
+
+.unreleased-table .sort-link:hover,
+.unreleased-table .sort-link:focus {
+  color: var(--blue);
+  text-decoration: underline;
+}
+
+.unreleased-table .sort-link.active {
+  color: var(--text);
+}
+
+.unreleased-table td {
+  vertical-align: middle;
+}
+
+.unreleased-table .col-order {
+  width: 86px;
+}
+
+.unreleased-table .col-delivery {
+  width: 104px;
+}
+
+.unreleased-table .col-customer {
+  width: 18%;
+}
+
+.unreleased-table .col-product {
+  width: auto;
+}
+
+.unreleased-table .col-max-roll {
+  width: 112px;
+}
+
+.unreleased-table .col-sequence {
+  width: 66px;
+}
+
+.unreleased-table .col-machine {
+  width: 78px;
+}
+
+.unreleased-table .col-action {
+  width: 92px;
+  text-align: right;
+}
+
+.unreleased-table .truncate-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.release-control {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 0 8px;
+  font: inherit;
+}
+
+.release-control-sequence,
+.release-control-machine {
+  text-align: center;
+}
+
+.release-submit-button {
+  min-height: 34px;
+  width: auto;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
 .release-form {
   display: grid;
   grid-template-columns: repeat(3, 170px) minmax(120px, 1fr);
@@ -284,12 +375,26 @@ select {
 
 .planning-form {
   display: grid;
-  grid-template-columns: 72px minmax(72px, 1fr) auto;
+  grid-template-columns: minmax(72px, 0.8fr) minmax(72px, 1fr) auto;
   gap: 7px;
-  align-items: center;
+  align-items: end;
   margin-top: 8px;
 }
 
+.planning-field {
+  display: grid;
+  gap: 3px;
+}
+
+.planning-field-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.planning-form select,
 .planning-form input {
   width: 100%;
   min-height: 38px;
@@ -303,9 +408,27 @@ select {
   padding: 0 10px;
 }
 
+.queue-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.queue-return-form {
+  margin: 0;
+}
+
+.queue-return-button {
+  min-height: 28px;
+  padding: 0 7px;
+  white-space: nowrap;
+}
+
 .queue-card-main {
   display: grid;
   gap: 4px;
+  margin-top: 4px;
 }
 
 .filter-form {
@@ -1283,5 +1406,13 @@ thead th {
   .timing-ledger .admin-ledger-head,
   .timing-ledger .admin-ledger-row {
     min-width: 720px;
+  }
+
+  .unreleased-table {
+    min-width: 880px;
+  }
+
+  #unreleased-queue {
+    overflow-x: auto;
   }
 }

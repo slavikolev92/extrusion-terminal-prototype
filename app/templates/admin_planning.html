@@ -44,50 +44,79 @@
     </section>
   {% endif %}
 
-  <section class="section">
+  <section class="section" id="unreleased-queue">
     <div class="section-head">
       <h2>Неизпратени технологични карти</h2>
       <span>{{ draft_cards|length }} карти</span>
     </div>
 
     {% if draft_cards %}
-      <table>
+      <table class="unreleased-table compact-table">
         <thead>
           <tr>
-            <th>Поръчка</th>
-            <th>Клиент</th>
-            <th>Изделие</th>
-            <th>Изпрати</th>
+            <th class="col-order" aria-sort="{{ draft_sort_links.order_number.aria_sort }}">
+              <a class="sort-link {% if draft_sort == 'order_number' %}active{% endif %}" href="{{ draft_sort_links.order_number.href }}">{{ draft_sort_links.order_number.label }}
+                {% if draft_sort == "order_number" %}
+                  <span aria-hidden="true">{% if draft_dir == "asc" %}↑{% else %}↓{% endif %}</span>
+                {% endif %}
+              </a>
+            </th>
+            <th class="col-delivery" aria-sort="{{ draft_sort_links.delivery_date.aria_sort }}">
+              <a class="sort-link {% if draft_sort == 'delivery_date' %}active{% endif %}" href="{{ draft_sort_links.delivery_date.href }}">{{ draft_sort_links.delivery_date.label }}
+                {% if draft_sort == "delivery_date" %}
+                  <span aria-hidden="true">{% if draft_dir == "asc" %}↑{% else %}↓{% endif %}</span>
+                {% endif %}
+              </a>
+            </th>
+            <th class="col-customer" aria-sort="{{ draft_sort_links.customer.aria_sort }}">
+              <a class="sort-link {% if draft_sort == 'customer' %}active{% endif %}" href="{{ draft_sort_links.customer.href }}">{{ draft_sort_links.customer.label }}
+                {% if draft_sort == "customer" %}
+                  <span aria-hidden="true">{% if draft_dir == "asc" %}↑{% else %}↓{% endif %}</span>
+                {% endif %}
+              </a>
+            </th>
+            <th class="col-product" aria-sort="{{ draft_sort_links.product_type.aria_sort }}">
+              <a class="sort-link {% if draft_sort == 'product_type' %}active{% endif %}" href="{{ draft_sort_links.product_type.href }}">{{ draft_sort_links.product_type.label }}
+                {% if draft_sort == "product_type" %}
+                  <span aria-hidden="true">{% if draft_dir == "asc" %}↑{% else %}↓{% endif %}</span>
+                {% endif %}
+              </a>
+            </th>
+            <th class="col-max-roll">Макс. кг/ролка</th>
+            <th class="col-sequence">Ред</th>
+            <th class="col-machine">Машина</th>
+            <th class="col-action">Действие</th>
           </tr>
         </thead>
         <tbody>
           {% for card in draft_cards %}
-            <tr>
-              <td><a href="/admin/cards/{{ card.id }}">{{ card.order_number }}</a></td>
-              <td>{{ card.customer or "-" }}</td>
-              <td>{{ card.product_type or "-" }}</td>
-              <td>
-                <form class="release-form" action="/admin/cards/{{ card.id }}/release" method="post">
+            {% set next_card = draft_cards[loop.index] if not loop.last else none %}
+            {% set return_anchor = 'draft-card-' ~ next_card.id if next_card else 'unreleased-queue' %}
+            <tr id="draft-card-{{ card.id }}">
+              <td class="col-order"><a href="/admin/cards/{{ card.id }}">{{ card.order_number }}</a></td>
+              <td class="col-delivery">{{ card.delivery_date or "-" }}</td>
+              <td class="col-customer truncate-cell" title="{{ card.customer or '' }}">{{ card.customer or "-" }}</td>
+              <td class="col-product truncate-cell" title="{{ card.product_type or '' }}">{{ card.product_type or "-" }}</td>
+              <td class="col-max-roll">
+                <form id="release-card-{{ card.id }}" action="/admin/cards/{{ card.id }}/release" method="post">
                   <input type="hidden" name="loaded_version" value="{{ card.version }}">
-                  <label class="release-field">
-                    <span>Макс. тегло ролка, кг</span>
-                    <input name="max_roll_weight" inputmode="decimal" value="{{ card.max_roll_weight or '' }}" aria-label="Максимално тегло ролка за поръчка {{ card.order_number }}">
-                  </label>
-                  <label class="release-field required-field">
-                    <span>Ред <span class="required-marker">*</span></span>
-                    <input name="machine_sequence" inputmode="numeric" pattern="[0-9]*" value="{{ card.machine_sequence or '' }}" aria-label="Ред за поръчка {{ card.order_number }}" required>
-                  </label>
-                  <label class="release-field required-field">
-                    <span>Машина <span class="required-marker">*</span></span>
-                    <select name="machine_id" aria-label="Машина за поръчка {{ card.order_number }}" required>
-                      <option value="">Машина</option>
-                      {% for machine in machines %}
-                        <option value="{{ machine.id }}" {% if card.machine_id == machine.id %}selected{% endif %}>{{ machine.id }}</option>
-                      {% endfor %}
-                    </select>
-                  </label>
-                  <button type="submit">Изпрати</button>
+                  <input type="hidden" name="return_anchor" value="{{ return_anchor }}">
                 </form>
+                <input class="release-control release-control-max-roll" form="release-card-{{ card.id }}" name="max_roll_weight" inputmode="decimal" value="{{ card.max_roll_weight or '' }}" aria-label="Максимално тегло ролка за поръчка {{ card.order_number }}">
+              </td>
+              <td class="col-sequence">
+                <input class="release-control release-control-sequence" form="release-card-{{ card.id }}" name="machine_sequence" inputmode="numeric" pattern="[0-9]*" value="{{ card.machine_sequence or '' }}" aria-label="Ред за поръчка {{ card.order_number }}" required>
+              </td>
+              <td class="col-machine">
+                <select class="release-control release-control-machine" form="release-card-{{ card.id }}" name="machine_id" aria-label="Машина за поръчка {{ card.order_number }}" required>
+                  <option value="">-</option>
+                  {% for machine in machines %}
+                    <option value="{{ machine.id }}" {% if card.machine_id == machine.id %}selected{% endif %}>{{ machine.id }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td class="col-action">
+                <button class="release-submit-button" type="submit" form="release-card-{{ card.id }}">Изпрати</button>
               </td>
             </tr>
           {% endfor %}
@@ -101,7 +130,6 @@
   <section class="section">
     <div class="section-head">
       <h2>Опашки по машини</h2>
-      <span>{{ summary.machine_count }} машини в системата</span>
     </div>
     <div class="machine-grid">
       {% for queue in machine_queues %}
@@ -110,29 +138,37 @@
           {% if queue.cards %}
             {% for card in queue.cards %}
               <div class="queue-card {{ card.status }}">
-                <div class="queue-card-main">
+                <div class="queue-card-header">
                   <strong>{{ card.machine_sequence }}. <a href="/admin/cards/{{ card.id }}">№ {{ card.order_number }}</a></strong>
+                  {% if card.status == "pending" %}
+                    <form class="queue-return-form" action="/admin/cards/{{ card.id }}/unrelease" method="post">
+                      <input type="hidden" name="loaded_version" value="{{ card.version }}">
+                      <input type="hidden" name="return_to" value="planning">
+                      <button class="queue-return-button" type="submit" aria-label="Върни поръчка {{ card.order_number }} в неизпратени">↩ Върни</button>
+                    </form>
+                  {% endif %}
+                </div>
+                <div class="queue-card-main">
                   <span>{{ card.customer or "Без клиент" }}</span>
                   <small>{{ card.product_type or "Без изделие" }}</small>
                   <span class="pill status-{{ card.status }}">{{ status_labels.get(card.status, card.status) }}</span>
                 </div>
                 <form class="planning-form" action="/admin/cards/{{ card.id }}/planning" method="post">
                   <input type="hidden" name="loaded_version" value="{{ card.version }}">
-                  <select name="machine_id" aria-label="Нова машина за поръчка {{ card.order_number }}">
-                    {% for machine in machines %}
-                      <option value="{{ machine.id }}" {% if card.machine_id == machine.id %}selected{% endif %}>{{ machine.id }}</option>
-                    {% endfor %}
-                  </select>
-                  <input name="machine_sequence" inputmode="numeric" pattern="[0-9]*" value="{{ card.machine_sequence or '' }}" aria-label="Нов ред за поръчка {{ card.order_number }}">
+                  <label class="planning-field">
+                    <span class="planning-field-label">Машина</span>
+                    <select name="machine_id" aria-label="Нова машина за поръчка {{ card.order_number }}">
+                      {% for machine in machines %}
+                        <option value="{{ machine.id }}" {% if card.machine_id == machine.id %}selected{% endif %}>{{ machine.id }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label class="planning-field">
+                    <span class="planning-field-label">Ред</span>
+                    <input name="machine_sequence" inputmode="numeric" pattern="[0-9]*" value="{{ card.machine_sequence or '' }}" aria-label="Нов ред за поръчка {{ card.order_number }}">
+                  </label>
                   <button type="submit">Запази</button>
                 </form>
-                {% if card.status == "pending" %}
-                  <form class="planning-form" action="/admin/cards/{{ card.id }}/unrelease" method="post">
-                    <input type="hidden" name="loaded_version" value="{{ card.version }}">
-                    <input type="hidden" name="return_to" value="planning">
-                    <button type="submit">Върни в неизпратени</button>
-                  </form>
-                {% endif %}
               </div>
             {% endfor %}
           {% else %}

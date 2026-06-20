@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 import re
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import PlainTextResponse, RedirectResponse
@@ -65,6 +67,16 @@ templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
 CARD_NOT_FOUND_MESSAGE = "Картата не е намерена."
 INVALID_LOADED_VERSION_MESSAGE = "Версията на заредената карта е невалидна. Презаредете картата."
+DEFAULT_PLANNING_ANCHOR = "unreleased-queue"
+DRAFT_SORT_DEFAULT = "order_number"
+DRAFT_SORT_DIRECTIONS = {"asc", "desc"}
+DRAFT_SORT_LABELS = {
+    "order_number": "Поръчка",
+    "delivery_date": "Доставка",
+    "customer": "Клиент",
+    "product_type": "Изделие",
+}
+SAFE_ANCHOR_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
 IMPORT_ACTION_LABELS = {
     "blocked": "блокиран",
@@ -139,10 +151,23 @@ def admin_import_context(**extra: Any) -> dict[str, Any]:
     return context
 
 
-def admin_planning_context(**extra: Any) -> dict[str, Any]:
+def admin_planning_context(
+    draft_sort: str = DRAFT_SORT_DEFAULT,
+    draft_dir: str = "asc",
+    **extra: Any,
+) -> dict[str, Any]:
     machine_queues = fetch_machine_queues()
+    normalized_sort, normalized_dir = normalize_draft_sort(draft_sort, draft_dir)
+    draft_cards = sorted_draft_cards(
+        fetch_cards_by_status((STATUS_IMPORTED,)),
+        normalized_sort,
+        normalized_dir,
+    )
     context: dict[str, Any] = {
-        "draft_cards": fetch_cards_by_status((STATUS_IMPORTED,)),
+        "draft_cards": draft_cards,
+        "draft_sort": normalized_sort,
+        "draft_dir": normalized_dir,
+        "draft_sort_links": build_draft_sort_links(normalized_sort, normalized_dir),
         "machine_queues": machine_queues,
         "machines": [queue["machine"] for queue in machine_queues],
         "summary": database_summary(),
@@ -187,6 +212,88 @@ def admin_card_post_response(
     if context is None:
         return PlainTextResponse(CARD_NOT_FOUND_MESSAGE, status_code=404)
     return templates.TemplateResponse(request, "admin_card_detail.html", context)
+
+
+def safe_planning_anchor(anchor: str) -> str:
+    candidate = anchor.strip()
+    if SAFE_ANCHOR_PATTERN.fullmatch(candidate):
+        return candidate
+    return DEFAULT_PLANNING_ANCHOR
+
+
+def normalize_draft_sort(sort_key: str, sort_dir: str) -> tuple[str, str]:
+    normalized_sort = sort_key if sort_key in DRAFT_SORT_LABELS else DRAFT_SORT_DEFAULT
+    normalized_dir = sort_dir if sort_dir in DRAFT_SORT_DIRECTIONS else "asc"
+    return normalized_sort, normalized_dir
+
+
+def draft_date_sort_value(value: Any) -> tuple[int, str]:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return (1, "")
+    for date_format in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return (0, datetime.strptime(raw_value, date_format).date().isoformat())
+        except ValueError:
+            continue
+    return (0, raw_value)
+
+
+def draft_sort_value(card: dict[str, Any], sort_key: str) -> tuple[int, str]:
+    if sort_key == "delivery_date":
+        return draft_date_sort_value(card.get("delivery_date"))
+    return (0, str(card.get(sort_key) or "").casefold())
+
+
+def sorted_draft_cards(
+    cards: list[dict[str, Any]],
+    sort_key: str,
+    sort_dir: str,
+) -> list[dict[str, Any]]:
+    reverse = sort_dir == "desc"
+    ordered_cards = sorted(
+        cards,
+        key=lambda card: (
+            str(card.get("order_number") or "").casefold(),
+            int(card.get("id") or 0),
+        ),
+    )
+    if sort_key == "delivery_date" and reverse:
+        # Keep missing dates last; reversing the full key would move blanks first.
+        dated_cards = []
+        missing_date_cards = []
+        for card in ordered_cards:
+            missing_date, _ = draft_date_sort_value(card.get("delivery_date"))
+            if missing_date:
+                missing_date_cards.append(card)
+            else:
+                dated_cards.append(card)
+        return sorted(
+            dated_cards,
+            key=lambda card: draft_date_sort_value(card.get("delivery_date")),
+            reverse=True,
+        ) + missing_date_cards
+    return sorted(
+        ordered_cards,
+        key=lambda card: draft_sort_value(card, sort_key),
+        reverse=reverse,
+    )
+
+
+def build_draft_sort_links(active_sort: str, active_dir: str) -> dict[str, dict[str, str]]:
+    links: dict[str, dict[str, str]] = {}
+    for sort_key, label in DRAFT_SORT_LABELS.items():
+        next_dir = "desc" if active_sort == sort_key and active_dir == "asc" else "asc"
+        query = urlencode({"draft_sort": sort_key, "draft_dir": next_dir})
+        aria_sort = "none"
+        if active_sort == sort_key:
+            aria_sort = "ascending" if active_dir == "asc" else "descending"
+        links[sort_key] = {
+            "label": label,
+            "href": f"/admin/planning?{query}#{DEFAULT_PLANNING_ANCHOR}",
+            "aria_sort": aria_sort,
+        }
+    return links
 
 
 def build_quantity_lines(card: dict[str, Any]) -> list[dict[str, str]]:
@@ -408,11 +515,15 @@ async def import_csv(
 
 
 @app.get("/admin/planning")
-async def admin_planning(request: Request):
+async def admin_planning(
+    request: Request,
+    draft_sort: str = DRAFT_SORT_DEFAULT,
+    draft_dir: str = "asc",
+):
     return templates.TemplateResponse(
         request,
         "admin_planning.html",
-        admin_planning_context(),
+        admin_planning_context(draft_sort=draft_sort, draft_dir=draft_dir),
     )
 
 
@@ -515,6 +626,7 @@ async def release_card_to_terminal(
     max_roll_weight: str = Form(""),
     machine_id: str = Form(...),
     machine_sequence: str = Form(...),
+    return_anchor: str = Form(DEFAULT_PLANNING_ANCHOR),
 ):
     parsed_version, release_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
@@ -529,7 +641,8 @@ async def release_card_to_terminal(
             )
 
     if release_result.ok:
-        return RedirectResponse(url="/admin/planning", status_code=303)
+        anchor = safe_planning_anchor(return_anchor)
+        return RedirectResponse(url=f"/admin/planning#{anchor}", status_code=303)
 
     return templates.TemplateResponse(
         request,
