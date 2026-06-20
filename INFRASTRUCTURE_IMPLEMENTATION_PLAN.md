@@ -742,11 +742,11 @@ Notes:
 
 ```
 
-## Phase 11 - Workstation/Kiosk Setup Later
+## Phase 11 - Workstation/Kiosk Prototype Setup
 
-Status: deferred
+Status: prototype workstation provisioned and working
 
-Goal: create production workstation/kiosk after terminal UI is stable enough.
+Goal: convert the Debian workstation PC into a maintainable Chromium kiosk for the terminal prototype.
 
 Confirmed direction:
 
@@ -755,8 +755,38 @@ Confirmed direction:
 - Use the Debian `amd64` netinst installer, currently `debian-13.5.0-amd64-netinst.iso`.
 - Create the installer USB with Rufus in DD image mode.
 - It is normal for Windows to stop showing the USB as a normal readable drive after Rufus writes the Debian installer in DD image mode.
-- Start with a normal Debian installation, then apply workstation kiosk provisioning later.
-- Kiosk provisioning should eventually create a kiosk user, configure auto-login, launch a browser in kiosk mode, and point to:
+- Normal Debian installation completed first; workstation kiosk provisioning has now been applied.
+- Current prototype workstation has Debian with Xfce, SSH server, DHCP networking, working HDD boot, and working Ethernet.
+- Use a maintainable kiosk setup, not a hardened appliance.
+- Use Chromium as the kiosk browser.
+- Create a separate non-sudo `kiosk` user for auto-login.
+- Keep the normal Debian install user as the admin/maintenance account.
+- Install and connect Tailscale on the workstation for remote maintenance/debug access.
+- Store the terminal URL in `/etc/extrusion-kiosk-url` so it can be changed when the business LAN app URL changes.
+- Configure auto-login into a Chromium-only kiosk session.
+- Prevent sleep, screen blanking, and lock interruptions during shifts.
+- Use `scripts/provision_workstation_kiosk.sh` to automate repeatable workstation provisioning.
+- Workstation printing is out of scope for this prototype pass.
+- Do not block setup on the likely weak CMOS battery; record it as a known risk.
+- Kiosk provisioning should launch the browser in kiosk mode and point to the URL from:
+
+```text
+/etc/extrusion-kiosk-url
+```
+
+Reusable script default URL when no app URL has been configured yet:
+
+```text
+http://127.0.0.1:8000/terminal
+```
+
+Current tested terminal URL:
+
+```text
+http://192.168.1.83:8000/terminal
+```
+
+Production/business LAN URL shape:
 
 ```text
 http://APP-VM-IP:8000/terminal
@@ -773,30 +803,91 @@ Workstation settings to verify:
 - touchscreen or mouse behavior works
 - keyboard behavior works for gross weight entry
 - operator cannot easily reach admin page or desktop
+- Tailscale shows the workstation online
+- existing admin user can SSH over LAN or Tailscale
 
 Acceptance:
 
 - On reboot, workstation opens directly to `/terminal`.
 - Operator sees only the terminal workflow.
 - Admin access is not exposed from the terminal UI.
+- Closing Chromium causes it to reopen.
+- The kiosk URL can be changed by editing `/etc/extrusion-kiosk-url`.
+- Maintenance remains possible through the existing admin user.
 
 Record:
 
 ```text
 Workstation OS: Debian 13.x, using debian-13.5.0-amd64-netinst.iso for current install media
 Install media: USB written with Rufus in DD image mode
-Kiosk approach: Linux kiosk mode; normal Debian install first, provisioning script later
-Browser:
-Kiosk command/config:
+Desktop/session: Xfce
+Kiosk approach: maintainable Chromium kiosk; separate kiosk user; existing admin user retained
+Browser: Chromium
+Provisioning script: scripts/provision_workstation_kiosk.sh
+Kiosk command/config: /usr/local/bin/extrusion-kiosk-session, /etc/extrusion-kiosk-url, LightDM extrusion-kiosk session
+Tailscale machine name: extrusion-workstation-prototype unless changed
 Resolution:
-Input devices:
-Reboot behavior:
+Input devices: keyboard and mouse; no touchscreen
+Reboot behavior: Debian auto-logs into kiosk user and launches Chromium full-screen to the terminal app.
+Known limitations: weak/dead CMOS battery may still reset BIOS time after full power loss, but HP BIOS `Bypass F1 Prompt on Configuration Changes` is enabled and confirmed to skip the boot-blocking F1 prompt during prototype testing.
+Provisioning progress: first `sudo bash scripts/provision_workstation_kiosk.sh` pass completed; Tailscale connected; auto-login enabled; kiosk confirmed working after launcher fixes.
+Tailscale workstation IP: 100.94.38.101
+Tailscale ACL note: ACL must include host `extrusion-workstation` = `100.94.38.101`, allow `desktop-laptop`/`desktop-pc` to `extrusion-workstation` on `tcp:22`, and allow `extrusion-workstation` to `extrusion-app` on `tcp:8000`.
+Maintenance access check: Windows `Test-NetConnection 100.94.38.101 -Port 22` and `ssh extrusion-terminal@100.94.38.101` succeeded after ACL update.
+Kiosk correction note: app URL is `http://192.168.1.83:8000/terminal`. Initial auto-login was enabled before this URL was set, so Chromium opened the local placeholder URL. Chromium also showed a "Choose password for new keyring" prompt in the kiosk session; `--password-store=basic` and clearing `/home/kiosk/.config/extrusion-chromium` fixed the keyring prompt.
+Kiosk rendering debug note: after URL/keyring correction, Chromium ran and the app URL was reachable, but the display showed a vertical half-white/half-black screen. The custom LightDM session was launching Chromium without a window manager. Starting `xfwm4 --replace` before Chromium and adding `--disable-gpu` / `--disable-gpu-compositing` fixed the split-screen rendering. Final working launcher includes those settings.
+Kiosk acceptance check: Chromium opens automatically in full-screen mode, loads the terminal card for the first machine, no keyring/password prompt appears, mouse and keyboard work in the terminal UI, `Alt+F4` closes Chromium and the launcher reopens it automatically, and SSH access remains available over Tailscale.
+BIOS prompt fix: in HP BIOS Power-On Options, enabled `Bypass F1 Prompt on Configuration Changes`. This skipped the previous `163 - Time & Date Not Set` / F1 boot-blocking screen during testing.
+Clock check: Linux time, NTP, and RTC were corrected and verified on 2026-06-20. `timedatectl` showed Europe/Sofia time with `System clock synchronized: yes`, `NTP service: active`, and `sudo hwclock --show` returned 2026-06-20 after `sudo hwclock --systohc`.
 ```
 
 Notes:
 
 ```text
 The Debian installer USB may appear unreadable or may not mount in Windows after being written in DD image mode. This is expected and does not mean the installer failed.
+
+Debian workstation admin note: the install user `extrusion-terminal` is not a root login shell. Running `whoami`
+without sudo shows `extrusion-terminal`, while `sudo whoami` shows `root`. Use `sudo` for provisioning and
+maintenance commands. Do not assume `su`/root-shell behavior during kiosk setup.
+
+Detailed execution plan: docs/superpowers/plans/2026-06-20-workstation-kiosk-prototype.md
+
+Preferred automated setup flow:
+
+1. Copy or clone this repository onto the workstation, or copy only scripts/provision_workstation_kiosk.sh onto the workstation.
+2. Run the first provisioning pass with the intended terminal URL, without auto-login:
+
+sudo bash scripts/provision_workstation_kiosk.sh --terminal-url http://192.168.1.83:8000/terminal
+
+3. Approve the Tailscale login URL printed by the script.
+4. Confirm maintenance access:
+
+tailscale ip
+tailscale status
+systemctl is-active ssh
+ssh ADMIN_USER@WORKSTATION_IP
+
+5. Enable kiosk auto-login only after maintenance access works:
+
+sudo bash scripts/provision_workstation_kiosk.sh --enable-autologin
+sudo reboot
+
+6. Confirm the workstation opens Chromium directly to the terminal route.
+
+To update the kiosk URL after the business LAN app VM IP changes:
+
+sudo bash scripts/provision_workstation_kiosk.sh --terminal-url http://APP-VM-IP:8000/terminal
+sudo reboot
+
+To temporarily disable kiosk auto-login for maintenance:
+
+sudo bash scripts/provision_workstation_kiosk.sh --disable-autologin
+sudo reboot
+
+To re-enable kiosk auto-login:
+
+sudo bash scripts/provision_workstation_kiosk.sh --enable-autologin
+sudo reboot
 ```
 
 ## Phase 12 - Final Pre-Pilot Infrastructure Rehearsal
