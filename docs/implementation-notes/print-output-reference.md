@@ -1,12 +1,14 @@
-# Print Output Specification And Implementation Plan
+# Print Output Reference
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+This document preserves the accepted print-output requirements, field mapping, validation rules, and implementation history for future maintenance.
 
 **Goal:** Add completed-card printing/reprinting for the extrusion terminal pilot, producing a two-page A4 operational card that follows `source-files/print-template.xlsx` as closely as practical.
 
 **Architecture:** The durable requirement is a two-page print output generated from app data, not from Excel. The recommended first implementation is a FastAPI server-rendered HTML/CSS print route that maps SQLite card data into print-only templates matching the workbook layout. If HTML/CSS cannot reach acceptable fidelity, this document still defines the persistent data, formatting, validation, and behavior requirements for another rendering approach.
 
 **Tech Stack:** FastAPI, Jinja2 templates, direct `sqlite3`, app-local CSS, browser print, pytest, Playwright/browser visual checks.
+
+**Current status:** Implemented and accepted for the app. Browser/PDF verification and physical printer rehearsal passed. The generated operational card is near-perfect. A remaining case where one specific computer prints across two physical sheets is a local workstation/browser/printer-driver/settings issue, not an application print-output defect.
 
 ---
 
@@ -590,9 +592,9 @@ Likely files to modify:
   - summary fields are in the template bottom area
   - no app-only fields appear
 
-- [ ] Perform one physical printer rehearsal before claiming pilot readiness.
+- [x] Perform one physical printer rehearsal before claiming pilot readiness.
 
-  Physical output must be compared against `source-files/print-template.xlsx`.
+  Physical output was reviewed and accepted as near-perfect for the operational card. The app print functionality is complete. One workstation/computer prints the app output across two physical sheets while other computers print correctly; that remaining issue is workstation/browser/printer-driver/settings specific and is not an app print-output defect.
 
 ### Task 7: Update Milestone Documentation
 
@@ -601,11 +603,11 @@ Likely files to modify:
 - Modify: `IMPLEMENTATION_PLAN.md`
 - Optionally modify: `README.md` if implementation confirms or changes persistent requirements
 
-- [ ] Mark Milestone 10 progress accurately.
+- [x] Mark Milestone 10 progress accurately.
 
-  Do not claim print output complete until automated tests, browser verification, and at least one print/PDF rehearsal pass.
+  Print output may be treated as complete for the app after automated tests, browser verification, and the accepted physical-printer rehearsal.
 
-- [ ] Document any accepted deviations from the Excel template.
+- [x] Document any accepted deviations from the Excel template.
 
   Examples:
 
@@ -619,20 +621,20 @@ Likely files to modify:
 
 Before saying print work is complete:
 
-- [ ] non-completed cards are blocked from print
-- [ ] cancelled cards are blocked from print
-- [ ] missing print-critical data is blocked with actionable messages
-- [ ] more than 120 rolls is blocked
-- [ ] completed printable card renders two pages
-- [ ] front page matches extrusion template structure
-- [ ] back page keeps 120-roll grid
-- [ ] roll cells show gross only
-- [ ] totals show tare, gross, and net
-- [ ] timing shows start, stop, and active duration excluding pauses
-- [ ] app-only fields are absent
-- [ ] automated tests pass
-- [ ] browser/Playwright check captures relevant artifact
-- [ ] physical or PDF print rehearsal is reviewed against the template
+- [x] non-completed cards are blocked from print
+- [x] cancelled cards are blocked from print
+- [x] missing print-critical data is blocked with actionable messages
+- [x] more than 120 rolls is blocked
+- [x] completed printable card renders two pages
+- [x] front page matches extrusion template structure
+- [x] back page keeps 120-roll grid
+- [x] roll cells show gross only
+- [x] totals show tare, gross, and net
+- [x] timing shows start, stop, and active duration excluding pauses
+- [x] app-only fields are absent
+- [x] automated tests pass
+- [x] browser/Playwright check captures relevant artifact
+- [x] physical or PDF print rehearsal is reviewed against the template
 
 ## Open Non-Requirements
 

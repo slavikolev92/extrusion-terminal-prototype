@@ -16,7 +16,7 @@ Read before testing:
 - `AGENTS.md`
 - `README.md`
 - `IMPLEMENTATION_PLAN.md`
-- `PRINT_OUTPUT_SPEC_AND_PLAN.md`
+- `docs/implementation-notes/print-output-reference.md`
 - `source-files/README.md`
 - `source-files/print-template.pdf`
 - current routes, templates, database/import/print code, and tests
@@ -97,6 +97,8 @@ Covered through live FastAPI + Playwright against the temp DB:
 
 ### 1. High - Print Front Page Overlaps And Clips Rich Recipe Data
 
+Status: **completed/stale after follow-up**. Later print-output work corrected the app-level layout/fidelity problems, and the physical printer rehearsal confirmed the generated operational card is near-perfect and works correctly from computers with correct print settings. A remaining case where one specific computer prints across two physical sheets is a workstation/browser/printer-driver/settings issue, not an application print-output defect.
+
 Reproduction:
 
 1. Import/release/complete card `31001`.
@@ -129,7 +131,7 @@ Likely code area:
 
 Impact:
 
-- Print output is not pilot-ready. The printed front card can obscure production/material information.
+- Original audit impact is stale. App print output is now accepted for pilot use; any remaining problem is local workstation/printer-environment configuration.
 
 ### 2. High - Import Overwrite Silently Replaces Admin-Corrected Front-Card Fields
 
@@ -242,6 +244,8 @@ Impact:
 
 ### 5. Medium - Print Fidelity Drifts From Reference Labels And Geometry
 
+Status: **completed/stale after follow-up**. Later template-fidelity work and physical printer rehearsal confirmed the app-generated print output is excellent and close enough to the operational card. Remaining two-sheet behavior on one computer is not an app fidelity issue.
+
 Reproduction:
 
 1. Generate app print PDF for completed card.
@@ -273,7 +277,7 @@ Likely code area:
 
 Impact:
 
-- Separate from the overlap failure, this reduces one-to-one fidelity with the operational card workers already know.
+- Original audit impact is stale. App print fidelity is accepted; no app-level print-output task remains from this finding.
 
 ## Non-Bug UX/Process Improvements
 
@@ -446,7 +450,9 @@ Impact:
 
 ## Print Output Findings
 
-Print status: **failed**.
+Print status: **completed/stale after follow-up**.
+
+The original audit print artifacts below captured the app before the later print-output fixes. Current app print output has since been browser/PDF verified and physically printed successfully. The generated operational card is near-perfect and works correctly from computers with correct print settings. A remaining case where one specific computer prints across two physical sheets is a local workstation/browser/printer-driver/settings problem and should be handled as environment troubleshooting, not as app print functionality.
 
 What passed:
 
@@ -457,7 +463,7 @@ What passed:
 - Back page contained 120 roll slots.
 - Gross roll values, tare, total gross, total net, start, stop, and duration rendered.
 
-What failed:
+Original failures, now stale:
 
 - Front page content overlapped.
 - Rich material data and notes do not reliably fit.
@@ -527,7 +533,7 @@ Results:
 ## Not Fully Tested
 
 - SQLite backup/restore was not re-run in this workflow audit; it is covered by automated tests.
-- Physical printer output was not tested.
+- Physical printer output was not tested during the original audit, but was later tested and accepted for the app. The remaining one-computer print pagination problem is environment-specific.
 - 120-roll and 121-roll print boundary cases were not manually rendered during this audit.
 - Mobile/tablet layouts were not a target; workstation was checked at `1920x950`.
 - Direct Excel macro export was not exercised.

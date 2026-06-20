@@ -323,7 +323,7 @@ Milestone 9 commit strategy:
 
 ## Milestone 10 - Print Output
 
-Status: software implementation and template-fidelity pass complete; physical printer rehearsal still required before pilot readiness
+Status: complete and accepted for the app; physical printer rehearsal confirmed app output is excellent
 
 Scope:
 
@@ -378,6 +378,10 @@ Verification completed:
   - `artifacts/ui-checks/template-tuning/final-review/current-print-output-1.png`
   - `artifacts/ui-checks/template-tuning/final-review/current-print-output-2.png`
   - `artifacts/ui-checks/template-tuning/final-review/current-print-output.metadata.json`
+- Physical printer calibration:
+  - Physical printed output was reviewed and accepted as near-perfect for the operational card.
+  - The app-generated print functionality is considered complete and working correctly.
+  - One workstation/computer still prints the app output across two physical sheets while other computers print it correctly; this is treated as a local computer/browser/printer-driver/settings issue, not an application print-output defect.
 
 Accepted v1 deviations / notes:
 
@@ -396,16 +400,16 @@ Accepted v1 deviations / notes:
   - Duplex/front-back handling depends on printer/browser settings and is not controlled by the app.
 - Text wrapping/shrinking behavior:
   - Long text wraps inside fixed boxes with `overflow-wrap`; sections are not expanded beyond the two-page structure.
-  - No dynamic shrink-to-fit algorithm is implemented in v1; physical calibration may identify specific fields needing smaller CSS font sizes.
+  - No dynamic shrink-to-fit algorithm is implemented in v1; physical calibration did not identify an app-level text-fit blocker.
 - Printer setup notes:
   - Use A4 portrait, default scale/100%, print backgrounds enabled, and browser headers/footers disabled.
   - Silent/kiosk printing remains a future deployment configuration after the physical terminal environment is known.
-- Physical printer calibration is not yet performed. Before pilot readiness, print the generated PDF/page on the target printer, compare it against `source-files/print-template.xlsx`, and record the result under `artifacts/ui-checks/` or this plan.
+  - If a specific workstation prints the two app pages onto more physical sheets than expected, troubleshoot that workstation's browser print scaling, page size, margins, printer driver, and OS print settings outside the app.
 
 Review checkpoint:
 
-- software implementation, template-fidelity pass, and PDF/browser rehearsal are ready for review.
-- physical printer rehearsal remains open.
+- software implementation, template-fidelity pass, PDF/browser rehearsal, and physical printer output are accepted for app readiness.
+- any remaining printer behavior is workstation/printer-environment setup, not app print-output work.
 - commit only when explicitly requested.
 
 ## Milestone 11 - Pilot Rehearsal
@@ -415,6 +419,7 @@ Status: pending
 Completed audit follow-up before rehearsal:
 
 - Implemented pending-card return-to-planning behavior from full workflow audit issue #7: pending cards can be returned to the unreleased planning pool with version checks, queue normalization, terminal removal, and admin planning/detail controls. Started cards (`running` or `paused`) remain in execution and cannot be returned to the pool.
+- admin planning unreleased-queue cleanup: compact single-row release table, delivery-date column, scoped control sizing, and PRG anchor return after release.
 
 Verification completed for this follow-up:
 

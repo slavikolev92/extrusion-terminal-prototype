@@ -61,6 +61,8 @@ Do not leave large uncommitted feature piles. Do not mix unrelated refactors int
 
 When a milestone starts or completes, update `IMPLEMENTATION_PLAN.md` in the same branch. The plan should always make the next intended step obvious.
 
+Use `docs/implementation-notes/` for durable implementation notes that future prototype or ERP work may need to understand why a feature was built a certain way. Current contents include `print-output-reference.md`, which preserves the accepted print-output requirements, field mapping, validation/formatting rules, and the note that the remaining two-sheet print issue is local workstation/printer setup rather than an app defect.
+
 ## Validation Rules
 
 Important rules must be enforced in backend code and, where practical, SQLite constraints:
@@ -210,5 +212,4 @@ Completed and committed:
 
 Next recommended milestone:
 
-- Proceed with Milestone 10 print output on the `print-output` branch using `PRINT_OUTPUT_SPEC_AND_PLAN.md` as the active specification and implementation plan.
 - Keep `workstation-v7.html` as the checkpoint before the top-machine-navigation restructure. The V8 workstation must not expose cancellation or restore controls; cancellation remains an admin/shift-manager action.
