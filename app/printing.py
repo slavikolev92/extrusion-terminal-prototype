@@ -65,7 +65,8 @@ def validate_print_readiness(card: dict[str, Any]) -> list[str]:
     ):
         messages.append("Печатът поддържа най-много 120 ролки.")
 
-    messages.extend(validate_print_weight_values(card, gross_rolls))
+    if card.get("tare_weight") is not None and gross_rolls:
+        messages.extend(validate_print_weight_values(card, gross_rolls))
 
     if int(card.get("total_production_seconds") or 0) < 0:
         messages.append("Времето за изработка не може да бъде изчислено за печат.")

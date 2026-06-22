@@ -856,6 +856,32 @@ def test_terminal_success_post_redirects_with_notice_query(connection):
     )
 
 
+def test_terminal_stale_tare_submit_renders_refresh_alert_without_overwrite(connection):
+    card_id = release_ready_card("26195", machine_id=1, sequence=1)
+    loaded_version = card_version(card_id)
+    assert db.update_tare_weight(card_id, loaded_version, "1.20").ok
+
+    response = asyncio.run(
+        save_tare_weight(
+            make_test_request(f"/terminal/cards/{card_id}/tare"),
+            card_id,
+            str(loaded_version),
+            "1.50",
+        )
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert "location" not in response.headers
+    assert card["tare_weight"] == 1.2
+    assert 'id="terminal-refresh-alert"' in html
+    assert "Данните са променени" in html
+    assert "Презаредете картата, преди да продължите." in html
+    assert STALE_CARD_MESSAGE not in html
+    assert 'class="terminal-toast"' not in html
+
+
 def test_terminal_finish_failure_renders_inline_without_redirect(connection):
     card_id = release_ready_card("26171", machine_id=1, sequence=1)
 

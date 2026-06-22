@@ -186,6 +186,13 @@ small {
   font-weight: 650;
 }
 
+.import-form .checkbox small {
+  display: block;
+  margin-top: 4px;
+  line-height: 1.35;
+  font-weight: 650;
+}
+
 .notice {
   margin-top: 14px;
   border: 1px solid #abc9e4;

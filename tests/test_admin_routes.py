@@ -63,6 +63,16 @@ def test_admin_redirects_to_import():
     assert response.headers["location"] == "/admin/import"
 
 
+def test_admin_import_explains_overwrite_scope(connection):
+    response = asyncio.run(admin_import(make_request("/admin/import", method="GET")))
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert "Обнови импортните/лицеви полета за съществуващи поръчки със същия номер" in html
+    assert "Запазва ролки, шпула, времена и операторски данни." in html
+    assert "По-стари CSV редове, които биха заменили админ корекции, се блокират за преглед." in html
+
+
 def make_request(path: str, method: str = "POST") -> Request:
     return Request(
         {

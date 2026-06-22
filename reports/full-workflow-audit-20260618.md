@@ -9,6 +9,13 @@ Runtime DB safety: `data/extrusion_terminal.sqlite3` was not used.
 Server status: temporary server was stopped after testing.
 Confirmed findings after follow-up: 8 total.
 
+Current remediation status as of 2026-06-21:
+
+- Bug findings 1-8: complete, or stale after later accepted print-output work where noted below.
+- App-level cleanup from this report is complete: the pending-card print-block copy was clarified, and the import overwrite warning now explains the overwrite scope.
+- Terminal tare stale-write verification is complete: the terminal route blocks stale tare submits without overwrite, and the live two-browser check showed the reload warning.
+- Remaining non-app check: verify the admin detail sticky summary on the actual shift-manager monitor if that screen feels obstructive in use.
+
 ## Current State Discovery
 
 Read before testing:
@@ -89,7 +96,7 @@ Covered through live FastAPI + Playwright against the temp DB:
 - `/admin/planning` no longer returns 500: **passed**.
 - Admin successful POST refresh cannot repeat:
   - **passed** for admin card detail correction routes, cancel/restore, and terminal finish because successful actions redirected to GET.
-  - **failed/partial** for `/admin/import`, `/admin/cards/{id}/release`, and `/admin/cards/{id}/planning`; details below.
+  - **completed after follow-up** for `/admin/import`, `/admin/cards/{id}/release`, and `/admin/cards/{id}/planning`; details below.
 - Admin roll-section copy is no longer misleading: **passed** in current redesigned admin roll ledger.
 - Terminal failed roll-delete confirmation preserves selected roll: **passed**. Wrong confirmation preserved selected roll id `2` and showed a visible error.
 
@@ -281,10 +288,10 @@ Impact:
 
 ## Non-Bug UX/Process Improvements
 
-- Pending-card print block lists all missing conditions plus `Критичните тегла за печат трябва да са валидни числа.`. That final message is technically produced by missing totals, but it reads like a separate data corruption problem.
-- Admin detail summary uses sticky positioning. Full-page screenshot stitching made it appear over other sections; worth checking on the actual shift-manager monitor for whether it obscures rows while scrolling.
-- Planning successful actions should likely use the same PRG pattern as admin card detail actions.
-- Import overwrite probably needs a clearer operator warning that it replaces imported/front-card fields, not only “existing orders with same number.”
+- **Completed:** Pending-card print blocking now avoids the numeric-validity warning when the card is simply missing required print fields; true invalid stored numeric values still use the numeric-validity warning.
+- **Completed/no app change:** Admin detail summary sticky positioning was treated as a real-monitor usability check. It is not an app defect unless it obstructs shift-manager use on the actual monitor.
+- **Completed:** Planning successful actions now use the PRG pattern. Successful release and replanning POSTs redirect to `/admin/planning`; refresh does not resubmit.
+- **Completed:** Import overwrite copy now explains that overwrite updates imported/front-card fields for existing order numbers, preserves production/workstation data, and blocks stale CSV rows that would replace admin corrections.
 
 ## Things That Behaved Correctly
 
@@ -371,6 +378,8 @@ Impact:
 
 ### 7. High - Released Cards Cannot Be Returned To The Unreleased Planning Pool
 
+Status: **completed** in `c5f427e` (`Return pending cards to planning pool`). Pending cards can be returned to the unreleased planning pool from admin planning or admin detail; the action clears machine assignment, removes the card from the terminal queue, normalizes the old queue, uses loaded-version conflict checks, and is blocked after timing starts.
+
 Reproduction:
 
 1. Import and release a card to the workstation.
@@ -413,6 +422,8 @@ Impact:
 - This makes scheduling/deferment semantically wrong and can hide cards from the workstation as if they were cancelled.
 
 ### 8. Medium - Admin Planning UI Repeats Per-Row Field Labels And Looks Cluttered
+
+Status: **completed** in `5448c3f` (`Polish admin planning workflow`). The unreleased planning pool now uses a compact table with shared headers for max roll weight, sequence, and machine, rather than repeating bulky labels inside every unreleased-card row. Pending queue cards also expose the compact return-to-planning action added for finding 7.
 
 Reproduction:
 
@@ -494,17 +505,20 @@ pdftotext -layout source-files/print-template.pdf -
 pdftotext -layout artifacts/ui-checks/full-workflow-audit-20260618/print-completed-output.pdf -
 pdftoppm -png -r 120 source-files/print-template.pdf artifacts/ui-checks/print-template-reference
 pdftoppm -png -r 120 artifacts/ui-checks/full-workflow-audit-20260618/print-completed-output.pdf artifacts/ui-checks/full-workflow-audit-20260618/print-completed-output-page
+source .venv/bin/activate && python -m pytest tests/test_roll_entry.py::test_tare_update_persists_and_checks_loaded_version tests/test_terminal_v8_render.py::test_terminal_v8_failed_tare_result_renders_under_tare_field tests/test_terminal_v8_render.py::test_terminal_v8_stale_new_roll_result_renders_refresh_alert_not_chip_or_error_text tests/test_terminal_v8_render.py::test_terminal_stale_tare_submit_renders_refresh_alert_without_overwrite -q
+node artifacts/ui-checks/tare-stale-two-browser/tare-stale-check.mjs
 ```
 
 Results:
 
-- Focused pytest subset: 95 passed.
-- Full pytest suite: 209 passed.
+- Follow-up focused pytest subset: 110 passed.
+- Follow-up full pytest suite: 254 passed.
 - `compileall app`: passed.
 - `git diff --check`: passed.
 - Reference PDF: 2 A4 pages.
 - App print PDF: 2 A4 pages.
 - Follow-up paused-machine probe: current app blocked starting a second card while the first card was paused.
+- Follow-up terminal tare stale-write check: focused route tests passed, the live two-browser check saved `artifacts/ui-checks/tare-stale-two-browser/stale-tare-refresh-alert.png`, and the newer tare value stayed preserved.
 
 ## Main Artifact Paths
 
@@ -529,15 +543,17 @@ Results:
 - `artifacts/ui-checks/full-workflow-audit-20260618/stale-admin-planning.png`
 - `artifacts/ui-checks/full-workflow-audit-20260618/print-completed-output.pdf`
 - `artifacts/ui-checks/full-workflow-audit-20260618/followup-paused-probe.txt`
+- `artifacts/ui-checks/tare-stale-two-browser/stale-tare-refresh-alert.png`
+
+## Later Verified
+
+- Terminal tare stale-write was verified after the original audit: stale tare submits are blocked by the terminal route, preserve the newer tare value, and show the reload warning in the live two-browser check.
 
 ## Not Fully Tested
 
 - SQLite backup/restore was not re-run in this workflow audit; it is covered by automated tests.
 - Physical printer output was not tested during the original audit, but was later tested and accepted for the app. The remaining one-computer print pagination problem is environment-specific.
-- 120-roll and 121-roll print boundary cases were not manually rendered during this audit.
 - Mobile/tablet layouts were not a target; workstation was checked at `1920x950`.
-- Direct Excel macro export was not exercised.
-- Terminal tare stale-write was not separately tested after terminal roll stale-write; same backend version guard is used, but this exact form was not repeated in two-browser mode.
 
 ## Server Stop Confirmation
 

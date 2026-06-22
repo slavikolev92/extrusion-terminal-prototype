@@ -259,6 +259,28 @@ def test_completed_card_with_missing_tare_is_blocked(connection):
     assert "Шпула е задължителна преди печат." in result.messages
 
 
+def test_incomplete_print_readiness_does_not_show_numeric_corruption_message(connection):
+    card_id = make_completed_printable_card("27060")
+    with db.connect() as connection:
+        connection.execute(
+            "UPDATE cards SET tare_weight = NULL WHERE id = ?",
+            (card_id,),
+        )
+        connection.execute(
+            "DELETE FROM roll_entries WHERE card_id = ?",
+            (card_id,),
+        )
+        connection.commit()
+
+    result = build_print_readiness(card_id)
+
+    assert not result.ok
+    assert result.data is None
+    assert "Шпула е задължителна преди печат." in result.messages
+    assert "Поне едно бруто тегло на ролка е задължително преди печат." in result.messages
+    assert "Критичните тегла за печат трябва да са валидни числа." not in result.messages
+
+
 def test_completed_card_with_no_rolls_is_blocked(connection):
     card_id = make_completed_printable_card("27003")
     with db.connect() as connection:
