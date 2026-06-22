@@ -256,6 +256,26 @@ def test_terminal_v8_renders_selected_card_details_and_max_roll_weight(connectio
     assert "Важна бележка за оператор." in html
 
 
+def test_terminal_v8_recipe_table_is_part_of_details_without_extra_recipe_heading(connection):
+    card_id = release_ready_card("26240", machine_id=1, sequence=1)
+
+    html = render_terminal(card_id)
+
+    assert '<span>Детайли</span>' in html
+    assert '<span>Ролки</span>' in html
+    assert 'class="recipe-table"' in html
+    assert "Вид суровина" in html
+    assert "Заложена суровина" in html
+    assert "Използван материал" in html
+    assert "Партида" in html
+    assert 'data-recipe-autosave="true"' in html
+    assert f'action="/terminal/cards/{card_id}/materials"' in html
+    assert 'name="actual_material__raw_material_a"' in html
+    assert 'name="batch_lot__raw_material_a"' in html
+    assert 'class="recipe-title"' not in html
+    assert ">Рецепта<" not in html
+
+
 def test_terminal_v8_renders_recipe_queue_and_completed_lookup(connection):
     selected_id = release_ready_card("26102", machine_id=1, sequence=1)
     release_ready_card("26103", machine_id=1, sequence=2, customer="Queued Customer")

@@ -604,13 +604,16 @@
     .workspace {
       min-width: 0;
       min-height: 0;
+      grid-row: 3;
       padding: 18px 24px 24px;
       display: grid;
       grid-template-columns: minmax(0, 1fr) 480px;
+      grid-template-rows: minmax(0, 1fr);
       gap: 28px;
     }
 
     .refresh-alert {
+      grid-row: 2;
       margin: 14px 24px 0;
       border: 1px solid #d79a35;
       border-left-width: 6px;
@@ -683,7 +686,7 @@
 
     .panel-head {
       min-height: 0;
-      padding: 0 0 16px;
+      padding: 0 0 12px;
       border-bottom: 0;
       background: transparent;
       color: #1f2933;
@@ -701,7 +704,7 @@
     .details-body {
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
-      gap: 24px;
+      gap: 10px;
     }
 
     .notes-section {
@@ -736,9 +739,9 @@
       border: 1px solid #d9dee5;
       border-radius: 9px;
       background: #fff;
-      padding: 18px;
+      padding: 14px 18px;
       display: grid;
-      gap: 18px;
+      gap: 12px;
       align-content: start;
     }
 
@@ -781,16 +784,10 @@
     .recipe-section {
       min-height: 0;
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
-      gap: 12px;
+      grid-template-rows: auto auto;
+      align-content: end;
+      gap: 6px;
       margin-top: 0;
-    }
-
-    .recipe-title {
-      color: #1f2933;
-      font-size: 21px;
-      font-weight: 800;
-      line-height: 1.15;
     }
 
     .recipe-table {
@@ -809,7 +806,7 @@
     }
 
     .recipe-head {
-      min-height: 36px;
+      min-height: 32px;
       background: #f1f4f7;
       color: #657383;
       font-size: 14px;
@@ -817,7 +814,7 @@
     }
 
     .recipe-row {
-      min-height: 54px;
+      min-height: 48px;
       border-top: 1px solid #dde3e9;
     }
 
@@ -825,7 +822,9 @@
     .recipe-row > div {
       min-width: 0;
       border-right: 1px solid #dde3e9;
-      padding: 6px 9px;
+      padding: 5px 9px;
+      display: flex;
+      align-items: center;
     }
 
     .recipe-head div:last-child,
@@ -844,12 +843,12 @@
     }
 
     .material-planned {
-      min-height: 34px;
+      min-height: 0;
       border: 1px solid transparent;
       border-radius: 7px;
       background: #fff;
       color: #26323f;
-      padding: 8px 7px;
+      padding: 0;
       font-size: 17px;
       font-weight: 700;
       line-height: 1.18;
@@ -857,8 +856,8 @@
     }
 
     .recipe-row input {
-      min-height: 36px;
-      padding: 6px 8px;
+      min-height: 34px;
+      padding: 5px 8px;
       font-size: 17px;
       font-weight: 700;
     }
@@ -1483,61 +1482,94 @@
 
     @media (max-height: 980px) {
       .machine-nav {
-        padding: 14px 24px;
-      }
-
-      .machine-tab {
-        min-height: 100px;
-        padding: 9px 12px;
-        gap: 6px;
-      }
-
-      .machine-nav-actions {
-        grid-template-rows: repeat(2, minmax(0, 45px));
-        gap: 8px;
-      }
-
-      .topbar {
-        min-height: 62px;
-        padding: 10px 24px;
-      }
-
-      .workspace {
-        padding: 12px 24px 16px;
-      }
-
-      .panel-head {
-        padding-bottom: 10px;
-      }
-
-      .details-body {
-        gap: 14px;
-      }
-
-      .order-section {
-        padding: 14px 18px;
+        padding: 8px 24px;
         gap: 12px;
       }
 
-      .recipe-section {
+      .machine-tab {
+        min-height: 78px;
+        padding: 7px 10px;
+        gap: 4px;
+      }
+
+      .machine-nav-actions {
+        grid-template-rows: repeat(2, minmax(0, 40px));
+        gap: 6px;
+      }
+
+      .topbar {
+        min-height: 50px;
+        padding: 7px 24px;
+      }
+
+      .workspace {
+        padding: 8px 24px 10px;
+      }
+
+      .panel-head {
+        padding-bottom: 7px;
+        font-size: 20px;
+      }
+
+      .details-body {
         gap: 8px;
       }
 
+      .order-section {
+        padding: 9px 14px;
+        gap: 7px;
+      }
+
+      .order-section .field-label {
+        margin-bottom: 3px;
+        font-size: 13px;
+      }
+
+      .value {
+        font-size: 16px;
+        line-height: 1.15;
+      }
+
+      .info-grid {
+        row-gap: 8px;
+      }
+
+      .notes-section {
+        gap: 4px;
+      }
+
+      .notes {
+        font-size: 15px;
+        line-height: 1.25;
+      }
+
+      .recipe-section {
+        gap: 6px;
+      }
+
       .recipe-head {
-        min-height: 32px;
+        min-height: 26px;
       }
 
       .recipe-row {
-        min-height: 46px;
+        min-height: 32px;
       }
 
       .recipe-row input {
-        min-height: 32px;
+        min-height: 28px;
+        padding: 2px 6px;
       }
 
-      .material-planned {
-        min-height: 32px;
-        padding: 6px 7px;
+      .recipe-head div,
+      .recipe-row > div {
+        padding: 2px 7px;
+      }
+
+      .component,
+      .material-planned,
+      .recipe-row input {
+        font-size: 15px;
+        line-height: 1.1;
       }
     }
 
@@ -1552,16 +1584,21 @@
       }
 
       .machine-nav {
-        padding: 14px 18px;
+        padding: 7px 18px;
       }
 
       .machine-tab {
-        min-height: 96px;
+        min-height: 72px;
       }
 
       .machine-nav-actions {
-        grid-template-rows: repeat(2, minmax(0, 43px));
-        gap: 8px;
+        grid-template-rows: repeat(2, minmax(0, 38px));
+        gap: 5px;
+      }
+
+      .topbar {
+        min-height: 48px;
+        padding: 6px 18px;
       }
 
       .history-nav,
@@ -1571,8 +1608,8 @@
       }
 
       .machine-tab {
-        padding: 8px;
-        gap: 6px;
+        padding: 6px 8px;
+        gap: 4px;
       }
 
       .machine-tab-name {
@@ -1588,7 +1625,31 @@
       }
 
       .workspace {
-        padding: 12px 18px 18px;
+        padding: 7px 18px 8px;
+      }
+
+      .panel-head {
+        padding-bottom: 6px;
+        font-size: 19px;
+      }
+
+      .order-section {
+        padding: 8px 12px;
+        gap: 6px;
+      }
+
+      .order-section .field-label {
+        margin-bottom: 2px;
+        font-size: 12px;
+      }
+
+      .value {
+        font-size: 15px;
+        line-height: 1.12;
+      }
+
+      .details-body {
+        gap: 6px;
       }
 
       .panel-body {
@@ -1602,18 +1663,41 @@
       .notes {
         max-height: none;
         overflow: hidden;
+        font-size: 14px;
+        line-height: 1.2;
+      }
+
+      .notes-section {
+        gap: 3px;
+      }
+
+      .recipe-head {
+        min-height: 24px;
       }
 
       .recipe-row {
-        min-height: 46px;
+        min-height: 28px;
       }
 
       .recipe-row input {
-        min-height: 32px;
+        min-height: 26px;
+        padding: 1px 6px;
+      }
+
+      .recipe-head div,
+      .recipe-row > div {
+        padding: 1px 6px;
+      }
+
+      .component,
+      .material-planned,
+      .recipe-row input {
+        font-size: 14px;
+        line-height: 1.08;
       }
 
       .material-planned {
-        min-height: 32px;
+        min-height: 0;
       }
 
       .metric {
@@ -1708,6 +1792,7 @@
 
     .no-card {
       min-height: 0;
+      grid-row: 3;
       padding: 36px;
       display: grid;
       place-items: center;
@@ -1979,7 +2064,6 @@
                 </section>
 
                 <div class="recipe-section">
-                  <div class="recipe-title">Рецепта</div>
                   <form class="recipe-table" action="/terminal/cards/{{ selected_card.id }}/materials" method="post" data-recipe-autosave="true">
                     <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                     <div class="recipe-head">
