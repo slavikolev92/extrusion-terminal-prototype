@@ -227,7 +227,38 @@ def test_admin_detail_print_link_is_available_only_for_completed_cards(connectio
     assert "Печат / препечат" not in cancelled_html
 
 
-def test_admin_cards_list_print_link_is_completed_only(connection):
+def test_admin_detail_shows_archive_action_for_produced_cards(connection):
+    card_id = prepare_dense_completed_card("27045", roll_count=1)
+
+    html = render_admin_detail(card_id)
+
+    assert "Произведена" in html
+    assert 'class="pill status-completed"' in html
+    assert (
+        f'<a class="nav-link" href="/cards/{card_id}/print" '
+        'target="_blank" rel="noopener">Печат / препечат</a>'
+    ) in html
+    assert f'action="/admin/cards/{card_id}/archive"' in html
+    assert "Маркирай като завършена" in html
+
+
+def test_admin_detail_shows_print_but_no_archive_action_for_archived_cards(connection):
+    card_id = prepare_dense_completed_card("27046", roll_count=1)
+    assert db.archive_completed_card(card_id, card_version(card_id)).ok
+
+    html = render_admin_detail(card_id)
+
+    assert "Завършена" in html
+    assert 'class="pill status-archived"' in html
+    assert (
+        f'<a class="nav-link" href="/cards/{card_id}/print" '
+        'target="_blank" rel="noopener">Печат / препечат</a>'
+    ) in html
+    assert f'action="/admin/cards/{card_id}/archive"' not in html
+    assert "Маркирай като завършена" not in html
+
+
+def test_admin_cards_list_does_not_show_print_shortcuts(connection):
     completed_id = prepare_dense_completed_card("27042", roll_count=1)
     pending_id = import_ready_card("27043")
     assert db.release_card(
@@ -249,12 +280,11 @@ def test_admin_cards_list_print_link_is_completed_only(connection):
 
     html = render_admin_cards_list()
 
-    assert (
-        f'<a href="/cards/{completed_id}/print" target="_blank" '
-        'rel="noopener">Печат</a>'
-    ) in html
-    assert f"/cards/{pending_id}/print" not in html
-    assert f"/cards/{cancelled_id}/print" not in html
+    assert f'<a href="/admin/cards/{completed_id}">Отвори</a>' in html
+    assert f'<a href="/admin/cards/{pending_id}">Отвори</a>' in html
+    assert f'<a href="/admin/cards/{cancelled_id}">Отвори</a>' in html
+    assert "/print" not in html
+    assert ">Печат<" not in html
 
 
 def test_admin_detail_uses_single_roll_ledger_without_repeated_save_buttons(connection):
@@ -596,7 +626,7 @@ def test_admin_roll_ledger_blocks_roll_add_on_paused_card(connection):
 
     assert not result.ok
     assert result.messages == (
-        "Теглата на ролките могат да се променят само когато картата е в изработване или завършена.",
+        "Теглата на ролките могат да се променят само когато картата е в изработване, произведена или завършена.",
     )
 
 

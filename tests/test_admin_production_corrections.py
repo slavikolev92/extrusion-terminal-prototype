@@ -8,7 +8,13 @@ from datetime import datetime, timedelta
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app import db
-from app.constants import STATUS_CANCELLED, STATUS_COMPLETED, STATUS_PENDING, STATUS_RUNNING
+from app.constants import (
+    STATUS_ARCHIVED,
+    STATUS_CANCELLED,
+    STATUS_COMPLETED,
+    STATUS_PENDING,
+    STATUS_RUNNING,
+)
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 from app.main import (
     add_admin_roll_weight,
@@ -582,6 +588,53 @@ def test_admin_roll_add_update_delete_preserves_numbering_and_completed_final_ro
     assert final_card["roll_entries"][0]["gross_weight"] == 26
     assert not blocked_delete.ok
     assert blocked_delete.messages == ("Завършените карти трябва да запазят поне едно бруто тегло на ролка.",)
+
+
+def test_archived_card_roll_weights_remain_editable(connection):
+    card_id = prepare_completed_card("26030")
+    assert db.archive_completed_card(card_id, card_version(card_id)).ok
+
+    result = db.update_admin_roll_ledger(
+        card_id,
+        card_version(card_id),
+        tare_weight="1.10",
+        roll_updates={},
+        delete_roll_ids=set(),
+        new_gross_weights=["35.00"],
+    )
+
+    card = db.fetch_admin_card_detail(card_id)
+    assert result.ok
+    assert card["status"] == STATUS_ARCHIVED
+    assert card["tare_weight"] == 1.1
+    assert card["roll_count"] == 2
+    assert card["roll_entries"][0]["net_weight"] == 23.9
+    assert card["roll_entries"][-1]["gross_weight"] == 35
+    assert card["roll_entries"][-1]["net_weight"] == 33.9
+    assert card["total_gross_weight"] == "60.00"
+    assert card["total_net_weight"] == "57.80"
+
+
+def test_archived_card_materials_remain_editable(connection):
+    card_id = prepare_completed_card("26031")
+    assert db.archive_completed_card(card_id, card_version(card_id)).ok
+
+    result = db.update_terminal_recipe_actual_entries(
+        card_id,
+        card_version(card_id),
+        {
+            "raw_material_a": {
+                "actual_material_used": "Archived Actual A",
+                "batch_lot": "ARCH-A",
+            }
+        },
+    )
+
+    card = db.fetch_admin_card_detail(card_id)
+    assert result.ok
+    assert card["status"] == STATUS_ARCHIVED
+    assert card["recipe_actual_entries"]["raw_material_a"]["actual_material_used"] == "Archived Actual A"
+    assert card["recipe_actual_entries"]["raw_material_a"]["batch_lot"] == "ARCH-A"
 
 
 def test_admin_timing_segment_edit_recalculates_total_time(connection):

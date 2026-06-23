@@ -5,6 +5,7 @@ import io
 
 from app import db
 from app.constants import (
+    STATUS_ARCHIVED,
     STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_PENDING,
@@ -213,6 +214,44 @@ def test_finish_from_paused_succeeds_without_open_segment(connection):
     assert card["status"] == STATUS_COMPLETED
     assert card["finished_at"] is not None
     assert open_segments == 0
+
+
+def test_admin_can_mark_completed_card_as_archived(connection):
+    card_id = prepare_running_finishable_card("25630")
+    assert db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"]).ok
+    loaded_version = db.fetch_admin_card_detail(card_id)["version"]
+
+    result = db.archive_completed_card(card_id, loaded_version)
+
+    card = db.fetch_admin_card_detail(card_id)
+    assert result.ok
+    assert result.messages == ("Поръчка 25630 е маркирана като завършена.",)
+    assert card["status"] == STATUS_ARCHIVED
+    assert card["version"] == loaded_version + 1
+
+
+def test_archive_action_blocks_non_completed_cards(connection):
+    card_id = import_and_release_card("25631", machine_id=1, machine_sequence=1)
+    loaded_version = db.fetch_admin_card_detail(card_id)["version"]
+
+    result = db.archive_completed_card(card_id, loaded_version)
+
+    assert not result.ok
+    assert result.messages == ("Само произведени карти могат да се маркират като завършени.",)
+    assert db.fetch_admin_card_detail(card_id)["status"] == STATUS_PENDING
+
+
+def test_archive_action_blocks_stale_version(connection):
+    card_id = prepare_running_finishable_card("25632")
+    assert db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"]).ok
+    loaded_version = db.fetch_admin_card_detail(card_id)["version"]
+    assert db.update_tare_weight(card_id, loaded_version, "1.10").ok
+
+    result = db.archive_completed_card(card_id, loaded_version)
+
+    assert not result.ok
+    assert result.messages == (db.STALE_CARD_MESSAGE,)
+    assert db.fetch_admin_card_detail(card_id)["status"] == STATUS_COMPLETED
 
 
 def test_completed_card_roll_weights_remain_editable(connection):

@@ -11,6 +11,8 @@ from .constants import (
     ACTIVE_TERMINAL_STATUSES,
     ARCHIVE_STATUSES,
     CARD_STATUSES,
+    PRODUCTION_COMPLETE_STATUSES,
+    STATUS_ARCHIVED,
     STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_IMPORTED,
@@ -28,6 +30,8 @@ TIMING_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv("EXTRUSION_DATA_DIR", BASE_DIR / "data"))
 DB_PATH = Path(os.getenv("EXTRUSION_DB_PATH", DATA_DIR / "extrusion_terminal.sqlite3"))
+TERMINAL_ACTION_STATUSES = (*ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES)
+TERMINAL_ACTION_STATUS_PLACEHOLDERS = ", ".join("?" for _ in TERMINAL_ACTION_STATUSES)
 
 
 def _sql_list(values: tuple[str, ...]) -> str:
@@ -68,41 +72,10 @@ def _sql_text_columns(values: tuple[str, ...]) -> str:
     return ",\n    ".join(f"{value} TEXT" for value in values)
 
 
-SCHEMA_SQL = f"""
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS machines (
-    id INTEGER PRIMARY KEY CHECK (id BETWEEN 1 AND 4),
-    name TEXT NOT NULL,
-    is_operational INTEGER NOT NULL DEFAULT 1 CHECK (is_operational IN (0, 1)),
-    display_order INTEGER NOT NULL UNIQUE,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS import_batches (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_filename TEXT,
-    rows_seen INTEGER NOT NULL DEFAULT 0 CHECK (rows_seen >= 0),
-    rows_imported INTEGER NOT NULL DEFAULT 0 CHECK (rows_imported >= 0),
-    notes TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS import_batch_rows (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    import_batch_id INTEGER NOT NULL REFERENCES import_batches(id) ON DELETE CASCADE,
-    display_order INTEGER NOT NULL CHECK (display_order >= 1),
-    row_number INTEGER,
-    order_number TEXT,
-    action TEXT NOT NULL,
-    message TEXT NOT NULL,
-    is_duplicate_row INTEGER NOT NULL DEFAULT 0 CHECK (is_duplicate_row IN (0, 1)),
-    row_error TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS cards (
+def cards_table_sql(table_name: str = "cards", if_not_exists: bool = True) -> str:
+    create_clause = "CREATE TABLE IF NOT EXISTS" if if_not_exists else "CREATE TABLE"
+    return f"""
+{create_clause} {table_name} (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_number TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL DEFAULT 'imported' CHECK (status IN ({_sql_list(CARD_STATUSES)})),
@@ -150,6 +123,44 @@ CREATE TABLE IF NOT EXISTS cards (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+"""
+
+
+SCHEMA_SQL = f"""
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS machines (
+    id INTEGER PRIMARY KEY CHECK (id BETWEEN 1 AND 4),
+    name TEXT NOT NULL,
+    is_operational INTEGER NOT NULL DEFAULT 1 CHECK (is_operational IN (0, 1)),
+    display_order INTEGER NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS import_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_filename TEXT,
+    rows_seen INTEGER NOT NULL DEFAULT 0 CHECK (rows_seen >= 0),
+    rows_imported INTEGER NOT NULL DEFAULT 0 CHECK (rows_imported >= 0),
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS import_batch_rows (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_batch_id INTEGER NOT NULL REFERENCES import_batches(id) ON DELETE CASCADE,
+    display_order INTEGER NOT NULL CHECK (display_order >= 1),
+    row_number INTEGER,
+    order_number TEXT,
+    action TEXT NOT NULL,
+    message TEXT NOT NULL,
+    is_duplicate_row INTEGER NOT NULL DEFAULT 0 CHECK (is_duplicate_row IN (0, 1)),
+    row_error TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+{cards_table_sql().strip()}
 
 CREATE TABLE IF NOT EXISTS card_import_sources (
     card_id INTEGER PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE,
@@ -260,6 +271,9 @@ def connect() -> sqlite3.Connection:
 def init_db() -> None:
     with connect() as connection:
         connection.executescript(SCHEMA_SQL)
+        seed_fixed_machines(connection)
+        ensure_cards_status_constraint(connection)
+        connection.executescript(SCHEMA_SQL)
         # Existing pilot databases may still have legacy cards.validation_status;
         # current code ignores it and validates current card fields directly.
         ensure_column(connection, "cards", "max_roll_weight", "TEXT")
@@ -271,17 +285,20 @@ def init_db() -> None:
             "INTEGER NOT NULL DEFAULT 0 CHECK (is_duplicate_row IN (0, 1))",
         )
         ensure_column(connection, "import_batch_rows", "row_error", "TEXT")
-        connection.executemany(
-            """
-            INSERT INTO machines (id, name, is_operational, display_order)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                name = excluded.name,
-                display_order = excluded.display_order,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            MACHINE_SEED,
-        )
+
+
+def seed_fixed_machines(connection: sqlite3.Connection) -> None:
+    connection.executemany(
+        """
+        INSERT INTO machines (id, name, is_operational, display_order)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            display_order = excluded.display_order,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        MACHINE_SEED,
+    )
 
 
 def ensure_column(
@@ -298,6 +315,82 @@ def ensure_column(
         connection.execute(
             f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
         )
+
+
+def _quote_identifier(identifier: str) -> str:
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def _legacy_column_type_sql(declared_type: Any) -> str:
+    column_type = str(declared_type or "").strip()
+    if not column_type:
+        return "TEXT"
+    safe_type_characters = (
+        character.isascii() and (character.isalnum() or character in " _()")
+        for character in column_type
+    )
+    if not all(safe_type_characters):
+        return "TEXT"
+    return column_type
+
+
+def ensure_cards_status_constraint(connection: sqlite3.Connection) -> None:
+    schema_row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cards'"
+    ).fetchone()
+    schema_sql = str(schema_row["sql"] or "") if schema_row else ""
+    if f"'{STATUS_ARCHIVED}'" in schema_sql:
+        return
+
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        connection.execute("DROP TABLE IF EXISTS cards_status_migration")
+        connection.execute(cards_table_sql("cards_status_migration", if_not_exists=False))
+
+        legacy_column_info = connection.execute("PRAGMA table_info(cards)").fetchall()
+        legacy_columns = {row["name"]: row for row in legacy_column_info}
+        target_columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(cards_status_migration)"
+            ).fetchall()
+        }
+        for column_name, column_info in legacy_columns.items():
+            if column_name in target_columns:
+                continue
+            connection.execute(
+                f"""
+                ALTER TABLE cards_status_migration
+                ADD COLUMN {_quote_identifier(column_name)} {_legacy_column_type_sql(column_info["type"])}
+                """
+            )
+            target_columns.add(column_name)
+
+        copy_columns = [
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(cards_status_migration)"
+            ).fetchall()
+            if row["name"] in legacy_columns
+        ]
+        column_sql = ", ".join(_quote_identifier(column) for column in copy_columns)
+        connection.execute(
+            f"""
+            INSERT INTO cards_status_migration ({column_sql})
+            SELECT {column_sql}
+            FROM cards
+            """
+        )
+        connection.execute("DROP TABLE cards")
+        connection.execute("ALTER TABLE cards_status_migration RENAME TO cards")
+        connection.commit()
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON")
+
+    violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise sqlite3.IntegrityError("cards status migration failed foreign key check")
 
 
 def backfill_card_import_sources(connection: sqlite3.Connection) -> None:
@@ -883,6 +976,40 @@ def finish_card(card_id: int, loaded_version: int) -> RuleResult:
     return RuleResult(True, (f"Поръчка {card['order_number']} е приключена.",))
 
 
+def archive_completed_card(card_id: int, loaded_version: int) -> RuleResult:
+    with connect() as connection:
+        card = connection.execute(
+            """
+            SELECT id, order_number, status, version
+            FROM cards
+            WHERE id = ?
+            """,
+            (card_id,),
+        ).fetchone()
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        if card["status"] != STATUS_COMPLETED:
+            return RuleResult(
+                False,
+                ("Само произведени карти могат да се маркират като завършени.",),
+            )
+
+        connection.execute(
+            """
+            UPDATE cards
+            SET status = ?,
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (STATUS_ARCHIVED, card_id),
+        )
+
+    return RuleResult(True, (f"Поръчка {card['order_number']} е маркирана като завършена.",))
+
+
 def cancel_card(card_id: int, loaded_version: int) -> RuleResult:
     with connect() as connection:
         card = fetch_active_terminal_action_card(connection, card_id)
@@ -1167,7 +1294,7 @@ def delete_timing_segment(card_id: int, segment_id: int, loaded_version: int) ->
         if not delete_result.ok:
             return delete_result
 
-        if card["status"] == STATUS_COMPLETED:
+        if card["status"] in PRODUCTION_COMPLETE_STATUSES:
             segment_count = int(
                 connection.execute(
                     """
@@ -1273,7 +1400,7 @@ def update_admin_timing_ledger(
                 final_open_count += 1
         final_open_count += sum(1 for segment in parsed_new if segment["ended_at"] is None)
 
-        if str(card["status"]) == STATUS_COMPLETED and final_segment_count < 1:
+        if str(card["status"]) in PRODUCTION_COMPLETE_STATUSES and final_segment_count < 1:
             return RuleResult(False, ("Завършена карта трябва да има поне един времеви сегмент.",))
 
         if str(card["status"]) != STATUS_RUNNING and final_open_count > 0:
@@ -1395,7 +1522,7 @@ def update_admin_timing_ledger(
                 """
                 UPDATE cards
                 SET finished_at = CASE
-                        WHEN status = ?
+                        WHEN status IN (?, ?)
                         THEN (
                             SELECT MAX(ended_at)
                             FROM production_time_segments
@@ -1405,7 +1532,7 @@ def update_admin_timing_ledger(
                     END
                 WHERE id = ?
                 """,
-                (STATUS_COMPLETED, card_id, card_id),
+                (*PRODUCTION_COMPLETE_STATUSES, card_id, card_id),
             )
             refresh_card_timing_markers(connection, card_id)
             touch_card(connection, card_id)
@@ -1812,13 +1939,13 @@ def update_tare_weight(card_id: int, loaded_version: int, tare_weight: str) -> R
 
     with connect() as connection:
         card = connection.execute(
-            """
+            f"""
             SELECT id, order_number, version
             FROM cards
             WHERE id = ?
-              AND status IN (?, ?, ?, ?, ?)
+              AND status IN ({TERMINAL_ACTION_STATUS_PLACEHOLDERS})
             """,
-            (card_id, *ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES),
+            (card_id, *TERMINAL_ACTION_STATUSES),
         ).fetchone()
 
         version_result = validate_loaded_card_version(card, loaded_version)
@@ -1984,7 +2111,7 @@ def update_roll_gross_weight(
             return RuleResult(False, ("Ролката не е намерена.",))
 
         if (
-            card["status"] == STATUS_COMPLETED
+            card["status"] in PRODUCTION_COMPLETE_STATUSES
             and parsed_gross is None
             and roll["gross_weight"] is not None
         ):
@@ -2063,7 +2190,7 @@ def delete_roll_entry(card_id: int, roll_id: int, loaded_version: int) -> RuleRe
         if not roll:
             return RuleResult(False, ("Ролката не е намерена.",))
 
-        if card["status"] == STATUS_COMPLETED and roll["gross_weight"] is not None:
+        if card["status"] in PRODUCTION_COMPLETE_STATUSES and roll["gross_weight"] is not None:
             gross_roll_count = int(
                 connection.execute(
                     """
@@ -2149,13 +2276,13 @@ def update_admin_roll_ledger(
 
     with connect() as connection:
         card = connection.execute(
-            """
+            f"""
             SELECT id, order_number, status, tare_weight, version
             FROM cards
             WHERE id = ?
-              AND status IN (?, ?, ?, ?, ?)
+              AND status IN ({TERMINAL_ACTION_STATUS_PLACEHOLDERS})
             """,
-            (card_id, *ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES),
+            (card_id, *TERMINAL_ACTION_STATUSES),
         ).fetchone()
         version_result = validate_loaded_card_version(card, loaded_version)
         if not version_result.ok:
@@ -2246,7 +2373,7 @@ def update_admin_roll_ledger(
                     ("Бруто теглото не може да бъде по-малко от шпулата.",),
                 )
 
-        if str(card["status"]) == STATUS_COMPLETED and gross_roll_count < 1:
+        if str(card["status"]) in PRODUCTION_COMPLETE_STATUSES and gross_roll_count < 1:
             return RuleResult(
                 False,
                 ("Завършените карти трябва да запазят поне едно бруто тегло на ролка.",),
@@ -2354,7 +2481,7 @@ def fetch_roll_action_card(
     connection: sqlite3.Connection,
     card_id: int,
 ) -> sqlite3.Row | None:
-    roll_edit_statuses = (*ACTIVE_TERMINAL_STATUSES, STATUS_COMPLETED)
+    roll_edit_statuses = (*ACTIVE_TERMINAL_STATUSES, *PRODUCTION_COMPLETE_STATUSES)
     return connection.execute(
         f"""
         SELECT id, order_number, status, tare_weight, version
@@ -2370,10 +2497,10 @@ def validate_card_allows_roll_entry(card: sqlite3.Row | None) -> RuleResult:
     if not card:
         return RuleResult(False, ("Картата не е намерена за въвеждане на ролка.",))
 
-    if card["status"] not in (STATUS_RUNNING, STATUS_COMPLETED):
+    if card["status"] not in (STATUS_RUNNING, *PRODUCTION_COMPLETE_STATUSES):
         return RuleResult(
             False,
-            ("Теглата на ролките могат да се променят само когато картата е в изработване или завършена.",),
+            ("Теглата на ролките могат да се променят само когато картата е в изработване, произведена или завършена.",),
         )
 
     return RuleResult(True)
@@ -2513,13 +2640,13 @@ def update_terminal_material_fields(
 ) -> RuleResult:
     with connect() as connection:
         card = connection.execute(
-            """
+            f"""
             SELECT id, version, raw_material_a
             FROM cards
             WHERE id = ?
-              AND status IN (?, ?, ?, ?, ?)
+              AND status IN ({TERMINAL_ACTION_STATUS_PLACEHOLDERS})
             """,
-            (card_id, *ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES),
+            (card_id, *TERMINAL_ACTION_STATUSES),
         ).fetchone()
 
         if not card:
@@ -2612,9 +2739,9 @@ def update_terminal_recipe_actual_entries(
             SELECT id, version, raw_material_brand_grade, {import_columns}
             FROM cards
             WHERE id = ?
-              AND status IN (?, ?, ?, ?, ?)
+              AND status IN ({TERMINAL_ACTION_STATUS_PLACEHOLDERS})
             """,
-            (card_id, *ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES),
+            (card_id, *TERMINAL_ACTION_STATUSES),
         ).fetchone()
 
         if not card:
@@ -2682,9 +2809,9 @@ def update_admin_material_ledger(
             SELECT id, version, raw_material_brand_grade, {import_columns}
             FROM cards
             WHERE id = ?
-              AND status IN (?, ?, ?, ?, ?)
+              AND status IN ({TERMINAL_ACTION_STATUS_PLACEHOLDERS})
             """,
-            (card_id, *ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES),
+            (card_id, *TERMINAL_ACTION_STATUSES),
         ).fetchone()
         version_result = validate_loaded_card_version(card, loaded_version)
         if not version_result.ok:

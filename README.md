@@ -43,8 +43,8 @@ Confirmed workflow facts:
 - Operators input gross weight for each roll.
 - The app calculates net weight per roll from gross roll weight and order-level tare weight.
 - The app calculates total net weight for the order from the roll net weights.
-- At the end of the order, operators click `Finished`.
-- After finishing, operators should be able to click `Print`.
+- At the end of the order, operators click `Finished` to mark the card as produced.
+- After production is finished, shift-manager/admin reviews and prints/reprints from the admin operational card detail.
 - Printing should print the whole front and back.
 - Completed data should be stored in the app.
 
@@ -58,16 +58,16 @@ Confirmed model:
 - The shift manager decides which machine should produce each released card and the sequence within that machine queue.
 - Operators use the terminal to execute loaded operational cards.
 - The app should provide the simplest possible way to visualize several orders/cards.
-- The terminal should have a main active queue/list and a separate completed cards section/list.
+- The terminal should have a main active queue/list and a separate produced cards section/list.
 - The main terminal queue/list should make it clear which cards are pending, running, or paused.
 - The terminal should have a fixed four-machine quick navigation strip.
 - Each machine tile should show only key information: machine number, current or next order, customer, progress, and status color.
 - Clicking a machine tile should open the running card for that machine if one exists; otherwise it should open the next active card for that machine by sequence, including paused cards that remain in the queue.
-- The completed section lets operators view previous completed cards, fix mistakes, and reprint when needed.
+- The produced section lets operators view previously produced cards and fix mistakes when needed.
 - Users should be able to click an order/card from the list to view it.
-- `Finished` means the order/card is closed for workflow/status purposes, not locked for editing.
-- Finishing/completing an order moves it out of the active terminal queue/list and into the terminal completed section.
-- Finished/closed cards may still be changed, similar to how paper cards can be scratched out and overwritten.
+- `Produced` means the order/card is closed for workstation production workflow/status purposes, not locked for editing.
+- Finishing/completing an order moves it out of the active terminal queue/list and into the terminal produced section.
+- Produced/finished cards may still be changed, similar to how paper cards can be scratched out and overwritten.
 - The pilot should avoid lock/reopen exception logic.
 - The terminal may have multiple running cards at the same time.
 - A machine cannot have more than one running card at the same time.
@@ -88,9 +88,10 @@ Lifecycle states:
 | --- | --- |
 | `imported` / `draft` | Order/card exists in the app database after CSV import. It can be reviewed in the app, but is not yet released to the terminal execution view. |
 | `pending` | Order/card has been released by the shift manager and is visible in the terminal queue, but production timing has not started. A pending card can be returned to the unreleased planning pool by the shift manager. |
-| `running` | Operators started production timing for the card. Multiple cards may be running at once. |
+| `running` | Operators started production timing for the card. Multiple cards may be running across the workstation, but a machine can have only one running card. |
 | `paused` | Production timing was paused for the card. |
-| `completed` / `finished` | Operators have finished the order/card. It moves from the active terminal queue to the terminal completed section and remains available in app history/details. |
+| `completed` / produced | Operators have manufactured the order/card. It moves from the active terminal queue to the terminal produced section and remains available to workstation operators for review/correction, but print/final archive approval is handled by shift-manager/admin. |
+| `archived` / finished | Shift-manager/admin has reviewed the produced card, printed/reprinted as needed, and marked the paper operational card as filed/done. It remains visible, editable, correctable, and reprintable in admin. |
 | `cancelled` | Shift manager/admin cancelled the card. It is no longer active, remains visible in admin review, and can be toggled back to `pending` from admin. |
 
 Canonical Bulgarian status labels:
@@ -101,7 +102,8 @@ Canonical Bulgarian status labels:
 | `pending` | Изчакване |
 | `running` | Изработване |
 | `paused` | Паузирана |
-| `completed` | Завършена |
+| `completed` | Произведена |
+| `archived` | Завършена |
 | `cancelled` | Анулирана |
 
 The important distinction: CSV import should already create persistent app records. Submit/release should not be the first time the data is saved; it should change the order/card from an app-side draft into a terminal-visible card.
@@ -154,24 +156,24 @@ Confirmed workstation screen structure:
 - Do not use a generic `Stop` action in the terminal workflow because it can be confused with pause, finish, cancel, or machine stop.
 - The top machine navigation should align its machine-card group with the left edge of the details and recipe content below.
 - Global navigation actions should sit on the right side of the top machine-navigation band, aligned with the right-side order actions and roll panel below.
-- `Завършени поръчки` should be the top global navigation action, and `Опашка` should sit directly beneath it.
+- `Произведени поръчки` should be the top global navigation action, and `Опашка` should sit directly beneath it.
 - `Опашка` is global navigation, not a production action, so it should not sit between `Приключи` and the overflow menu in the selected-order action row.
 - Clicking `Опашка` should open a queue drawer/panel showing queued cards grouped by `Машина 1` through `Машина 4`.
-- Queue and completed-order drawers should cover the full workstation viewport from top to bottom. Do not start them below the top machine navigation, because partially visible machine cards behind the drawer create an awkward half-covered state.
+- Queue and produced-order drawers should cover the full workstation viewport from top to bottom. Do not start them below the top machine navigation, because partially visible machine cards behind the drawer create an awkward half-covered state.
 - The currently selected machine section should be visually highlighted first.
 - Queue rows should be compact, not large cards.
 - Queue rows should use three information rows: sequence + customer name + order ID + status; product/type; then size/thickness + material + ordered kilograms.
 - Clicking a queue row loads/displays that card on screen only. It must not start, pause, finish, cancel, or otherwise mutate production state.
 - If a machine has no running card, selecting a queued row can load that card into the workstation view so the operator can then press `Старт`.
-- `Print/Reprint` belongs in the overflow/burger menu.
+- Print/reprint does not belong on the workstation. Shift-manager/admin handles printing and final archive approval from the admin operational card detail.
 - `Cancel/Restore` does not belong on the workstation. Operators should not cancel or restore cards; shift-manager/admin handles cancellation from the admin page.
-- `Завършени поръчки` belongs with the global top navigation because completed-card lookup is not specific to one active order.
-- `Завършени поръчки` should open a completed-orders drawer/panel, separate from `Опашка`.
-- Completed orders should be searchable/filterable by `Фирма`, `Изделие`, `Размер / дебелина`, and `Материал`.
-- Completed-order rows should be compact result rows, not machine cards.
-- Completed-order rows should show customer + order ID, product/type, size/thickness, material, total kilograms, and completion date/time.
-- Clicking a completed-order row loads/displays that completed card on screen only. It must not restart the order or change production state.
-- When a completed card is displayed, production actions such as `Старт`, `Пауза`, and `Приключи` should be disabled; reprint should be available from the overflow menu.
+- `Произведени поръчки` belongs with the global top navigation because produced-card lookup is not specific to one active order.
+- `Произведени поръчки` should open a produced-orders drawer/panel, separate from `Опашка`.
+- Produced orders should be searchable/filterable by `Фирма`, `Изделие`, `Размер / дебелина`, and `Материал`.
+- Produced-order rows should be compact result rows, not machine cards.
+- Produced-order rows should show customer + order ID, product/type, size/thickness, material, total kilograms, and production completion date/time.
+- Clicking a produced-order row loads/displays that produced card on screen only. It must not restart the order or change production state.
+- When a produced card is displayed, production actions such as `Старт`, `Пауза`, and `Приключи` should be disabled; print/reprint remains available only from admin.
 - The roll panel should stay focused on core/tare weight, new gross roll entry, roll correction, and gross/net totals.
 - `Шпула, кг` should sit immediately before the `Нова ролка, кг` input in the roll-entry controls.
 - New roll entry controls should sit directly above the roll list so the roll table can extend upward.
@@ -607,7 +609,7 @@ Confirmed production timing behavior:
 - Do not calculate total time as one naive `finish time - start time` if pauses exist.
 - Start, pause, resume, and finish actions must persist immediately when clicked.
 - If an operator tries to input a roll while no timer is active for that card, the app should warn them.
-- Printing is available only after the card is completed.
+- Printing/reprinting is an admin/shift-manager action after the card is produced or archived.
 
 Finish validation:
 
@@ -624,7 +626,7 @@ Cancellation behavior:
 - Cancelling changes the card status to `cancelled`.
 - Cancelled cards are no longer active and should not appear in the main active queue.
 - Cancelled cards remain visible to shift-manager/admin for review and restoration.
-- Cancelled cards should not appear in the workstation completed-order lookup.
+- Cancelled cards should not appear in the workstation produced-order lookup.
 - Cancelling is reversible: clicking the cancel action again on a cancelled card changes it back to `pending`.
 - This reversible cancel behavior should be available from the shift-manager/admin page, not from the workstation terminal.
 
@@ -764,11 +766,13 @@ Confirmed print requirements:
 - Output is always exactly two pages: extrusion front page plus back page.
 - Paper size is A4.
 - The app should generate two pages. Duplex/front-back printing on one sheet can be handled by printer settings.
-- Printing must be possible from the workstation/terminal itself.
-- Printing/reprinting should be possible from completed cards so mistakes can be corrected and the card can be printed again.
-- Only completed cards can be printed.
+- Printing/reprinting is an admin/shift-manager action from the operational card detail.
+- Workstation operators do not print from `/terminal`.
+- Printing is allowed for produced (`completed`) and finished/archived (`archived`) cards.
+- Opening or executing print does not change card status.
+- Shift-manager/admin manually marks a produced card as finished/archived after review and paper handling.
 - Completion closes timing before print is allowed.
-- Printing should be impossible until the card/order is finished.
+- Printing should be impossible until the card/order is produced.
 - Preserve the Excel card layout one-to-one as much as possible.
 - The back page should keep the same 120-roll grid even if fewer rolls were produced.
 - Mild additions are acceptable:

@@ -26,6 +26,7 @@ from .db import (
     STALE_CARD_MESSAGE,
     add_timing_segment,
     add_roll_gross_weight,
+    archive_completed_card,
     cancel_card,
     database_summary,
     delete_timing_segment,
@@ -748,6 +749,24 @@ async def restore_admin_card(
     parsed_version, workflow_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
         workflow_result = restore_cancelled_card(card_id, parsed_version)
+
+    return admin_card_post_response(
+        request,
+        card_id,
+        "workflow_result",
+        workflow_result,
+    )
+
+
+@app.post("/admin/cards/{card_id}/archive")
+async def archive_admin_card(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+):
+    parsed_version, workflow_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        workflow_result = archive_completed_card(card_id, parsed_version)
 
     return admin_card_post_response(
         request,

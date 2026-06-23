@@ -75,9 +75,6 @@
               <td>{{ card.updated_at }}</td>
               <td>
                 <a href="/admin/cards/{{ card.id }}">Отвори</a>
-                {% if card.status == "completed" %}
-                  <a href="/cards/{{ card.id }}/print" target="_blank" rel="noopener">Печат</a>
-                {% endif %}
               </td>
             </tr>
           {% endfor %}

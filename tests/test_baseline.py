@@ -9,7 +9,11 @@ from uuid import uuid4
 
 from app import db
 from app.constants import (
+    CARD_STATUSES,
+    STATUS_ARCHIVED,
+    STATUS_COMPLETED,
     STATUS_IMPORTED,
+    STATUS_LABELS,
     STATUS_PENDING,
 )
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
@@ -79,6 +83,35 @@ def test_database_initialization_seeds_machines_1_through_4(temp_db_path):
     assert [machine["display_order"] for machine in machines] == [1, 2, 3, 4]
 
 
+def test_status_constants_label_completed_as_produced_and_archived_as_finished():
+    assert STATUS_COMPLETED in CARD_STATUSES
+    assert STATUS_ARCHIVED in CARD_STATUSES
+    assert STATUS_LABELS[STATUS_COMPLETED] == "Произведена"
+    assert STATUS_LABELS[STATUS_ARCHIVED] == "Завършена"
+
+
+def test_new_cards_schema_allows_archived_status(connection):
+    schema_sql = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cards'"
+    ).fetchone()["sql"]
+
+    assert "'archived'" in schema_sql
+
+    connection.execute(
+        """
+        INSERT INTO cards (order_number, status)
+        VALUES (?, ?)
+        """,
+        ("ARCHIVED-SCHEMA-1", STATUS_ARCHIVED),
+    )
+
+    status = connection.execute(
+        "SELECT status FROM cards WHERE order_number = ?",
+        ("ARCHIVED-SCHEMA-1",),
+    ).fetchone()["status"]
+    assert status == STATUS_ARCHIVED
+
+
 def test_csv_import_creates_imported_ready_cards(connection):
     result = import_cards_from_csv(
         "orders.csv",
@@ -139,6 +172,208 @@ def test_database_initialization_adds_max_roll_weight_to_existing_cards_table(
         shutil.rmtree(legacy_data_dir, ignore_errors=True)
 
     assert "max_roll_weight" in columns
+
+
+def test_database_initialization_updates_existing_status_check_to_allow_archived(
+    monkeypatch,
+):
+    legacy_data_dir = Path.cwd() / ".test-runtime" / uuid4().hex
+    legacy_data_dir.mkdir(parents=True)
+    legacy_db_path = legacy_data_dir / "legacy-status-check.sqlite3"
+    try:
+        with sqlite3.connect(legacy_db_path) as legacy_connection:
+            legacy_connection.execute(
+                """
+                CREATE TABLE cards (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    order_number TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL DEFAULT 'imported'
+                        CHECK (status IN ('imported', 'pending', 'running', 'paused', 'completed', 'cancelled')),
+                    machine_id INTEGER,
+                    machine_sequence INTEGER,
+                    max_roll_weight TEXT
+                )
+                """
+            )
+            legacy_connection.execute(
+                "INSERT INTO cards (order_number, status) VALUES (?, ?)",
+                ("LEGACY-ARCHIVE-1", STATUS_COMPLETED),
+            )
+
+        monkeypatch.setattr(db, "DATA_DIR", legacy_data_dir)
+        monkeypatch.setattr(db, "DB_PATH", legacy_db_path)
+
+        db.init_db()
+        db.init_db()
+
+        with db.connect() as migrated_connection:
+            migrated_connection.execute(
+                "UPDATE cards SET status = ? WHERE order_number = ?",
+                (STATUS_ARCHIVED, "LEGACY-ARCHIVE-1"),
+            )
+            migrated_connection.commit()
+            schema_sql = migrated_connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cards'"
+            ).fetchone()["sql"]
+            status = migrated_connection.execute(
+                "SELECT status FROM cards WHERE order_number = ?",
+                ("LEGACY-ARCHIVE-1",),
+            ).fetchone()["status"]
+    finally:
+        shutil.rmtree(legacy_data_dir, ignore_errors=True)
+
+    assert "'archived'" in schema_sql
+    assert status == STATUS_ARCHIVED
+
+
+def test_database_initialization_preserves_legacy_only_cards_columns_during_status_check_migration(
+    monkeypatch,
+):
+    legacy_data_dir = Path.cwd() / ".test-runtime" / uuid4().hex
+    legacy_data_dir.mkdir(parents=True)
+    legacy_db_path = legacy_data_dir / "legacy-status-check-extra-column.sqlite3"
+    try:
+        with sqlite3.connect(legacy_db_path) as legacy_connection:
+            legacy_connection.execute(
+                """
+                CREATE TABLE cards (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    order_number TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL DEFAULT 'imported'
+                        CHECK (status IN ('imported', 'pending', 'running', 'paused', 'completed', 'cancelled')),
+                    machine_id INTEGER,
+                    machine_sequence INTEGER,
+                    max_roll_weight TEXT,
+                    validation_status TEXT
+                )
+                """
+            )
+            legacy_connection.execute(
+                """
+                INSERT INTO cards (order_number, status, validation_status)
+                VALUES (?, ?, ?)
+                """,
+                ("LEGACY-EXTRA-COLUMN-1", STATUS_COMPLETED, "legacy-ready"),
+            )
+
+        monkeypatch.setattr(db, "DATA_DIR", legacy_data_dir)
+        monkeypatch.setattr(db, "DB_PATH", legacy_db_path)
+
+        db.init_db()
+        db.init_db()
+
+        with db.connect() as migrated_connection:
+            migrated_connection.execute(
+                "UPDATE cards SET status = ? WHERE order_number = ?",
+                (STATUS_ARCHIVED, "LEGACY-EXTRA-COLUMN-1"),
+            )
+            migrated_connection.commit()
+            columns = {
+                row["name"]
+                for row in migrated_connection.execute("PRAGMA table_info(cards)").fetchall()
+            }
+            schema_sql = migrated_connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cards'"
+            ).fetchone()["sql"]
+            card = migrated_connection.execute(
+                """
+                SELECT status, validation_status
+                FROM cards
+                WHERE order_number = ?
+                """,
+                ("LEGACY-EXTRA-COLUMN-1",),
+            ).fetchone()
+    finally:
+        shutil.rmtree(legacy_data_dir, ignore_errors=True)
+
+    assert "validation_status" in columns
+    assert "'archived'" in schema_sql
+    assert dict(card) == {
+        "status": STATUS_ARCHIVED,
+        "validation_status": "legacy-ready",
+    }
+
+
+def test_database_initialization_seeds_machines_before_status_check_fk_validation(
+    monkeypatch,
+):
+    legacy_data_dir = Path.cwd() / ".test-runtime" / uuid4().hex
+    legacy_data_dir.mkdir(parents=True)
+    legacy_db_path = legacy_data_dir / "legacy-status-check-machine-fk.sqlite3"
+    try:
+        with sqlite3.connect(legacy_db_path) as legacy_connection:
+            legacy_connection.execute(
+                """
+                CREATE TABLE machines (
+                    id INTEGER PRIMARY KEY CHECK (id BETWEEN 1 AND 4),
+                    name TEXT NOT NULL,
+                    is_operational INTEGER NOT NULL DEFAULT 1 CHECK (is_operational IN (0, 1)),
+                    display_order INTEGER NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            legacy_connection.execute(
+                """
+                CREATE TABLE cards (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    order_number TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL DEFAULT 'imported'
+                        CHECK (status IN ('imported', 'pending', 'running', 'paused', 'completed', 'cancelled')),
+                    machine_id INTEGER REFERENCES machines(id) ON DELETE RESTRICT,
+                    machine_sequence INTEGER,
+                    max_roll_weight TEXT
+                )
+                """
+            )
+            legacy_connection.execute(
+                """
+                INSERT INTO cards (order_number, status, machine_id, machine_sequence)
+                VALUES (?, ?, ?, ?)
+                """,
+                ("LEGACY-MACHINE-FK-1", STATUS_PENDING, 1, 1),
+            )
+
+        monkeypatch.setattr(db, "DATA_DIR", legacy_data_dir)
+        monkeypatch.setattr(db, "DB_PATH", legacy_db_path)
+
+        db.init_db()
+
+        with db.connect() as migrated_connection:
+            migrated_connection.execute(
+                "UPDATE cards SET status = ? WHERE order_number = ?",
+                (STATUS_ARCHIVED, "LEGACY-MACHINE-FK-1"),
+            )
+            migrated_connection.commit()
+            machines = migrated_connection.execute(
+                "SELECT id, display_order FROM machines ORDER BY id"
+            ).fetchall()
+            card = migrated_connection.execute(
+                """
+                SELECT order_number, status, machine_id, machine_sequence
+                FROM cards
+                WHERE order_number = ?
+                """,
+                ("LEGACY-MACHINE-FK-1",),
+            ).fetchone()
+            violations = migrated_connection.execute("PRAGMA foreign_key_check").fetchall()
+    finally:
+        shutil.rmtree(legacy_data_dir, ignore_errors=True)
+
+    assert [(machine["id"], machine["display_order"]) for machine in machines] == [
+        (1, 1),
+        (2, 2),
+        (3, 3),
+        (4, 4),
+    ]
+    assert dict(card) == {
+        "order_number": "LEGACY-MACHINE-FK-1",
+        "status": STATUS_ARCHIVED,
+        "machine_id": 1,
+        "machine_sequence": 1,
+    }
+    assert violations == []
 
 
 def test_csv_import_ignores_max_roll_weight_alias(connection):

@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
 from . import db
-from .constants import STATUS_COMPLETED
+from .constants import PRINTABLE_STATUSES
 
 MAX_PRINT_ROLLS = 120
 
@@ -40,8 +40,8 @@ def build_print_readiness(card_id: int) -> PrintReadiness:
 def validate_print_readiness(card: dict[str, Any]) -> list[str]:
     messages: list[str] = []
 
-    if card["status"] != STATUS_COMPLETED:
-        messages.append("Печатът е разрешен само за завършени карти.")
+    if card["status"] not in PRINTABLE_STATUSES:
+        messages.append("Печатът е разрешен само за произведени или завършени карти.")
     if card.get("cancelled_at"):
         messages.append("Анулирани карти не могат да се печатат.")
     if card.get("tare_weight") is None:

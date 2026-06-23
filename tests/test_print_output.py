@@ -12,6 +12,7 @@ import pytest
 
 from app import db
 from app.constants import (
+    STATUS_ARCHIVED,
     STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_IMPORTED,
@@ -225,6 +226,16 @@ def test_completed_card_with_required_production_data_is_printable(connection):
     }
 
 
+def test_archived_card_with_required_production_data_is_printable(connection):
+    card_id = make_completed_printable_card("27035")
+    set_card_status(card_id, STATUS_ARCHIVED)
+
+    result = build_print_readiness(card_id)
+
+    assert result.ok
+    assert result.data is not None
+
+
 @pytest.mark.parametrize(
     "status",
     [
@@ -235,7 +246,7 @@ def test_completed_card_with_required_production_data_is_printable(connection):
         STATUS_CANCELLED,
     ],
 )
-def test_only_completed_cards_are_printable(connection, status):
+def test_only_produced_or_archived_cards_are_printable(connection, status):
     card_id = make_completed_printable_card(f"27001-{status}")
     set_card_status(card_id, status)
 
@@ -243,7 +254,7 @@ def test_only_completed_cards_are_printable(connection, status):
 
     assert not result.ok
     assert result.data is None
-    assert "Печатът е разрешен само за завършени карти." in result.messages
+    assert "Печатът е разрешен само за произведени или завършени карти." in result.messages
 
 
 def test_completed_card_with_missing_tare_is_blocked(connection):
@@ -488,7 +499,7 @@ def test_print_route_non_completed_card_returns_blocked_response(connection):
 
     assert response.status_code == 200
     assert "Печатът е блокиран" in response.text
-    assert "Печатът е разрешен само за завършени карти." in response.text
+    assert "Печатът е разрешен само за произведени или завършени карти." in response.text
 
 
 def test_print_route_terminal_blocked_response_does_not_link_to_admin(connection):

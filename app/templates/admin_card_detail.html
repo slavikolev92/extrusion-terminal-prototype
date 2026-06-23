@@ -24,8 +24,14 @@
     <div class="actions">
       <a class="nav-link" href="/admin/cards">Технологични карти</a>
       <a class="nav-link" href="/terminal">Терминал</a>
-      {% if card.status == "completed" %}
+      {% if card.status in ["completed", "archived"] %}
         <a class="nav-link" href="/cards/{{ card.id }}/print" target="_blank" rel="noopener">Печат / препечат</a>
+      {% endif %}
+      {% if card.status == "completed" %}
+        <form action="/admin/cards/{{ card.id }}/archive" method="post">
+          <input type="hidden" name="loaded_version" value="{{ card.version }}">
+          <button type="submit">Маркирай като завършена</button>
+        </form>
       {% endif %}
       {% if card.status == "pending" %}
         <form action="/admin/cards/{{ card.id }}/unrelease" method="post">

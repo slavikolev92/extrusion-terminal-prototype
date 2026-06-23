@@ -143,11 +143,11 @@ def test_add_roll_is_blocked_when_card_is_not_running(connection):
     assert db.fetch_terminal_card_detail(paused_card_id)["status"] == STATUS_PAUSED
     assert not pending_result.ok
     assert pending_result.messages == (
-        "Теглата на ролките могат да се променят само когато картата е в изработване или завършена.",
+        "Теглата на ролките могат да се променят само когато картата е в изработване, произведена или завършена.",
     )
     assert not paused_result.ok
     assert paused_result.messages == (
-        "Теглата на ролките могат да се променят само когато картата е в изработване или завършена.",
+        "Теглата на ролките могат да се променят само когато картата е в изработване, произведена или завършена.",
     )
 
 
@@ -322,7 +322,7 @@ def test_delete_roll_is_blocked_when_card_is_not_running_or_completed(connection
 
     assert not result.ok
     assert result.messages == (
-        "Теглата на ролките могат да се променят само когато картата е в изработване или завършена.",
+        "Теглата на ролките могат да се променят само когато картата е в изработване, произведена или завършена.",
     )
     assert db.fetch_terminal_card_detail(card_id)["roll_count"] == 1
 

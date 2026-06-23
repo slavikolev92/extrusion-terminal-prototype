@@ -100,7 +100,7 @@ Scope:
 - machine quick tile opens running/paused card if present, otherwise next pending card.
 - detail view shows imported operational-card fields needed by operators.
 - terminal does not expose `/admin` navigation.
-- completed cards remain separate from the active queue; cancelled cards are not shown to workstation operators.
+- produced cards remain separate from the active queue; cancelled cards are not shown to workstation operators.
 - forms/actions carry the loaded card version or `updated_at` value.
 - stale edits are blocked with a reload warning instead of silently overwriting newer data.
 
@@ -168,11 +168,11 @@ Scope:
 
 - finish validation.
 - finish closes active timing segment.
-- completed cards leave active terminal queue.
-- completed cards appear in the workstation completed section.
+- produced cards leave active terminal queue.
+- produced cards appear in the workstation produced section.
 - cancellation without reason remains supported for shift-manager/admin.
 - cancelled cards are reversible back to `pending` from admin.
-- completed cards remain editable as confirmed.
+- produced cards remain editable as confirmed.
 
 Review checkpoint:
 
@@ -272,7 +272,7 @@ Implementation bundles:
 4. Admin workflow controls and production-data correction - done
    - Add admin-side reversible cancel/restore using the same business rules as terminal cancel/restore.
    - Add admin editing for production-side correction fields needed before print: tare, roll gross weights, terminal material fields, and timing segments.
-   - Keep completed cards editable, but preserve finish validation invariants needed for print readiness.
+   - Keep produced cards editable, but preserve finish validation invariants needed for print readiness.
    - Implement the simplest timing correction workflow: edit segment start/end values, end reason, and recalculate totals; prevent invalid intervals and multiple open segments.
    - Use loaded `version` conflict checks for all correction forms.
    - Add tests for admin cancel/restore, roll/tare correction, timing correction, recalculated total time, invalid timing rejection, and stale edit blocking.
@@ -327,9 +327,9 @@ Status: complete and accepted for the app; physical printer rehearsal confirmed 
 
 Scope:
 
-- completed-card print/reprint route implemented as `GET /cards/{card_id}/print`.
-- terminal completed-card print action opens `/cards/{card_id}/print?auto=1` and calls browser print.
-- admin completed-card print/reprint access exists from card detail and the admin card list.
+- produced/archived-card print/reprint route implemented as `GET /cards/{card_id}/print`.
+- admin card detail owns print/reprint access and opens `/cards/{card_id}/print?auto=1` for browser print.
+- workstation `/terminal` does not expose print/reprint actions.
 - print route uses app data and server-rendered HTML/CSS; it does not fill or print from Excel at runtime.
 - output renders exactly two A4 portrait pages: extrusion front card and roll/summary back page.
 - front page preserves the extrusion-card structure and has been tuned against `source-files/print-template.pdf`: order/header fields, product/quantity rows, extrusion requested fields, split planned/actual material blocks, notes/packaging, and blank legacy boxes for `ШПУЛИ`, `БРАК`, and `ФОЛИО [kg]`.
@@ -338,8 +338,16 @@ Scope:
 - final back-page polish restored the header as a two-row table, narrowed `Дата / смяна`, centered roll gross `кг.` values, and restored separate left/right timing and weight summary tables.
 - roll grid prints gross weights only.
 - summary prints start, stop, active production duration excluding pauses, tare, total gross, and total net.
-- print readiness is rechecked at print time and blocks missing critical production data, non-completed/cancelled cards, open timing segments, and more than 120 rolls.
+- print readiness is rechecked at print time and blocks missing critical production data, statuses other than `completed`/`archived`, cancelled cards, open timing segments, and more than 120 rolls.
 - app-only workflow fields such as machine, sequence, status, queue position, internal card id, and max roll weight are not printed.
+
+Follow-up: Admin finalization status
+
+- `completed` is now the workstation-produced state and is labeled `Произведена`.
+- `archived` is the shift-manager finalized state and is labeled `Завършена`.
+- Admin card detail owns print/reprint and manual finalization actions.
+- The workstation no longer exposes print/reprint; its produced-card drawer is labeled `Произведени поръчки`.
+- Produced and archived cards remain editable/correctable, and both are printable from admin.
 
 Verification completed:
 

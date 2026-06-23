@@ -25,9 +25,12 @@
   --status-paused-bg: #ffedd5;
   --status-paused-border: #fb923c;
   --status-paused-text: #9a3412;
-  --status-completed-bg: #dcfce7;
-  --status-completed-border: #22c55e;
-  --status-completed-text: #166534;
+  --status-completed-bg: #ddf4ff;
+  --status-completed-border: #8bb8e8;
+  --status-completed-text: #0969da;
+  --status-archived-bg: #dcfce7;
+  --status-archived-border: #22c55e;
+  --status-archived-text: #166534;
   --status-cancelled-bg: #fee2e2;
   --status-cancelled-border: #ef4444;
   --status-cancelled-text: #991b1b;
@@ -1033,6 +1036,13 @@ thead th {
   border-color: var(--status-completed-border);
   background: var(--status-completed-bg);
   color: var(--status-completed-text);
+}
+
+.pill.archived,
+.pill.status-archived {
+  border-color: var(--status-archived-border);
+  background: var(--status-archived-bg);
+  color: var(--status-archived-text);
 }
 
 .pill.cancelled,

@@ -1850,7 +1850,7 @@
 
         <div class="machine-nav-actions" aria-label="Глобални действия">
           <button class="history-nav" id="history-open" type="button" aria-controls="history-overlay" aria-expanded="false">
-            <span>Завършени поръчки</span>
+            <span>Произведени поръчки</span>
           </button>
           <button class="queue-nav" id="queue-open" type="button" aria-controls="queue-overlay" aria-expanded="false">
             <span>Опашка</span>
@@ -1895,12 +1895,12 @@
       </div>
 
       <div class="history-overlay" id="history-overlay" aria-hidden="true">
-        <aside class="history-drawer" aria-label="Завършени поръчки">
+        <aside class="history-drawer" aria-label="Произведени поръчки">
           <div class="history-drawer-head">
-            <h2>Завършени поръчки</h2>
-            <button class="history-close" id="history-close" type="button" aria-label="Затвори завършените поръчки">×</button>
+            <h2>Произведени поръчки</h2>
+            <button class="history-close" id="history-close" type="button" aria-label="Затвори произведените поръчки">×</button>
           </div>
-          <div class="history-filters" aria-label="Филтри за завършени поръчки">
+          <div class="history-filters" aria-label="Филтри за произведени поръчки">
             <label>
               <span class="field-label">Фирма</span>
               <input class="history-filter" type="search" placeholder="напр. Пирин" data-filter="customer">
@@ -1926,7 +1926,7 @@
                 <span class="history-row-details"><span>{{ card.size_thickness or "-" }}</span><span>{{ card.material or "-" }}</span><span>{{ card.quantity_display }}</span><span>{{ card.finished_at or "-" }}</span></span>
               </a>
             {% endfor %}
-            <div class="history-empty" id="history-empty" {% if archive_cards %}hidden{% endif %}>Няма намерени завършени поръчки.</div>
+            <div class="history-empty" id="history-empty" {% if archive_cards %}hidden{% endif %}>Няма намерени произведени поръчки.</div>
           </div>
         </aside>
       </div>
@@ -1977,17 +1977,11 @@
               {% endif %}
 
               {% set show_roll_correction = selected_card and selected_card.roll_entries and selected_card.status in ["running", "completed"] %}
-              {% set show_print_action = selected_card and selected_card.status == "completed" %}
-              {% if show_print_action or show_roll_correction %}
+              {% if show_roll_correction %}
                 <div class="menu">
                   <button class="menu-btn" type="button" aria-label="Още действия">⋯</button>
                   <div class="menu-panel">
-                    {% if show_print_action %}
-                      <a href="/cards/{{ selected_card.id }}/print?auto=1&amp;source=terminal" target="_blank" rel="noopener">Печат / препечат</a>
-                    {% endif %}
-                    {% if show_roll_correction %}
-                      <button class="roll-correction-open" id="roll-correction-open" type="button">Корекции на ролки</button>
-                    {% endif %}
+                    <button class="roll-correction-open" id="roll-correction-open" type="button">Корекции на ролки</button>
                   </div>
                 </div>
               {% endif %}
@@ -2230,7 +2224,7 @@
             {% if selected_machine_id %}
               Няма активна поръчка за Машина {{ selected_machine_id }}.
             {% else %}
-              Изберете поръчка от машините, опашката или завършените поръчки.
+              Изберете поръчка от машините, опашката или произведените поръчки.
             {% endif %}
           </div>
         {% endif %}

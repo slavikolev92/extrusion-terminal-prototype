@@ -307,6 +307,24 @@ def test_terminal_v8_renders_recipe_queue_and_completed_lookup(connection):
     assert "№26105" not in html
 
 
+def test_terminal_v8_labels_completed_lookup_as_produced_orders(connection):
+    completed_id = release_ready_card(
+        "26184",
+        machine_id=1,
+        sequence=1,
+        customer="Produced Customer",
+    )
+    complete_card(completed_id)
+
+    html = render_terminal(completed_id)
+
+    assert "Произведени поръчки" in html
+    assert "Завършени поръчки" not in html
+    assert "Филтри за произведени поръчки" in html
+    assert "Затвори произведените поръчки" in html
+    assert "Няма намерени произведени поръчки." in html
+
+
 def test_terminal_v8_recipe_inputs_are_named_for_all_rows(connection):
     card_id = release_ready_card("26140", machine_id=1, sequence=1)
     entries = {
@@ -466,21 +484,38 @@ def test_terminal_v8_write_forms_include_loaded_version_and_no_operator_cancel_r
     assert f"/admin/cards/{card_id}/restore" not in html
 
 
-def test_terminal_v8_print_link_is_available_only_for_completed_cards(connection):
+def test_terminal_v8_does_not_render_print_action_for_produced_cards(connection):
     completed_id = release_ready_card("26180", machine_id=1, sequence=1)
     complete_card(completed_id)
-    pending_id = release_ready_card("26181", machine_id=2, sequence=1)
 
     completed_html = render_terminal(completed_id)
-    pending_html = render_terminal(pending_id)
 
-    assert (
-        f'<a href="/cards/{completed_id}/print?auto=1&amp;source=terminal" '
-        'target="_blank" rel="noopener">Печат / препечат</a>'
-    ) in completed_html
-    assert "Печат / препечат" in completed_html
-    assert f"/cards/{pending_id}/print" not in pending_html
-    assert "Печат / препечат" not in pending_html
+    assert f"/cards/{completed_id}/print" not in completed_html
+    assert "Печат / препечат" not in completed_html
+    assert "Корекции на ролки" in completed_html
+
+
+def test_terminal_v8_hides_archived_cards_from_produced_lookup(connection):
+    completed_id = release_ready_card(
+        "26185",
+        machine_id=1,
+        sequence=1,
+        customer="Produced Customer",
+    )
+    complete_card(completed_id)
+    archived_id = release_ready_card(
+        "26186",
+        machine_id=2,
+        sequence=1,
+        customer="Archived Customer",
+    )
+    complete_card(archived_id)
+    assert db.archive_completed_card(archived_id, card_version(archived_id)).ok
+
+    html = render_terminal(completed_id)
+
+    assert "Produced Customer" in html
+    assert "Archived Customer" not in html
 
 
 def test_terminal_v8_action_and_roll_add_buttons_render_decorative_icons(connection):
