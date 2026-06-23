@@ -11,6 +11,7 @@ from app.constants import CARD_STATUSES, STATUS_LABELS
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 from app.main import (
     admin_card_detail_context,
+    save_admin_card_changes,
     save_admin_imported_fields,
     save_admin_roll_ledger,
 )
@@ -218,13 +219,43 @@ def test_admin_detail_print_link_is_available_only_for_completed_cards(connectio
     completed_html = render_admin_detail(completed_id)
     cancelled_html = render_admin_detail(cancelled_id)
 
-    assert (
-        f'<a class="nav-link" href="/cards/{completed_id}/print" '
-        'target="_blank" rel="noopener">Печат / препечат</a>'
-    ) in completed_html
-    assert "Печат / препечат" in completed_html
+    assert f'href="/cards/{completed_id}/print"' in completed_html
+    assert 'class="admin-action-button admin-print-button"' in completed_html
+    assert 'target="_blank" rel="noopener">Принтирай</a>' in completed_html
+    assert "Печат / препечат" not in completed_html
     assert f"/cards/{cancelled_id}/print" not in cancelled_html
-    assert "Печат / препечат" not in cancelled_html
+    assert "Принтирай" not in cancelled_html
+
+
+def test_admin_detail_separates_global_navigation_from_card_actions(connection):
+    card_id = prepare_dense_completed_card("27042", roll_count=1)
+
+    html = render_admin_detail(card_id)
+
+    assert 'class="admin-header"' in html
+    assert 'src="/static/images/kolev-logo.png"' in html
+    assert 'aria-current="page">Технологични карти</a>' in html
+    assert "Терминал" in html
+    assert 'class="admin-card-context admin-action-bar"' in html
+    assert 'class="admin-card-title-line"' in html
+    assert "Поръчка № 27042" in html
+    assert 'class="pill status-completed"' in html
+    assert 'class="admin-card-actions"' in html
+    assert f'href="/cards/{card_id}/print"' in html
+    assert f'action="/admin/cards/{card_id}/archive"' in html
+
+    header_before_actions = html.split('class="admin-card-actions"', 1)[0]
+    assert 'href="/cards/' not in header_before_actions
+    assert "Технологични карти / Поръчка" not in header_before_actions
+    assert "Машина 1 / ред 1" not in header_before_actions
+    assert "Версия" not in header_before_actions
+    assert "Обновена" not in header_before_actions
+    assert "Маркирай като завършена" not in header_before_actions
+    assert "Началник смяна" not in html
+    assert '<a class="nav-link" href="/admin/cards">Технологични карти</a>' not in html
+    assert '<a class="nav-link" href="/terminal">Терминал</a>' not in html
+    assert "Terminal" not in html
+    assert "Към терминала" not in html
 
 
 def test_admin_detail_shows_archive_action_for_produced_cards(connection):
@@ -234,12 +265,14 @@ def test_admin_detail_shows_archive_action_for_produced_cards(connection):
 
     assert "Произведена" in html
     assert 'class="pill status-completed"' in html
-    assert (
-        f'<a class="nav-link" href="/cards/{card_id}/print" '
-        'target="_blank" rel="noopener">Печат / препечат</a>'
-    ) in html
+    assert f'href="/cards/{card_id}/print"' in html
+    assert 'target="_blank" rel="noopener">Принтирай</a>' in html
     assert f'action="/admin/cards/{card_id}/archive"' in html
-    assert "Маркирай като завършена" in html
+    assert 'class="admin-action-button admin-finish-button"' in html
+    assert ">Маркирай завършена</button>" in html
+    assert "<span>Маркирай</span>" not in html
+    assert "<span>завършена</span>" not in html
+    assert "Маркирай като завършена" not in html
 
 
 def test_admin_detail_shows_print_but_no_archive_action_for_archived_cards(connection):
@@ -250,12 +283,57 @@ def test_admin_detail_shows_print_but_no_archive_action_for_archived_cards(conne
 
     assert "Завършена" in html
     assert 'class="pill status-archived"' in html
-    assert (
-        f'<a class="nav-link" href="/cards/{card_id}/print" '
-        'target="_blank" rel="noopener">Печат / препечат</a>'
-    ) in html
+    assert f'href="/cards/{card_id}/print"' in html
+    assert 'target="_blank" rel="noopener">Принтирай</a>' in html
     assert f'action="/admin/cards/{card_id}/archive"' not in html
+    assert 'class="admin-action-button admin-finish-button disabled"' in html
+    assert 'type="button" disabled' in html
+    assert ">Маркирай завършена</button>" in html
+    assert "<span>Маркирай</span>" not in html
+    assert "<span>завършена</span>" not in html
     assert "Маркирай като завършена" not in html
+
+
+def test_admin_detail_header_and_summary_remove_nonessential_metadata(connection):
+    card_id = prepare_dense_completed_card("27047", roll_count=1)
+
+    html = render_admin_detail(card_id)
+
+    assert '<main class="page admin-page admin-review-page">' in html
+    assert "wide-page admin-page admin-review-page" not in html
+    assert '<h1 class="admin-card-title-line">' in html
+    assert 'Поръчка № 27047' in html
+    assert 'class="pill status-completed"' in html
+
+    header_html = html.split('<section class="section admin-summary-panel"', 1)[0]
+    assert "Технологични карти / Поръчка" not in header_html
+    assert "Машина 1 / ред 1" not in header_html
+    assert "Версия" not in header_html
+    assert "Обновена" not in header_html
+
+    summary_html = html.split('<section class="section admin-summary-panel"', 1)[1].split("</section>", 1)[0]
+    assert "<span>" not in summary_html
+    assert "/ ред" not in summary_html
+    assert "<dt>Машина</dt>" in summary_html
+    machine_value = summary_html.split("<dt>Машина</dt>", 1)[1].split("</dd>", 1)[0]
+    assert ">1" in "".join(machine_value.split())
+
+
+def test_admin_detail_uses_sticky_action_bar_and_single_save_button(connection):
+    card_id = prepare_dense_completed_card("27048", roll_count=1)
+
+    html = render_admin_detail(card_id)
+
+    assert 'class="admin-card-context admin-action-bar"' in html
+    assert 'id="admin-card-save-form"' in html
+    assert f'action="/admin/cards/{card_id}/save-all"' in html
+    assert 'class="admin-action-button primary admin-save-button"' in html
+    assert 'form="admin-card-save-form">Запази Промените</button>' in html
+    assert html.count("Запази Промените") == 1
+    assert "Запази данните" not in html
+    assert "Запази материалите" not in html
+    assert "Запази ролките" not in html
+    assert "Запази времето" not in html
 
 
 def test_admin_cards_list_does_not_show_print_shortcuts(connection):
@@ -293,7 +371,8 @@ def test_admin_detail_uses_single_roll_ledger_without_repeated_save_buttons(conn
     html = render_admin_detail(card_id)
 
     assert html.count("admin-roll-ledger-row") == 12
-    assert html.count("Запази ролките") == 1
+    assert "Запази ролките" not in html
+    assert html.count("Запази Промените") == 1
     assert "admin-roll-correction-row" not in html
     assert html.count(">Запази<") < 10
     assert html.count(">Изтрий<") < 10
@@ -307,7 +386,8 @@ def test_admin_detail_uses_single_timing_ledger_without_duplicate_segment_forms(
     html = render_admin_detail(card_id)
 
     assert "Време" in html
-    assert html.count("Запази времето") == 1
+    assert "Запази времето" not in html
+    assert html.count("Запази Промените") == 1
     assert "admin-timing-correction-row" not in html
     assert "timing-correction-form" not in html
 
@@ -443,6 +523,109 @@ def test_admin_order_form_save_preserves_omitted_recipe_fields(connection):
     assert updated["antistatic"] == "Planned antistatic"
     assert updated["masterbatch"] == "Planned masterbatch"
     assert updated["chalk"] == "Planned chalk"
+
+
+def test_admin_global_save_updates_order_materials_and_roll_data(connection):
+    card_id = prepare_dense_completed_card("27107", roll_count=1)
+    card = db.fetch_admin_card_detail(card_id)
+    roll_id = int(card["roll_entries"][0]["id"])
+
+    response = asyncio.run(
+        save_admin_card_changes(
+            FormRequest(
+                MultiItemForm(
+                    [
+                        ("loaded_version", str(card["version"])),
+                        ("customer", "Global Save Customer"),
+                        ("planned_material__raw_material_a", "Global planned A"),
+                        ("actual_material__raw_material_a", "Global actual A"),
+                        ("batch_lot__raw_material_a", "Global batch A"),
+                        ("tare_weight", "2.00"),
+                        (f"gross_weight__{roll_id}", "60.00"),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+    updated = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/admin/cards/{card_id}"
+    assert updated["customer"] == "Global Save Customer"
+    assert updated["raw_material_a"] == "Global planned A"
+    assert (
+        updated["recipe_actual_entries"]["raw_material_a"]["actual_material_used"]
+        == "Global actual A"
+    )
+    assert updated["recipe_actual_entries"]["raw_material_a"]["batch_lot"] == "Global batch A"
+    assert updated["tare_weight"] == 2
+    assert updated["roll_entries"][0]["gross_weight"] == 60
+    assert updated["roll_entries"][0]["net_weight"] == 58
+
+
+def test_admin_global_save_rolls_back_all_sections_when_timing_is_invalid(connection):
+    card_id = prepare_dense_completed_card("27108", roll_count=1)
+    before = db.fetch_admin_card_detail(card_id)
+    roll_id = int(before["roll_entries"][0]["id"])
+    segment_id = int(before["timing_segments"][0]["id"])
+    before_segments = [
+        (
+            int(segment["id"]),
+            segment["started_at"],
+            segment["ended_at"],
+            segment["end_reason"],
+        )
+        for segment in before["timing_segments"]
+    ]
+
+    response = asyncio.run(
+        save_admin_card_changes(
+            FormRequest(
+                MultiItemForm(
+                    [
+                        ("loaded_version", str(before["version"])),
+                        ("customer", "Should Not Persist"),
+                        ("planned_material__raw_material_a", "Should Not Persist"),
+                        ("actual_material__raw_material_a", "Should Not Persist"),
+                        ("batch_lot__raw_material_a", "Should Not Persist"),
+                        ("tare_weight", "2.00"),
+                        (f"gross_weight__{roll_id}", "60.00"),
+                        ("delete_segment_id", str(segment_id)),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+    body = response.body.decode("utf-8")
+    after = db.fetch_admin_card_detail(card_id)
+    after_segments = [
+        (
+            int(segment["id"]),
+            segment["started_at"],
+            segment["ended_at"],
+            segment["end_reason"],
+        )
+        for segment in after["timing_segments"]
+    ]
+
+    assert response.status_code == 200
+    assert "Завършена карта трябва да има поне един времеви сегмент." in body
+    assert after["version"] == before["version"]
+    assert after["customer"] == before["customer"]
+    assert after["raw_material_a"] == before["raw_material_a"]
+    assert (
+        after["recipe_actual_entries"]["raw_material_a"]["actual_material_used"]
+        == before["recipe_actual_entries"]["raw_material_a"]["actual_material_used"]
+    )
+    assert after["recipe_actual_entries"]["raw_material_a"]["batch_lot"] == (
+        before["recipe_actual_entries"]["raw_material_a"]["batch_lot"]
+    )
+    assert after["tare_weight"] == before["tare_weight"]
+    assert after["roll_entries"][0]["gross_weight"] == before["roll_entries"][0]["gross_weight"]
+    assert after["roll_entries"][0]["net_weight"] == before["roll_entries"][0]["net_weight"]
+    assert after_segments == before_segments
 
 
 def test_admin_material_ledger_updates_planned_and_actual_fields(connection):

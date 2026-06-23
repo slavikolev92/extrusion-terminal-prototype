@@ -28,6 +28,7 @@ from .db import (
     add_roll_gross_weight,
     archive_completed_card,
     cancel_card,
+    connect,
     database_summary,
     delete_timing_segment,
     delete_roll_entry,
@@ -157,6 +158,7 @@ app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="stati
 
 def admin_import_context(**extra: Any) -> dict[str, Any]:
     context: dict[str, Any] = {
+        "admin_section": "import",
         "recent_imports": fetch_recent_import_batches(),
         "summary": database_summary(),
     }
@@ -177,6 +179,7 @@ def admin_planning_context(
         normalized_dir,
     )
     context: dict[str, Any] = {
+        "admin_section": "planning",
         "draft_cards": draft_cards,
         "draft_sort": normalized_sort,
         "draft_dir": normalized_dir,
@@ -198,6 +201,7 @@ def admin_card_detail_context(card_id: int, **extra: Any) -> dict[str, Any] | No
         card["total_production_seconds"],
     )
     context: dict[str, Any] = {
+        "admin_section": "cards",
         "card": card,
         "import_fields": IMPORT_FIELDS,
         "import_field_labels": IMPORT_FIELD_LABELS,
@@ -558,6 +562,7 @@ async def admin_cards(
         request,
         "admin_cards.html",
         {
+            "admin_section": "cards",
             "cards": fetch_admin_cards(filters),
             "filters": filters,
             "card_statuses": CARD_STATUSES,
@@ -582,26 +587,13 @@ async def save_admin_imported_fields(request: Request, card_id: int):
         str(form.get("loaded_version", ""))
     )
     if parsed_version is not None:
-        submitted_fields = {key: str(value) for key, value in form.multi_items()}
-        current_card = fetch_admin_card_detail(card_id)
-        preserved_fields = {
-            field: str(current_card[field] or "") if current_card is not None else ""
-            for field in IMPORT_FIELDS
-        }
-        preserved_fields.update(
-            {
-                field: submitted_fields[field]
-                for field in IMPORT_FIELDS
-                if field in submitted_fields
-            }
-        )
-        if "max_roll_weight" in submitted_fields:
-            preserved_fields["max_roll_weight"] = submitted_fields["max_roll_weight"]
-        imported_field_result = update_admin_imported_fields(
-            card_id=card_id,
-            loaded_version=parsed_version,
-            fields=preserved_fields,
-        )
+        preserved_fields, imported_field_result = imported_fields_from_form(card_id, form)
+        if preserved_fields is not None:
+            imported_field_result = update_admin_imported_fields(
+                card_id=card_id,
+                loaded_version=parsed_version,
+                fields=preserved_fields,
+            )
 
     return admin_card_post_response(
         request,
@@ -610,6 +602,163 @@ async def save_admin_imported_fields(request: Request, card_id: int):
         imported_field_result,
         anchor="order",
     )
+
+
+@app.post("/admin/cards/{card_id}/save-all")
+async def save_admin_card_changes(request: Request, card_id: int):
+    form = await request.form()
+    parsed_version, save_all_result = parse_loaded_version(
+        str(form.get("loaded_version", ""))
+    )
+    if parsed_version is not None:
+        save_all_result = save_all_admin_card_changes(card_id, parsed_version, form)
+
+    return admin_card_post_response(
+        request,
+        card_id,
+        "save_all_result",
+        save_all_result,
+    )
+
+
+def imported_fields_from_form(
+    card_id: int,
+    form: Any,
+) -> tuple[dict[str, str] | None, RuleResult]:
+    submitted_fields = {key: str(value) for key, value in form.multi_items()}
+    current_card = fetch_admin_card_detail(card_id)
+    if current_card is None:
+        return None, RuleResult(False, (CARD_NOT_FOUND_MESSAGE,))
+
+    preserved_fields = {
+        field: str(current_card[field] or "")
+        for field in IMPORT_FIELDS
+    }
+    preserved_fields.update(
+        {
+            field: submitted_fields[field]
+            for field in IMPORT_FIELDS
+            if field in submitted_fields
+        }
+    )
+    if "max_roll_weight" in submitted_fields:
+        preserved_fields["max_roll_weight"] = submitted_fields["max_roll_weight"]
+    return preserved_fields, RuleResult(True)
+
+
+def current_card_version_and_status(
+    card_id: int,
+    connection: Any | None = None,
+) -> tuple[int | None, str | None, RuleResult]:
+    if connection is None:
+        card = fetch_admin_card_detail(card_id)
+    else:
+        card = connection.execute(
+            """
+            SELECT version, status
+            FROM cards
+            WHERE id = ?
+            """,
+            (card_id,),
+        ).fetchone()
+    if card is None:
+        return None, None, RuleResult(False, (CARD_NOT_FOUND_MESSAGE,))
+    return int(card["version"]), str(card["status"]), RuleResult(True)
+
+
+def save_all_admin_card_changes(
+    card_id: int,
+    loaded_version: int,
+    form: Any,
+) -> RuleResult:
+    preserved_fields, result = imported_fields_from_form(card_id, form)
+    if preserved_fields is None:
+        return result
+
+    with connect() as connection:
+        result = update_admin_imported_fields(
+            card_id=card_id,
+            loaded_version=loaded_version,
+            fields=preserved_fields,
+            connection=connection,
+        )
+        if not result.ok:
+            connection.rollback()
+            return result
+
+        current_version, current_status, result = current_card_version_and_status(
+            card_id,
+            connection,
+        )
+        if not result.ok:
+            connection.rollback()
+            return result
+        if current_status == STATUS_IMPORTED:
+            return RuleResult(True, ("Промените са записани.",))
+        assert current_version is not None
+
+        planned_materials, actual_entries = material_ledger_from_form(form)
+        result = update_admin_material_ledger(
+            card_id=card_id,
+            loaded_version=current_version,
+            planned_materials=planned_materials,
+            actual_entries=actual_entries,
+            connection=connection,
+        )
+        if not result.ok:
+            connection.rollback()
+            return result
+
+        current_version, _, result = current_card_version_and_status(card_id, connection)
+        if not result.ok:
+            connection.rollback()
+            return result
+        assert current_version is not None
+
+        try:
+            tare_weight, roll_updates, delete_roll_ids, new_gross_weights = (
+                roll_ledger_from_form(form)
+            )
+        except ValueError:
+            connection.rollback()
+            return RuleResult(False, ("Формата съдържа невалидна ролка.",))
+        result = update_admin_roll_ledger(
+            card_id=card_id,
+            loaded_version=current_version,
+            tare_weight=tare_weight,
+            roll_updates=roll_updates,
+            delete_roll_ids=delete_roll_ids,
+            new_gross_weights=new_gross_weights,
+            connection=connection,
+        )
+        if not result.ok:
+            connection.rollback()
+            return result
+
+        current_version, _, result = current_card_version_and_status(card_id, connection)
+        if not result.ok:
+            connection.rollback()
+            return result
+        assert current_version is not None
+
+        try:
+            segment_updates, delete_segment_ids, new_segments = timing_ledger_from_form(form)
+        except ValueError:
+            connection.rollback()
+            return RuleResult(False, ("Формата съдържа невалиден времеви сегмент.",))
+        result = update_admin_timing_ledger(
+            card_id=card_id,
+            loaded_version=current_version,
+            segment_updates=segment_updates,
+            delete_segment_ids=delete_segment_ids,
+            new_segments=new_segments,
+            connection=connection,
+        )
+        if not result.ok:
+            connection.rollback()
+            return result
+
+    return RuleResult(True, ("Промените са записани.",))
 
 
 @app.post("/admin/cards/{card_id}/delete")

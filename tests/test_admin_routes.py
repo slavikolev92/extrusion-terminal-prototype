@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from tempfile import SpooledTemporaryFile
 
 from starlette.datastructures import UploadFile
@@ -10,6 +11,7 @@ from app import db
 from app.importer import import_cards_from_csv
 from app.main import (
     admin,
+    admin_cards,
     admin_card_detail,
     admin_import,
     admin_planning,
@@ -31,6 +33,7 @@ def test_admin_routes_are_registered():
     assert "/admin/planning" in route_paths
     assert "/admin/cards" in route_paths
     assert "/admin/cards/{card_id}" in route_paths
+    assert "/admin/cards/{card_id}/save-all" in route_paths
     assert "/admin/cards/{card_id}/imported-fields" in route_paths
     assert "/admin/cards/{card_id}/planning" in route_paths
     assert "/admin/cards/{card_id}/unrelease" in route_paths
@@ -119,6 +122,66 @@ def card_version(card_id: int) -> int:
 def assert_html_order(html: str, *needles: str) -> None:
     positions = [html.index(needle) for needle in needles]
     assert positions == sorted(positions)
+
+
+def assert_admin_global_nav(html: str, active_label: str) -> None:
+    assert "/static/css/app.css?v=admin-nav-underline" in html
+    assert 'class="admin-header"' in html
+    assert 'aria-label="Admin navigation"' in html
+    assert "/static/images/kolev-logo.png" in html
+    assert 'href="/admin/import"' in html
+    assert 'href="/admin/planning"' in html
+    assert 'href="/admin/cards"' in html
+    assert 'href="/terminal"' in html
+    assert "Терминал" in html
+    assert f'aria-current="page">{active_label}</a>' in html
+    assert "Началник смяна" not in html
+    assert '<a class="nav-link" href="/terminal">Терминал</a>' not in html
+    assert "Terminal" not in html
+    assert "Към терминала" not in html
+
+
+def test_admin_nav_active_underline_is_direct_border_style():
+    css = Path("app/static/css/app.css").read_text(encoding="utf-8")
+
+    assert "border-bottom: 3px solid transparent;" in css
+    assert ".admin-nav-link.is-active {" in css
+    assert "border-bottom-color: var(--admin-nav-accent);" in css
+
+
+def test_admin_import_uses_shared_global_navigation(connection):
+    response = asyncio.run(admin_import(make_request("/admin/import", method="GET")))
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert_admin_global_nav(html, "Импорт")
+    assert "Импорт от CSV" in html
+
+
+def test_admin_planning_uses_shared_global_navigation(connection):
+    response = asyncio.run(admin_planning(make_request("/admin/planning", method="GET")))
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert_admin_global_nav(html, "Планиране")
+    assert "Неизпратени технологични карти" in html
+
+
+def test_admin_cards_list_uses_shared_global_navigation(connection):
+    response = asyncio.run(
+        admin_cards(
+            make_request("/admin/cards", method="GET"),
+            order_number="",
+            customer="",
+            product="",
+            status="",
+        )
+    )
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert_admin_global_nav(html, "Технологични карти")
+    assert "Търсене на технологични карти" in html
 
 
 def test_successful_admin_import_redirects_to_batch_result_get(connection):

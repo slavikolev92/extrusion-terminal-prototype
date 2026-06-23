@@ -3,58 +3,49 @@
 {% block title %}Поръчка № {{ card.order_number }} - Терминал Екструдиране{% endblock %}
 
 {% block body %}
-<main class="page wide-page admin-review-page">
-  <header class="page-header admin-card-header">
-    <div>
-      <p class="eyebrow">Преглед на технологична карта</p>
-      <h1>Поръчка № {{ card.order_number }}</h1>
-      <div class="admin-card-meta">
+<main class="page admin-page admin-review-page">
+  {% include "_admin_nav.html" %}
+
+  <header class="admin-card-context admin-action-bar">
+    <div class="admin-card-title-block">
+      <h1 class="admin-card-title-line">
+        <span>Поръчка № {{ card.order_number }}</span>
         <span class="pill status-{{ card.status }}">{{ status_labels.get(card.status, card.status) }}</span>
-        <span>
-          {% if card.machine_id %}
-            Машина {{ card.machine_id }}{% if card.machine_sequence %} / ред {{ card.machine_sequence }}{% endif %}
-          {% else %}
-            Без машина
-          {% endif %}
-        </span>
-        <span>Версия {{ card.version }}</span>
-        <span>Обновена {{ card.updated_at }}</span>
-      </div>
+      </h1>
     </div>
-    <div class="actions">
-      <a class="nav-link" href="/admin/cards">Технологични карти</a>
-      <a class="nav-link" href="/terminal">Терминал</a>
+    <div class="admin-card-actions" aria-label="Действия за технологична карта">
       {% if card.status in ["completed", "archived"] %}
-        <a class="nav-link" href="/cards/{{ card.id }}/print" target="_blank" rel="noopener">Печат / препечат</a>
+        <a class="admin-action-button admin-print-button" href="/cards/{{ card.id }}/print" target="_blank" rel="noopener">Принтирай</a>
       {% endif %}
       {% if card.status == "completed" %}
         <form action="/admin/cards/{{ card.id }}/archive" method="post">
           <input type="hidden" name="loaded_version" value="{{ card.version }}">
-          <button type="submit">Маркирай като завършена</button>
+          <button class="admin-action-button admin-finish-button" type="submit">Маркирай завършена</button>
         </form>
+      {% elif card.status == "archived" %}
+        <button class="admin-action-button admin-finish-button disabled" type="button" disabled>Маркирай завършена</button>
       {% endif %}
       {% if card.status == "pending" %}
         <form action="/admin/cards/{{ card.id }}/unrelease" method="post">
           <input type="hidden" name="loaded_version" value="{{ card.version }}">
           <input type="hidden" name="return_to" value="detail">
-          <button type="submit">Върни в планиране</button>
+          <button class="admin-action-button" type="submit">Върни в планиране</button>
         </form>
       {% endif %}
       {% if card.status in ["pending", "running", "paused"] %}
         <form action="/admin/cards/{{ card.id }}/cancel" method="post">
           <input type="hidden" name="loaded_version" value="{{ card.version }}">
-          <button type="submit">Анулирай</button>
+          <button class="admin-action-button danger" type="submit">Анулирай</button>
         </form>
       {% elif card.status == "cancelled" %}
         <form action="/admin/cards/{{ card.id }}/restore" method="post">
           <input type="hidden" name="loaded_version" value="{{ card.version }}">
-          <button type="submit">Възстанови</button>
+          <button class="admin-action-button" type="submit">Възстанови</button>
         </form>
       {% endif %}
+      <button class="admin-action-button primary admin-save-button" type="submit" form="admin-card-save-form">Запази Промените</button>
     </div>
   </header>
-
-  {% include "_admin_nav.html" %}
 
   {% if imported_field_result %}
     <section class="section">
@@ -86,7 +77,8 @@
     ("workflow_result", workflow_result, "Статусът е записан:", "Статусът е блокиран:"),
     ("material_result", material_result, "Материалите са записани:", "Материалите са блокирани:"),
     ("roll_result", roll_result, "Ролките са записани:", "Ролките са блокирани:"),
-    ("timing_result", timing_result, "Времето е записано:", "Времето е блокирано:")
+    ("timing_result", timing_result, "Времето е записано:", "Времето е блокирано:"),
+    ("save_all_result", save_all_result, "Промените са записани:", "Записът е блокиран:")
   ] %}
     {% set result = result_block[1] %}
     {% if result %}
@@ -104,7 +96,6 @@
   <section class="section admin-summary-panel">
     <div class="section-head">
       <h2>Общо произведено</h2>
-      <span>{{ card.finished_at or card.updated_at }}</span>
     </div>
     <dl class="admin-summary-grid">
       <div>
@@ -137,7 +128,7 @@
         <dt>Машина</dt>
         <dd>
           {% if card.machine_id %}
-            {{ card.machine_id }}{% if card.machine_sequence %} / ред {{ card.machine_sequence }}{% endif %}
+            {{ card.machine_id }}
           {% else %}
             -
           {% endif %}
@@ -146,13 +137,12 @@
     </dl>
   </section>
 
-  <form class="admin-operational-form" action="/admin/cards/{{ card.id }}/imported-fields" method="post">
+  <form id="admin-card-save-form" class="admin-operational-form" action="/admin/cards/{{ card.id }}/save-all" method="post">
     <input type="hidden" name="loaded_version" value="{{ card.version }}">
 
     <section class="section operational-panel admin-compact-card" id="order">
       <div class="section-head">
         <h2>Данни по поръчката</h2>
-        <button type="submit">Запази данните</button>
       </div>
       <div class="admin-order-groups">
         <fieldset class="admin-order-group">
@@ -266,14 +256,11 @@
         </fieldset>
       </div>
     </section>
-  </form>
 
   <section class="section operational-panel" id="materials">
-    <form class="admin-ledger-form" action="/admin/cards/{{ card.id }}/materials-ledger" method="post">
-      <input type="hidden" name="loaded_version" value="{{ card.version }}">
+    <div class="admin-ledger-form">
       <div class="section-head">
         <h2>Материали</h2>
-        <button type="submit">Запази материалите</button>
       </div>
       <div class="admin-ledger-table material-ledger">
         <div class="admin-ledger-head">
@@ -297,15 +284,13 @@
           </div>
         {% endfor %}
       </div>
-    </form>
+    </div>
   </section>
 
   <section class="section operational-panel" id="rolls">
-    <form class="admin-ledger-form" action="/admin/cards/{{ card.id }}/roll-ledger" method="post">
-      <input type="hidden" name="loaded_version" value="{{ card.version }}">
+    <div class="admin-ledger-form">
       <div class="section-head">
         <h2>Ролки</h2>
-        <button type="submit">Запази ролките</button>
       </div>
 
       <div class="admin-roll-toolbar">
@@ -343,20 +328,13 @@
       {% else %}
         <p class="empty">Няма въведени ролки.</p>
       {% endif %}
-    </form>
-    {% for roll in card.roll_entries %}
-      <form id="roll-delete-{{ roll.id }}" class="ledger-delete-form" action="/admin/cards/{{ card.id }}/rolls/{{ roll.id }}/delete" method="post" onsubmit="return confirm('Да се изтрие ли ролка {{ roll.roll_number }} с бруто {{ roll.gross_weight if roll.gross_weight is not none else '-' }} кг?');">
-        <input type="hidden" name="loaded_version" value="{{ card.version }}">
-      </form>
-    {% endfor %}
+    </div>
   </section>
 
   <section class="section operational-panel" id="timing">
-    <form class="admin-ledger-form" action="/admin/cards/{{ card.id }}/timing-ledger" method="post">
-      <input type="hidden" name="loaded_version" value="{{ card.version }}">
+    <div class="admin-ledger-form">
       <div class="section-head">
         <h2>Време</h2>
-        <button type="submit">Запази времето</button>
       </div>
 
       <dl class="detail-grid timing-summary">
@@ -412,13 +390,20 @@
           <div class="readonly-cell">Нов</div>
         </div>
       </div>
-    </form>
-    {% for segment in card.timing_segments %}
-      <form id="timing-delete-{{ segment.id }}" class="ledger-delete-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}/delete" method="post" onsubmit="return confirm('Да се изтрие ли времеви сегмент {{ loop.index }}: {{ segment.started_at }} - {{ segment.ended_at or 'в ход' }}?');">
-        <input type="hidden" name="loaded_version" value="{{ card.version }}">
-      </form>
-    {% endfor %}
+    </div>
   </section>
+  </form>
+
+  {% for roll in card.roll_entries %}
+    <form id="roll-delete-{{ roll.id }}" class="ledger-delete-form" action="/admin/cards/{{ card.id }}/rolls/{{ roll.id }}/delete" method="post" onsubmit="return confirm('Да се изтрие ли ролка {{ roll.roll_number }} с бруто {{ roll.gross_weight if roll.gross_weight is not none else '-' }} кг?');">
+      <input type="hidden" name="loaded_version" value="{{ card.version }}">
+    </form>
+  {% endfor %}
+  {% for segment in card.timing_segments %}
+    <form id="timing-delete-{{ segment.id }}" class="ledger-delete-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}/delete" method="post" onsubmit="return confirm('Да се изтрие ли времеви сегмент {{ loop.index }}: {{ segment.started_at }} - {{ segment.ended_at or 'в ход' }}?');">
+      <input type="hidden" name="loaded_version" value="{{ card.version }}">
+    </form>
+  {% endfor %}
 
   <section class="section admin-system-section">
     <details>
