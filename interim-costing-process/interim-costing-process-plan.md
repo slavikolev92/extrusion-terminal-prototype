@@ -2,7 +2,7 @@
 
 Status: working planning document.
 
-Last updated: 2026-06-22.
+Last updated: 2026-06-23.
 
 This is the single planning file for the interim product-costing process. It
 records approved decisions, open decisions, and remaining tasks for the
@@ -39,7 +39,7 @@ In scope:
 
 - Clean forward-looking recipe convention for extrusion.
 - Clean forward-looking sales price convention.
-- Simple production actuals ledger app.
+- Simple production actuals app with workbook import of expected operations.
 - CSV export, and XLSX export if needed.
 - Production-order-level export for costing.
 - Manual or semi-manual daily completeness checks.
@@ -109,109 +109,117 @@ It owns:
 The workbook should not become the repository for completed operation actuals.
 Those actuals belong in the production actuals app.
 
-### Existing Relevant Fields
+### Database Field Index
 
-Important workbook fields for the interim costing process:
+The current shift-manager `Database` worksheets have been classified for the
+interim costing process. The classifications below are final for this planning
+stage unless the user explicitly reopens a field after new evidence appears.
 
-- `A`: production order number
-- `D`: customer
-- `F`: product/type
-- `G:J`: ordered quantities and units
-- `L`: material
-- `M`: size/thickness
-- `O`: price
-- `V:Y`: planned operation flags
-- `Z`: printing next operation
-- `AA`: printing cylinder size
-- `AB:AI`: printing ink station slots 1-8
-- `AM:AS`: extrusion recipe/costing material fields
+Classification meanings:
 
-Production-order key:
+- `Required as-is`: usable workbook input without a convention change.
+- `Required after convention`: workbook input needed for costing, but only after
+  the forward-looking entry convention is adopted.
+- `Import for navigation`: useful context for shift-manager screens, not a
+  costing calculation input.
+- `Ignore for costing`: preserve existing workbook use, but do not use for
+  costing.
+- `App-captured`: required information is not reliable in the workbook and must
+  be captured in the production actuals app.
 
-- `A` / production order number is the required join key between the
-  shift-manager workbook and the production actuals app.
-- The shift-manager process and paper operational cards are centered on this
-  number, so the app must use it to reference the production order.
-- Multiple operational-card actual rows may link to the same production order
-  number, one per completed operation card or split/rerun card.
-- Production order numbers are treated as unique across the current
-  shift-manager files.
+| Column | Existing meaning | Classification | Interim costing treatment |
+| --- | --- | --- | --- |
+| `A` | Production order number | Required as-is | Required join key between the workbook, expected operation slots, actuals, and final produced item. |
+| `B` | Workbook/order date | Import for navigation | Planning/admin date only. Use for list context if helpful; costing completion dates come from app actuals. |
+| `C` | Delivery date | Import for navigation | Planning/admin date only. Use for list context if helpful. |
+| `D` | Customer | Import for navigation | Useful for list/search context. Not a costing calculation input. |
+| `E` | City | Ignore for costing | Customer/admin context only. |
+| `F` | Legacy product/type free text | Import for navigation | Useful for list/search context. Do not use as preferred final-product identity because it is dirty and unstructured. |
+| `G:J` | Ordered quantities and units | Ignore for costing | Usage is not reliable enough across files. Actual output quantities come from app actuals. |
+| `K` | Type of blank/preparation | Ignore for costing | Descriptive production/spec field only for the current method. |
+| `L` | Legacy material | Ignore for costing | Descriptive/spec field only. Costing material identity comes from recipe/material convention. |
+| `M` | Size/thickness | Ignore for costing | Descriptive/spec field only. Final product identity should come from a forward-looking nomenclature if practical. |
+| `N` | Notes | Ignore for costing | Free text, not parseable costing data. |
+| `O` | Sales price | Required after confirmation | Must use the approved numeric-only convention if shift managers confirm it is workable. |
+| `P` | Payment terms | Ignore for costing | Sales/admin context only. |
+| `Q` | Produced quantity / `Изработено количество` | Ignore for costing | Shift-manager-owned free text. Do not change meaning, format, or workflow. Actuals come from the app. |
+| `R:T` | Invoice, contact, delivery fields | Ignore for costing | Admin/logistics context only. |
+| `U` | Cliche payment | Ignore for costing | Not part of current per-order production costing unless direct tooling/cliche allocation is explicitly added later. |
+| `V` | Flexo printing flag | Required as-is | `Да` means printing actuals are expected. |
+| `W` | Extrusion flag | Required as-is | `Да` means extrusion actuals are expected. |
+| `X` | Rewinding/slitting flag | Required as-is | `Да` means rewinding/slitting actuals are expected. |
+| `Y` | Confection flag | Required as-is | `Да` means confection actuals are expected. |
+| `Z` | Printing next operation | Ignore for costing | Workflow/spec context only. |
+| `AA` | Printing cylinder size | Ignore for costing | Printing spec context only; not a current costing input. |
+| `AB:AI` | Printing ink station slots 1-8 | Required after convention | Must use `Color Identity | Anilox lines/cm`. Ink/color identity supports ink allocation; anilox is preserved for later refinement. |
+| `AJ:AL` | Extrusion/workflow-adjacent fields | Ignore for costing | Workflow/spec context only. |
+| `AM:AP` | Base polymer recipe slots | Required after convention | Must use `Material Name | %`; base percentages must sum to `100%`. |
+| `AQ:AS` | Additive/filler recipe slots | Required after convention | Must use `Material Name | %`; percentages are over the base blend. |
 
-Customer and legacy product fields:
+No existing `Database` column is classified as `App-captured`. App-captured data
+is identified in the later workbook/app gap-fit step.
 
-- `D` is the customer field.
-- `F` is the existing legacy product/type free-text field.
-- These fields are production-order-level descriptive fields and can be pulled
-  from the workbook if needed.
-- They are not required costing calculation inputs for the current planning
-  stage.
-- Do not rely on `F` as the preferred final-product identity because it is
-  dirty and unstructured.
-- A forward-looking final-product nomenclature is preferred if practical.
+### Workbook-Owned Costing Inputs
 
-Legacy ordered quantity fields:
+The shift-manager workbook owns the following data for the interim costing
+process:
 
-- `G:J` are existing ordered quantity and unit fields.
-- Do not use `G:J` as costing inputs because the current shift-manager usage is
-  not reliable enough across files.
-- Required costing quantity fields should be separate from these legacy workbook
-  fields.
-- Actual output quantities for costing come from the production actuals app.
+- `A`: production order number.
+  - Production order numbers are treated as unique across the current
+    shift-manager files.
+  - `source_workbook` should still be retained by the import process for
+    provenance and review.
+- `V:Y`: expected operation flags.
+- `O`: agreed sales price, if the numeric EUR/kg excluding-VAT convention is
+  confirmed by shift managers.
+- `AB:AI`: printing ink/color and anilox values after the new convention is
+  adopted.
+- `AM:AS`: extrusion recipe material names and percentages after the new
+  convention is adopted.
 
-Legacy material and size fields:
+The workbook can also provide navigation context for the app:
 
-- `L` / material and `M` / size-thickness are existing descriptive/spec fields.
-- Do not use `L:M` as authoritative costing inputs.
-- Required costing material identity should come from the forward-looking
-  recipe/material convention, not from these legacy descriptive fields.
-- Final product identity should be handled through a forward-looking product
-  nomenclature if practical, not inferred from legacy descriptive text.
+- `B:C`: workbook/order and delivery dates.
+- `D`: customer.
+- `F`: legacy product/type free text.
 
-Other legacy/admin fields:
+### Workbook-Ignored Fields
 
-- Treat `B:C`, `E`, `K`, `N`, `P`, `R:T`, `U`, `Z:AA`, and `AJ:AL` as
-  legacy/admin/workflow/spec fields, not costing inputs.
-- Workbook dates in `B:C` are planning/admin dates. Costing completion dates
-  must come from operational-card actuals.
-- `E` city, `P` payment terms, and `R:T` invoice/contact/delivery fields are
-  customer/admin/logistics context only.
-- `K`, `N`, `Z:AA`, and `AJ:AL` may describe production/spec workflow, but they
-  do not drive the current costing method.
-- `U` cliché payment is not part of the current per-order production costing
-  inputs unless direct tooling/cliché allocation is explicitly added later.
-- The later full field index may promote one of these fields only if it has a
-  concrete, repeatable costing use.
+The following workbook fields are not costing inputs for this interim process:
 
-Workbook field-index direction:
-
-- Create an index of all fields in the current `Database` worksheets from the
-  shift-manager files before finalizing workbook ownership and app gaps.
-- For each field, classify whether it is usable as-is, usable only after a
-  forward-looking convention change, shift-manager-owned/ignored for costing, or
-  unavailable in the workbook and therefore app-captured.
-- The purpose is to extract as much useful planned/specification data from the
-  existing workbook as practical without changing fields that shift managers use
-  for their own workflow.
-
-Excluded workbook fields:
-
-- `Q` / `Изработено количество` remains shift-manager-owned free text.
-- Do not change its meaning, format, or workflow for the interim costing
-  process.
-- Do not use `Q` as an authoritative source for costing actuals.
+- `E`, `G:N`, `P:U`, `Z:AA`, and `AJ:AL`.
+- These fields should remain available for the shift managers' existing
+  workbook workflow where they are useful.
+- The interim costing process should not change their meaning, format, or
+  workflow.
+- `Q` specifically remains shift-manager-owned free text and must not be used as
+  authoritative production actuals.
 - Required production actuals must come from the production actuals app.
 
-Planned operation flags:
+### Workbook Analysis Conclusion
 
-- `V`: flexo printing
-- `W`: extrusion
-- `X`: rewinding/slitting
-- `Y`: confection
-- These fields are the canonical planned-operation source for completeness
-  checks.
-- The `Технологични Карти` worksheet formulas are gated by these flags. If the
-  relevant `Database!V:Y` flag is not `Да`, the corresponding operation-card
-  block does not populate.
+For the interim costing process, the shift-manager workbook can provide the
+production-order key, expected operations, agreed sales price after
+confirmation, recipe data after convention changes, printing ink/color data
+after convention changes, and navigation context for the app.
+
+The workbook cannot provide reliable production actuals, reliable output
+quantities, or a reliable final-product/material identity from legacy free-text
+fields alone. The app must import expected operations from the workbook and
+capture operational-card actuals against those expected slots.
+
+### Planned Operation Flags
+
+- `V`: flexo printing.
+- `W`: extrusion.
+- `X`: rewinding/slitting.
+- `Y`: confection.
+- These fields are the canonical planned-operation source for app expected
+  operation slots and completeness checks.
+- A `Да` value means the operation is expected and actuals are required.
+- The `Технологични Карти` worksheet formulas are also gated by these flags. If
+  the relevant `Database!V:Y` flag is not `Да`, the corresponding
+  operation-card block does not populate.
 
 ### Required Convention Changes
 
@@ -245,20 +253,39 @@ Use existing extrusion material columns in the `Database` worksheet.
 Column identity defines the costing role. Do not add `BASE` or `ADD` markers to
 the cell text.
 
-Each costable material cell should use:
+Each costable material cell should use the approved raw-material item naming
+rule:
 
 ```text
-[Material Category] [Manufacturer] [Grade or Density] | [%]
+[Material Category] [Producer or Brand] [Full Commercial Grade/Code] | [%]
 ```
+
+For PE raw materials, `Material Category` means the polymer family such as
+`LDPE`, `LLDPE`, `MDPE`, or `reLDPE`.
+
+For additives, `Material Category` means the additive family such as
+`Antistatic`, `Masterbatch`, `Filler`, `Processing Aid`, or another accepted
+additive category.
+
+Approved ERP item identity rule:
+
+- For normal PE raw materials and extrusion additives, the ERP item identity is
+  defined by material/additive family, producer or brand, and full commercial
+  grade/code.
+- Melt-flow index, density, processing temperatures, food-contact status,
+  additive package, technical datasheets, and certificate values are item or lot
+  specification fields, not normal item-name components.
+- Recycled/regranulate, off-spec, non-prime, or trader-blended materials may
+  need a separate naming rule if they do not have a stable producer grade/spec.
 
 Examples:
 
 ```text
-LDPE Rompetrol B20/03 | 60%
-MDPE Ethydco 3914 | 20%
-LLDPE KJ | 20%
-Ampacet Antistatic | 2%
-UV Masterbatch | 3%
+LDPE Rompetrol Midilena B20/03 | 60%
+LDPE SABIC 2100N0W | 40%
+LLDPE SABIC 119ZJ | 20%
+Antistatic Novachem AT 04673 LD | 2%
+Masterbatch Polibach White 8000 ET | 3%
 ```
 
 Parsing rule:
@@ -296,16 +323,13 @@ Working assumption to verify:
   per kg.
 - The column label/process should make the implicit meaning clear.
 
-Open detail:
+Shift-manager confirmation needed:
 
-- Shift managers must confirm whether they receive price information in a way
-  that supports this numeric-only convention.
-- Shift managers must confirm whether prices can always be entered as net of
-  VAT.
-- Shift managers must confirm whether the canonical sales price unit can always
-  be EUR/kg.
-- If an order is priced per piece/carton, the actuals app must capture enough
-  output quantity data to convert revenue to a comparable unit such as EUR/kg.
+- Shift managers must confirm whether this numeric EUR/kg excluding-VAT
+  convention is acceptable and implementable for forward-looking tracked
+  production orders.
+- No alternate unit or alternate sales-price convention is approved at this
+  planning stage.
 
 ### Printing Ink Rules
 
@@ -329,7 +353,7 @@ Resolved interpretation:
 Each filled printing ink station cell should use:
 
 ```text
-[Ink/Color Name] | [Anilox lines/cm]
+[Color Identity] | [Anilox lines/cm]
 ```
 
 Examples:
@@ -353,6 +377,11 @@ Parsing rule:
 - Initial monthly ink allocation should use the ink/color identity.
 - The anilox value should be kept for later allocation refinement but is not
   required for the initial allocation method.
+- For the interim prototype/workbook, the color identity is an accepted
+  color/color-standard name. Manufacturer and invoice product code are not part
+  of the workbook-facing color identity.
+- ERP ink-item identity remains open. It depends on whether equivalent colors
+  from different manufacturers are interchangeable in practice.
 
 Solvents:
 
@@ -377,8 +406,8 @@ Sales price validation:
 - If the numeric-only convention is approved, price must contain one numeric
   value.
 - The value is interpreted as EUR/kg excluding VAT.
-- Non-kg pricing exceptions need a defined conversion rule before they can be
-  used for margin.
+- Non-numeric, unit-labelled, VAT-labelled, or mixed price entries are not valid
+  under the approved direction.
 
 Planning/spec validation:
 
@@ -389,7 +418,7 @@ Planning/spec validation:
 Printing ink validation:
 
 - Filled ink station cells in `AB:AI` should contain a final `|` delimiter.
-- The text before the final `|` must contain an accepted ink/color name.
+- The text before the final `|` must contain an accepted color identity.
 - The text after the final `|` must contain one anilox value.
 - Blank ink station cells are allowed.
 
@@ -397,52 +426,103 @@ Printing ink validation:
 
 Sales price:
 
-- Can column `O` be entered as a numeric value only?
-- Can that numeric value always mean EUR per kg, excluding VAT?
-- How do shift managers receive agreed sales prices today, and are prices ever
-  provided with VAT included?
-- Are any orders priced per piece, carton, roll, or another unit instead of kg?
-- If non-kg prices exist, what information is available at order creation time
-  to convert the agreed price to EUR/kg?
+- Do shift managers approve using column `O` as one numeric value that always
+  means EUR/kg, excluding VAT, for forward-looking tracked production orders?
 
-Printing colors/inks:
+Naming conventions:
 
-- Can both shift managers use the forward-looking ink station convention
-  `[Ink/Color Name] | [Anilox lines/cm]` in `AB:AI`?
-- Which ink names/codes should be accepted for standard process colors and
-  special colors?
-- Can the accepted ink/color names be aligned with invoice-style ink names where
-  possible, such as `White`, `Yellow`, `Cyan`, `Magenta`, `Black`,
-  `Pantone 485`, `Gold 871`, and `Reflex Blue`?
+- Do shift managers approve the proposed naming conventions, and are they easy
+  enough to use consistently?
+  - Extrusion raw materials/additives:
+    `[Material/Additive Category] [Producer or Brand] [Full Commercial Grade/Code]`
+  - Recipe cells: `Material Name | %`
+  - Printing ink station fields: `Color Identity | Anilox lines/cm`
+  - Polypropylene film:
+    `[Film Type] [Product Series] [Thickness] [Width mm]`
+- What is the preferred way to help shift managers use the new names and
+  formats: month-start raw-material/additive inventory list, workbook dropdowns,
+  separate reference sheet/document, workbook verification macro, app-side
+  validation on workbook upload, or some combination?
+- Are equivalent colors from different ink suppliers/manufacturers
+  interchangeable in production, so manufacturer can be excluded from the
+  workbook-facing color identity?
+
+Extrusion recipe structure:
+
+- Do real extrusion recipes fit within four base polymer slots `AM:AP` and three
+  additive/filler slots `AQ:AS`?
+- Is the costing interpretation correct: base polymers in `AM:AP` sum to
+  `100%`, and additives/fillers in `AQ:AS` are percentages over the base blend
+  rather than part of the base `100%`?
+- Do shift managers need a reference table or calculator to convert current
+  shorthand such as ratios, bag counts, or `20% KJ` into percentages?
+
+Solvents:
+
+- How is solvent usage currently captured, if at all?
+- If solvent usage is not captured per order/card, should solvent cost be
+  allocated monthly?
 
 ### Workbook Open Decisions
 
-- Final approved material naming catalog for ERP-compatible raw material names.
+- Whether the raw-material/additive reference list should be implemented as
+  workbook dropdowns, a separate reference sheet, or a separate document for the
+  interim month-start process.
+- Final approved ink/color naming catalog, prepared from legacy workbook values
+  and invoice/expense ink names and then verified with shift managers.
+- Final approved final-product/item nomenclature. This is a deferred user-owned
+  decision, not a shift-manager question for the current workbook step.
 - Whether sales price can use the numeric-only EUR/kg excluding-VAT convention.
-- Conversion rule for orders priced in a unit other than kg.
-- Which required costing data already exists in the current shift-manager
-  workbook.
-- Final accepted ink/color naming catalog for printing station cells.
+- Final solvent monthly allocation naming/grouping:
+  - whether generic `СОЛВЕНТ` and `Солвент` invoice rows map to
+    `Solvent SOL115A0000`;
+  - whether `Methoxypropanol` and `Ethyl acetate` are separate monthly
+    allocation buckets or merged into a broader solvent bucket;
+  - whether solvents remain separate from inks in month-end reporting or are
+    grouped into one printing-consumables allocation line;
+  - whether any additional solvent names exist outside the inspected invoice
+    workbook.
 - Where workbook-side validation should run: Excel, macro, separate checker, or
   costing tool.
+- Exact starting production order number for the July 2026 import cutoff in each
+  shift-manager file. This is an internal tracking setup item, not a
+  shift-manager question.
 
 ### Workbook Tasks
 
-1. Define the material naming catalog.
-2. Confirm the sales price convention for column `O`.
-3. Define accepted printing ink/color names.
-4. Confirm both shift managers can use `Ink/Color Name | Anilox lines/cm` in
-   printing station cells.
-5. Create a `Database` worksheet field index across the current
-   shift-manager files.
-6. Map required costing data to existing workbook fields.
-7. Identify required workbook convention or field changes.
-8. Decide where recipe and price validation will run.
-9. Update the shift-manager process so recipe cells follow `Material | %`.
-10. Update the shift-manager process so price follows the approved column `O`
+1. Use `shift-manager-questions.md` to collect shift-manager answers.
+2. Prepare the starting raw-material/additive inventory reference list for the
+   beginning of the tracked month, using the approved naming convention.
+3. Decide whether the raw-material/additive reference list is provided as
+   workbook dropdowns, a separate workbook/reference sheet, or a document.
+4. Define the simple update process for adding newly received stock to the
+   controlled raw-material/additive list during the month.
+5. Confirm the sales price convention for column `O`.
+6. Confirm shift-manager approval and usability of the raw-material/additive,
+   recipe-cell, ink/color, and PP film naming conventions.
+7. Confirm the preferred support method for using the new names and formats:
+   reference list, dropdowns, separate document, workbook macro, app-side upload
+   validation, or a combination.
+8. Confirm whether current recipes fit within `AM:AS`.
+9. Confirm whether the planned base/additive percentage interpretation matches
+   the way shift managers currently build extrusion recipes.
+10. Confirm whether shift managers need a reference table or calculator to
+   convert current shorthand into percentages.
+11. Confirm whether equivalent colors from different ink suppliers are
+   interchangeable in production.
+12. Confirm how solvent usage is captured today, if at all, and whether monthly
+   allocation is required.
+13. After June 30, record the July 2026 starting production order numbers for
+   each shift-manager file.
+14. Decide where workbook validation will run: Excel, macro, separate checker,
+   or costing/import tool.
+15. Update the shift-manager process so recipe cells follow `Material | %`.
+16. Update the shift-manager process so price follows the approved column `O`
    convention.
-11. Update the shift-manager process so printing ink station cells follow
-    `Ink/Color Name | Anilox lines/cm`.
+17. Update the shift-manager process so printing ink station cells follow
+    `Color Identity | Anilox lines/cm`.
+18. At month end, map the actual material names used in the shift-manager files
+    to the costing/invoice file and actual cost per kg.
 
 ## 3. Production Actuals App
 
@@ -672,6 +752,16 @@ PP film input direction:
   operations.
 - The app should capture PP film material/name and PP film quantity in kg when
   PP film is consumed.
+- CPP/BOPP purchased-film material/name should use the approved controlled-list
+  convention:
+  `[Film Type] [Product Series] [Thickness] [Width mm]`, for example
+  `BOPP FXC 30 960mm` or `CPP PLCBZ 28 1040mm`.
+- Do not include the micron symbol in the PP film item name.
+- The product series remains in the name because `FXC`, `PLCB`, and `PLCBZ` are
+  formal Plastchim-T product types.
+- The inspected invoice workbook currently yields 40 distinct purchased PP film
+  identities after normalizing obvious wording variants and excluding
+  transport/correction rows.
 - PP film fields are optional at entry because the shift-manager workbook can be
   used later to validate which production orders are PP orders.
 

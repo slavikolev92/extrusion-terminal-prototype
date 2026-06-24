@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Interim Naming Convention Preview</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18212f;
+      --muted: #596579;
+      --line: #d8dee8;
+      --soft: #f5f7fa;
+      --panel: #ffffff;
+      --blue: #1f5f9f;
+      --green: #28704f;
+      --amber: #8b5e12;
+      --red: #9f3434;
+      --shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--ink);
+      background: #eef2f6;
+      line-height: 1.45;
+    }
+
+    header {
+      background: #ffffff;
+      border-bottom: 1px solid var(--line);
+      padding: 28px 40px 24px;
+    }
+
+    main {
+      padding: 26px 40px 48px;
+      max-width: 1440px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 30px 0 14px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 20px 0 10px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 12px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      max-width: 960px;
+      font-size: 15px;
+    }
+
+    .band {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 22px;
+      margin-bottom: 22px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .rule {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfcfe;
+      min-height: 142px;
+    }
+
+    .rule strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      background: #edf2f7;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+
+    .rule code {
+      display: block;
+      white-space: normal;
+      padding: 9px;
+      margin: 8px 0;
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 8px;
+    }
+
+    .tag {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      background: #e7eef8;
+      color: var(--blue);
+      margin-right: 6px;
+      margin-bottom: 4px;
+    }
+
+    .tag.green {
+      background: #e8f3ed;
+      color: var(--green);
+    }
+
+    .tag.amber {
+      background: #f8f0de;
+      color: var(--amber);
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 900px;
+      font-size: 13px;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 10px 11px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f1f5f9;
+      color: #263244;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .item-name {
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .cols {
+      columns: 2;
+      column-gap: 34px;
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .cols li {
+      break-inside: avoid;
+      margin: 0 0 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .callout {
+      border-left: 4px solid var(--blue);
+      background: #f7faff;
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin: 12px 0 0;
+    }
+
+    .warning {
+      border-left-color: var(--amber);
+      background: #fff9ed;
+    }
+
+    @media (max-width: 900px) {
+      header, main {
+        padding-left: 18px;
+        padding-right: 18px;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .cols {
+        columns: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Interim Naming Convention Preview</h1>
+  </header>
+
+  <main>
+    <section class="band">
+      <h2>Raw Materials</h2>
+      <h3>Naming convention</h3>
+      <code>[Material/Additive Category] [Producer or Brand] [Full Commercial Grade/Code]</code>
+      <h3>Specification examples</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Item name</th>
+              <th>MFI / MFR</th>
+              <th>Density</th>
+              <th>Processing / thermal properties</th>
+              <th>Specification</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="item-name">LDPE Rompetrol Midilena B20/03</td>
+              <td>0.2-0.4 g/10 min</td>
+              <td class="muted">TDS/certificate</td>
+              <td>Extrusion</td>
+              <td><a href="https://rompetrol-rafinare.kmginternational.com/en/products-and-services/petrochemical-products/low-density-polyethylene-ldpe-plant">Rompetrol LDPE grade table</a></td>
+            </tr>
+            <tr>
+              <td class="item-name">LDPE SABIC 2100N0W</td>
+              <td>0.33 dg/min at 190 C / 2.16 kg</td>
+              <td>921 kg/m3</td>
+              <td>Storage <= 50 C</td>
+              <td><a href="https://www.polydisteurope.com/assets/uploads/files/SABIC_LDPE_2100N0W.pdf">SABIC 2100N0W TDS copy</a></td>
+            </tr>
+            <tr>
+              <td class="item-name">LDPE ExxonMobil LD165BW1</td>
+              <td>0.33 g/10 min</td>
+              <td>0.922 g/cm3</td>
+              <td>Peak melting temp: 109 C; typical melt temp: 182-193 C</td>
+              <td><a href="https://exxonmobilchemical.ulprospector.com/en-US/ds243966/ExxonMobil%E2%84%A2%20LDPE%20LD%20165BW1.aspx?I=58933&U=0">ExxonMobil LD165BW1 data page</a></td>
+            </tr>
+            <tr>
+              <td class="item-name">LDPE Petkim Petilen G03-21T</td>
+              <td>0.3 g/10 min</td>
+              <td class="muted">TDS/certificate</td>
+              <td>Zones: 160-220 C; melt: 190-210 C; BUR: 2:1-3:1</td>
+              <td><a href="https://www.balkanpolymers.com/wp-content/uploads/2024/04/G03-21T.pdf">Petkim Petilen G03-21T TDS copy</a></td>
+            </tr>
+            <tr>
+              <td class="item-name">Antistatic Novachem AT 04673 LD</td>
+              <td class="muted">Not applicable.</td>
+              <td class="muted">Supplier TDS/certificate</td>
+              <td>Use-rate; carrier; compatibility; food-contact status</td>
+              <td class="muted">Supplier/manufacturer technical sheet</td>
+            </tr>
+            <tr>
+              <td class="item-name">Masterbatch Polibach White 8000 ET</td>
+              <td class="muted">Not applicable.</td>
+              <td class="muted">Supplier TDS/certificate</td>
+              <td>Pigment/loading; carrier; use-rate; food-contact status</td>
+              <td class="muted">Supplier/manufacturer technical sheet</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>PE raw materials</h3>
+      <ul class="cols">
+        <li>LDPE ExxonMobil LD165BW1</li>
+        <li>LDPE DOW 1200E</li>
+        <li>LDPE HIPTEN F22003</li>
+        <li>LDPE SABIC 2100N0W</li>
+        <li>LDPE SABIC HP0722NN</li>
+        <li>LDPE Midilena B20/03</li>
+        <li>LDPE Midilena B20/07</li>
+        <li>LDPE Midilena B21/05</li>
+        <li>LDPE Midilena B22/07</li>
+        <li>LDPE Petkim G03-5</li>
+        <li>LDPE Petkim Petilen G03-21T</li>
+        <li>LLDPE Borealis FB4230</li>
+        <li>LLDPE Ciplas 1118F</li>
+        <li>LLDPE Ciplas 1121F6</li>
+        <li>LLDPE Copap 118-B8</li>
+        <li>LLDPE LL1001AV</li>
+        <li>LLDPE Lotrene Q1018H</li>
+        <li>LLDPE SABIC 119ZJ</li>
+        <li>LLDPE Shell 18F1B</li>
+        <li>MDPE Advancene EE-3914-AAH</li>
+        <li>MDPE 3914</li>
+        <li>reLDPE Natural Regranulate</li>
+      </ul>
+      <h3>Additives and masterbatches</h3>
+      <ul class="cols">
+        <li>Antistatic Novachem AT 04673 LD</li>
+        <li>Filler Vietnam 80-41</li>
+        <li>Masterbatch Black</li>
+        <li>Masterbatch Polibach Black 7200</li>
+        <li>Masterbatch Polibach Blue AG L4535</li>
+        <li>Masterbatch Polibach LCC 90</li>
+        <li>Masterbatch Polibach Orange L1014</li>
+        <li>Masterbatch Polibach UV 1952 Natural</li>
+        <li>Masterbatch Polibach VLA 66</li>
+        <li>Masterbatch Polibach White 800 ET</li>
+        <li>Masterbatch Polibach White 8000 ET</li>
+      </ul>
+    </section>
+
+    <section class="band">
+      <h2>Inks and Solvents</h2>
+      <h3>Ink convention</h3>
+      <code>Color Identity | Anilox lines/cm</code>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Workbook value</th>
+              <th>Examples that can map into it</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="item-name">White | 110</td>
+              <td><code>W/110</code>, <code>БЯЛО</code>, <code>FKD400W0000F БЯЛО</code></td>
+            </tr>
+            <tr>
+              <td class="item-name">Yellow | 255</td>
+              <td><code>Y/255</code>, <code>ЖЪЛТО</code>, <code>MHD005Y2222 ЖЪЛТО</code></td>
+            </tr>
+            <tr>
+              <td class="item-name">Cyan | 255</td>
+              <td><code>C/255</code>, <code>ЦИАН</code>, <code>MXD026B2222 ЦИАН</code></td>
+            </tr>
+            <tr>
+              <td class="item-name">Black | 110</td>
+              <td><code>K/110</code>, <code>К/110</code>, <code>Black 110</code>, <code>MHD029S2222 ЧЕРНО</code></td>
+            </tr>
+            <tr>
+              <td class="item-name">Pantone 485 | 110</td>
+              <td><code>P 485/110</code>, <code>Р 485/110</code>, <code>ЧЕРВЕНО 485</code>, <code>MXK005R0000 ЧЕРВЕНО 485 C</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>Solvents</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Canonical name</th>
+              <th>Invoice examples</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="item-name">Solvent SOL115A0000</td>
+              <td><code>SOL115A0000 СОЛВЕНТ</code>, <code>Солвент (SOL115A0000)</code></td>
+            </tr>
+            <tr>
+              <td class="item-name">Methoxypropanol</td>
+              <td><code>МЕТОКСИПРОПАНОЛ</code></td>
+            </tr>
+            <tr>
+              <td class="item-name">Ethyl acetate</td>
+              <td><code>ЕТИЛАЦЕТАТ</code></td>
+            </tr>
+            <tr>
+              <td class="item-name">Generic Solvent</td>
+              <td><code>СОЛВЕНТ</code>, <code>Солвент</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="band">
+      <h2>Polypropylene Film</h2>
+      <h3>Naming convention</h3>
+      <code>[Film Type] [Product Series] [Thickness] [Width mm]</code>
+      <h3>BOPP</h3>
+      <ul class="cols">
+        <li>BOPP FXC 20 930mm</li>
+        <li>BOPP FXC 25 1000mm</li>
+        <li>BOPP FXC 30 800mm</li>
+        <li>BOPP FXC 30 900mm</li>
+        <li>BOPP FXC 30 930mm</li>
+        <li>BOPP FXC 30 960mm</li>
+        <li>BOPP FXC 30 1000mm</li>
+        <li>BOPP FXC 30 1080mm</li>
+        <li>BOPP FXC 35 800mm</li>
+        <li>BOPP FXC 35 960mm</li>
+        <li>BOPP FXC 40 370mm</li>
+      </ul>
+      <h3>CPP</h3>
+      <ul class="cols">
+        <li>CPP PLCB 25 640mm</li>
+        <li>CPP PLCB 25 900mm</li>
+        <li>CPP PLCB 25 960mm</li>
+        <li>CPP PLCB 25 1000mm</li>
+        <li>CPP PLCB 25 1020mm</li>
+        <li>CPP PLCB 25 1040mm</li>
+        <li>CPP PLCB 28 740mm</li>
+        <li>CPP PLCB 28 960mm</li>
+        <li>CPP PLCB 28 1000mm</li>
+        <li>CPP PLCB 28 1020mm</li>
+        <li>CPP PLCB 28 1040mm</li>
+        <li>CPP PLCB 28 1060mm</li>
+        <li>CPP PLCB 28 1100mm</li>
+        <li>CPP PLCB 35 1020mm</li>
+        <li>CPP PLCB 35 1040mm</li>
+        <li>CPP PLCBZ 25 900mm</li>
+        <li>CPP PLCBZ 25 960mm</li>
+        <li>CPP PLCBZ 25 1020mm</li>
+        <li>CPP PLCBZ 28 640mm</li>
+        <li>CPP PLCBZ 28 740mm</li>
+        <li>CPP PLCBZ 28 840mm</li>
+        <li>CPP PLCBZ 28 960mm</li>
+        <li>CPP PLCBZ 28 1000mm</li>
+        <li>CPP PLCBZ 28 1020mm</li>
+        <li>CPP PLCBZ 28 1040mm</li>
+        <li>CPP PLCBZ 28 1060mm</li>
+        <li>CPP PLCBZ 28 1100mm</li>
+        <li>CPP PLCBZ 35 800mm</li>
+        <li>CPP PLCBZ 35 1020mm</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
