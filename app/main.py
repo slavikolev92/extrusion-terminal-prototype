@@ -1683,6 +1683,8 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
     notice_result = terminal_notice_result(results.get("terminal_notice"))
     if notice_result is not None:
         feedback["toast"] = {"messages": notice_result.messages}
+        if results.get("terminal_notice") == "roll_saved":
+            feedback["scroll_rolls_to_bottom"] = True
 
     for result_name, target in (
         ("workflow_result", "topbar"),

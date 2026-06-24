@@ -192,6 +192,8 @@
 
     .machine-tab.selected {
       border-color: #0b355f;
+      outline: 4px solid #0b355f;
+      outline-offset: 3px;
       box-shadow: none;
     }
     .machine-tab.idle {
@@ -1008,11 +1010,12 @@
     .roll-row {
       display: grid;
       grid-template-columns: 48px minmax(0, 1fr) minmax(0, 1fr);
-      min-height: 52px;
-      align-items: center;
+      align-items: stretch;
     }
 
     .roll-head {
+      min-height: 52px;
+      align-items: center;
       background: #f1f4f7;
       color: var(--muted);
       font-size: 12px;
@@ -1021,14 +1024,17 @@
     }
 
     .roll-row {
+      min-height: 46px;
       border-top: 1px solid #dde3e9;
       font-weight: 800;
     }
 
-    .roll-head div,
-    .roll-row div {
+    .roll-head > div,
+    .roll-row > div {
       min-width: 0;
-      padding: 5px 7px;
+      padding: 4px 7px;
+      display: flex;
+      align-items: center;
     }
 
     .roll-row input {
@@ -1039,12 +1045,23 @@
 
     .roll-weight-cell {
       display: grid;
+      min-height: 100%;
+      align-content: center;
       gap: 3px;
+    }
+
+    .roll-weight-cell form {
+      display: grid;
+      align-items: center;
     }
 
     .roll-row-error-slot {
       min-height: 14px;
       font-size: 11px;
+    }
+
+    .roll-row-error-slot:empty {
+      display: none;
     }
 
     .roll-delete-panel {

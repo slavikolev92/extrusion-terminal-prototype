@@ -198,6 +198,22 @@ def test_terminal_v8_renders_four_machine_navigation_controls(connection):
     )
 
 
+def test_terminal_v8_selected_machine_navigation_has_strong_focus_ring(connection):
+    release_ready_card("26103", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    selected_style_match = re.search(
+        r"\.machine-tab\.selected\s*\{(?P<rules>.*?)\}",
+        html,
+        flags=re.S,
+    )
+    assert selected_style_match is not None
+    selected_style = selected_style_match.group("rules")
+    assert "outline: 4px solid #0b355f;" in selected_style
+    assert "outline-offset: 3px;" in selected_style
+
+
 def test_terminal_v8_selects_requested_machine_focus_card(connection):
     release_ready_card("26115", machine_id=1, sequence=1)
     focused_id = release_ready_card("26116", machine_id=2, sequence=1)
@@ -580,6 +596,26 @@ def test_terminal_v8_success_result_renders_one_dismissible_toast(connection):
     assert "Ролка 1 е записана." in html
     assert 'class="terminal-toast-close"' in html
     assert html.count('role="alert"') == 0
+    assert 'class="roll-list" data-scroll-bottom="true"' in html
+
+
+def test_terminal_v8_roll_rows_are_compact_and_vertically_centered(connection):
+    card_id = release_ready_card("26112", machine_id=1, sequence=1)
+
+    html = render_terminal(card_id)
+
+    assert ".roll-row {\n      min-height: 46px;" in html
+    assert ".roll-head > div,\n    .roll-row > div" in html
+    assert "align-content: center;" in html
+    assert ".roll-row-error-slot:empty {\n      display: none;" in html
+
+
+def test_terminal_v8_roll_saved_notice_scrolls_roll_list_to_bottom(connection):
+    card_id = release_ready_card("26192", machine_id=1, sequence=1)
+
+    html = render_terminal(card_id, terminal_notice="roll_saved")
+
+    assert "Ролката е записана." in html
     assert 'class="roll-list" data-scroll-bottom="true"' in html
 
 
