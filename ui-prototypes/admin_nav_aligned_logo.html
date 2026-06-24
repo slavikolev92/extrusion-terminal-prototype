@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="bg">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin top navigation prototype</title>
+  <style>
+    :root {
+      --page-bg: #f5f6f8;
+      --header-bg: #ffffff;
+      --text: #111827;
+      --line: #e5e7eb;
+      --accent: #0b355f;
+      --accent-dark: #062644;
+      --shell-width: 1240px;
+      --header-height: 64px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--page-bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    }
+
+    .admin-header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      height: var(--header-height);
+      border-bottom: 1px solid var(--line);
+      background: var(--header-bg);
+    }
+
+    .admin-shell {
+      position: relative;
+      width: min(var(--shell-width), 100%);
+      height: 100%;
+      margin: 0 auto;
+      padding: 0 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .logo-link {
+      display: inline-flex;
+      align-items: center;
+      flex: 0 0 156px;
+      height: 100%;
+      outline: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .logo-link:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 4px;
+      border-radius: 4px;
+    }
+
+    .logo {
+      display: block;
+      width: 142px;
+      max-height: 40px;
+      height: auto;
+    }
+
+    .main-nav {
+      position: absolute;
+      left: 50%;
+      top: 0;
+      height: 100%;
+      transform: translateX(-50%);
+      display: grid;
+      grid-template-columns: repeat(3, 176px);
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      white-space: nowrap;
+    }
+
+    .nav-link {
+      position: relative;
+      height: 100%;
+      padding: 0 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      text-decoration: none;
+      outline: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .nav-link::after {
+      content: "";
+      position: absolute;
+      left: 28px;
+      right: 28px;
+      bottom: 0;
+      height: 3px;
+      background: transparent;
+    }
+
+    .nav-link:hover,
+    .nav-link:focus-visible {
+      color: var(--accent-dark);
+    }
+
+    .nav-link.is-active::after,
+    .nav-link:hover::after,
+    .nav-link:focus-visible::after {
+      background: var(--accent);
+    }
+
+    .terminal-link {
+      margin-left: auto;
+      min-width: 142px;
+      height: 40px;
+      padding: 0 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      background: var(--accent);
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 750;
+      letter-spacing: -0.01em;
+      text-decoration: none;
+      outline: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .terminal-link:hover {
+      border-color: var(--accent-dark);
+      background: var(--accent-dark);
+    }
+
+    .terminal-link:focus-visible {
+      outline: 2px solid var(--accent-dark);
+      outline-offset: 3px;
+    }
+
+    @media (max-width: 900px) {
+      :root {
+        --header-height: 72px;
+      }
+
+      .admin-shell {
+        padding: 0 18px;
+        gap: 16px;
+      }
+
+      .main-nav {
+        grid-template-columns: repeat(3, 148px);
+      }
+
+      .nav-link,
+      .terminal-link {
+        font-size: 13px;
+      }
+
+      .terminal-link {
+        min-width: 124px;
+        height: 38px;
+        padding: 0 14px;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .admin-header {
+        height: auto;
+      }
+
+      .admin-shell {
+        height: auto;
+        min-height: 72px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        flex-wrap: wrap;
+      }
+
+      .logo-link {
+        height: auto;
+        flex: 0 1 auto;
+      }
+
+      .main-nav {
+        position: static;
+        order: 3;
+        width: 100%;
+        height: 42px;
+        transform: none;
+        justify-content: center;
+        border-top: 1px solid var(--line);
+      }
+
+      .nav-link {
+        height: 42px;
+      }
+
+      .terminal-link {
+        margin-left: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="admin-header">
+    <div class="admin-shell">
+      <a class="logo-link" href="/admin/cards" aria-label="Admin home">
+        <img class="logo" src="logo2.png" alt="Kolev">
+      </a>
+
+      <nav class="main-nav" aria-label="Admin navigation">
+        <a class="nav-link" href="/admin/import">Импорт</a>
+        <a class="nav-link is-active" href="/admin/planning" aria-current="page">Планиране</a>
+        <a class="nav-link" href="/admin/cards">Технологични карти</a>
+      </nav>
+
+      <a class="terminal-link" href="/terminal">Terminal</a>
+    </div>
+  </header>
+</body>
+</html>

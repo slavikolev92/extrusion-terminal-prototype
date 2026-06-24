@@ -724,14 +724,7 @@
 
     .info-grid {
       display: grid;
-      grid-template-columns:
-        minmax(180px, 1.2fr)
-        minmax(220px, 1.35fr)
-        minmax(150px, .82fr)
-        minmax(150px, .82fr)
-        minmax(120px, .62fr)
-        minmax(86px, .46fr)
-        minmax(140px, .7fr);
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
       column-gap: 28px;
       row-gap: 16px;
     }

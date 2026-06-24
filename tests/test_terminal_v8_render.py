@@ -214,6 +214,14 @@ def test_terminal_v8_selected_machine_navigation_has_strong_focus_ring(connectio
     assert "outline-offset: 3px;" in selected_style
 
 
+def test_terminal_v8_details_grid_wraps_by_available_panel_width(connection):
+    release_ready_card("26104", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    assert "grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));" in html
+
+
 def test_terminal_v8_selects_requested_machine_focus_card(connection):
     release_ready_card("26115", machine_id=1, sequence=1)
     focused_id = release_ready_card("26116", machine_id=2, sequence=1)
