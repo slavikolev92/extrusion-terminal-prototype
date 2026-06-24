@@ -1,6 +1,6 @@
 # Structured Recipe Contract
 
-Status: draft contract for the structured extrusion recipe redesign.
+Status: locked contract for the structured extrusion recipe redesign.
 
 Created: 2026-06-24.
 
@@ -63,10 +63,43 @@ LDPE Rompetrol Midilena B20/03 | 77%
 LDPE  Rompetrol Midilena B20/03  |  77 %
 ```
 
+## Approved Categories
+
+The material category is a controlled app contract list. The initial approved
+categories are:
+
+- `LDPE`
+- `LLDPE`
+- `MDPE`
+- `reLDPE`
+- `Antistatic`
+- `Masterbatch`
+- `Filler`
+- `UV`
+- `Antislip`
+
+`Processing Aid` is not approved for the initial list.
+
+The list can be amended after operational review, including the planned monthly
+reconciliation on 2026-07-01. Any category change that affects existing imported
+or normalized recipe data requires an explicit data-normalization decision before
+the contract is changed.
+
+Category matching should be case-insensitive and should normalize accepted input
+to the canonical category spelling listed above. For example, `uv`, `UV`, and
+`Uv` all normalize to `UV`; `reldpe` normalizes to `reLDPE`.
+
 ## Percentage Rule
 
 All non-empty recipe rows in `AM:AS` are part of one recipe percentage pool.
-Together they must sum to `100%`.
+Together they must sum to exactly `100%`.
+
+The canonical percentage format uses a dot decimal, such as `2.5%`. Comma
+decimal input, such as `2,5%`, should be accepted and normalized to `2.5%` to
+avoid keyboard-layout errors. Spaces around the number and `%` are allowed.
+Comma normalization is only for the decimal separator, not thousands separators.
+The `%` symbol is required. Percentages must be greater than `0`; use an empty
+source cell instead of a `0%` recipe row.
 
 There is no separate "base blend plus additive over base" interpretation for
 this app redesign. Additives, masterbatches, and fillers are included in the
@@ -101,6 +134,23 @@ Planned kilograms are calculated from `recipe_percent * target_gross_weight`.
 They do not need to be authoritative stored source data unless a later
 implementation step deliberately chooses to persist them as a derived snapshot.
 
+Target gross weight is required before release. Release should be blocked when
+target gross weight is missing, zero, or invalid. The later Excel export macro
+validation should also treat missing, zero, or invalid target gross weight as a
+blocking export error.
+
+The structured admin/terminal recipe display should use these Bulgarian column
+labels:
+
+| Meaning | Bulgarian label |
+| --- | --- |
+| Material category | Категория |
+| Planned material | Планирани материали |
+| Recipe percent | % |
+| Planned kilograms | КГ |
+| Actual material used | Вложени материали |
+| Batch/lot | Партида |
+
 ## Validation Intent
 
 The app should allow imported draft cards to exist so an admin can correct bad
@@ -112,7 +162,26 @@ Release to the terminal should be blocked when:
 - any non-empty row has an unapproved material category;
 - any non-empty row has missing or invalid material identity text;
 - any non-empty row has missing or invalid percentage text;
-- parsed recipe percentages do not sum to `100%` within the accepted tolerance.
+- any non-empty row has a zero or negative percentage;
+- parsed recipe percentages do not sum to exactly `100%`;
+- target gross weight is missing, zero, or invalid.
+
+Validation messages shown to admins/operators should be concise Bulgarian
+messages. The general form should be:
+
+```text
+Рецептата не може да бъде пусната: [reason]. Коригирайте рецептата и опитайте отново.
+```
+
+Row-specific reasons should identify the source field or row and use wording in
+this style:
+
+- `липсва разделител |`
+- `непозната категория`
+- `липсва процент`
+- `процентът трябва да е по-голям от 0%`
+- `сборът на процентите трябва да е точно 100%`
+- `липсват планирани кг/поръчано количество`
 
 The Excel export macro should eventually validate the same contract before
 writing CSV files. The macro must remain read-only with respect to workbook
@@ -135,14 +204,20 @@ This redesign does not add:
 - writing terminal-entered production data back to Excel;
 - changes to print layout.
 
-## Open Contract Decisions
+## Locked Contract Decisions
 
-These must be confirmed before implementation planning starts:
+The Step 1 contract decisions were approved on 2026-06-24:
 
-1. Approved material/additive category list.
-2. Decimal format rules for percentages, including whether comma decimals are
-   accepted.
-3. Percentage total tolerance, for example exactly `100%` or `100 +/- 0.01`.
-4. Release behavior when target gross weight is missing but recipe percentages
-   are valid.
-5. Final Bulgarian labels for the new admin/terminal recipe columns.
+1. The approved category list is controlled and amendable, with the initial
+   categories listed above.
+2. Dot decimal percentages are canonical; comma decimals are accepted and
+   normalized. The `%` symbol is required, and row percentages must be greater
+   than `0`.
+3. Category matching is case-insensitive and normalizes accepted input to the
+   canonical approved spelling.
+4. Parsed recipe percentages must sum to exactly `100%`.
+5. Missing, zero, or invalid target gross weight blocks release.
+6. The new admin/terminal recipe column labels are the Bulgarian labels listed
+   above.
+7. Release/admin validation messages use concise Bulgarian wording with
+   row-specific reasons.
