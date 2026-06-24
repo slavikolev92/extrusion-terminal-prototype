@@ -420,7 +420,30 @@ Review checkpoint:
 - any remaining printer behavior is workstation/printer-environment setup, not app print-output work.
 - commit only when explicitly requested.
 
-## Milestone 11 - Pilot Rehearsal
+## Milestone 11 - Admin Global Navigation Rework
+
+Status: in progress
+
+Scope:
+
+- replace repeated admin page headers with one sticky global admin navigation bar.
+- keep equal-width navigation tabs for Import, Planning, and Technology Cards.
+- move terminal app switching into the global navigation bar as `Към терминала`.
+- remove the `Началник смяна` eyebrow and oversized repeated page title treatment.
+- separate card-specific actions from global navigation on operational card detail pages.
+- remove duplicate navigation buttons on card detail pages.
+- remove sticky behavior from the produced-summary panel so global navigation remains the sticky orientation element.
+- preserve operational card internal section structure and styling.
+
+Review checkpoint:
+
+- admin import, planning, card list, and card detail pages render the same global navigation.
+- card detail actions vary by status but remain separate from global navigation.
+- operational card body sections are visually unchanged except for the removed sticky summary behavior.
+- focused tests pass.
+- Playwright screenshot verification covers import, planning, cards list, and card detail pages.
+
+## Milestone 12 - Pilot Rehearsal
 
 Status: pending
 
