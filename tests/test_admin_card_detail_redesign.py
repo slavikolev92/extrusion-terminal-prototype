@@ -63,6 +63,26 @@ def card_version(card_id: int) -> int:
     return int(db.fetch_admin_card_detail(card_id)["version"])
 
 
+def current_import_fields(card_id: int) -> dict[str, str]:
+    card = db.fetch_admin_card_detail(card_id)
+    assert card is not None
+    return {field: str(card[field] or "") for field in IMPORT_FIELDS}
+
+
+def recipe_component_snapshot(card_id: int) -> list[tuple[str, str, str, str, str]]:
+    with db.connect() as connection:
+        return [
+            (
+                str(row["component_key"]),
+                str(row["source_text"]),
+                str(row["material_category"]),
+                str(row["planned_material"]),
+                str(row["recipe_percent"]),
+            )
+            for row in db.fetch_recipe_components(connection, card_id)
+        ]
+
+
 def import_ready_card(order_number: str, **overrides: str) -> int:
     result = import_cards_from_csv(
         f"{order_number}.csv",
@@ -626,6 +646,51 @@ def test_admin_global_save_rolls_back_all_sections_when_timing_is_invalid(connec
     assert after["roll_entries"][0]["gross_weight"] == before["roll_entries"][0]["gross_weight"]
     assert after["roll_entries"][0]["net_weight"] == before["roll_entries"][0]["net_weight"]
     assert after_segments == before_segments
+
+
+def test_admin_global_save_rolls_back_recipe_components_when_timing_is_invalid(connection):
+    card_id = prepare_dense_completed_card("27109", roll_count=1)
+    seed_fields = current_import_fields(card_id)
+    seed_fields["raw_material_a"] = "LDPE Before Rollback | 80%"
+    seed_fields["linear_pe"] = "LLDPE Before Rollback | 20%"
+    assert db.update_admin_imported_fields(card_id, card_version(card_id), seed_fields).ok
+
+    before = db.fetch_admin_card_detail(card_id)
+    roll_id = int(before["roll_entries"][0]["id"])
+    segment_id = int(before["timing_segments"][0]["id"])
+    before_components = recipe_component_snapshot(card_id)
+
+    response = asyncio.run(
+        save_admin_card_changes(
+            FormRequest(
+                MultiItemForm(
+                    [
+                        ("loaded_version", str(before["version"])),
+                        ("raw_material_a", "LDPE After Rollback | 70%"),
+                        ("linear_pe", "LLDPE After Rollback | 30%"),
+                        ("planned_material__raw_material_a", "Should Not Persist"),
+                        ("tare_weight", "2.00"),
+                        (f"gross_weight__{roll_id}", "60.00"),
+                        ("delete_segment_id", str(segment_id)),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+    body = response.body.decode("utf-8")
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert before_components == [
+        ("raw_material_a", "LDPE Before Rollback | 80%", "LDPE", "Before Rollback", "80"),
+        ("linear_pe", "LLDPE Before Rollback | 20%", "LLDPE", "Before Rollback", "20"),
+    ]
+    assert response.status_code == 200
+    assert "Завършена карта трябва да има поне един времеви сегмент." in body
+    assert after["version"] == before["version"]
+    assert after["raw_material_a"] == before["raw_material_a"]
+    assert after["linear_pe"] == before["linear_pe"]
+    assert recipe_component_snapshot(card_id) == before_components
 
 
 def test_admin_material_ledger_updates_planned_and_actual_fields(connection):

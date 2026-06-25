@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .constants import STATUS_IMPORTED
-from .db import connect, insert_import_batch_row
+from .db import connect, insert_import_batch_row, sync_recipe_components_for_card
 
 
 IMPORT_FIELDS = (
@@ -411,7 +411,9 @@ def insert_imported_card(connection, batch_id: int, card: dict[str, str]) -> Non
         """,
         values,
     )
-    upsert_card_import_source(connection, int(cursor.lastrowid), batch_id, card)
+    card_id = int(cursor.lastrowid)
+    upsert_card_import_source(connection, card_id, batch_id, card)
+    sync_recipe_components_for_card(connection, card_id, card)
 
 
 def update_imported_card_fields(connection, card_id: int, batch_id: int, card: dict[str, str]) -> None:
@@ -436,6 +438,7 @@ def update_imported_card_fields(connection, card_id: int, batch_id: int, card: d
         values,
     )
     upsert_card_import_source(connection, card_id, batch_id, card)
+    sync_recipe_components_for_card(connection, card_id, card)
 
 
 def find_existing_import_card(

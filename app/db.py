@@ -21,6 +21,13 @@ from .constants import (
     STATUS_RUNNING,
     TERMINAL_VISIBLE_STATUSES,
 )
+from .recipe_parser import (
+    APPROVED_RECIPE_CATEGORIES,
+    RECIPE_SOURCE_FIELDS,
+    ParsedRecipeComponent,
+    RecipeParseResult,
+    parse_recipe_source_fields,
+)
 from .rules import RuleResult
 
 STALE_CARD_MESSAGE = "Картата е променена след зареждането на страницата. Презаредете и опитайте отново."
@@ -36,6 +43,14 @@ TERMINAL_ACTION_STATUS_PLACEHOLDERS = ", ".join("?" for _ in TERMINAL_ACTION_STA
 
 def _sql_list(values: tuple[str, ...]) -> str:
     return ", ".join(f"'{value}'" for value in values)
+
+
+RECIPE_COMPONENT_KEY_PLACEHOLDERS = _sql_list(RECIPE_SOURCE_FIELDS)
+RECIPE_CATEGORY_PLACEHOLDERS = _sql_list(APPROVED_RECIPE_CATEGORIES)
+RECIPE_COMPONENT_ORDER_SQL = " ".join(
+    f"WHEN '{component_key}' THEN {index}"
+    for index, component_key in enumerate(RECIPE_SOURCE_FIELDS, start=1)
+)
 
 
 CARD_IMPORT_SOURCE_FIELDS = (
@@ -195,6 +210,19 @@ CREATE TABLE IF NOT EXISTS recipe_actual_entries (
     UNIQUE (card_id, component_key)
 );
 
+CREATE TABLE IF NOT EXISTS recipe_components (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    component_key TEXT NOT NULL CHECK (component_key IN ({RECIPE_COMPONENT_KEY_PLACEHOLDERS})),
+    source_text TEXT NOT NULL,
+    material_category TEXT NOT NULL CHECK (material_category IN ({RECIPE_CATEGORY_PLACEHOLDERS})),
+    planned_material TEXT NOT NULL,
+    recipe_percent NUMERIC NOT NULL CHECK (recipe_percent > 0),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (card_id, component_key)
+);
+
 CREATE TABLE IF NOT EXISTS production_time_segments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
@@ -230,6 +258,9 @@ ON roll_entries(card_id, roll_number);
 
 CREATE INDEX IF NOT EXISTS idx_recipe_actual_entries_card
 ON recipe_actual_entries(card_id);
+
+CREATE INDEX IF NOT EXISTS idx_recipe_components_card
+ON recipe_components(card_id);
 
 CREATE INDEX IF NOT EXISTS idx_time_segments_card_started
 ON production_time_segments(card_id, started_at);
@@ -270,9 +301,23 @@ def connect() -> sqlite3.Connection:
 
 def init_db() -> None:
     with connect() as connection:
+        existing_cards_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cards'"
+        ).fetchone()
+        cards_status_migrated_before_schema = False
+        if existing_cards_table:
+            cards_status_migrated_before_schema = ensure_cards_status_constraint(
+                connection,
+                validate_foreign_keys=False,
+            )
         connection.executescript(SCHEMA_SQL)
         seed_fixed_machines(connection)
         ensure_cards_status_constraint(connection)
+        if cards_status_migrated_before_schema:
+            ensure_foreign_keys_valid(
+                connection,
+                "cards status migration failed foreign key check",
+            )
         connection.executescript(SCHEMA_SQL)
         # Existing pilot databases may still have legacy cards.validation_status;
         # current code ignores it and validates current card fields directly.
@@ -334,13 +379,17 @@ def _legacy_column_type_sql(declared_type: Any) -> str:
     return column_type
 
 
-def ensure_cards_status_constraint(connection: sqlite3.Connection) -> None:
+def ensure_cards_status_constraint(
+    connection: sqlite3.Connection,
+    *,
+    validate_foreign_keys: bool = True,
+) -> bool:
     schema_row = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cards'"
     ).fetchone()
     schema_sql = str(schema_row["sql"] or "") if schema_row else ""
     if f"'{STATUS_ARCHIVED}'" in schema_sql:
-        return
+        return False
 
     connection.commit()
     connection.execute("PRAGMA foreign_keys = OFF")
@@ -388,9 +437,21 @@ def ensure_cards_status_constraint(connection: sqlite3.Connection) -> None:
     finally:
         connection.execute("PRAGMA foreign_keys = ON")
 
+    if validate_foreign_keys:
+        ensure_foreign_keys_valid(
+            connection,
+            "cards status migration failed foreign key check",
+        )
+    return True
+
+
+def ensure_foreign_keys_valid(
+    connection: sqlite3.Connection,
+    message: str,
+) -> None:
     violations = connection.execute("PRAGMA foreign_key_check").fetchall()
     if violations:
-        raise sqlite3.IntegrityError("cards status migration failed foreign key check")
+        raise sqlite3.IntegrityError(message)
 
 
 def backfill_card_import_sources(connection: sqlite3.Connection) -> None:
@@ -699,6 +760,97 @@ def fetch_recipe_actual_entries(
         (card_id,),
     ).fetchall()
     return {str(row["component_key"]): dict(row) for row in rows}
+
+
+def replace_recipe_components_for_card(
+    connection: sqlite3.Connection,
+    card_id: int,
+    components: tuple[ParsedRecipeComponent, ...] | list[ParsedRecipeComponent],
+) -> None:
+    component_order = {
+        component_key: index for index, component_key in enumerate(RECIPE_SOURCE_FIELDS)
+    }
+    ordered_components = sorted(
+        components,
+        key=lambda component: component_order.get(component.component_key, 999),
+    )
+
+    connection.execute(
+        """
+        DELETE FROM recipe_components
+        WHERE card_id = ?
+        """,
+        (card_id,),
+    )
+    connection.executemany(
+        """
+        INSERT INTO recipe_components (
+            card_id,
+            component_key,
+            source_text,
+            material_category,
+            planned_material,
+            recipe_percent
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            (
+                card_id,
+                component.component_key,
+                component.source_text,
+                component.material_category,
+                component.planned_material,
+                decimal_to_storage(component.recipe_percent),
+            )
+            for component in ordered_components
+        ),
+    )
+
+
+def parse_and_replace_recipe_components_for_card(
+    connection: sqlite3.Connection,
+    card_id: int,
+    source_fields: dict[str, str | None],
+) -> RecipeParseResult:
+    result = parse_recipe_source_fields(source_fields)
+    if result.ok:
+        replace_recipe_components_for_card(connection, card_id, result.components)
+    return result
+
+
+def recipe_source_fields_from_mapping(source: dict[str, Any]) -> dict[str, str | None]:
+    return {field: source.get(field) for field in RECIPE_SOURCE_FIELDS}
+
+
+def sync_recipe_components_for_card(
+    connection: sqlite3.Connection,
+    card_id: int,
+    source_fields: dict[str, Any],
+) -> RecipeParseResult:
+    result = parse_recipe_source_fields(recipe_source_fields_from_mapping(source_fields))
+    replace_recipe_components_for_card(connection, card_id, result.components)
+    return result
+
+
+def fetch_recipe_components(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        f"""
+        SELECT id, card_id, component_key, source_text, material_category,
+               planned_material, recipe_percent, created_at, updated_at
+        FROM recipe_components
+        WHERE card_id = ?
+        ORDER BY CASE component_key {RECIPE_COMPONENT_ORDER_SQL} ELSE 999 END, id
+        """,
+        (card_id,),
+    ).fetchall()
+    components = rows_to_dicts(rows)
+    for component in components:
+        component["recipe_percent"] = decimal_from_database(component["recipe_percent"])
+    return components
 
 
 def fetch_roll_entries_and_totals(
@@ -2664,6 +2816,7 @@ def _update_admin_imported_fields(
                 """,
                 (cleaned_fields["order_number"], card_id),
             )
+        sync_recipe_components_for_card(connection, card_id, cleaned_fields)
     except sqlite3.IntegrityError:
         connection.rollback()
         return RuleResult(False, ("Номерът на поръчката вече съществува в друга карта.",))
@@ -2967,6 +3120,8 @@ def _update_admin_material_ledger(
             card_id,
         ),
     )
+
+    sync_recipe_components_for_card(connection, card_id, cleaned_planned)
 
     for component_key, component_label in RECIPE_COMPONENT_FIELDS:
         entry = actual_entries.get(component_key, {})
