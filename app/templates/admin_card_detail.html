@@ -264,22 +264,27 @@
       </div>
       <div class="admin-ledger-table material-ledger">
         <div class="admin-ledger-head">
-          <div>Позиция</div>
-          <div>По карта</div>
-          <div>Реално използвано</div>
+          <div>Категория</div>
+          <div>Планирани материали</div>
+          <div>%</div>
+          <div>КГ</div>
+          <div>Вложени материали</div>
           <div>Партида</div>
         </div>
         {% for row in recipe_rows %}
           <div class="admin-ledger-row material-ledger-row">
-            <div class="component">{{ row.label }}</div>
+            <div class="component">{{ row.material_category or row.source_label }}</div>
             <div>
-              <input name="planned_material__{{ row.field }}" value="{{ row.planned }}">
+              <div class="structured-planned">{{ row.planned_material or "-" }}</div>
+              <input name="planned_material__{{ row.field }}" value="{{ row.source_text }}" aria-label="{{ row.source_label }} източник по карта">
+            </div>
+            <div class="readonly-cell recipe-number">{{ row.recipe_percent or "" }}</div>
+            <div class="readonly-cell recipe-number">{{ row.planned_kg or "" }}</div>
+            <div>
+              <input name="actual_material__{{ row.field }}" value="{{ row.actual_material or '' }}" aria-label="{{ row.source_label }} вложен материал">
             </div>
             <div>
-              <input name="actual_material__{{ row.field }}" value="{{ row.actual_material or '' }}">
-            </div>
-            <div>
-              <input name="batch_lot__{{ row.field }}" value="{{ row.batch or '' }}">
+              <input name="batch_lot__{{ row.field }}" value="{{ row.batch or '' }}" aria-label="{{ row.source_label }} партида">
             </div>
           </div>
         {% endfor %}

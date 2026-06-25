@@ -288,10 +288,17 @@ def test_terminal_v8_recipe_table_is_part_of_details_without_extra_recipe_headin
     assert '<span>Детайли</span>' in html
     assert '<span>Ролки</span>' in html
     assert 'class="recipe-table"' in html
-    assert "Вид суровина" in html
-    assert "Заложена суровина" in html
-    assert "Използван материал" in html
+    assert "Категория" in html
+    assert "Планирани материали" in html
+    assert ">%<" in html
+    assert ">КГ<" in html
+    assert "Вложени материали" in html
     assert "Партида" in html
+    recipe_html = form_block(html, f"/terminal/cards/{card_id}/materials")
+    assert "LDPE" in recipe_html
+    assert "A" in recipe_html
+    assert "50%" in recipe_html
+    assert "250.00" in recipe_html
     assert 'data-recipe-autosave="true"' in html
     assert f'action="/terminal/cards/{card_id}/materials"' in html
     assert 'name="actual_material__raw_material_a"' in html
@@ -310,17 +317,18 @@ def test_terminal_v8_renders_recipe_queue_and_completed_lookup(connection):
 
     html = render_terminal(selected_id)
 
-    assert "LDPE A" in html
-    assert "LLDPE B" in html
-    assert "HDPE C" in html
-    assert "Линеен PE" in html
-    assert "Вид суровина A" in html
-    assert "Вид суровина B" in html
-    assert "Вид суровина C" in html
-    assert "Линеен /mLLDPE/" in html
-    assert "Антистатик 1%" in html
-    assert "Бял мастербач" in html
-    assert "Креда 5%" in html
+    recipe_html = form_block(html, f"/terminal/cards/{selected_id}/materials")
+    assert "A" in recipe_html
+    assert "B" in recipe_html
+    assert "HDPE C" in recipe_html
+    assert "Линеен PE" in recipe_html
+    assert "Антистатик 1%" in recipe_html
+    assert "Бял мастербач" in recipe_html
+    assert "Креда 5%" in recipe_html
+    assert "50%" in recipe_html
+    assert "30%" in recipe_html
+    assert "250.00" in recipe_html
+    assert "150.00" in recipe_html
     assert "Марка" not in html
     assert "v8-recipe-actions" not in html
     assert "Queued Customer" in html

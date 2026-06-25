@@ -982,6 +982,20 @@ select {
   overflow-wrap: anywhere;
 }
 
+.structured-planned {
+  margin-bottom: 5px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.recipe-number {
+  justify-content: flex-end;
+  text-align: right;
+}
+
 .secondary-note {
   margin: 10px 0 0;
   line-height: 1.35;
@@ -1092,7 +1106,7 @@ select {
 
 .material-ledger .admin-ledger-head,
 .material-ledger .admin-ledger-row {
-  grid-template-columns: 90px minmax(180px, 1fr) minmax(180px, 1fr) minmax(140px, 0.8fr);
+  grid-template-columns: 110px minmax(220px, 1.2fr) 70px 90px minmax(180px, 1fr) minmax(140px, 0.8fr);
 }
 
 .roll-ledger .admin-ledger-head,
@@ -1727,7 +1741,7 @@ thead th {
 
   .material-ledger .admin-ledger-head,
   .material-ledger .admin-ledger-row {
-    min-width: 640px;
+    min-width: 900px;
   }
 
   .roll-ledger .admin-ledger-head,

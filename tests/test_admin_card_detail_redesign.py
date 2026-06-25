@@ -216,9 +216,18 @@ def test_admin_detail_combines_recipe_and_machine_materials(connection):
     html = render_admin_detail(card_id)
 
     assert "Материали" in html
+    assert "Категория" in html
+    assert "Планирани материали" in html
+    assert ">%<" in html
+    assert ">КГ<" in html
+    assert "Вложени материали" in html
     assert "Рецепта" not in html
     assert "Материал на машината" not in html
     assert html.count('name="planned_material__raw_material_a"') == 1
+    assert 'value="LDPE Planned A | 50%"' in html
+    assert "Planned A" in html
+    assert "50%" in html
+    assert "1625.25" in html
     assert html.count('name="actual_material__raw_material_a"') == 1
     assert html.count('name="batch_lot__raw_material_a"') == 1
     assert 'name="raw_material_brand_grade"' not in html
@@ -435,6 +444,11 @@ def test_admin_materials_ledger_omits_brand_class_field(connection):
     html = render_admin_detail(card_id)
 
     assert 'id="materials"' in html
+    assert "Категория" in html
+    assert "Планирани материали" in html
+    assert ">%<" in html
+    assert ">КГ<" in html
+    assert "Вложени материали" in html
     assert "Марка / клас" not in html
     assert 'name="raw_material_brand_grade"' not in html
     assert html.count('name="planned_material__raw_material_a"') == 1

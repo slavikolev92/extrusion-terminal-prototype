@@ -62,7 +62,8 @@ from .db import (
 )
 from .importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
 from .printing import build_print_readiness
-from .rules import RuleResult
+from .recipe_parser import RECIPE_SOURCE_FIELDS
+from .rules import RuleResult, target_gross_weight_from_card
 
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
@@ -137,14 +138,6 @@ RECIPE_FIELD_ROWS = (
     ("Мастербач", "masterbatch"),
     ("Креда", "chalk"),
 )
-
-TERMINAL_RECIPE_LABELS = {
-    "raw_material_a": "Вид суровина A",
-    "raw_material_b": "Вид суровина B",
-    "raw_material_c": "Вид суровина C",
-    "linear_pe": "Линеен /mLLDPE/",
-}
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -331,48 +324,123 @@ def build_quantity_lines(card: dict[str, Any]) -> list[dict[str, str]]:
     return lines
 
 
-def build_recipe_rows(card: dict[str, Any]) -> list[dict[str, str | bool]]:
+def decimal_text(value: Decimal) -> str:
+    text = format(value.normalize(), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
+
+
+def recipe_percent_display(value: Any) -> str:
+    percent = decimal_from_display(value)
+    return f"{decimal_text(percent)}%" if percent is not None else ""
+
+
+def recipe_components_by_key(card: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    components = card.get("recipe_components") or []
+    if not isinstance(components, list):
+        return {}
+    return {str(component["component_key"]): component for component in components}
+
+
+def planned_kg_display(card: dict[str, Any], recipe_percent: Any) -> str:
+    target = target_gross_weight_from_card(card)
+    percent = decimal_from_display(recipe_percent)
+    if target is None or percent is None:
+        return ""
+    return decimal_weight_display(target * percent / Decimal("100"))
+
+
+def build_recipe_rows(
+    card: dict[str, Any],
+    *,
+    include_all_source_fields: bool = True,
+) -> list[dict[str, Any]]:
     actual_entries = card.get("recipe_actual_entries") or {}
     if not isinstance(actual_entries, dict):
         actual_entries = {}
-    rows: list[dict[str, str | bool]] = []
-    for label, field in RECIPE_FIELD_ROWS:
-        is_actual_row = field == "raw_material_a"
+    components = recipe_components_by_key(card)
+    source_labels = {field: label for label, field in RECIPE_FIELD_ROWS}
+
+    fields: list[str] = []
+    for field in RECIPE_SOURCE_FIELDS:
+        source_text = str(card.get(field) or "")
+        has_component = field in components
+        entry = actual_entries.get(field, {}) if isinstance(actual_entries, dict) else {}
+        has_actual_entry = bool(
+            isinstance(entry, dict)
+            and (entry.get("actual_material_used") or entry.get("batch_lot"))
+        )
+        if include_all_source_fields or has_component or source_text.strip() or has_actual_entry:
+            fields.append(field)
+
+    rows: list[dict[str, Any]] = []
+    for field in fields:
+        source_text = str(card.get(field) or "")
+        component = components.get(field)
         entry = actual_entries.get(field, {}) if isinstance(actual_entries, dict) else {}
         actual_material = str(entry.get("actual_material_used") or "")
         batch = str(entry.get("batch_lot") or "")
-        if is_actual_row and field not in actual_entries:
+        if field == "raw_material_a" and field not in actual_entries:
             actual_material = str(card.get("actual_raw_material_used") or "")
             batch = str(card.get("raw_material_batch_lot") or "")
+
+        if component:
+            planned_material = str(component.get("planned_material") or "")
+            material_category = str(component.get("material_category") or "")
+            recipe_percent = recipe_percent_display(component.get("recipe_percent"))
+            planned_kg = planned_kg_display(card, component.get("recipe_percent"))
+            is_structured = True
+        else:
+            planned_material = source_text
+            material_category = ""
+            recipe_percent = ""
+            planned_kg = ""
+            is_structured = False
+
+        source_label = source_labels.get(field, field)
         rows.append(
             {
-                "label": label,
                 "field": field,
-                "planned": str(card.get(field) or ""),
+                "source_label": source_label,
+                "label": source_label,
+                "material_category": material_category,
+                "planned_material": planned_material,
+                "recipe_percent": recipe_percent,
+                "planned_kg": planned_kg,
+                "source_text": source_text,
+                "planned": source_text,
                 "actual_material": actual_material,
-                "brand": str(card.get("raw_material_brand_grade") or "") if is_actual_row else "",
                 "batch": batch,
                 "has_actual": bool(actual_material or batch),
+                "is_structured": is_structured,
             }
         )
     return rows
 
 
-def build_terminal_recipe_rows(card: dict[str, Any]) -> list[dict[str, str | bool]]:
-    rows = build_recipe_rows(card)
-    for row in rows:
-        field = str(row["field"])
-        row["label"] = TERMINAL_RECIPE_LABELS.get(field, str(row["label"]))
-    return rows
+def build_terminal_recipe_rows(card: dict[str, Any]) -> list[dict[str, Any]]:
+    return build_recipe_rows(card, include_all_source_fields=False)
 
 
 def recipe_actual_entries_from_form(form: Any) -> dict[str, dict[str, str]]:
     entries: dict[str, dict[str, str]] = {}
-    for _, field in RECIPE_FIELD_ROWS:
-        entries[field] = {
-            "actual_material_used": str(form.get(f"actual_material__{field}") or ""),
-            "batch_lot": str(form.get(f"batch_lot__{field}") or ""),
-        }
+    for key, value in form.multi_items():
+        text_value = str(value or "")
+        if key.startswith("actual_material__"):
+            field = key.removeprefix("actual_material__")
+            entry = entries.setdefault(
+                field,
+                {"actual_material_used": "", "batch_lot": ""},
+            )
+            entry["actual_material_used"] = text_value
+        elif key.startswith("batch_lot__"):
+            field = key.removeprefix("batch_lot__")
+            entry = entries.setdefault(
+                field,
+                {"actual_material_used": "", "batch_lot": ""},
+            )
+            entry["batch_lot"] = text_value
     return entries
 
 

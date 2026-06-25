@@ -796,7 +796,7 @@
     .recipe-head,
     .recipe-row {
       display: grid;
-      grid-template-columns: 178px minmax(190px, 1fr) minmax(150px, .7fr) minmax(120px, .5fr);
+      grid-template-columns: 112px minmax(180px, 1fr) 58px 86px minmax(140px, .72fr) minmax(110px, .52fr);
       align-items: stretch;
     }
 
@@ -848,6 +848,14 @@
       font-weight: 700;
       line-height: 1.18;
       overflow-wrap: anywhere;
+    }
+
+    .recipe-number {
+      justify-content: flex-end;
+      color: #26323f;
+      font-size: 17px;
+      font-weight: 800;
+      text-align: right;
     }
 
     .recipe-row input {
@@ -1482,7 +1490,7 @@
 
       .recipe-head,
       .recipe-row {
-        grid-template-columns: 156px minmax(150px, 1fr) minmax(118px, .62fr) minmax(92px, .48fr);
+        grid-template-columns: 96px minmax(150px, 1fr) 50px 76px minmax(118px, .62fr) minmax(92px, .48fr);
       }
 
       .history-filters {
@@ -2071,17 +2079,21 @@
                   <form class="recipe-table" action="/terminal/cards/{{ selected_card.id }}/materials" method="post" data-recipe-autosave="true">
                     <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                     <div class="recipe-head">
-                      <div>Вид суровина</div>
-                      <div>Заложена суровина</div>
-                      <div>Използван материал</div>
+                      <div>Категория</div>
+                      <div>Планирани материали</div>
+                      <div>%</div>
+                      <div>КГ</div>
+                      <div>Вложени материали</div>
                       <div>Партида</div>
                     </div>
                     {% for row in recipe_rows %}
                       <div class="recipe-row">
-                        <div class="component">{{ row.label }}</div>
-                        <div><div class="material-planned">{{ row.planned or "" }}</div></div>
-                        <div><input name="actual_material__{{ row.field }}" value="{{ row.actual_material or '' }}" aria-label="{{ row.label }} използван материал" {% if not can_edit_card %}disabled{% endif %}></div>
-                        <div><input name="batch_lot__{{ row.field }}" value="{{ row.batch or '' }}" aria-label="{{ row.label }} партида" {% if not can_edit_card %}disabled{% endif %}></div>
+                        <div class="component">{{ row.material_category or row.source_label }}</div>
+                        <div><div class="material-planned">{{ row.planned_material or row.source_text or "" }}</div></div>
+                        <div class="recipe-number">{{ row.recipe_percent or "" }}</div>
+                        <div class="recipe-number">{{ row.planned_kg or "" }}</div>
+                        <div><input name="actual_material__{{ row.field }}" value="{{ row.actual_material or '' }}" aria-label="{{ row.source_label }} използван материал" {% if not can_edit_card %}disabled{% endif %}></div>
+                        <div><input name="batch_lot__{{ row.field }}" value="{{ row.batch or '' }}" aria-label="{{ row.source_label }} партида" {% if not can_edit_card %}disabled{% endif %}></div>
                       </div>
                     {% endfor %}
                     <button type="submit" hidden>Запази материал</button>

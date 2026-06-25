@@ -441,29 +441,72 @@ def test_admin_material_ledger_does_not_block_parser_errors(connection):
     ]
 
 
-def test_step_4_keeps_admin_and_terminal_recipe_display_on_original_source_text(connection):
+def test_step_6_admin_and_terminal_display_use_normalized_recipe_rows(connection):
     card_id = import_card(
-        "RS-SYNC-010",
+        "RS-SYNC-008",
+        quantity_1="1000",
+        unit_1="kg",
         raw_material_a="LDPE Display Source | 80%",
         linear_pe="LLDPE Display Source | 20%",
     )
     assert db.release_card(card_id, machine_id=1, machine_sequence=1).ok
-    poison_raw_material_a_component(connection, card_id)
+    assert db.update_terminal_recipe_actual_entries(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        {
+            "raw_material_a": {
+                "actual_material_used": "Actual Display A",
+                "batch_lot": "Batch Display A",
+            },
+            "linear_pe": {
+                "actual_material_used": "Actual Display L",
+                "batch_lot": "Batch Display L",
+            },
+        },
+    ).ok
 
     admin_context = admin_card_detail_context(card_id)
-    terminal = terminal_context(selected_card_id=card_id)
+    terminal = terminal_context(card_id)
 
-    assert admin_context is not None
     admin_rows = {row["field"]: row for row in admin_context["recipe_rows"]}
     terminal_rows = {row["field"]: row for row in terminal["recipe_rows"]}
-    assert admin_rows["raw_material_a"]["planned"] == "LDPE Display Source | 80%"
-    assert terminal_rows["raw_material_a"]["planned"] == "LDPE Display Source | 80%"
-    assert admin_rows["raw_material_a"]["planned"] != "LDPE Derived Should Not Display | 100%"
-    assert terminal_rows["raw_material_a"]["planned"] != "LDPE Derived Should Not Display | 100%"
-    assert "material_category" not in admin_rows["raw_material_a"]
-    assert "recipe_percent" not in admin_rows["raw_material_a"]
-    assert "material_category" not in terminal_rows["raw_material_a"]
-    assert "recipe_percent" not in terminal_rows["raw_material_a"]
+
+    assert admin_rows["raw_material_a"]["source_text"] == "LDPE Display Source | 80%"
+    assert admin_rows["raw_material_a"]["material_category"] == "LDPE"
+    assert admin_rows["raw_material_a"]["planned_material"] == "Display Source"
+    assert admin_rows["raw_material_a"]["recipe_percent"] == "80%"
+    assert admin_rows["raw_material_a"]["planned_kg"] == "800.00"
+    assert admin_rows["raw_material_a"]["actual_material"] == "Actual Display A"
+    assert admin_rows["raw_material_a"]["batch"] == "Batch Display A"
+
+    assert terminal_rows["raw_material_a"]["source_text"] == "LDPE Display Source | 80%"
+    assert terminal_rows["raw_material_a"]["material_category"] == "LDPE"
+    assert terminal_rows["raw_material_a"]["planned_material"] == "Display Source"
+    assert terminal_rows["raw_material_a"]["recipe_percent"] == "80%"
+    assert terminal_rows["raw_material_a"]["planned_kg"] == "800.00"
+    assert terminal_rows["raw_material_a"]["actual_material"] == "Actual Display A"
+    assert terminal_rows["linear_pe"]["planned_material"] == "Display Source"
+    assert "chalk" not in terminal_rows
+
+
+def test_admin_recipe_display_keeps_source_text_when_row_has_no_normalized_component(connection):
+    card_id = import_card(
+        "RS-SYNC-010",
+        raw_material_a="LDPE Missing Delimiter 80%",
+        linear_pe="LLDPE Valid Row | 20%",
+    )
+
+    context = admin_card_detail_context(card_id)
+    rows = {row["field"]: row for row in context["recipe_rows"]}
+
+    assert rows["raw_material_a"]["source_text"] == "LDPE Missing Delimiter 80%"
+    assert rows["raw_material_a"]["planned_material"] == "LDPE Missing Delimiter 80%"
+    assert rows["raw_material_a"]["material_category"] == ""
+    assert rows["raw_material_a"]["recipe_percent"] == ""
+    assert rows["raw_material_a"]["planned_kg"] == ""
+    assert rows["raw_material_a"]["is_structured"] is False
+    assert rows["linear_pe"]["material_category"] == "LLDPE"
+    assert rows["linear_pe"]["planned_material"] == "Valid Row"
 
 
 def test_step_4_keeps_print_recipe_rows_on_original_source_text(connection):

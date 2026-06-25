@@ -378,6 +378,59 @@ def test_terminal_recipe_actual_entries_reject_unknown_component(connection):
     assert result.messages == ("Формата съдържа непознат ред от рецептата.",)
 
 
+def test_terminal_recipe_actual_update_preserves_omitted_component_entries(connection):
+    card_id = import_ready_card(
+        "25344",
+        raw_material_a="LDPE A | 80%",
+        linear_pe="LLDPE Linear PE | 20%",
+    )
+    assert db.release_card(
+        card_id,
+        machine_id=1,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    ).ok
+    loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
+    assert db.update_terminal_recipe_actual_entries(
+        card_id,
+        loaded_version,
+        {
+            "raw_material_a": {
+                "actual_material_used": "Actual A",
+                "batch_lot": "Batch A",
+            },
+            "linear_pe": {
+                "actual_material_used": "Actual Linear",
+                "batch_lot": "Batch Linear",
+            },
+        },
+    ).ok
+
+    result = db.update_terminal_recipe_actual_entries(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        {
+            "raw_material_a": {
+                "actual_material_used": "Updated Actual A",
+                "batch_lot": "Updated Batch A",
+            },
+        },
+    )
+
+    card = db.fetch_terminal_card_detail(card_id)
+    assert result.ok
+    assert card["recipe_actual_entries"]["raw_material_a"]["actual_material_used"] == (
+        "Updated Actual A"
+    )
+    assert card["recipe_actual_entries"]["raw_material_a"]["batch_lot"] == (
+        "Updated Batch A"
+    )
+    assert card["recipe_actual_entries"]["linear_pe"]["actual_material_used"] == (
+        "Actual Linear"
+    )
+    assert card["recipe_actual_entries"]["linear_pe"]["batch_lot"] == "Batch Linear"
+
+
 def test_terminal_card_detail_hides_cancelled_cards(connection):
     card_id = import_ready_card("25305")
     assert db.release_card(

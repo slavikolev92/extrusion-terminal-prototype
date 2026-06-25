@@ -161,22 +161,26 @@ def test_admin_card_detail_context_groups_quantities_and_recipe_rows(connection)
     context = admin_card_detail_context(card_id)
 
     assert context is not None
+    rows = {row["field"]: row for row in context["recipe_rows"]}
+
     assert [line["display"] for line in context["quantity_lines"]] == ["500 kg", "1200 m"]
-    assert [row["label"] for row in context["recipe_rows"]] == [
-        "A",
-        "B",
-        "C",
-        "Линеен",
-        "Антистатик",
-        "Мастербач",
-        "Креда",
-    ]
-    assert context["recipe_rows"][0]["planned"] == "LDPE A | 60%"
-    assert context["recipe_rows"][0]["actual_material"] == "Actual LDPE"
-    assert context["recipe_rows"][0]["brand"] == "Grade A"
-    assert context["recipe_rows"][0]["batch"] == "Batch 42"
-    assert context["recipe_rows"][1]["planned"] == "LDPE B | 30%"
-    assert context["recipe_rows"][1]["brand"] == ""
+    assert rows["raw_material_a"]["source_label"] == "A"
+    assert rows["raw_material_a"]["material_category"] == "LDPE"
+    assert rows["raw_material_a"]["planned_material"] == "A"
+    assert rows["raw_material_a"]["recipe_percent"] == "60%"
+    assert rows["raw_material_a"]["planned_kg"] == "300.00"
+    assert rows["raw_material_a"]["source_text"] == "LDPE A | 60%"
+    assert rows["raw_material_a"]["actual_material"] == "Actual LDPE"
+    assert rows["raw_material_a"]["batch"] == "Batch 42"
+    assert rows["raw_material_b"]["material_category"] == "LDPE"
+    assert rows["raw_material_b"]["planned_material"] == "B"
+    assert rows["raw_material_b"]["recipe_percent"] == "30%"
+    assert rows["raw_material_b"]["planned_kg"] == "150.00"
+    assert rows["linear_pe"]["material_category"] == "LLDPE"
+    assert rows["linear_pe"]["planned_material"] == "Linear PE"
+    assert rows["linear_pe"]["planned_kg"] == "50.00"
+    assert rows["chalk"]["source_text"] == ""
+    assert rows["chalk"]["planned_kg"] == ""
 
 
 def test_admin_imported_field_edit_succeeds_and_increments_version(connection):

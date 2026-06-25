@@ -698,6 +698,7 @@ def fetch_admin_card_detail(card_id: int) -> dict[str, Any] | None:
         roll_data = fetch_roll_entries_and_totals(connection, card_id, card["tare_weight"])
         card.update(roll_data)
         card["recipe_actual_entries"] = fetch_recipe_actual_entries(connection, card_id)
+        card["recipe_components"] = fetch_recipe_components(connection, card_id)
         return card
 
 
@@ -743,6 +744,7 @@ def fetch_terminal_card_detail(card_id: int) -> dict[str, Any] | None:
         roll_data = fetch_roll_entries_and_totals(connection, card_id, card["tare_weight"])
         card.update(roll_data)
         card["recipe_actual_entries"] = fetch_recipe_actual_entries(connection, card_id)
+        card["recipe_components"] = fetch_recipe_components(connection, card_id)
         return card
 
 
@@ -2966,7 +2968,12 @@ def update_terminal_recipe_actual_entries(
     with connect() as connection:
         card = connection.execute(
             f"""
-            SELECT id, version, raw_material_brand_grade, {import_columns}
+            SELECT id,
+                   version,
+                   actual_raw_material_used,
+                   raw_material_brand_grade,
+                   raw_material_batch_lot,
+                   {import_columns}
             FROM cards
             WHERE id = ?
               AND status IN ({TERMINAL_ACTION_STATUS_PLACEHOLDERS})
@@ -2980,8 +2987,8 @@ def update_terminal_recipe_actual_entries(
         if int(card["version"]) != loaded_version:
             return RuleResult(False, (STALE_CARD_MESSAGE,))
 
-        for component_key, component_label in RECIPE_COMPONENT_FIELDS:
-            entry = entries.get(component_key, {})
+        for component_key, entry in entries.items():
+            component_label = component_labels[component_key]
             actual_material = str(entry.get("actual_material_used") or "").strip()
             batch_lot = str(entry.get("batch_lot") or "").strip()
             _upsert_recipe_actual_entry(
@@ -2993,9 +3000,15 @@ def update_terminal_recipe_actual_entries(
                 batch_lot,
             )
 
-        raw_material_entry = entries.get("raw_material_a", {})
-        raw_material_used = str(raw_material_entry.get("actual_material_used") or "").strip()
-        raw_material_batch_lot = str(raw_material_entry.get("batch_lot") or "").strip()
+        if "raw_material_a" in entries:
+            raw_material_entry = entries["raw_material_a"]
+            raw_material_used = str(
+                raw_material_entry.get("actual_material_used") or ""
+            ).strip()
+            raw_material_batch_lot = str(raw_material_entry.get("batch_lot") or "").strip()
+        else:
+            raw_material_used = str(card["actual_raw_material_used"] or "")
+            raw_material_batch_lot = str(card["raw_material_batch_lot"] or "")
         if raw_material_brand_grade is None:
             raw_material_brand_grade = str(card["raw_material_brand_grade"] or "")
 
