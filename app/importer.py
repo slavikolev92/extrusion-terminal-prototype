@@ -163,7 +163,7 @@ def csv_template() -> str:
         "material": "LDPE",
         "size_thickness": "600/0.050",
         "extrusion_flag": "да",
-        "raw_material_a": "LDPE",
+        "raw_material_a": "reLDPE | 100%",
         "packaging_method": "ролки",
     }
     output = io.StringIO()

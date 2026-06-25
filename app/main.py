@@ -386,8 +386,9 @@ def build_recipe_rows(
             batch = str(card.get("raw_material_batch_lot") or "")
 
         if component:
-            planned_material = str(component.get("planned_material") or "")
             material_category = str(component.get("material_category") or "")
+            normalized_planned_material = str(component.get("planned_material") or "")
+            planned_material = normalized_planned_material or material_category
             recipe_percent = recipe_percent_display(component.get("recipe_percent"))
             planned_kg = planned_kg_display(card, component.get("recipe_percent"))
             is_structured = True

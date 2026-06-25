@@ -93,8 +93,9 @@ def import_card(order_number: str, **overrides: str) -> int:
 def make_completed_printable_card(
     order_number: str = "27000",
     roll_count: int = 1,
+    **overrides: str,
 ) -> int:
-    card_id = import_card(order_number)
+    card_id = import_card(order_number, **overrides)
     with db.connect() as connection:
         connection.execute(
             """
@@ -709,6 +710,28 @@ def test_print_route_front_page_renders_planned_recipe_values(connection):
     for component_key, expected_value in expected_values.items():
         planned_cell = data_block(response.text, "data-front-recipe-planned", component_key)
         assert rendered_text(planned_cell) == expected_value
+
+
+def test_print_route_preserves_category_only_recipe_source_text(connection):
+    card_id = make_completed_printable_card(
+        "27061",
+        raw_material_a="reLDPE | 80%",
+        raw_material_b="",
+        raw_material_c="",
+        linear_pe="LLDPE SABIC 119ZJ | 20%",
+        antistatic="",
+        masterbatch="",
+        chalk="",
+    )
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    planned_a = data_block(response.text, "data-front-recipe-planned", "raw_material_a")
+    planned_linear = data_block(response.text, "data-front-recipe-planned", "linear_pe")
+    assert rendered_text(planned_a) == "reLDPE | 80%"
+    assert rendered_text(planned_linear) == "LLDPE SABIC 119ZJ | 20%"
+    assert "N/A" not in response.text
 
 
 def test_print_route_front_page_renders_actual_material_and_batch_values(

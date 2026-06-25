@@ -104,6 +104,16 @@ Accepted implementation roadmap:
    - Keep existing actual material and batch/lot save behavior and loaded-version
      conflict checks.
 
+6.5. Align app parser with Excel recipe-builder `N/A` omissions.
+   - Allow final source cells such as `reLDPE | 80%` when the category is
+     approved and producer/grade were intentionally omitted by the Excel
+     builder.
+   - Keep app-side validation limited to the final source-cell contract because
+     the app does not import `RecipeCatalog`.
+   - Preserve original source text for print and admin correction.
+   - Keep malformed rows, invalid percentages, non-100 totals, and missing
+     target gross blocked at release.
+
 7. Verify with structured sample CSV data.
    - Create several sample orders using the new convention.
    - Verify import, admin review/correction, release, terminal display, actual

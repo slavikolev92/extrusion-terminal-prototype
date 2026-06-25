@@ -307,6 +307,37 @@ def test_terminal_v8_recipe_table_is_part_of_details_without_extra_recipe_headin
     assert ">Рецепта<" not in html
 
 
+def test_terminal_v8_renders_category_only_recipe_without_na_control_value(connection):
+    card_id = release_ready_card(
+        "26241",
+        machine_id=1,
+        sequence=1,
+        raw_material_a="reLDPE | 80%",
+        linear_pe="LLDPE SABIC 119ZJ | 20%",
+        raw_material_b="",
+        raw_material_c="",
+        antistatic="",
+        masterbatch="",
+        chalk="",
+    )
+
+    html = render_terminal(card_id)
+    recipe_html = form_block(html, f"/terminal/cards/{card_id}/materials")
+
+    assert "reLDPE" in recipe_html
+    assert "80%" in recipe_html
+    assert "400.00" in recipe_html
+    assert "SABIC 119ZJ" in recipe_html
+    assert 'name="actual_material__raw_material_b"' not in recipe_html
+    assert 'name="actual_material__raw_material_c"' not in recipe_html
+    assert 'name="actual_material__antistatic"' not in recipe_html
+    assert 'name="actual_material__masterbatch"' not in recipe_html
+    assert 'name="actual_material__chalk"' not in recipe_html
+    assert "N/A" not in recipe_html
+    assert 'name="actual_material__raw_material_a"' in recipe_html
+    assert 'name="batch_lot__raw_material_a"' in recipe_html
+
+
 def test_terminal_v8_renders_recipe_queue_and_completed_lookup(connection):
     selected_id = release_ready_card("26102", machine_id=1, sequence=1)
     release_ready_card("26103", machine_id=1, sequence=2, customer="Queued Customer")

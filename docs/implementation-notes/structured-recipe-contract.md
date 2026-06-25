@@ -38,7 +38,7 @@ continues to be used by print output.
 
 ## Accepted Cell Format
 
-Each non-empty recipe source cell should use:
+The normal final source-cell format is still:
 
 ```text
 [Material/Additive Category] [Producer or Brand] [Full Commercial Grade/Code] | [% of final product]
@@ -51,6 +51,24 @@ LDPE Rompetrol Midilena B20/03 | 77%
 LLDPE SABIC 119ZJ | 18%
 Antistatic Novachem AT 04673 LD | 2%
 Masterbatch Polibach White 8000 ET | 3%
+```
+
+The Excel recipe builder also supports intentional producer and/or grade
+omissions through `N/A` values in `RecipeCatalog`. `N/A` is a catalog control
+value only. It is not printed into the final `AM:AS` source cell. When both
+producer and grade are `N/A`, the final source cell is category-only before the
+delimiter:
+
+```text
+reLDPE | 80%
+```
+
+When only one of producer or grade is `N/A`, the final source cell contains the
+category plus the remaining non-`N/A` text:
+
+```text
+LDPE Midilena | 77%
+LDPE B20/03 | 77%
 ```
 
 The parser should split on the final `|`. The text before the final `|` is the
@@ -127,8 +145,13 @@ recipe-component rows with the meaningful parts split into fields:
 | `component_key` | Source app field, such as `raw_material_a` |
 | `source_text` | Original imported/editable source cell text |
 | `material_category` | First approved category token, such as `LDPE` |
-| `planned_material` | Remaining material identity after the category |
+| `planned_material` | Remaining material identity after the category; empty string when the Excel builder intentionally omitted both producer and grade |
 | `recipe_percent` | Percentage of final product |
+
+For structured admin/terminal display, category-only rows should use the
+canonical category as the visible planned material fallback. The normalized
+stored value remains an empty string so the app does not invent producer or
+grade data that did not exist in the workbook.
 
 Planned kilograms are calculated from `recipe_percent * target_gross_weight`.
 They do not need to be authoritative stored source data unless a later
@@ -159,8 +182,8 @@ recipe source text before release.
 Release to the terminal should be blocked when:
 
 - any non-empty `AM:AS` row cannot be parsed;
-- any non-empty row has an unapproved material category;
-- any non-empty row has missing or invalid material identity text;
+- any non-empty row has missing identity text before `|`, an unapproved
+  category, or invalid category text;
 - any non-empty row has missing or invalid percentage text;
 - any non-empty row has a zero or negative percentage;
 - parsed recipe percentages do not sum to exactly `100%`;
@@ -206,7 +229,8 @@ This redesign does not add:
 
 ## Locked Contract Decisions
 
-The Step 1 contract decisions were approved on 2026-06-24:
+The locked contract decisions were initially approved on 2026-06-24 and extended
+by later structured-recipe follow-up work:
 
 1. The approved category list is controlled and amendable, with the initial
    categories listed above.
@@ -221,3 +245,7 @@ The Step 1 contract decisions were approved on 2026-06-24:
    above.
 7. Release/admin validation messages use concise Bulgarian wording with
    row-specific reasons.
+8. Intentional producer/grade omissions from the Excel recipe builder are valid
+   when represented by omitted text in the final source cell. The app allows
+   category-only rows for all approved categories because it imports final cell
+   text, not the Excel `RecipeCatalog`.

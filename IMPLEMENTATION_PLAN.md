@@ -450,6 +450,7 @@ Structured recipe redesign follow-up:
 - OI-003 Step 4 complete: normalized recipe rows now sync from CSV import, overwrite re-import, and admin source recipe corrections while preserving original card source fields and production actual material/batch data.
 - OI-003 Step 5 complete: release now blocks malformed structured recipe rows, category/material/percent rule failures, recipe totals other than exactly 100%, and missing/zero/invalid target gross weight while keeping import/admin draft correction permissive.
 - OI-003 Step 6 complete: terminal and admin recipe displays now use normalized structured recipe rows with category, planned material, percent, planned kilograms, actual material, and batch/lot columns; admin source-text correction remains available for all seven source fields; terminal/admin actual material and batch/lot saves preserve version checks and existing actual-entry data; print output remains unchanged.
+- OI-003 Step 6.5 complete: parser, release validation, normalized sync, admin/terminal structured display, sample CSV template, and print-boundary tests now accept Excel-builder category-only source cells such as `reLDPE | 80%` for approved categories while preserving original source text and release protections for malformed rows.
 - Step 5 deliberately did not add terminal/admin recipe display redesign, print changes, or Excel macro/export validation; Step 6 completed the display redesign while print changes and Excel macro/export validation remain outside this slice.
 
 ## Milestone 12 - Pilot Rehearsal

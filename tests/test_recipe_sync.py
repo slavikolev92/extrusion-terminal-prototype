@@ -154,6 +154,19 @@ def test_csv_import_creates_normalized_recipe_components(connection):
     ]
 
 
+def test_import_sync_stores_category_only_rows_with_empty_planned_material(connection):
+    card_id = import_card(
+        "RS-SYNC-012",
+        raw_material_a="reLDPE | 80%",
+        linear_pe="LLDPE SABIC 119ZJ | 20%",
+    )
+
+    assert component_summary(connection, card_id) == [
+        ("raw_material_a", "reLDPE | 80%", "reLDPE", ""),
+        ("linear_pe", "LLDPE SABIC 119ZJ | 20%", "LLDPE", "SABIC 119ZJ"),
+    ]
+
+
 def test_overwrite_reimport_refreshes_components_and_preserves_actual_entries(connection):
     card_id = import_card("RS-SYNC-002")
     assert db.release_card(card_id, machine_id=1, machine_sequence=1).ok
@@ -270,6 +283,21 @@ def test_admin_imported_field_correction_refreshes_recipe_components(connection)
     assert updated["linear_pe"] == ""
     assert component_summary(connection, card_id) == [
         ("raw_material_a", "LDPE Admin Corrected | 100%", "LDPE", "Admin Corrected"),
+    ]
+
+
+def test_admin_source_correction_syncs_category_only_rows(connection):
+    card_id = import_card("RS-SYNC-013")
+    card = db.fetch_admin_card_detail(card_id)
+    fields = current_import_fields(card_id)
+    fields["raw_material_a"] = "reLDPE | 100%"
+    fields["linear_pe"] = ""
+
+    result = db.update_admin_imported_fields(card_id, card["version"], fields)
+
+    assert result.ok
+    assert component_summary(connection, card_id) == [
+        ("raw_material_a", "reLDPE | 100%", "reLDPE", ""),
     ]
 
 
@@ -487,6 +515,37 @@ def test_step_6_admin_and_terminal_display_use_normalized_recipe_rows(connection
     assert terminal_rows["raw_material_a"]["actual_material"] == "Actual Display A"
     assert terminal_rows["linear_pe"]["planned_material"] == "Display Source"
     assert "chalk" not in terminal_rows
+
+
+def test_admin_and_terminal_display_use_category_fallback_for_category_only_rows(connection):
+    card_id = import_card(
+        "RS-SYNC-014",
+        quantity_1="1000",
+        unit_1="kg",
+        raw_material_a="reLDPE | 80%",
+        linear_pe="LLDPE SABIC 119ZJ | 20%",
+    )
+    assert db.release_card(card_id, machine_id=1, machine_sequence=1).ok
+
+    admin_context = admin_card_detail_context(card_id)
+    terminal = terminal_context(card_id)
+    admin_rows = {row["field"]: row for row in admin_context["recipe_rows"]}
+    terminal_rows = {row["field"]: row for row in terminal["recipe_rows"]}
+
+    assert admin_rows["raw_material_a"]["material_category"] == "reLDPE"
+    assert admin_rows["raw_material_a"]["planned_material"] == "reLDPE"
+    assert admin_rows["raw_material_a"]["source_text"] == "reLDPE | 80%"
+    assert admin_rows["raw_material_a"]["recipe_percent"] == "80%"
+    assert admin_rows["raw_material_a"]["planned_kg"] == "800.00"
+    assert admin_rows["raw_material_a"]["is_structured"] is True
+
+    assert terminal_rows["raw_material_a"]["material_category"] == "reLDPE"
+    assert terminal_rows["raw_material_a"]["planned_material"] == "reLDPE"
+    assert terminal_rows["raw_material_a"]["source_text"] == "reLDPE | 80%"
+    assert terminal_rows["raw_material_a"]["recipe_percent"] == "80%"
+    assert terminal_rows["raw_material_a"]["planned_kg"] == "800.00"
+    assert terminal_rows["raw_material_a"]["is_structured"] is True
+    assert terminal_rows["linear_pe"]["planned_material"] == "SABIC 119ZJ"
 
 
 def test_admin_recipe_display_keeps_source_text_when_row_has_no_normalized_component(connection):

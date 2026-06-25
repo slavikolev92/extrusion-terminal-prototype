@@ -147,6 +147,49 @@ def test_parse_normalizes_reldpe_to_canonical_spelling():
     assert result.components[0].material_category == "reLDPE"
 
 
+def test_parse_allows_excel_builder_na_omissions():
+    result = parse_recipe_source_fields(
+        {
+            "raw_material_a": "reLDPE | 80%",
+            "linear_pe": "LLDPE 119ZJ | 20%",
+        }
+    )
+
+    assert result.ok
+    assert result.total_percent == Decimal("100")
+    assert result.components == (
+        ParsedRecipeComponent(
+            component_key="raw_material_a",
+            source_text="reLDPE | 80%",
+            material_category="reLDPE",
+            planned_material="",
+            recipe_percent=Decimal("80"),
+        ),
+        ParsedRecipeComponent(
+            component_key="linear_pe",
+            source_text="LLDPE 119ZJ | 20%",
+            material_category="LLDPE",
+            planned_material="119ZJ",
+            recipe_percent=Decimal("20"),
+        ),
+    )
+
+
+def test_parse_category_only_is_allowed_for_any_approved_category():
+    result = parse_recipe_source_fields(
+        {
+            "raw_material_a": "LDPE | 95%",
+            "masterbatch": "Masterbatch | 5%",
+        }
+    )
+
+    assert result.ok
+    assert [
+        (component.material_category, component.planned_material)
+        for component in result.components
+    ] == [("LDPE", ""), ("Masterbatch", "")]
+
+
 def test_parse_reports_missing_final_pipe():
     component, errors = parse_recipe_cell(
         "raw_material_a",
@@ -179,10 +222,10 @@ def test_parse_rejects_unknown_category():
     assert errors[0].message == "непозната категория"
 
 
-def test_parse_rejects_missing_material_after_category():
+def test_parse_rejects_missing_identity_before_percent_delimiter():
     component, errors = parse_recipe_cell(
         "raw_material_a",
-        "LDPE | 100%",
+        " | 100%",
     )
 
     assert component is None

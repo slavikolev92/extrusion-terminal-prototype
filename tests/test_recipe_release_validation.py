@@ -117,7 +117,7 @@ def test_release_allows_valid_structured_recipe_and_target_gross(connection):
         ),
         (
             "RS-REL-004",
-            {"raw_material_a": "LDPE | 80%"},
+            {"raw_material_a": " | 80%"},
             "Суровина A: липсва материал след категория",
         ),
         (
@@ -219,6 +219,36 @@ def test_release_accepts_comma_decimal_recipe_percent_and_quantity_2_target_gros
     assert card["status"] == STATUS_PENDING
     assert card["machine_id"] == 2
     assert card["machine_sequence"] == 1
+
+
+def test_release_allows_category_only_recipe_rows_from_excel_builder_na_omissions(connection):
+    card_id = import_structured_card(
+        "RS-REL-022",
+        raw_material_a="reLDPE | 80%",
+        linear_pe="LLDPE SABIC 119ZJ | 20%",
+    )
+
+    result = db.release_card(card_id, machine_id=1, machine_sequence=1)
+    card = db.fetch_admin_card_detail(card_id)
+
+    assert result.ok
+    assert card["status"] == STATUS_PENDING
+    assert card["raw_material_a"] == "reLDPE | 80%"
+
+
+def test_release_allows_category_only_rows_for_all_approved_categories_without_catalog_lookup(
+    connection,
+):
+    card_id = import_structured_card(
+        "RS-REL-023",
+        raw_material_a="LDPE | 95%",
+        masterbatch="Masterbatch | 5%",
+        linear_pe="",
+    )
+
+    result = db.release_card(card_id, machine_id=1, machine_sequence=1)
+
+    assert result.ok
 
 
 def test_import_still_allows_invalid_recipe_for_admin_correction_before_release(connection):

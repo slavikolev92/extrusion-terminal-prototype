@@ -16,7 +16,7 @@ from app.constants import (
     STATUS_LABELS,
     STATUS_PENDING,
 )
-from app.importer import IMPORT_FIELDS, import_cards_from_csv
+from app.importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
 
 
 def csv_bytes(*rows: dict[str, str]) -> bytes:
@@ -72,6 +72,14 @@ def current_import_fields(connection, card_id: int) -> dict[str, str]:
     ).fetchone()
     assert row is not None
     return {field: str(row[field] or "") for field in IMPORT_FIELDS}
+
+
+def test_csv_template_uses_valid_structured_recipe_sample():
+    content = csv_template()
+
+    assert "raw_material_a" in content
+    assert "reLDPE | 100%" in content
+    assert "N/A" not in content
 
 
 def test_database_initialization_seeds_machines_1_through_4(temp_db_path):

@@ -389,6 +389,24 @@ def test_parse_and_replace_recipe_components_for_card_stores_only_valid_parse(co
     assert [row["component_key"] for row in rows] == ["raw_material_a", "linear_pe"]
 
 
+def test_recipe_components_store_category_only_planned_material_as_empty_string(connection):
+    card_id = insert_card(connection, raw_material_a="reLDPE | 100%")
+
+    result = db.parse_and_replace_recipe_components_for_card(
+        connection,
+        card_id,
+        {"raw_material_a": "reLDPE | 100%"},
+    )
+
+    assert result.ok
+    rows = db.fetch_recipe_components(connection, card_id)
+    assert len(rows) == 1
+    assert rows[0]["source_text"] == "reLDPE | 100%"
+    assert rows[0]["material_category"] == "reLDPE"
+    assert rows[0]["planned_material"] == ""
+    assert rows[0]["recipe_percent"] == Decimal("100")
+
+
 def test_parse_and_replace_recipe_components_for_card_does_not_mutate_on_parse_error(connection):
     card_id = insert_card(connection)
     db.replace_recipe_components_for_card(connection, card_id, valid_components())
@@ -448,4 +466,3 @@ def test_recipe_component_replacement_does_not_touch_actual_recipe_entries(conne
         "actual_material_used": "Actual LDPE",
         "batch_lot": "Batch 42",
     }
-

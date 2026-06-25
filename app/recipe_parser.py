@@ -149,15 +149,6 @@ def parse_recipe_cell(
             ),
         )
 
-    if not planned_material:
-        return None, (
-            RecipeParseError(
-                component_key=component_key,
-                source_text=original_source_text,
-                message=MISSING_MATERIAL_MESSAGE,
-            ),
-        )
-
     recipe_percent, percent_error = parse_percent(component_key, original_source_text, percent_text)
     if percent_error is not None:
         return None, (percent_error,)
