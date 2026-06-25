@@ -51,13 +51,13 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "extrusion_folding": "single",
         "extrusion_next_operation": "rewind",
         "extrusion_treatment": "corona",
-        "raw_material_a": "LDPE A",
-        "raw_material_b": "LLDPE B",
-        "raw_material_c": "HDPE C",
-        "linear_pe": "Линеен PE",
-        "antistatic": "Антистатик 1%",
-        "masterbatch": "Бял мастербач",
-        "chalk": "Креда 5%",
+        "raw_material_a": "LDPE A | 50%",
+        "raw_material_b": "LLDPE B | 30%",
+        "raw_material_c": "MDPE HDPE C | 5%",
+        "linear_pe": "LLDPE Линеен PE | 8%",
+        "antistatic": "Antistatic Антистатик 1% | 1%",
+        "masterbatch": "Masterbatch Бял мастербач | 4%",
+        "chalk": "Filler Креда 5% | 2%",
         "packaging_method": "rolls",
     }
     row.update(overrides)
@@ -465,11 +465,14 @@ def test_terminal_v8_does_not_show_fake_zero_target_when_no_kg_quantity(connecti
         "26142",
         machine_id=1,
         sequence=1,
-        quantity_1="7",
-        unit_1="ролки",
-        quantity_2="20",
-        unit_2="бр",
     )
+    card = db.fetch_admin_card_detail(card_id)
+    fields = {field: str(card[field] or "") for field in IMPORT_FIELDS}
+    fields["quantity_1"] = "7"
+    fields["unit_1"] = "ролки"
+    fields["quantity_2"] = "20"
+    fields["unit_2"] = "бр"
+    assert db.update_admin_imported_fields(card_id, card_version(card_id), fields).ok
 
     html = render_terminal(card_id)
     card = terminal_context(card_id)["selected_card"]

@@ -34,7 +34,7 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "extrusion_folding": "single",
         "extrusion_next_operation": "rewind",
         "extrusion_treatment": "corona",
-        "raw_material_a": "LDPE A",
+        "raw_material_a": "LDPE A | 100%",
         "packaging_method": "rolls",
     }
     row.update(overrides)
@@ -140,9 +140,9 @@ def test_admin_card_detail_context_groups_quantities_and_recipe_rows(connection)
         unit_1="kg",
         quantity_2="1200",
         unit_2="m",
-        raw_material_a="LDPE A",
-        raw_material_b="LDPE B",
-        linear_pe="20%",
+        raw_material_a="LDPE A | 60%",
+        raw_material_b="LDPE B | 30%",
+        linear_pe="LLDPE Linear PE | 10%",
     )
     assert db.release_card(
         card_id,
@@ -171,11 +171,11 @@ def test_admin_card_detail_context_groups_quantities_and_recipe_rows(connection)
         "Мастербач",
         "Креда",
     ]
-    assert context["recipe_rows"][0]["planned"] == "LDPE A"
+    assert context["recipe_rows"][0]["planned"] == "LDPE A | 60%"
     assert context["recipe_rows"][0]["actual_material"] == "Actual LDPE"
     assert context["recipe_rows"][0]["brand"] == "Grade A"
     assert context["recipe_rows"][0]["batch"] == "Batch 42"
-    assert context["recipe_rows"][1]["planned"] == "LDPE B"
+    assert context["recipe_rows"][1]["planned"] == "LDPE B | 30%"
     assert context["recipe_rows"][1]["brand"] == ""
 
 
@@ -295,7 +295,7 @@ def test_admin_imported_field_edit_blocks_no_extrusion_result(connection):
     assert not result.ok
     assert result.messages == ("Импортираните полета трябва да запазят валидна стъпка за екструдиране преди запис.",)
     assert unchanged["extrusion_flag"] == "da"
-    assert unchanged["raw_material_a"] == "LDPE A"
+    assert unchanged["raw_material_a"] == "LDPE A | 100%"
 
 
 def test_admin_delete_removes_unreleased_card(connection):

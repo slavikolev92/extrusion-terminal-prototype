@@ -27,7 +27,7 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "material": "LDPE",
         "size_thickness": "600/0.050",
         "extrusion_flag": "da",
-        "raw_material_a": "LDPE A",
+        "raw_material_a": "LDPE A | 100%",
         "packaging_method": "rolls",
     }
     row.update(overrides)

@@ -448,7 +448,8 @@ Structured recipe redesign follow-up:
 - OI-003 Step 2 complete: central parser committed in `0de3d33`.
 - OI-003 Step 3 complete: normalized recipe-component SQLite storage and backend helpers only; focused storage tests pass.
 - OI-003 Step 4 complete: normalized recipe rows now sync from CSV import, overwrite re-import, and admin source recipe corrections while preserving original card source fields and production actual material/batch data.
-- Step 4 deliberately does not add release gates, terminal/admin recipe display redesign, print changes, or Excel macro/export validation; those remain later OI-003 steps.
+- OI-003 Step 5 complete: release now blocks malformed structured recipe rows, category/material/percent rule failures, recipe totals other than exactly 100%, and missing/zero/invalid target gross weight while keeping import/admin draft correction permissive.
+- Step 5 deliberately does not add terminal/admin recipe display redesign, print changes, or Excel macro/export validation; those remain later OI-003 steps.
 
 ## Milestone 12 - Pilot Rehearsal
 

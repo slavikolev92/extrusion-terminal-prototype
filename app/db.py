@@ -28,7 +28,7 @@ from .recipe_parser import (
     RecipeParseResult,
     parse_recipe_source_fields,
 )
-from .rules import RuleResult
+from .rules import RuleResult, validate_structured_recipe_release
 
 STALE_CARD_MESSAGE = "Картата е променена след зареждането на страницата. Презаредете и опитайте отново."
 TIMING_END_REASONS = ("pause", "finish", "correction")
@@ -3188,6 +3188,8 @@ def release_card(
         card_fields = {field: str(card[field] or "") for field in IMPORT_FIELDS}
         if not card_has_usable_extrusion_step(card_fields):
             messages.append("Картата трябва да има валидна стъпка за екструдиране преди изпращане.")
+        recipe_release_result = validate_structured_recipe_release(card_fields)
+        messages.extend(recipe_release_result.messages)
 
         release_max_roll_weight = (
             str(max_roll_weight).strip()

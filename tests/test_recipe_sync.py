@@ -5,7 +5,6 @@ import io
 from decimal import Decimal
 
 from app import db
-from app.constants import STATUS_PENDING
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 from app.main import admin_card_detail_context, terminal_context
 from app.printing import build_recipe_rows as build_print_recipe_rows
@@ -231,7 +230,7 @@ def test_duplicate_skip_does_not_refresh_recipe_components(connection):
     ]
 
 
-def test_import_sync_does_not_block_parser_errors_or_add_release_gate(connection):
+def test_import_sync_does_not_block_parser_errors_before_release(connection):
     result = import_cards_from_csv(
         "structured-invalid-total.csv",
         csv_bytes(
@@ -254,12 +253,6 @@ def test_import_sync_does_not_block_parser_errors_or_add_release_gate(connection
         ("raw_material_a", "LDPE Rompetrol B20/03 | 80%", "LDPE", "Rompetrol B20/03"),
         ("linear_pe", "LLDPE SABIC 119ZJ | 19%", "LLDPE", "SABIC 119ZJ"),
     ]
-
-    release_result = db.release_card(card_id, machine_id=1, machine_sequence=1)
-    released = db.fetch_admin_card_detail(card_id)
-
-    assert release_result.ok
-    assert released["status"] == STATUS_PENDING
 
 
 def test_admin_imported_field_correction_refreshes_recipe_components(connection):

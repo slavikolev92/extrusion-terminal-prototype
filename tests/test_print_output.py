@@ -61,13 +61,13 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "extrusion_folding": "C",
         "extrusion_next_operation": "cutting",
         "extrusion_treatment": "corona",
-        "raw_material_a": "LDPE A",
-        "raw_material_b": "LLDPE B",
-        "raw_material_c": "MB C",
-        "linear_pe": "10%",
-        "antistatic": "1%",
-        "masterbatch": "2%",
-        "chalk": "0%",
+        "raw_material_a": "LDPE A | 50%",
+        "raw_material_b": "LLDPE B | 30%",
+        "raw_material_c": "Masterbatch MB C | 5%",
+        "linear_pe": "LLDPE Linear PE | 10%",
+        "antistatic": "Antistatic Agent | 1%",
+        "masterbatch": "Masterbatch Additive | 2%",
+        "chalk": "Filler Chalk | 2%",
         "packaging_method": "rolls",
     }
     row.update(overrides)
@@ -608,15 +608,15 @@ def test_print_route_front_page_preserves_planned_material_abc_grid(connection):
 
     assert response.status_code == 200
     expected_values = {
-        ("raw_material_a", "A"): "LDPE A",
-        ("raw_material_b", "B"): "LLDPE B",
-        ("raw_material_c", "C"): "MB C",
-        ("linear_pe", "A"): "10%",
+        ("raw_material_a", "A"): "LDPE A | 50%",
+        ("raw_material_b", "B"): "LLDPE B | 30%",
+        ("raw_material_c", "C"): "Masterbatch MB C | 5%",
+        ("linear_pe", "A"): "LLDPE Linear PE | 10%",
         ("linear_pe", "B"): "",
         ("linear_pe", "C"): "",
-        ("antistatic", "A"): "1%",
-        ("masterbatch", "A"): "2%",
-        ("chalk", "A"): "0%",
+        ("antistatic", "A"): "Antistatic Agent | 1%",
+        ("masterbatch", "A"): "Masterbatch Additive | 2%",
+        ("chalk", "A"): "Filler Chalk | 2%",
     }
     for (component_key, column_name), expected_value in expected_values.items():
         cell = data_block(
@@ -698,13 +698,13 @@ def test_print_route_front_page_renders_planned_recipe_values(connection):
 
     assert response.status_code == 200
     expected_values = {
-        "raw_material_a": "LDPE A",
-        "raw_material_b": "LLDPE B",
-        "raw_material_c": "MB C",
-        "linear_pe": "10%",
-        "antistatic": "1%",
-        "masterbatch": "2%",
-        "chalk": "0%",
+        "raw_material_a": "LDPE A | 50%",
+        "raw_material_b": "LLDPE B | 30%",
+        "raw_material_c": "Masterbatch MB C | 5%",
+        "linear_pe": "LLDPE Linear PE | 10%",
+        "antistatic": "Antistatic Agent | 1%",
+        "masterbatch": "Masterbatch Additive | 2%",
+        "chalk": "Filler Chalk | 2%",
     }
     for component_key, expected_value in expected_values.items():
         planned_cell = data_block(response.text, "data-front-recipe-planned", component_key)

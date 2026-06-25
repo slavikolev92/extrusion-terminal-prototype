@@ -46,13 +46,13 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "extrusion_folding": "single fold",
         "extrusion_next_operation": "rewind",
         "extrusion_treatment": "corona",
-        "raw_material_a": "Planned LDPE A",
-        "raw_material_b": "Planned LLDPE B",
-        "raw_material_c": "Planned HDPE C",
-        "linear_pe": "Planned mLLDPE",
-        "antistatic": "Planned antistatic",
-        "masterbatch": "Planned masterbatch",
-        "chalk": "Planned chalk",
+        "raw_material_a": "LDPE Planned A | 50%",
+        "raw_material_b": "LLDPE Planned B | 30%",
+        "raw_material_c": "MDPE Planned C | 5%",
+        "linear_pe": "LLDPE Planned mLLDPE | 8%",
+        "antistatic": "Antistatic Planned antistatic | 1%",
+        "masterbatch": "Masterbatch Planned masterbatch | 4%",
+        "chalk": "Filler Planned chalk | 2%",
         "packaging_method": "rolls",
     }
     row.update(overrides)
@@ -536,13 +536,13 @@ def test_admin_order_form_save_preserves_omitted_recipe_fields(connection):
     assert response.status_code == 303
     assert updated["customer"] == "Grouped Order Customer"
     assert updated["max_roll_weight"] == "70.5"
-    assert updated["raw_material_a"] == "Planned LDPE A"
-    assert updated["raw_material_b"] == "Planned LLDPE B"
-    assert updated["raw_material_c"] == "Planned HDPE C"
-    assert updated["linear_pe"] == "Planned mLLDPE"
-    assert updated["antistatic"] == "Planned antistatic"
-    assert updated["masterbatch"] == "Planned masterbatch"
-    assert updated["chalk"] == "Planned chalk"
+    assert updated["raw_material_a"] == "LDPE Planned A | 50%"
+    assert updated["raw_material_b"] == "LLDPE Planned B | 30%"
+    assert updated["raw_material_c"] == "MDPE Planned C | 5%"
+    assert updated["linear_pe"] == "LLDPE Planned mLLDPE | 8%"
+    assert updated["antistatic"] == "Antistatic Planned antistatic | 1%"
+    assert updated["masterbatch"] == "Masterbatch Planned masterbatch | 4%"
+    assert updated["chalk"] == "Filler Planned chalk | 2%"
 
 
 def test_admin_global_save_updates_order_materials_and_roll_data(connection):
@@ -652,7 +652,12 @@ def test_admin_global_save_rolls_back_recipe_components_when_timing_is_invalid(c
     card_id = prepare_dense_completed_card("27109", roll_count=1)
     seed_fields = current_import_fields(card_id)
     seed_fields["raw_material_a"] = "LDPE Before Rollback | 80%"
+    seed_fields["raw_material_b"] = ""
+    seed_fields["raw_material_c"] = ""
     seed_fields["linear_pe"] = "LLDPE Before Rollback | 20%"
+    seed_fields["antistatic"] = ""
+    seed_fields["masterbatch"] = ""
+    seed_fields["chalk"] = ""
     assert db.update_admin_imported_fields(card_id, card_version(card_id), seed_fields).ok
 
     before = db.fetch_admin_card_detail(card_id)

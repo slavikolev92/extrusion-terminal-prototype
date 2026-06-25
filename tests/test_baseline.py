@@ -38,7 +38,7 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "material": "LDPE",
         "size_thickness": "600/0.050",
         "extrusion_flag": "da",
-        "raw_material_a": "LDPE A",
+        "raw_material_a": "LDPE A | 100%",
         "packaging_method": "rolls",
     }
     row.update(overrides)
@@ -407,7 +407,7 @@ def test_csv_import_ignores_max_roll_weight_alias(connection):
             "max_roll_weight_kg": "75",
             "size_thickness": "600/0.050",
             "extrusion_flag": "da",
-            "raw_material_a": "LDPE A",
+            "raw_material_a": "LDPE A | 100%",
             "packaging_method": "rolls",
         }
     )
