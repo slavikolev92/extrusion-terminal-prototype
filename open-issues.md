@@ -122,10 +122,124 @@ Accepted implementation roadmap:
      changed UI.
 
 8. Add Excel export macro validation.
-   - Update the read-only CSV export macro so it validates selected rows before
-     writing a CSV.
-   - Validate non-empty `AM:AS` cells against the same recipe contract used by
-     the app.
-   - Block export with a clear row/order/column/value/reason message when
-     validation fails.
-   - Keep the macro read-only with respect to existing workbook cells.
+   - Update the read-only CSV export macro so it validates selected production
+     rows before writing a CSV.
+   - Add standalone selected-row validation and configured-range validation from
+     `ExportConfig!FirstValidationRow`.
+   - Validate `Database!G` as positive gross kilograms for every validated
+     production-order row.
+   - Validate printing `AB:AI` cells against `RecipeCatalogPrinting`; do not add
+     printing fields to the extrusion-terminal CSV.
+   - Validate extrusion `AM:AS` cells against the structured recipe contract and
+     `RecipeCatalogExtrusion`.
+   - Block CSV writing with a clear English row/order/column/value/reason
+     message when validation fails.
+   - Keep the macro read-only with respect to existing workbook production-order
+     cells.
+
+Immediate follow-up after Step 8:
+
+- Address `OI-004` so the app release gate aligns with the workbook/export
+  contract that `Database!G` is the only canonical target gross kilograms source.
+
+### OI-004 - App target gross validation should align to canonical Database column G
+
+- Status: open
+- Severity: important
+- Found in: OI-003 Step 8 export-validation design discussion, 2026-06-26
+- Must follow: immediately after OI-003 Step 8 Excel export validation
+- Evidence:
+  - `docs/implementation-notes/oi-003-step-8-export-validation-interim.md`
+
+The OI-003 Step 8 workbook/export validation design now treats `Database!G` as
+the canonical target manufacturing weight for every future validated production
+order. Column `G` must contain positive gross kilograms. Columns `H`, `I`, and
+`J` are not authoritative for this purpose and should be ignored by the export
+validator.
+
+The current app release gate still accepts target gross from either `G/H` or
+`I/J` when the unit looks kg-like. That broader app behavior was useful earlier,
+but it no longer matches the workbook contract needed for controlled export and
+future costing.
+
+Recommended fix:
+
+- After OI-003 Step 8 is complete, update app-side release validation and
+  planned-kilogram calculations to use only imported `quantity_1`
+  (`Database!G`) as positive gross kilograms.
+- Stop using `unit_1`, `quantity_2`, or `unit_2` as alternate target gross
+  sources.
+- Update focused release-validation tests that currently accept `I/J` kg-like
+  values.
+- Preserve the app's role as a structural/operational safety backstop; do not
+  add app-side workbook catalog validation.
+
+### OI-005 - Consolidate workbook helper macro installation
+
+- Status: open
+- Severity: important
+- Found in: workbook macro validation discussion, 2026-06-26
+- Must consider after: OI-003 Step 8 Excel export validation
+- Evidence:
+  - `source-files/excel-macros/ExportExtrusionOrders.bas`
+  - `interim-costing-process/source-files/recipe-builder-demo/modRecipeBuilderCascadingInstaller.bas`
+
+The workbook helper macro workflow currently requires separate installation
+paths for the recipe builder and export validation. In practice this is fragile:
+the shift-manager should not have to know which helper module installs which
+piece of workbook infrastructure, nor remember to run multiple setup macros in
+the correct order.
+
+The target workflow should have one installation command for all workbook helper
+functionality needed by the pilot workbook. The underlying implementation may
+still keep separate VBA modules for recipe-builder behavior, export validation,
+and CSV export, but installation should be a single explicit operation that
+ensures all required helper sheets, forms, event handlers, and export validation
+prerequisites are present.
+
+Recommended fix:
+
+- Design a single workbook-helper installation entry point that installs or
+  verifies both recipe-builder support and export-validation support.
+- Keep catalog data preservation as a hard requirement; installation must not
+  clear, seed, or rewrite reviewed catalog rows.
+- Preserve the existing public export macro `ExportSelectedExtrusionOrdersCsv`.
+- Avoid duplicate or competing `Database` worksheet event handlers.
+- Make installation messages ASCII/English so VBA import/display remains
+  reliable across workstations.
+- Document one installation workflow for the shift-manager workbook.
+
+### OI-006 - Restore Bulgarian workbook runtime messages safely
+
+- Status: open
+- Severity: important
+- Found in: workbook macro validation discussion, 2026-06-26
+- Must consider after: OI-005 workbook helper installation consolidation
+- Evidence:
+  - `source-files/excel-macros/ExportExtrusionOrders.bas`
+  - `tests/test_excel_export_macro_contract.py`
+
+The export-validation macro was temporarily converted to English-only messages
+because raw Cyrillic string literals in imported `.bas` files displayed as
+mojibake in Excel/VBE. This made validation messages unreadable on the target
+workstation even though the validation behavior worked.
+
+Installation/setup messages should remain English/ASCII for reliability and
+supportability. Runtime messages that operators or shift managers use during
+validation and export should be translated back to Bulgarian, but only with an
+encoding-safe implementation that survives `.bas` import.
+
+Recommended fix:
+
+- Keep installation/setup messages in English/ASCII.
+- Translate non-installation runtime messages to Bulgarian, including selected
+  validation, configured validation, export validation failure, and row-level
+  validation errors.
+- Do not store raw Cyrillic literals directly in `.bas` source files unless the
+  workbook import path is proven to preserve them.
+- Use an encoding-safe approach such as `ChrW$`/Unicode helper functions, or a
+  generated installer path that writes Unicode text inside Excel reliably.
+- Keep static tests that prevent accidental raw Cyrillic in imported `.bas`
+  source files until the safe message strategy is implemented and verified.
+- Verify messages manually in a copied workbook on the target Excel
+  workstation.
