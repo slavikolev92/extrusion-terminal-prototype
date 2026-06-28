@@ -176,7 +176,6 @@ def test_release_blocks_recipe_total_that_is_not_exactly_100(connection):
         ("RS-REL-009", {"quantity_1": "0", "unit_1": "kg"}),
         ("RS-REL-010", {"quantity_1": "-10", "unit_1": "kg"}),
         ("RS-REL-011", {"quantity_1": "not a number", "unit_1": "kg"}),
-        ("RS-REL-012", {"quantity_1": "1000", "unit_1": "pcs"}),
         ("RS-REL-017", {"quantity_1": "-10 kg", "unit_1": "kg"}),
         ("RS-REL-018", {"quantity_1": "abc10", "unit_1": "kg"}),
         ("RS-REL-019", {"quantity_1": "10 kg", "unit_1": "kg"}),
@@ -201,13 +200,13 @@ def test_release_blocks_missing_zero_or_invalid_target_gross(
     assert_card_still_imported(card_id)
 
 
-def test_release_accepts_comma_decimal_recipe_percent_and_quantity_2_target_gross(connection):
+def test_release_accepts_positive_quantity_1_without_unit_1_kg_check(connection):
     card_id = import_structured_card(
-        "RS-REL-013",
-        quantity_1="200",
+        "RS-REL-012",
+        quantity_1="1250,5",
         unit_1="бр",
-        quantity_2="1250,5",
-        unit_2="кг",
+        quantity_2="not target gross",
+        unit_2="nonsense",
         raw_material_a="LDPE Rompetrol B20/03 | 97,5%",
         linear_pe="LLDPE SABIC 119ZJ | 2,5%",
     )
@@ -219,6 +218,27 @@ def test_release_accepts_comma_decimal_recipe_percent_and_quantity_2_target_gros
     assert card["status"] == STATUS_PENDING
     assert card["machine_id"] == 2
     assert card["machine_sequence"] == 1
+
+
+def test_release_blocks_invalid_quantity_1_even_when_quantity_2_is_kg_like(connection):
+    card_id = import_structured_card(
+        "RS-REL-024",
+        quantity_1="",
+        unit_1="",
+        quantity_2="1250,5",
+        unit_2="кг",
+        raw_material_a="LDPE Rompetrol B20/03 | 97,5%",
+        linear_pe="LLDPE SABIC 119ZJ | 2,5%",
+    )
+
+    result = db.release_card(card_id, machine_id=1, machine_sequence=1)
+
+    assert not result.ok
+    assert result.messages == (
+        f"{RECIPE_RELEASE_PREFIX}: липсват планирани кг/поръчано количество. "
+        "Коригирайте рецептата и опитайте отново.",
+    )
+    assert_card_still_imported(card_id)
 
 
 def test_release_allows_category_only_recipe_rows_from_excel_builder_na_omissions(connection):

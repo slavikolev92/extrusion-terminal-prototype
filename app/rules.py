@@ -29,7 +29,6 @@ RECIPE_RELEASE_FIELD_LABELS = {
 RECIPE_RELEASE_PREFIX = "Рецептата не може да бъде пусната"
 RECIPE_RELEASE_SUFFIX = "Коригирайте рецептата и опитайте отново."
 TARGET_GROSS_RELEASE_REASON = "липсват планирани кг/поръчано количество"
-TARGET_GROSS_UNITS = {"kg", "kgs", "кг", "килограм", "килограма"}
 
 
 @dataclass(frozen=True)
@@ -40,10 +39,6 @@ class RuleResult:
 
 def recipe_release_message(reason: str) -> str:
     return f"{RECIPE_RELEASE_PREFIX}: {reason}. {RECIPE_RELEASE_SUFFIX}"
-
-
-def normalize_quantity_unit(value: Any) -> str:
-    return str(value or "").strip().casefold().rstrip(".")
 
 
 def decimal_from_quantity_text(value: Any) -> Decimal | None:
@@ -60,13 +55,9 @@ def decimal_from_quantity_text(value: Any) -> Decimal | None:
 
 
 def target_gross_weight_from_card(card: dict[str, Any]) -> Decimal | None:
-    for index in (1, 2):
-        unit = normalize_quantity_unit(card.get(f"unit_{index}"))
-        if unit not in TARGET_GROSS_UNITS:
-            continue
-        quantity = decimal_from_quantity_text(card.get(f"quantity_{index}"))
-        if quantity is not None and quantity > Decimal("0"):
-            return quantity
+    quantity = decimal_from_quantity_text(card.get("quantity_1"))
+    if quantity is not None and quantity > Decimal("0"):
+        return quantity
     return None
 
 

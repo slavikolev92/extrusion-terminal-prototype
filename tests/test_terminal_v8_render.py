@@ -476,14 +476,16 @@ def test_terminal_v8_recipe_autosave_script_tracks_dirty_exit_and_beforeunload(
     assert 'window.addEventListener("beforeunload"' in html
 
 
-def test_target_gross_resolves_from_quantity_2_and_remaining_clamps(connection):
+def test_target_gross_uses_quantity_1_and_ignores_quantity_units_and_secondary_quantity(
+    connection,
+):
     card_id = release_ready_card(
         "26141",
         machine_id=1,
         sequence=1,
-        quantity_1="7",
+        quantity_1="100",
         unit_1="ролки",
-        quantity_2="100",
+        quantity_2="9999",
         unit_2="kg",
     )
     assert db.start_production_timing(card_id, card_version(card_id)).ok
@@ -499,7 +501,9 @@ def test_target_gross_resolves_from_quantity_2_and_remaining_clamps(connection):
     assert card["remaining_gross_weight"] == "0.00"
 
 
-def test_terminal_v8_does_not_show_fake_zero_target_when_no_kg_quantity(connection):
+def test_terminal_v8_does_not_show_fake_zero_target_when_quantity_1_is_invalid(
+    connection,
+):
     card_id = release_ready_card(
         "26142",
         machine_id=1,
@@ -507,10 +511,10 @@ def test_terminal_v8_does_not_show_fake_zero_target_when_no_kg_quantity(connecti
     )
     card = db.fetch_admin_card_detail(card_id)
     fields = {field: str(card[field] or "") for field in IMPORT_FIELDS}
-    fields["quantity_1"] = "7"
-    fields["unit_1"] = "ролки"
+    fields["quantity_1"] = ""
+    fields["unit_1"] = "kg"
     fields["quantity_2"] = "20"
-    fields["unit_2"] = "бр"
+    fields["unit_2"] = "kg"
     assert db.update_admin_imported_fields(card_id, card_version(card_id), fields).ok
 
     html = render_terminal(card_id)

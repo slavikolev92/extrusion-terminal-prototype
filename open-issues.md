@@ -144,7 +144,7 @@ Immediate follow-up after Step 8:
 
 ### OI-004 - App target gross validation should align to canonical Database column G
 
-- Status: open
+- Status: complete
 - Severity: important
 - Found in: OI-003 Step 8 export-validation design discussion, 2026-06-26
 - Must follow: immediately after OI-003 Step 8 Excel export validation
@@ -173,6 +173,14 @@ Recommended fix:
   values.
 - Preserve the app's role as a structural/operational safety backstop; do not
   add app-side workbook catalog validation.
+
+Resolution:
+
+- Implemented in OI-004. App release validation, planned kilograms, terminal
+  target kilograms, remaining kilograms, and progress percentage now use
+  canonical `quantity_1` (`Database!G`) only. `unit_1`, `quantity_2`, and
+  `unit_2` remain imported/displayed workbook fields and are ignored for
+  target-gross calculations.
 
 ### OI-005 - Consolidate workbook helper macro installation
 

@@ -1866,13 +1866,7 @@ def build_quantity_display(card: dict[str, Any]) -> str:
 
 
 def target_gross_decimal(card: dict[str, Any]) -> Decimal | None:
-    for index in (1, 2):
-        unit = normalize_quantity_unit(card.get(f"unit_{index}"))
-        if unit in {"kg", "kgs", "кг", "килограм", "килограма"}:
-            target = decimal_from_quantity_text(card.get(f"quantity_{index}"))
-            if target is not None:
-                return target
-    return None
+    return target_gross_weight_from_card(card)
 
 
 def target_gross_display(card: dict[str, Any]) -> str | None:
@@ -1905,24 +1899,6 @@ def decimal_from_display(value: Any) -> Decimal | None:
         return None
     try:
         return Decimal(text)
-    except InvalidOperation:
-        return None
-
-
-def normalize_quantity_unit(value: Any) -> str:
-    return str(value or "").strip().casefold().rstrip(".")
-
-
-def decimal_from_quantity_text(value: Any) -> Decimal | None:
-    direct_value = decimal_from_display(value)
-    if direct_value is not None:
-        return direct_value
-    text = str(value or "").strip().replace(",", ".")
-    match = re.search(r"\d+(?:\.\d+)?", text)
-    if not match:
-        return None
-    try:
-        return Decimal(match.group(0))
     except InvalidOperation:
         return None
 

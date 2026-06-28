@@ -517,6 +517,29 @@ def test_step_6_admin_and_terminal_display_use_normalized_recipe_rows(connection
     assert "chalk" not in terminal_rows
 
 
+def test_admin_and_terminal_planned_kg_use_quantity_1_only(connection):
+    card_id = import_card(
+        "RS-SYNC-015",
+        quantity_1="1000",
+        unit_1="rolls",
+        quantity_2="9999",
+        unit_2="kg",
+        raw_material_a="LDPE Display Source | 80%",
+        linear_pe="LLDPE Display Source | 20%",
+    )
+    assert db.release_card(card_id, machine_id=1, machine_sequence=1).ok
+
+    admin_context = admin_card_detail_context(card_id)
+    terminal = terminal_context(card_id)
+    admin_rows = {row["field"]: row for row in admin_context["recipe_rows"]}
+    terminal_rows = {row["field"]: row for row in terminal["recipe_rows"]}
+
+    assert admin_rows["raw_material_a"]["planned_kg"] == "800.00"
+    assert admin_rows["linear_pe"]["planned_kg"] == "200.00"
+    assert terminal_rows["raw_material_a"]["planned_kg"] == "800.00"
+    assert terminal_rows["linear_pe"]["planned_kg"] == "200.00"
+
+
 def test_admin_and_terminal_display_use_category_fallback_for_category_only_rows(connection):
     card_id = import_card(
         "RS-SYNC-014",
