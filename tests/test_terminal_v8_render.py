@@ -231,6 +231,24 @@ def test_terminal_v8_selected_machine_navigation_does_not_use_heavy_focus_ring(c
     assert "border-width: 10px 3px 3px;" in selected_style
 
 
+def test_terminal_v8_action_buttons_are_vertically_aligned(connection):
+    release_ready_card("26124", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    actions_rules = css_rules(html, r"(?m)^    \.actions")
+    action_form_rules = css_rules(html, r"(?m)^    \.actions form")
+    action_button_rules = css_rules(html, r"(?m)^    \.actions \.action-button")
+
+    assert "align-items: center;" in actions_rules
+    assert "display: flex;" in action_form_rules
+    assert "align-items: center;" in action_form_rules
+    assert "height: 38px;" in action_button_rules
+    assert "min-height: 38px;" in action_button_rules
+    assert "align-items: center;" in action_button_rules
+    assert "line-height: 1;" in action_button_rules
+
+
 def test_terminal_v8_machine_card_kpi_text_is_semibold(connection):
     release_ready_card("26113", machine_id=1, sequence=1)
 
@@ -325,7 +343,10 @@ def test_terminal_v8_recipe_table_uses_secondary_text_color(connection):
 
     html = render_terminal()
 
-    assert "color: var(--secondary-text);" in css_rules(html, r"(?m)^    \.recipe-head")
+    assert "color: var(--secondary-text);" in css_rules(
+        html,
+        r"(?m)^    \.recipe-head,\s*\.roll-head",
+    )
     for selector in (
         r"\.component",
         r"\.material-planned",
@@ -585,11 +606,14 @@ def test_terminal_v8_recipe_table_aligns_all_values_left(connection):
 
     html = render_terminal()
 
-    recipe_cell_rules = css_rules(html, r"\.recipe-head div,\s*\.recipe-row > div")
+    recipe_head_cell_rules = css_rules(html, r"(?m)^    \.recipe-head div,\s*\.roll-head > div")
+    recipe_body_cell_rules = css_rules(html, r"(?m)^    \.recipe-row > div")
     recipe_number_rules = css_rules(html, r"\.recipe-number")
 
-    assert "justify-content: flex-start;" in recipe_cell_rules
-    assert "text-align: left;" in recipe_cell_rules
+    assert "justify-content: flex-start;" in recipe_head_cell_rules
+    assert "text-align: left;" in recipe_head_cell_rules
+    assert "justify-content: flex-start;" in recipe_body_cell_rules
+    assert "text-align: left;" in recipe_body_cell_rules
     assert "justify-content: flex-start;" in recipe_number_rules
     assert "text-align: left;" in recipe_number_rules
     assert "justify-content: flex-end;" not in recipe_number_rules
@@ -604,7 +628,7 @@ def test_terminal_v8_recipe_and_roll_spacing_is_balanced_for_compact_workstation
     html = render_terminal()
 
     recipe_row_rules = css_rules_all(html, r"(?m)^    \.recipe-row")
-    recipe_cell_rules = css_rules(html, r"\.recipe-head div,\s*\.recipe-row > div")
+    recipe_cell_rules = css_rules(html, r"(?m)^    \.recipe-row > div")
     roll_entry_rules = css_rules_all(html, r"(?m)^    \.roll-entry")
     roll_entry_label_rules = css_rules_all(html, r"(?m)^    \.roll-entry \.field-label")
     roll_entry_input_rules = css_rules(html, r"(?m)^    \.roll-entry input")
@@ -620,7 +644,7 @@ def test_terminal_v8_recipe_and_roll_spacing_is_balanced_for_compact_workstation
     assert "min-height: 36px;" in roll_entry_input_rules
     assert any("min-height: 36px;" in rules for rules in roll_entry_button_rules)
     assert "min-height: 0;" in roll_entry_feedback_rules
-    assert any("min-height: 38px;" in rules for rules in roll_head_rules)
+    assert any("min-height: 36px;" in rules for rules in roll_head_rules)
 
     compact_height_match = re.search(
         r"@media \(max-height: 980px\) \{(?P<rules>.*?)@media \(max-height: 760px\)",
@@ -637,13 +661,60 @@ def test_terminal_v8_recipe_and_roll_spacing_is_balanced_for_compact_workstation
 
     compact_height_rules = compact_height_match.group("rules")
     assert ".recipe-row {\n        min-height: 36px;" in compact_height_rules
-    assert ".recipe-head div,\n      .recipe-row > div {\n        padding: 4px 7px;" in compact_height_rules
+    assert ".recipe-row > div {\n        padding: 4px 7px;" in compact_height_rules
     assert ".roll-entry .field-label {\n        margin-bottom: 5px;" in compact_height_rules
 
     short_height_rules = short_height_match.group("rules")
     assert ".recipe-row {\n        min-height: 32px;" in short_height_rules
-    assert ".recipe-head div,\n      .recipe-row > div {\n        padding: 3px 6px;" in short_height_rules
+    assert ".recipe-row > div {\n        padding: 3px 6px;" in short_height_rules
     assert ".roll-entry .field-label {\n        margin-bottom: 5px;" in short_height_rules
+
+
+def test_terminal_v8_recipe_and_roll_table_headers_share_style(connection):
+    release_ready_card("26237", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    shared_head_rules = css_rules(html, r"(?m)^    \.recipe-head,\s*\.roll-head")
+    shared_head_cell_rules = css_rules(html, r"(?m)^    \.recipe-head div,\s*\.roll-head > div")
+    recipe_body_cell_rules = css_rules(html, r"(?m)^    \.recipe-row > div")
+    roll_body_cell_rules = css_rules(html, r"(?m)^    \.roll-row > div")
+
+    assert "min-height: 36px;" in shared_head_rules
+    assert "background: #f1f4f7;" in shared_head_rules
+    assert "color: var(--secondary-text);" in shared_head_rules
+    assert "font-size: 13px;" in shared_head_rules
+    assert "font-weight: 700;" in shared_head_rules
+    assert "line-height: 1.15;" in shared_head_rules
+    assert "text-transform:" not in shared_head_rules
+
+    assert "padding: 6px 9px;" in shared_head_cell_rules
+    assert "align-items: center;" in shared_head_cell_rules
+    assert "justify-content: flex-start;" in shared_head_cell_rules
+    assert "text-align: left;" in shared_head_cell_rules
+    assert "padding: 6px 9px;" in recipe_body_cell_rules
+    assert "padding: 4px 7px;" in roll_body_cell_rules
+
+    compact_height_match = re.search(
+        r"@media \(max-height: 980px\) \{(?P<rules>.*?)@media \(max-height: 760px\)",
+        html,
+        flags=re.S,
+    )
+    short_height_match = re.search(
+        r"@media \(max-height: 760px\) \{(?P<rules>.*?)a\.machine-tab,",
+        html,
+        flags=re.S,
+    )
+    assert compact_height_match is not None
+    assert short_height_match is not None
+
+    compact_height_rules = compact_height_match.group("rules")
+    assert ".recipe-head,\n      .roll-head {\n        min-height: 32px;" in compact_height_rules
+    assert ".recipe-head div,\n      .roll-head > div {\n        padding: 5px 7px;" in compact_height_rules
+
+    short_height_rules = short_height_match.group("rules")
+    assert ".recipe-head,\n      .roll-head {\n        min-height: 30px;" in short_height_rules
+    assert ".recipe-head div,\n      .roll-head > div {\n        padding: 4px 6px;" in short_height_rules
 
 
 def test_terminal_v8_renders_category_only_recipe_without_na_control_value(connection):
@@ -908,6 +979,83 @@ def test_target_gross_uses_quantity_1_and_ignores_quantity_units_and_secondary_q
     assert card["remaining_gross_weight"] == "0.00"
 
 
+def test_terminal_v8_rounds_machine_progress_and_totals_but_preserves_roll_decimals(
+    connection,
+):
+    card_id = release_ready_card(
+        "26145",
+        machine_id=1,
+        sequence=1,
+        quantity_1="1000",
+    )
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "0.25").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "100.50").ok
+
+    html = render_terminal(card_id)
+
+    assert '<span class="machine-tab-qty">101 / 1000 кг</span>' in html
+    assert re.search(
+        r'<span class="field-label">Бруто</span>\s*<div class="big">101</div>',
+        html,
+    )
+    assert re.search(
+        r'<span class="field-label">Оставащи</span>\s*<div class="big">900</div>',
+        html,
+    )
+    assert re.search(
+        r'<span class="field-label">Нето</span>\s*<div class="big">100</div>',
+        html,
+    )
+    assert re.search(r'value="100\.50?"', html)
+    assert "<div>100.25</div>" in html
+    assert "100.50 / 1000.00 кг" not in html
+
+
+def test_terminal_v8_keeps_totals_visible_if_server_context_lacks_new_display_fields(
+    connection,
+):
+    card_id = release_ready_card(
+        "26146",
+        machine_id=1,
+        sequence=1,
+        quantity_1="1000",
+    )
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "0.25").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "100.50").ok
+
+    context = terminal_context(card_id)
+    context["selected_card"].pop("total_gross_weight_display", None)
+    context["selected_card"].pop("remaining_gross_weight_display", None)
+    context["selected_card"].pop("total_net_weight_display", None)
+    for queue in context["machine_queues"]:
+        focus_card = queue.get("focus_card")
+        if focus_card:
+            focus_card.pop("target_gross_weight_display", None)
+
+    env = Environment(
+        loader=FileSystemLoader("app/templates"),
+        autoescape=select_autoescape(["html"]),
+    )
+    env.globals["url_for"] = lambda name, **kwargs: f"/static{kwargs.get('path', '')}"
+    html = env.get_template("terminal.html").render(**context)
+
+    assert re.search(r'<span class="machine-tab-qty">101 / [^<]+ кг</span>', html)
+    assert re.search(
+        r'<span class="field-label">Бруто</span>\s*<div class="big">\S+</div>',
+        html,
+    )
+    assert re.search(
+        r'<span class="field-label">Оставащи</span>\s*<div class="big">\S+</div>',
+        html,
+    )
+    assert re.search(
+        r'<span class="field-label">Нето</span>\s*<div class="big">\S+</div>',
+        html,
+    )
+
+
 def test_terminal_v8_does_not_show_fake_zero_target_when_quantity_1_is_invalid(
     connection,
 ):
@@ -1066,7 +1214,9 @@ def test_terminal_v8_roll_rows_are_compact_and_vertically_centered(connection):
     html = render_terminal(card_id)
 
     assert ".roll-row {\n      min-height: 46px;" in html
-    assert ".roll-head > div,\n    .roll-row > div" in html
+    roll_body_cell_rules = css_rules(html, r"(?m)^    \.roll-row > div")
+    assert "padding: 4px 7px;" in roll_body_cell_rules
+    assert "align-items: center;" in roll_body_cell_rules
     assert "align-content: center;" in html
     assert ".roll-row-error-slot:empty {\n      display: none;" in html
 

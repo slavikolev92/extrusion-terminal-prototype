@@ -22,6 +22,13 @@
     {%- endif %}
   </span>
 {%- endmacro %}
+{% macro whole_kg(value, blank="-") -%}
+  {%- if value is not none and value|string|trim and value|string|trim != "-" -%}
+    {{- ((value|string|replace(",", ".")|float) + 0.5)|int -}}
+  {%- else -%}
+    {{- blank -}}
+  {%- endif -%}
+{%- endmacro %}
 <!doctype html>
 <html lang="bg">
 <head>
@@ -549,7 +556,20 @@
     }
 
     .actions {
+      align-items: center;
       flex-wrap: nowrap;
+    }
+
+    .actions form {
+      display: flex;
+      align-items: center;
+    }
+
+    .actions .action-button {
+      height: 38px;
+      min-height: 38px;
+      align-items: center;
+      line-height: 1;
     }
 
     .action-primary,
@@ -828,12 +848,14 @@
       align-items: stretch;
     }
 
-    .recipe-head {
-      min-height: 32px;
+    .recipe-head,
+    .roll-head {
+      min-height: 36px;
       background: #f1f4f7;
       color: var(--secondary-text);
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 700;
+      line-height: 1.15;
     }
 
     .recipe-row {
@@ -842,6 +864,15 @@
     }
 
     .recipe-head div,
+    .roll-head > div {
+      min-width: 0;
+      padding: 6px 9px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      text-align: left;
+    }
+
     .recipe-row > div {
       min-width: 0;
       border-right: 1px solid #dde3e9;
@@ -850,6 +881,10 @@
       align-items: center;
       justify-content: flex-start;
       text-align: left;
+    }
+
+    .recipe-head div {
+      border-right: 1px solid #dde3e9;
     }
 
     .recipe-head div:last-child,
@@ -1065,16 +1100,6 @@
       align-items: stretch;
     }
 
-    .roll-head {
-      min-height: 38px;
-      align-items: center;
-      background: #f1f4f7;
-      color: var(--secondary-text);
-      font-size: 12px;
-      font-weight: 800;
-      text-transform: uppercase;
-    }
-
     .roll-row {
       min-height: 46px;
       border-top: 1px solid #dde3e9;
@@ -1086,7 +1111,6 @@
       color: var(--secondary-text);
     }
 
-    .roll-head > div,
     .roll-row > div {
       min-width: 0;
       padding: 4px 7px;
@@ -1620,8 +1644,9 @@
         line-height: 1.25;
       }
 
-      .recipe-head {
-        min-height: 26px;
+      .recipe-head,
+      .roll-head {
+        min-height: 32px;
       }
 
       .recipe-row {
@@ -1634,6 +1659,10 @@
       }
 
       .recipe-head div,
+      .roll-head > div {
+        padding: 5px 7px;
+      }
+
       .recipe-row > div {
         padding: 4px 7px;
       }
@@ -1746,8 +1775,9 @@
         line-height: 1.2;
       }
 
-      .recipe-head {
-        min-height: 24px;
+      .recipe-head,
+      .roll-head {
+        min-height: 30px;
       }
 
       .recipe-row {
@@ -1760,6 +1790,10 @@
       }
 
       .recipe-head div,
+      .roll-head > div {
+        padding: 4px 6px;
+      }
+
       .recipe-row > div {
         padding: 3px 6px;
       }
@@ -1917,7 +1951,7 @@
               </span>
               <span class="machine-tab-progress">
                 <span class="progress"><span style="width:{{ focus_card.progress_percent if focus_card else 0 }}%"></span></span>
-                <span class="machine-tab-qty">{{ focus_card.produced_gross_weight if focus_card else "0" }} / {{ focus_card.target_gross_weight if focus_card and focus_card.target_gross_weight else "-" }} кг</span>
+                <span class="machine-tab-qty">{{ whole_kg(focus_card.produced_gross_weight if focus_card else "0") }} / {{ whole_kg(focus_card.target_gross_weight if focus_card and focus_card.target_gross_weight else none) }} кг</span>
               </span>
             </a>
           {% endfor %}
@@ -2286,16 +2320,16 @@
                   <div class="gross-metrics">
                     <div class="metric">
                       <span class="field-label">Бруто</span>
-                      <div class="big">{{ selected_card.total_gross_weight }}</div>
+                      <div class="big">{{ whole_kg(selected_card.total_gross_weight, "0") }}</div>
                     </div>
                     <div class="metric remain">
                       <span class="field-label">Оставащи</span>
-                      <div class="big">{{ selected_card.remaining_gross_weight or "-" }}</div>
+                      <div class="big">{{ whole_kg(selected_card.remaining_gross_weight) }}</div>
                     </div>
                   </div>
                   <div class="metric">
                     <span class="field-label">Нето</span>
-                    <div class="big">{{ selected_card.total_net_weight if selected_card.total_net_weight is not none else "-" }}</div>
+                    <div class="big">{{ whole_kg(selected_card.total_net_weight) }}</div>
                   </div>
                 </div>
               </div>
