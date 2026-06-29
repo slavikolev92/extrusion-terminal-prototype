@@ -7,7 +7,7 @@ This file is intentionally not a dump of every old Marco workbook value. The
 Marco workbook is legacy evidence. Most values there are percentages, ratios,
 blend shorthand, color shorthand, or incomplete material names. The catalog
 itself should be invoice-led, as stated in
-`interim-costing-process/interim-naming-convention-report.md`.
+`interim-costing-process/naming-conventions/interim-naming-convention-report.md`.
 
 ## Catalog Decisions
 

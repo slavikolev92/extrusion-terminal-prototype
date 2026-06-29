@@ -4,8 +4,10 @@ import re
 from pathlib import Path
 
 
-MACRO_PATH = Path("source-files/excel-macros/ExportExtrusionOrders.bas")
-README_PATH = Path("source-files/excel-macros/README.md")
+MACRO_PATH = Path(
+    "interim-costing-process/excel-tools/export-validation/ExportExtrusionOrders.bas"
+)
+README_PATH = Path("interim-costing-process/excel-tools/export-validation/README.md")
 
 
 def macro_text() -> str:

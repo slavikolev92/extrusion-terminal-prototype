@@ -10,8 +10,8 @@ Physical printing was intentionally out of scope. The app-side print route was c
 
 Workbook sources inspected:
 
-- `interim-costing-process/source-files/PO-OC - Elena.xlsm`
-- `interim-costing-process/source-files/PO-OC - Marco.XLSM`
+- `interim-costing-process/source-evidence/workbooks/PO-OC - Elena.xlsm`
+- `interim-costing-process/source-evidence/workbooks/PO-OC - Marco.XLSM`
 
 The `.xlsm` files were parsed read-only as zipped workbook XML because `openpyxl` is not installed in the repo virtualenv.
 

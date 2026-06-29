@@ -490,7 +490,7 @@ Solvents:
 
 ### Workbook Tasks
 
-1. Use `shift-manager-questions.md` to collect shift-manager answers.
+1. Use the questions in this plan to collect shift-manager answers.
 2. Prepare the starting raw-material/additive inventory reference list for the
    beginning of the tracked month, using the approved naming convention.
 3. Decide whether the raw-material/additive reference list is provided as

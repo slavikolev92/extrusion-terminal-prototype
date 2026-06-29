@@ -1,8 +1,6 @@
 # Local source workbooks and Excel lock files.
 source-files/*
 !source-files/README.md
-!source-files/excel-macros/
-!source-files/excel-macros/**
 
 # Runtime databases and local app state.
 *.db

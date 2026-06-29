@@ -19,7 +19,7 @@ The next work is not new feature development. It is a final software audit befor
 
 The user confirmed:
 
-- The workbook files under `interim-costing-process/source-files/` are current enough for audit purposes.
+- The workbook files under `interim-costing-process/source-evidence/workbooks/` are current enough for audit purposes.
 - These files reflect how the company currently works, even if the backups are not from today.
 - The audit may use any local test database or temporary database; nothing in this VM should be treated as live production data.
 - Physical printing is out of scope for Codex. The user will verify physical/PDF output where needed.
@@ -28,8 +28,8 @@ The user confirmed:
 
 Workbook sources:
 
-- `interim-costing-process/source-files/PO-OC - Elena.xlsm`
-- `interim-costing-process/source-files/PO-OC - Marco.XLSM`
+- `interim-costing-process/source-evidence/workbooks/PO-OC - Elena.xlsm`
+- `interim-costing-process/source-evidence/workbooks/PO-OC - Marco.XLSM`
 
 Preferred audit database policy:
 

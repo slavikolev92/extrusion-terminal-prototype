@@ -6,9 +6,9 @@ Rule used for this file: a row appears here only when the source evidence suppor
 
 Source files inspected:
 
-- `interim-costing-process/source-files/raw-materials-for-naming-convention.xlsx`
-- `interim-costing-process/source-files/PO-OC - Marco.XLSM`, `Database!AM:AS`
-- `interim-costing-process/interim-naming-convention-report.md`
+- `interim-costing-process/source-evidence/workbooks/raw-materials-for-naming-convention.xlsx`
+- `interim-costing-process/source-evidence/workbooks/PO-OC - Marco.XLSM`, `Database!AM:AS`
+- `interim-costing-process/naming-conventions/interim-naming-convention-report.md`
 
 The paste-ready catalog columns are the first four columns below. `Source evidence` is for review only and should not be pasted into Excel.
 

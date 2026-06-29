@@ -189,8 +189,8 @@ Resolution:
 - Found in: workbook macro validation discussion, 2026-06-26
 - Must consider after: OI-003 Step 8 Excel export validation
 - Evidence:
-  - `source-files/excel-macros/ExportExtrusionOrders.bas`
-  - `interim-costing-process/source-files/recipe-builder-demo/modRecipeBuilderCascadingInstaller.bas`
+  - `interim-costing-process/excel-tools/export-validation/ExportExtrusionOrders.bas`
+  - `interim-costing-process/excel-tools/recipe-builder/modRecipeBuilderCascadingInstaller.bas`
 
 The workbook helper macro workflow currently requires separate installation
 paths for the recipe builder and export validation. In practice this is fragile:
@@ -224,7 +224,7 @@ Recommended fix:
 - Found in: workbook macro validation discussion, 2026-06-26
 - Must consider after: OI-005 workbook helper installation consolidation
 - Evidence:
-  - `source-files/excel-macros/ExportExtrusionOrders.bas`
+  - `interim-costing-process/excel-tools/export-validation/ExportExtrusionOrders.bas`
   - `tests/test_excel_export_macro_contract.py`
 
 The export-validation macro was temporarily converted to English-only messages

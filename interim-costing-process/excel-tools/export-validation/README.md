@@ -91,7 +91,7 @@ final `Database` cell text.
 1. Open a copy of the shift-manager workbook in Excel.
 2. Press `Alt+F11`.
 3. In the VBA editor, choose `File > Import File...`.
-4. Select `source-files/excel-macros/ExportExtrusionOrders.bas`.
+4. Select `interim-costing-process/excel-tools/export-validation/ExportExtrusionOrders.bas`.
 5. Run macro `InstallExportValidation`.
 6. Set `ExportConfig!FirstValidationRow` to the first row of the new
    nomenclature period.
