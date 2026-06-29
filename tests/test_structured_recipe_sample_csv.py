@@ -189,7 +189,7 @@ def test_structured_sample_admin_and_terminal_display_structured_rows(connection
     assert terminal_rows["raw_material_a"]["material_category"] == "reLDPE"
     assert terminal_rows["raw_material_a"]["planned_material"] == "reLDPE"
     assert terminal_rows["raw_material_a"]["recipe_percent"] == "80%"
-    assert terminal_rows["raw_material_a"]["planned_kg"] == "1000.00"
+    assert terminal_rows["raw_material_a"]["planned_kg"] == "1000"
     assert terminal_rows["linear_pe"]["planned_material"] == "SABIC 119ZJ"
     assert "masterbatch" not in terminal_rows
 

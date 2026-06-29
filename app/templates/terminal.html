@@ -39,8 +39,11 @@
       --nav-card: #f8fbfe;
       --line: #d5dde6;
       --line-strong: #92a0af;
-      --text: #1f2933;
-      --muted: #667382;
+      --primary-text: #222222;
+      --secondary-text: #565656;
+      --details-value-gap: 4px;
+      --text: var(--primary-text);
+      --muted: var(--secondary-text);
       --blue: #0b6bcb;
       --blue-soft: rgba(223, 238, 255, .58);
       --green: #1f7a43;
@@ -192,9 +195,8 @@
 
     .machine-tab.selected {
       border-color: #0b355f;
-      outline: 4px solid #0b355f;
-      outline-offset: 3px;
-      box-shadow: none;
+      border-width: 10px 3px 3px;
+      background: #f4f8fc;
     }
     .machine-tab.idle {
       background: #f8fafc;
@@ -211,6 +213,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
+      font-weight: 600;
     }
 
     .machine-tab-top,
@@ -219,6 +222,7 @@
     }
 
     .machine-tab-name {
+      color: var(--primary-text);
       font-size: 17px;
       font-weight: 900;
     }
@@ -241,34 +245,37 @@
       min-width: 0;
       display: grid;
       gap: 4px;
-      color: var(--text);
+      color: var(--secondary-text);
       font-size: 14px;
-      font-weight: 800;
+      font-weight: 600;
       line-height: 1.15;
     }
 
     .machine-tab-customer,
     .machine-tab-product {
       min-width: 0;
+      font-weight: 600;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
     .machine-tab-customer {
+      color: var(--primary-text);
       font-size: 14px;
-      font-weight: 900;
+      font-weight: 600;
     }
 
     .machine-tab-product {
+      color: var(--secondary-text);
       font-size: 14px;
-      font-weight: 800;
+      font-weight: 600;
     }
 
     .machine-tab-progress {
-      color: var(--muted);
+      color: var(--secondary-text);
       font-size: 14px;
-      font-weight: 800;
+      font-weight: 600;
       line-height: 1.2;
     }
 
@@ -278,7 +285,7 @@
 
     .machine-tab-qty {
       flex: 0 0 auto;
-      color: var(--muted);
+      color: var(--secondary-text);
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
@@ -388,6 +395,7 @@
     .topbar,
     .actions,
     .panel-head,
+    .recipe-panel-head,
     .totals,
     .roll-entry {
       display: flex;
@@ -398,7 +406,8 @@
     .machine-top,
     .machine-meta,
     .topbar,
-    .panel-head {
+    .panel-head,
+    .recipe-panel-head {
       justify-content: space-between;
     }
 
@@ -524,6 +533,7 @@
     .title h2 {
       margin: 0;
       overflow: hidden;
+      color: var(--primary-text);
       font-size: 21px;
       line-height: 1.05;
       font-weight: 800;
@@ -686,12 +696,13 @@
       grid-template-rows: auto minmax(0, 1fr);
     }
 
-    .panel-head {
+    .panel-head,
+    .recipe-panel-head {
       min-height: 0;
       padding: 0 0 12px;
       border-bottom: 0;
       background: transparent;
-      color: #1f2933;
+      color: var(--primary-text);
       font-size: 21px;
       font-weight: 800;
       line-height: 1.15;
@@ -705,14 +716,15 @@
 
     .details-body {
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-rows: auto auto;
+      align-content: start;
       gap: 10px;
     }
 
     .notes-section {
       min-width: 0;
       display: grid;
-      gap: 8px;
+      gap: 0;
     }
 
     .section-title {
@@ -726,7 +738,7 @@
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
       column-gap: 28px;
-      row-gap: 16px;
+      row-gap: 22px;
     }
 
     .order-section {
@@ -736,7 +748,7 @@
       background: #fff;
       padding: 14px 18px;
       display: grid;
-      gap: 12px;
+      gap: 20px;
       align-content: start;
     }
 
@@ -750,7 +762,7 @@
     .field-label {
       display: block;
       margin-bottom: 6px;
-      color: #657383;
+      color: var(--secondary-text);
       font-size: 14px;
       font-weight: 700;
       line-height: 1.2;
@@ -758,10 +770,26 @@
 
     .value {
       overflow-wrap: anywhere;
-      color: #111827;
+      color: var(--primary-text);
       font-size: 17px;
       font-weight: 800;
       line-height: 1.2;
+    }
+
+    .details-panel .field-label,
+    .details-panel .section-title,
+    .roll-entry .field-label {
+      display: block;
+      margin-bottom: var(--details-value-gap);
+      color: var(--secondary-text);
+      font-size: 17px;
+      font-weight: 400;
+      line-height: 1.2;
+    }
+
+    .details-panel .value {
+      color: var(--primary-text);
+      font-weight: 600;
     }
 
     .notes {
@@ -770,18 +798,18 @@
       border-radius: 0;
       padding: 0;
       background: transparent;
-      color: #26323f;
+      color: var(--primary-text);
       font-size: 17px;
-      font-weight: 400;
+      font-weight: 600;
       line-height: 1.4;
     }
 
     .recipe-section {
       min-height: 0;
       display: grid;
-      grid-template-rows: auto auto;
-      align-content: end;
-      gap: 6px;
+      grid-template-rows: auto auto auto;
+      align-content: start;
+      gap: 0;
       margin-top: 0;
     }
 
@@ -796,20 +824,20 @@
     .recipe-head,
     .recipe-row {
       display: grid;
-      grid-template-columns: 112px minmax(180px, 1fr) 58px 86px minmax(140px, .72fr) minmax(110px, .52fr);
+      grid-template-columns: 132px minmax(180px, 1fr) 58px 86px minmax(140px, .72fr) minmax(110px, .52fr);
       align-items: stretch;
     }
 
     .recipe-head {
       min-height: 32px;
       background: #f1f4f7;
-      color: #657383;
+      color: var(--secondary-text);
       font-size: 14px;
       font-weight: 700;
     }
 
     .recipe-row {
-      min-height: 48px;
+      min-height: 52px;
       border-top: 1px solid #dde3e9;
     }
 
@@ -817,9 +845,11 @@
     .recipe-row > div {
       min-width: 0;
       border-right: 1px solid #dde3e9;
-      padding: 5px 9px;
+      padding: 6px 9px;
       display: flex;
       align-items: center;
+      justify-content: flex-start;
+      text-align: left;
     }
 
     .recipe-head div:last-child,
@@ -829,9 +859,9 @@
 
     .component {
       background: #f8fafc;
-      color: #1f2933;
+      color: var(--secondary-text);
       font-size: 17px;
-      font-weight: 800;
+      font-weight: 400;
       line-height: 1.18;
       overflow-wrap: anywhere;
       white-space: normal;
@@ -842,27 +872,39 @@
       border: 1px solid transparent;
       border-radius: 7px;
       background: #fff;
-      color: #26323f;
+      color: var(--secondary-text);
       padding: 0;
       font-size: 17px;
-      font-weight: 700;
+      font-weight: 400;
       line-height: 1.18;
       overflow-wrap: anywhere;
     }
 
     .recipe-number {
-      justify-content: flex-end;
-      color: #26323f;
+      justify-content: flex-start;
+      color: var(--secondary-text);
       font-size: 17px;
-      font-weight: 800;
-      text-align: right;
+      text-align: left;
+    }
+
+    .recipe-percent {
+      color: var(--secondary-text);
+      font-size: 16px;
+      font-weight: 400;
+    }
+
+    .recipe-kg {
+      color: var(--secondary-text);
+      font-size: 16px;
+      font-weight: 400;
     }
 
     .recipe-row input {
       min-height: 34px;
       padding: 5px 8px;
+      color: var(--secondary-text);
       font-size: 17px;
-      font-weight: 700;
+      font-weight: 400;
     }
 
     .field-error-slot {
@@ -932,7 +974,7 @@
       border: 0;
       border-radius: 0;
       background: transparent;
-      padding: 0 22px;
+      padding: 0 14px;
     }
 
     .gross-metrics .metric.remain::before {
@@ -946,7 +988,7 @@
     }
 
     .totals .field-label {
-      color: #718091;
+      color: var(--secondary-text);
       font-weight: 700;
       margin-bottom: 6px;
     }
@@ -954,6 +996,7 @@
     .metric .big {
       margin-top: 0;
       overflow: hidden;
+      color: var(--primary-text);
       font-size: 30px;
       line-height: 1;
       font-weight: 900;
@@ -971,7 +1014,7 @@
       border: 1px solid var(--line);
       border-radius: 9px;
       background: #fff;
-      padding: 8px;
+      padding: 6px 8px;
     }
 
     .roll-entry label {
@@ -983,13 +1026,21 @@
       flex: 0 0 138px;
     }
 
+    .roll-entry .field-label {
+      margin-bottom: 6px;
+    }
+
+    .roll-entry .field-error-slot {
+      min-height: 0;
+    }
+
     .roll-entry input {
-      min-height: 44px;
+      min-height: 36px;
       font-size: 17px;
     }
 
     .roll-entry button {
-      min-height: 44px;
+      min-height: 36px;
     }
 
     .roll-table {
@@ -1015,10 +1066,10 @@
     }
 
     .roll-head {
-      min-height: 52px;
+      min-height: 38px;
       align-items: center;
       background: #f1f4f7;
-      color: var(--muted);
+      color: var(--secondary-text);
       font-size: 12px;
       font-weight: 800;
       text-transform: uppercase;
@@ -1027,7 +1078,12 @@
     .roll-row {
       min-height: 46px;
       border-top: 1px solid #dde3e9;
-      font-weight: 800;
+      color: var(--primary-text);
+      font-weight: 600;
+    }
+
+    .roll-entry .field-label {
+      color: var(--secondary-text);
     }
 
     .roll-head > div,
@@ -1524,7 +1580,8 @@
         padding: 8px 24px 10px;
       }
 
-      .panel-head {
+      .panel-head,
+      .recipe-panel-head {
         padding-bottom: 7px;
         font-size: 20px;
       }
@@ -1538,9 +1595,14 @@
         gap: 7px;
       }
 
-      .order-section .field-label {
-        margin-bottom: 3px;
+      .order-section .field-label,
+      .order-section .section-title,
+      .roll-entry .field-label {
         font-size: 13px;
+      }
+
+      .roll-entry .field-label {
+        margin-bottom: 5px;
       }
 
       .value {
@@ -1552,17 +1614,9 @@
         row-gap: 8px;
       }
 
-      .notes-section {
-        gap: 4px;
-      }
-
       .notes {
         font-size: 15px;
         line-height: 1.25;
-      }
-
-      .recipe-section {
-        gap: 6px;
       }
 
       .recipe-head {
@@ -1570,7 +1624,7 @@
       }
 
       .recipe-row {
-        min-height: 32px;
+        min-height: 36px;
       }
 
       .recipe-row input {
@@ -1580,7 +1634,7 @@
 
       .recipe-head div,
       .recipe-row > div {
-        padding: 2px 7px;
+        padding: 4px 7px;
       }
 
       .component,
@@ -1646,7 +1700,8 @@
         padding: 7px 18px 8px;
       }
 
-      .panel-head {
+      .panel-head,
+      .recipe-panel-head {
         padding-bottom: 6px;
         font-size: 19px;
       }
@@ -1656,9 +1711,14 @@
         gap: 6px;
       }
 
-      .order-section .field-label {
-        margin-bottom: 2px;
+      .order-section .field-label,
+      .order-section .section-title,
+      .roll-entry .field-label {
         font-size: 12px;
+      }
+
+      .roll-entry .field-label {
+        margin-bottom: 5px;
       }
 
       .value {
@@ -1685,16 +1745,12 @@
         line-height: 1.2;
       }
 
-      .notes-section {
-        gap: 3px;
-      }
-
       .recipe-head {
         min-height: 24px;
       }
 
       .recipe-row {
-        min-height: 28px;
+        min-height: 32px;
       }
 
       .recipe-row input {
@@ -1704,7 +1760,7 @@
 
       .recipe-head div,
       .recipe-row > div {
-        padding: 1px 6px;
+        padding: 3px 6px;
       }
 
       .component,
@@ -2065,7 +2121,7 @@
                     </div>
                     <div class="field">
                       <span class="field-label">Макс. тегло ролка, кг</span>
-                      <div class="value">{{ selected_card.max_roll_weight or "-" }}</div>
+                      <div class="value">{{ selected_card.max_roll_weight_display or "-" }}</div>
                     </div>
                   </div>
 
@@ -2076,6 +2132,9 @@
                 </section>
 
                 <div class="recipe-section">
+                  <div class="panel-head recipe-panel-head">
+                    <span>Рецепта</span>
+                  </div>
                   <form class="recipe-table" action="/terminal/cards/{{ selected_card.id }}/materials" method="post" data-recipe-autosave="true">
                     <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                     <div class="recipe-head">
@@ -2090,8 +2149,8 @@
                       <div class="recipe-row">
                         <div class="component">{{ row.material_category or row.source_label }}</div>
                         <div><div class="material-planned">{{ row.planned_material or row.source_text or "" }}</div></div>
-                        <div class="recipe-number">{{ row.recipe_percent or "" }}</div>
-                        <div class="recipe-number">{{ row.planned_kg or "" }}</div>
+                        <div class="recipe-number recipe-percent">{{ row.recipe_percent or "" }}</div>
+                        <div class="recipe-number recipe-kg">{{ row.planned_kg or "" }}</div>
                         <div><input name="actual_material__{{ row.field }}" value="{{ row.actual_material or '' }}" aria-label="{{ row.source_label }} използван материал" {% if not can_edit_card %}disabled{% endif %}></div>
                         <div><input name="batch_lot__{{ row.field }}" value="{{ row.batch or '' }}" aria-label="{{ row.source_label }} партида" {% if not can_edit_card %}disabled{% endif %}></div>
                       </div>

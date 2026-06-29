@@ -511,7 +511,7 @@ def test_step_6_admin_and_terminal_display_use_normalized_recipe_rows(connection
     assert terminal_rows["raw_material_a"]["material_category"] == "LDPE"
     assert terminal_rows["raw_material_a"]["planned_material"] == "Display Source"
     assert terminal_rows["raw_material_a"]["recipe_percent"] == "80%"
-    assert terminal_rows["raw_material_a"]["planned_kg"] == "800.00"
+    assert terminal_rows["raw_material_a"]["planned_kg"] == "800"
     assert terminal_rows["raw_material_a"]["actual_material"] == "Actual Display A"
     assert terminal_rows["linear_pe"]["planned_material"] == "Display Source"
     assert "chalk" not in terminal_rows
@@ -536,8 +536,8 @@ def test_admin_and_terminal_planned_kg_use_quantity_1_only(connection):
 
     assert admin_rows["raw_material_a"]["planned_kg"] == "800.00"
     assert admin_rows["linear_pe"]["planned_kg"] == "200.00"
-    assert terminal_rows["raw_material_a"]["planned_kg"] == "800.00"
-    assert terminal_rows["linear_pe"]["planned_kg"] == "200.00"
+    assert terminal_rows["raw_material_a"]["planned_kg"] == "800"
+    assert terminal_rows["linear_pe"]["planned_kg"] == "200"
 
 
 def test_admin_and_terminal_display_use_category_fallback_for_category_only_rows(connection):
@@ -566,7 +566,7 @@ def test_admin_and_terminal_display_use_category_fallback_for_category_only_rows
     assert terminal_rows["raw_material_a"]["planned_material"] == "reLDPE"
     assert terminal_rows["raw_material_a"]["source_text"] == "reLDPE | 80%"
     assert terminal_rows["raw_material_a"]["recipe_percent"] == "80%"
-    assert terminal_rows["raw_material_a"]["planned_kg"] == "800.00"
+    assert terminal_rows["raw_material_a"]["planned_kg"] == "800"
     assert terminal_rows["raw_material_a"]["is_structured"] is True
     assert terminal_rows["linear_pe"]["planned_material"] == "SABIC 119ZJ"
 

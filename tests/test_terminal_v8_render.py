@@ -152,6 +152,21 @@ def roll_row_block(html: str, roll_id: int) -> str:
     return html[start : min(end_candidates)]
 
 
+def css_rules(html: str, selector_pattern: str) -> str:
+    match = re.search(rf"{selector_pattern}\s*\{{(?P<rules>.*?)\}}", html, flags=re.S)
+    assert match is not None
+    return match.group("rules")
+
+
+def css_rules_all(html: str, selector_pattern: str) -> list[str]:
+    rules = [
+        match.group("rules")
+        for match in re.finditer(rf"{selector_pattern}\s*\{{(?P<rules>.*?)\}}", html, flags=re.S)
+    ]
+    assert rules
+    return rules
+
+
 def make_test_request(path: str, method: str = "POST") -> Request:
     return Request(
         {
@@ -198,7 +213,7 @@ def test_terminal_v8_renders_four_machine_navigation_controls(connection):
     )
 
 
-def test_terminal_v8_selected_machine_navigation_has_strong_focus_ring(connection):
+def test_terminal_v8_selected_machine_navigation_does_not_use_heavy_focus_ring(connection):
     release_ready_card("26103", machine_id=1, sequence=1)
 
     html = render_terminal()
@@ -210,8 +225,113 @@ def test_terminal_v8_selected_machine_navigation_has_strong_focus_ring(connectio
     )
     assert selected_style_match is not None
     selected_style = selected_style_match.group("rules")
-    assert "outline: 4px solid #0b355f;" in selected_style
-    assert "outline-offset: 3px;" in selected_style
+    assert "outline:" not in selected_style
+    assert "box-shadow:" not in selected_style
+    assert "border-color: #0b355f;" in selected_style
+    assert "border-width: 10px 3px 3px;" in selected_style
+
+
+def test_terminal_v8_machine_card_kpi_text_is_semibold(connection):
+    release_ready_card("26113", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    machine_name_style = re.search(
+        r"\.machine-tab-name\s*\{(?P<rules>.*?)\}",
+        html,
+        flags=re.S,
+    )
+    assert machine_name_style is not None
+    assert "font-weight: 900;" in machine_name_style.group("rules")
+
+    for selector in (
+        r"\.machine-tab-meta",
+        r"\.machine-tab-customer",
+        r"\.machine-tab-product",
+        r"\.machine-tab-progress",
+    ):
+        style_match = re.search(rf"{selector}\s*\{{(?P<rules>.*?)\}}", html, flags=re.S)
+        assert style_match is not None
+        assert "font-weight: 600;" in style_match.group("rules")
+
+
+def test_terminal_v8_uses_defined_primary_and_secondary_text_tokens(connection):
+    release_ready_card("26117", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    root_rules = css_rules(html, r":root")
+    assert "--primary-text: #222222;" in root_rules
+    assert "--secondary-text: #565656;" in root_rules
+
+
+def test_terminal_v8_machine_cards_apply_primary_and_secondary_text_colors(connection):
+    release_ready_card("26118", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    assert "color: var(--primary-text);" in css_rules(html, r"(?m)^    \.machine-tab-name")
+    assert "color: var(--primary-text);" in css_rules(html, r"(?m)^    \.machine-tab-customer")
+    assert any(
+        "color: var(--secondary-text);" in rules
+        for rules in css_rules_all(html, r"(?m)^    \.machine-tab-product")
+    )
+
+
+def test_terminal_v8_details_and_rolls_apply_primary_and_secondary_text_colors(
+    connection,
+):
+    card_id = release_ready_card("26119", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "100").ok
+
+    html = render_terminal(card_id)
+
+    assert "color: var(--primary-text);" in css_rules(html, r"(?m)^    \.title h2")
+    assert any(
+        "color: var(--primary-text);" in rules
+        for rules in css_rules_all(html, r"(?m)^    \.panel-head,\s*\.recipe-panel-head")
+    )
+    assert "color: var(--secondary-text);" in css_rules(
+        html,
+        r"\.details-panel \.field-label,\s*"
+        r"\.details-panel \.section-title,\s*"
+        r"\.roll-entry \.field-label",
+    )
+    assert "color: var(--primary-text);" in css_rules(html, r"\.details-panel \.value")
+    assert "color: var(--primary-text);" in css_rules(html, r"\.notes")
+
+    roll_entry_label_rules = css_rules_all(html, r"(?m)^    \.roll-entry \.field-label")
+    assert any("color: var(--secondary-text);" in rules for rules in roll_entry_label_rules)
+    assert any("font-size: 17px;" in rules for rules in roll_entry_label_rules)
+    assert any("font-weight: 400;" in rules for rules in roll_entry_label_rules)
+    assert any("line-height: 1.2;" in rules for rules in roll_entry_label_rules)
+    assert "color: var(--secondary-text);" in css_rules(html, r"(?m)^    \.roll-head")
+    roll_row_rules = css_rules_all(html, r"(?m)^    \.roll-row")
+    assert any(
+        "color: var(--primary-text);" in rules
+        for rules in roll_row_rules
+    )
+    assert any("font-weight: 600;" in rules for rules in roll_row_rules)
+    assert "color: var(--secondary-text);" in css_rules(html, r"(?m)^    \.totals \.field-label")
+    assert "color: var(--primary-text);" in css_rules(html, r"(?m)^    \.metric \.big")
+
+
+def test_terminal_v8_recipe_table_uses_secondary_text_color(connection):
+    release_ready_card("26120", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    assert "color: var(--secondary-text);" in css_rules(html, r"(?m)^    \.recipe-head")
+    for selector in (
+        r"\.component",
+        r"\.material-planned",
+        r"\.recipe-percent",
+        r"\.recipe-kg",
+        r"\.recipe-row input",
+    ):
+        assert "color: var(--secondary-text);" in css_rules(html, rf"(?m)^    {selector}")
 
 
 def test_terminal_v8_details_grid_wraps_by_available_panel_width(connection):
@@ -267,6 +387,7 @@ def test_terminal_v8_renders_selected_card_details_and_max_roll_weight(connectio
     card_id = release_ready_card("26101", machine_id=1, sequence=1)
 
     html = render_terminal(card_id)
+    card = terminal_context(card_id)["selected_card"]
 
     assert "Машина 1: №26101" in html
     assert "ТСФ 890/0.082" in html
@@ -276,16 +397,155 @@ def test_terminal_v8_renders_selected_card_details_and_max_roll_weight(connectio
     assert "плоско" in html
     assert "LDPE" in html
     assert "Макс. тегло ролка, кг" in html
-    assert "62.5" in html
+    assert card["max_roll_weight_display"] == "63"
+    assert "62.5" not in html
+    assert re.search(r"Макс\. тегло ролка, кг\s*</span>\s*<div class=\"value\">63</div>", html)
     assert "Важна бележка за оператор." in html
 
 
-def test_terminal_v8_recipe_table_is_part_of_details_without_extra_recipe_heading(connection):
+def test_terminal_v8_details_panel_labels_and_values_are_deemphasized(connection):
+    release_ready_card("26114", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    label_style = re.search(
+        r"\.details-panel \.field-label,\s*"
+        r"\.details-panel \.section-title,\s*"
+        r"\.roll-entry \.field-label\s*\{(?P<rules>.*?)\}",
+        html,
+        flags=re.S,
+    )
+    value_style = re.search(r"\.details-panel \.value\s*\{(?P<rules>.*?)\}", html, flags=re.S)
+    assert label_style is not None
+    assert value_style is not None
+
+    label_rules = label_style.group("rules")
+    assert "display: block;" in label_rules
+    assert "margin-bottom: var(--details-value-gap);" in label_rules
+    assert "color: var(--secondary-text);" in label_rules
+    assert "font-size: 17px;" in label_rules
+    assert "font-weight: 400;" in label_rules
+    assert "line-height: 1.2;" in label_rules
+
+    value_rules = value_style.group("rules")
+    assert "color: var(--primary-text);" in value_rules
+    assert "font-weight: 600;" in value_rules
+
+    assert "row-gap: 22px;" in html
+    assert "gap: 20px;" in html
+
+
+def test_terminal_v8_details_values_and_notes_share_value_rhythm(connection):
+    release_ready_card("26123", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    root_rules = css_rules(html, r":root")
+    label_rules = css_rules(
+        html,
+        r"\.details-panel \.field-label,\s*"
+        r"\.details-panel \.section-title,\s*"
+        r"\.roll-entry \.field-label",
+    )
+    notes_section_rules = css_rules(html, r"(?m)^    \.notes-section")
+    notes_rules = css_rules(html, r"(?m)^    \.notes")
+
+    assert "--details-value-gap: 4px;" in root_rules
+    assert "margin-bottom: var(--details-value-gap);" in label_rules
+    assert "gap: 0;" in notes_section_rules
+    assert "font-weight: 600;" in notes_rules
+
+    compact_height_match = re.search(
+        r"@media \(max-height: 980px\) \{(?P<rules>.*?)@media \(max-height: 760px\)",
+        html,
+        flags=re.S,
+    )
+    short_height_match = re.search(
+        r"@media \(max-height: 760px\) \{(?P<rules>.*?)a\.machine-tab,",
+        html,
+        flags=re.S,
+    )
+    assert compact_height_match is not None
+    assert short_height_match is not None
+
+    for rules in (compact_height_match.group("rules"), short_height_match.group("rules")):
+        assert "margin-bottom: 2px;" not in rules
+        assert "margin-bottom: 3px;" not in rules
+        assert ".notes-section" not in rules
+
+
+def test_terminal_v8_notes_title_tracks_details_label_style_in_compact_viewports(
+    connection,
+):
+    release_ready_card("26121", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    compact_height_match = re.search(
+        r"@media \(max-height: 980px\) \{(?P<rules>.*?)@media \(max-height: 760px\)",
+        html,
+        flags=re.S,
+    )
+    short_height_match = re.search(
+        r"@media \(max-height: 760px\) \{(?P<rules>.*?)a\.machine-tab,",
+        html,
+        flags=re.S,
+    )
+    assert compact_height_match is not None
+    assert short_height_match is not None
+
+    compact_height_rules = compact_height_match.group("rules")
+    assert ".order-section .field-label,\n      .order-section .section-title" in compact_height_rules
+    assert "font-size: 13px;" in compact_height_rules
+    assert "margin-bottom: 3px;" not in compact_height_rules
+
+    short_height_rules = short_height_match.group("rules")
+    assert ".order-section .field-label,\n      .order-section .section-title" in short_height_rules
+    assert "font-size: 12px;" in short_height_rules
+    assert "margin-bottom: 2px;" not in short_height_rules
+
+
+def test_terminal_v8_roll_entry_labels_track_details_label_style_in_compact_viewports(
+    connection,
+):
+    release_ready_card("26122", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    compact_height_match = re.search(
+        r"@media \(max-height: 980px\) \{(?P<rules>.*?)@media \(max-height: 760px\)",
+        html,
+        flags=re.S,
+    )
+    short_height_match = re.search(
+        r"@media \(max-height: 760px\) \{(?P<rules>.*?)a\.machine-tab,",
+        html,
+        flags=re.S,
+    )
+    assert compact_height_match is not None
+    assert short_height_match is not None
+
+    compact_height_rules = compact_height_match.group("rules")
+    assert ".order-section .field-label,\n      .order-section .section-title,\n      .roll-entry .field-label" in compact_height_rules
+    assert "font-size: 13px;" in compact_height_rules
+    assert "margin-bottom: 3px;" not in compact_height_rules
+
+    short_height_rules = short_height_match.group("rules")
+    assert ".order-section .field-label,\n      .order-section .section-title,\n      .roll-entry .field-label" in short_height_rules
+    assert "font-size: 12px;" in short_height_rules
+    assert "margin-bottom: 2px;" not in short_height_rules
+
+
+def test_terminal_v8_recipe_table_follows_details_with_matching_recipe_title(connection):
     card_id = release_ready_card("26240", machine_id=1, sequence=1)
 
     html = render_terminal(card_id)
 
     assert '<span>Детайли</span>' in html
+    assert re.search(
+        r'<div class="panel-head recipe-panel-head">\s*<span>Рецепта</span>\s*</div>',
+        html,
+    )
     assert '<span>Ролки</span>' in html
     assert 'class="recipe-table"' in html
     assert "Категория" in html
@@ -298,13 +558,90 @@ def test_terminal_v8_recipe_table_is_part_of_details_without_extra_recipe_headin
     assert "LDPE" in recipe_html
     assert "A" in recipe_html
     assert "50%" in recipe_html
-    assert "250.00" in recipe_html
+    assert "250.00" not in recipe_html
+    assert re.search(r'<div class="recipe-number recipe-percent">50%</div>', recipe_html)
+    assert re.search(r'<div class="recipe-number recipe-kg">250</div>', recipe_html)
     assert 'data-recipe-autosave="true"' in html
     assert f'action="/terminal/cards/{card_id}/materials"' in html
     assert 'name="actual_material__raw_material_a"' in html
     assert 'name="batch_lot__raw_material_a"' in html
-    assert 'class="recipe-title"' not in html
-    assert ">Рецепта<" not in html
+
+    details_body_rules = css_rules(html, r"(?m)^    \.details-body")
+    recipe_section_rules = css_rules(html, r"(?m)^    \.recipe-section")
+    shared_head_rules = css_rules_all(html, r"(?m)^    \.panel-head,\s*\.recipe-panel-head")
+
+    assert "grid-template-rows: auto auto;" in details_body_rules
+    assert "align-content: start;" in details_body_rules
+    assert "align-content: start;" in recipe_section_rules
+    assert any("color: var(--primary-text);" in rules for rules in shared_head_rules)
+    assert any("font-size: 21px;" in rules for rules in shared_head_rules)
+    assert any("font-weight: 800;" in rules for rules in shared_head_rules)
+
+
+def test_terminal_v8_recipe_table_aligns_all_values_left(connection):
+    release_ready_card("26239", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    recipe_cell_rules = css_rules(html, r"\.recipe-head div,\s*\.recipe-row > div")
+    recipe_number_rules = css_rules(html, r"\.recipe-number")
+
+    assert "justify-content: flex-start;" in recipe_cell_rules
+    assert "text-align: left;" in recipe_cell_rules
+    assert "justify-content: flex-start;" in recipe_number_rules
+    assert "text-align: left;" in recipe_number_rules
+    assert "justify-content: flex-end;" not in recipe_number_rules
+    assert "text-align: right;" not in recipe_number_rules
+
+
+def test_terminal_v8_recipe_and_roll_spacing_is_balanced_for_compact_workstations(
+    connection,
+):
+    release_ready_card("26238", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    recipe_row_rules = css_rules_all(html, r"(?m)^    \.recipe-row")
+    recipe_cell_rules = css_rules(html, r"\.recipe-head div,\s*\.recipe-row > div")
+    roll_entry_rules = css_rules_all(html, r"(?m)^    \.roll-entry")
+    roll_entry_label_rules = css_rules_all(html, r"(?m)^    \.roll-entry \.field-label")
+    roll_entry_input_rules = css_rules(html, r"(?m)^    \.roll-entry input")
+    roll_entry_button_rules = css_rules_all(html, r"(?m)^    \.roll-entry button")
+    roll_entry_feedback_rules = css_rules(html, r"(?m)^    \.roll-entry \.field-error-slot")
+    roll_head_rules = css_rules_all(html, r"(?m)^    \.roll-head")
+
+    assert any("min-height: 52px;" in rules for rules in recipe_row_rules)
+    assert "align-items: center;" in recipe_cell_rules
+    assert "padding: 6px 9px;" in recipe_cell_rules
+    assert any("padding: 6px 8px;" in rules for rules in roll_entry_rules)
+    assert any("margin-bottom: 6px;" in rules for rules in roll_entry_label_rules)
+    assert "min-height: 36px;" in roll_entry_input_rules
+    assert any("min-height: 36px;" in rules for rules in roll_entry_button_rules)
+    assert "min-height: 0;" in roll_entry_feedback_rules
+    assert any("min-height: 38px;" in rules for rules in roll_head_rules)
+
+    compact_height_match = re.search(
+        r"@media \(max-height: 980px\) \{(?P<rules>.*?)@media \(max-height: 760px\)",
+        html,
+        flags=re.S,
+    )
+    short_height_match = re.search(
+        r"@media \(max-height: 760px\) \{(?P<rules>.*?)a\.machine-tab,",
+        html,
+        flags=re.S,
+    )
+    assert compact_height_match is not None
+    assert short_height_match is not None
+
+    compact_height_rules = compact_height_match.group("rules")
+    assert ".recipe-row {\n        min-height: 36px;" in compact_height_rules
+    assert ".recipe-head div,\n      .recipe-row > div {\n        padding: 4px 7px;" in compact_height_rules
+    assert ".roll-entry .field-label {\n        margin-bottom: 5px;" in compact_height_rules
+
+    short_height_rules = short_height_match.group("rules")
+    assert ".recipe-row {\n        min-height: 32px;" in short_height_rules
+    assert ".recipe-head div,\n      .recipe-row > div {\n        padding: 3px 6px;" in short_height_rules
+    assert ".roll-entry .field-label {\n        margin-bottom: 5px;" in short_height_rules
 
 
 def test_terminal_v8_renders_category_only_recipe_without_na_control_value(connection):
@@ -326,7 +663,8 @@ def test_terminal_v8_renders_category_only_recipe_without_na_control_value(conne
 
     assert "reLDPE" in recipe_html
     assert "80%" in recipe_html
-    assert "400.00" in recipe_html
+    assert "400.00" not in recipe_html
+    assert "400" in recipe_html
     assert "SABIC 119ZJ" in recipe_html
     assert 'name="actual_material__raw_material_b"' not in recipe_html
     assert 'name="actual_material__raw_material_c"' not in recipe_html
@@ -336,6 +674,71 @@ def test_terminal_v8_renders_category_only_recipe_without_na_control_value(conne
     assert "N/A" not in recipe_html
     assert 'name="actual_material__raw_material_a"' in recipe_html
     assert 'name="batch_lot__raw_material_a"' in recipe_html
+
+
+def test_terminal_v8_recipe_display_rounds_operator_percent_and_kg_values(connection):
+    card_id = release_ready_card(
+        "26242",
+        machine_id=1,
+        sequence=1,
+        quantity_1="1250",
+        raw_material_a="LDPE A | 37.5%",
+        raw_material_b="LLDPE B | 23.5%",
+        raw_material_c="MDPE C | 12%",
+        linear_pe="reLDPE D | 10%",
+        antistatic="Antistatic E | 2.5%",
+        masterbatch="Masterbatch F | 9%",
+        chalk="Filler G | 5.5%",
+    )
+
+    rows = {row["field"]: row for row in terminal_context(card_id)["recipe_rows"]}
+
+    assert rows["raw_material_a"]["recipe_percent"] == "38%"
+    assert rows["raw_material_a"]["planned_kg"] == "469"
+    assert rows["raw_material_b"]["recipe_percent"] == "24%"
+    assert rows["raw_material_b"]["planned_kg"] == "294"
+    assert rows["antistatic"]["recipe_percent"] == "3%"
+    assert rows["antistatic"]["planned_kg"] == "31"
+    assert rows["chalk"]["recipe_percent"] == "6%"
+    assert rows["chalk"]["planned_kg"] == "69"
+
+
+def test_terminal_v8_recipe_body_values_use_homogeneous_regular_style(connection):
+    release_ready_card("26243", machine_id=1, sequence=1)
+
+    html = render_terminal()
+
+    component_style = re.search(r"\.component\s*\{(?P<rules>.*?)\}", html, flags=re.S)
+    planned_style = re.search(r"\.material-planned\s*\{(?P<rules>.*?)\}", html, flags=re.S)
+    percent_style = re.search(r"\.recipe-percent\s*\{(?P<rules>.*?)\}", html, flags=re.S)
+    kg_style = re.search(r"\.recipe-kg\s*\{(?P<rules>.*?)\}", html, flags=re.S)
+    input_style = re.search(r"\.recipe-row input\s*\{(?P<rules>.*?)\}", html, flags=re.S)
+    assert component_style is not None
+    assert planned_style is not None
+    assert percent_style is not None
+    assert kg_style is not None
+    assert input_style is not None
+
+    assert "font-weight: 400;" in component_style.group("rules")
+    assert "font-weight: 400;" in planned_style.group("rules")
+    assert "font-weight: 400;" in percent_style.group("rules")
+    assert "font-weight: 400;" in kg_style.group("rules")
+    assert "font-weight: 400;" in input_style.group("rules")
+
+    assert "font-size: 17px;" in component_style.group("rules")
+    assert "font-size: 17px;" in planned_style.group("rules")
+    assert "font-size: 16px;" in percent_style.group("rules")
+    assert "font-size: 16px;" in kg_style.group("rules")
+    assert "font-size: 17px;" in input_style.group("rules")
+
+    assert "color: var(--secondary-text);" in component_style.group("rules")
+    assert "color: var(--secondary-text);" in planned_style.group("rules")
+    assert "color: var(--secondary-text);" in percent_style.group("rules")
+    assert "color: var(--secondary-text);" in kg_style.group("rules")
+    assert "color: var(--secondary-text);" in input_style.group("rules")
+
+    assert "grid-template-columns: 132px" in html
+    assert "padding: 0 14px;" in html
 
 
 def test_terminal_v8_renders_recipe_queue_and_completed_lookup(connection):
@@ -358,8 +761,10 @@ def test_terminal_v8_renders_recipe_queue_and_completed_lookup(connection):
     assert "Креда 5%" in recipe_html
     assert "50%" in recipe_html
     assert "30%" in recipe_html
-    assert "250.00" in recipe_html
-    assert "150.00" in recipe_html
+    assert "250.00" not in recipe_html
+    assert "150.00" not in recipe_html
+    assert "250" in recipe_html
+    assert "150" in recipe_html
     assert "Марка" not in html
     assert "v8-recipe-actions" not in html
     assert "Queued Customer" in html

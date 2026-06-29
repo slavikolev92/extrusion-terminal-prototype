@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 import re
 from typing import Any
@@ -331,8 +331,14 @@ def decimal_text(value: Decimal) -> str:
     return text
 
 
-def recipe_percent_display(value: Any) -> str:
+def whole_decimal_text(value: Decimal) -> str:
+    return format(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP), "f")
+
+
+def recipe_percent_display(value: Any, *, rounded: bool = False) -> str:
     percent = decimal_from_display(value)
+    if percent is not None and rounded:
+        return f"{whole_decimal_text(percent)}%"
     return f"{decimal_text(percent)}%" if percent is not None else ""
 
 
@@ -343,18 +349,27 @@ def recipe_components_by_key(card: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {str(component["component_key"]): component for component in components}
 
 
-def planned_kg_display(card: dict[str, Any], recipe_percent: Any) -> str:
+def planned_kg_display(
+    card: dict[str, Any],
+    recipe_percent: Any,
+    *,
+    rounded: bool = False,
+) -> str:
     target = target_gross_weight_from_card(card)
     percent = decimal_from_display(recipe_percent)
     if target is None or percent is None:
         return ""
-    return decimal_weight_display(target * percent / Decimal("100"))
+    planned_kg = target * percent / Decimal("100")
+    if rounded:
+        return whole_decimal_text(planned_kg)
+    return decimal_weight_display(planned_kg)
 
 
 def build_recipe_rows(
     card: dict[str, Any],
     *,
     include_all_source_fields: bool = True,
+    rounded_operator_values: bool = False,
 ) -> list[dict[str, Any]]:
     actual_entries = card.get("recipe_actual_entries") or {}
     if not isinstance(actual_entries, dict):
@@ -389,8 +404,15 @@ def build_recipe_rows(
             material_category = str(component.get("material_category") or "")
             normalized_planned_material = str(component.get("planned_material") or "")
             planned_material = normalized_planned_material or material_category
-            recipe_percent = recipe_percent_display(component.get("recipe_percent"))
-            planned_kg = planned_kg_display(card, component.get("recipe_percent"))
+            recipe_percent = recipe_percent_display(
+                component.get("recipe_percent"),
+                rounded=rounded_operator_values,
+            )
+            planned_kg = planned_kg_display(
+                card,
+                component.get("recipe_percent"),
+                rounded=rounded_operator_values,
+            )
             is_structured = True
         else:
             planned_material = source_text
@@ -421,7 +443,11 @@ def build_recipe_rows(
 
 
 def build_terminal_recipe_rows(card: dict[str, Any]) -> list[dict[str, Any]]:
-    return build_recipe_rows(card, include_all_source_fields=False)
+    return build_recipe_rows(
+        card,
+        include_all_source_fields=False,
+        rounded_operator_values=True,
+    )
 
 
 def recipe_actual_entries_from_form(form: Any) -> dict[str, dict[str, str]]:
@@ -1838,6 +1864,7 @@ def enrich_terminal_card_display(card: dict[str, Any]) -> dict[str, Any]:
     enrich_terminal_list_card(card, card)
     card["quantity_display"] = build_quantity_display(card)
     card["recipe_rows"] = build_terminal_recipe_rows(card)
+    card["max_roll_weight_display"] = rounded_optional_weight_display(card.get("max_roll_weight"))
     card["target_gross_weight"] = target_gross_display(card)
     card["remaining_gross_weight"] = remaining_gross_display(card)
     return card
@@ -1852,6 +1879,7 @@ def enrich_terminal_list_card(
         "idle" if card.get("status") == STATUS_PENDING else str(card.get("status") or "")
     )
     card["quantity_display"] = build_quantity_display(card)
+    card["max_roll_weight_display"] = rounded_optional_weight_display(card.get("max_roll_weight"))
     card["target_gross_weight"] = target_gross_display(card)
     card["produced_gross_weight"] = rounded_weight_display(card.get("total_gross_weight"))
     card["remaining_gross_weight"] = remaining_gross_display(card)
@@ -1913,7 +1941,14 @@ def rounded_weight_display(value: Any) -> str:
     decimal_value = decimal_from_display(value)
     if decimal_value is None:
         return "0"
-    return f"{decimal_value.quantize(Decimal('1'))}"
+    return whole_decimal_text(decimal_value)
+
+
+def rounded_optional_weight_display(value: Any) -> str:
+    decimal_value = decimal_from_display(value)
+    if decimal_value is None:
+        return "-"
+    return whole_decimal_text(decimal_value)
 
 
 def format_duration(total_seconds: int) -> str:
