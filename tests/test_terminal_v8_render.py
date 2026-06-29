@@ -309,11 +309,13 @@ def test_terminal_v8_details_and_rolls_apply_primary_and_secondary_text_colors(
     assert any("line-height: 1.2;" in rules for rules in roll_entry_label_rules)
     assert "color: var(--secondary-text);" in css_rules(html, r"(?m)^    \.roll-head")
     roll_row_rules = css_rules_all(html, r"(?m)^    \.roll-row")
+    roll_row_input_rules = css_rules(html, r"(?m)^    \.roll-row input")
     assert any(
         "color: var(--primary-text);" in rules
         for rules in roll_row_rules
     )
     assert any("font-weight: 600;" in rules for rules in roll_row_rules)
+    assert "font-weight: 600;" in roll_row_input_rules
     assert "color: var(--secondary-text);" in css_rules(html, r"(?m)^    \.totals \.field-label")
     assert "color: var(--primary-text);" in css_rules(html, r"(?m)^    \.metric \.big")
 
