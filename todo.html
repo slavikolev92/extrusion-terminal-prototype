@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tasks</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #f5f6f8;
+      color: #1f2933;
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.5;
+    }
+
+    main {
+      width: min(1120px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0 48px;
+    }
+
+    h1 {
+      margin: 0 0 18px;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    ol {
+      display: grid;
+      gap: 12px;
+      margin: 0 0 28px;
+      padding: 0;
+      list-style: none;
+      counter-reset: task;
+    }
+
+    section {
+      margin-bottom: 30px;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    li {
+      counter-increment: task;
+      display: grid;
+      grid-template-columns: 24px 42px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+      background: #ffffff;
+      border: 1px solid #d9dee7;
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    li::before {
+      content: counter(task);
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: #e7f5f2;
+      color: #0f766e;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      margin: 6px 0 0;
+      accent-color: #0f766e;
+    }
+
+    h3 {
+      margin: 0 0 6px;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 2px 0 0;
+    }
+
+    .task-content p {
+      color: #4b5563;
+    }
+
+    .task-details {
+      grid-column: 3;
+      margin: 8px 0 0;
+      padding-left: 0;
+      list-style: none;
+    }
+
+    .task-details li {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      padding: 0;
+      margin: 6px 0;
+    }
+
+    .task-details li::before {
+      content: none;
+    }
+
+    @media (max-width: 640px) {
+      main {
+        width: min(100vw - 20px, 1120px);
+        padding-top: 14px;
+      }
+
+      li {
+        grid-template-columns: 24px 34px minmax(0, 1fr);
+        padding: 14px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Tasks</h1>
+
+    <section>
+      <h2>Shift Manager Workbooks Redesign</h2>
+      <ol>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Redesign existing workbook columns</h3>
+            <p>Redesign the existing shift manager workbooks by fixing columns G to J, which are currently used for heterogeneous data. Some columns currently contain amounts while other columns contain the unit for those amounts. The redesign must apply to both shift manager files, because column G will become the gross canonical weight column used by the app.</p>
+          </div>
+          <ul class="task-details">
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Column G: amount in kilograms.</span>
+            </li>
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Column H: amount in units.</span>
+            </li>
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Column I: amount in meters.</span>
+            </li>
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Apply the redesign to both shift manager workbook files.</span>
+            </li>
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Create new payment method column to define whether the customer pays based on gross kilograms or net kilograms.</span>
+            </li>
+          </ul>
+        </li>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Operational Card Redesign</h3>
+            <p>Redesign the operational cards so they include the fields that shift managers will need to manually enter into the new actuals app.</p>
+          </div>
+          <ul class="task-details">
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Add start and stop time.</span>
+            </li>
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Add core or tare weight.</span>
+            </li>
+          </ul>
+        </li>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Remove Obsolete Columns</h3>
+            <p>Discuss all columns that are currently not used. Any column that is not used or is not planned to be used should be removed.</p>
+          </div>
+        </li>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Prepare instruction worksheet</h3>
+            <p>Prepare an instruction worksheet inside the shift manager workbooks with carefully selected and well-structured notes about all workbook changes. This worksheet should explain the new nomenclature for inks and raw materials, the new order quantity columns, and the sales price fields.</p>
+          </div>
+          <ul class="task-details">
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Explain the new ink nomenclature.</span>
+            </li>
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Explain the new raw material nomenclature.</span>
+            </li>
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Explain that the new columns represent gross kilograms, total meters, and total units ordered by the customer.</span>
+            </li>
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Explain the sales price fields.</span>
+            </li>
+          </ul>
+        </li>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Install new macros in both shift manager files</h3>
+            <p>Install both required macros in both shift manager workbook files: the verification macro and the export macro.</p>
+          </div>
+          <ul class="task-details">
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Install the verification macro in both shift manager workbook files.</span>
+            </li>
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Install the export macro in both shift manager workbook files.</span>
+            </li>
+          </ul>
+        </li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Workbook Functionality To Build</h2>
+      <ol>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Finish ink recipe builder</h3>
+            <p>Finish the ink recipe builder, which is a helper functional sheet within the shift-manager Excel files.</p>
+          </div>
+        </li>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Finalize extrusion recipe builder</h3>
+            <p>Finish and finalize the extrusion recipe builder, which is also functionality within the shift-manager Excel file.</p>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Monthly Reconciliation</h2>
+      <ol>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Agree monthly reconciliation process</h3>
+            <p>Ask about and agree the monthly reconciliation that needs to be done as of July 1, 2026.</p>
+          </div>
+        </li>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Complete a monthly reconciliation</h3>
+            <p>Complete the monthly reconciliation work for the raw materials.</p>
+          </div>
+          <ul class="task-details">
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Monthly reconciliation on the extrusion raw materials.</span>
+            </li>
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Monthly reconciliation on the printing raw materials.</span>
+            </li>
+          </ul>
+        </li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Operational Card Actuals App</h2>
+      <ol>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Create the operational card actuals app</h3>
+            <p>Create the app that will be used to record all actual data from all operational cards completed from now on.</p>
+          </div>
+        </li>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Finalize the design of the actuals app</h3>
+            <p>Finalize the design of the app itself and what information it will contain.</p>
+          </div>
+          <ul class="task-details">
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Finalize the data that will be stored.</span>
+            </li>
+            <li>
+              <input type="checkbox" aria-label="Complete subtask">
+              <span>Finalize the actual implementation and the workflow.</span>
+            </li>
+          </ul>
+        </li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Raw Materials And Recipe Catalogs</h2>
+      <ol>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Review invoice raw material names</h3>
+            <p>Look through the invoices to understand all the different raw materials being ordered, how they are named, and whether the naming conventions picked so far work for all of them.</p>
+          </div>
+        </li>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Update raw material recipe catalogs</h3>
+            <p>Look through the invoices and update the recipe catalogs for raw materials for extrusion and printing with respect to the latest raw materials that are available, especially those available in company inventory.</p>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Printing Workstation</h2>
+      <ol>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Fix double-sided printing workstation</h3>
+            <p>Fix the PC of the shift manager who will be doing the printing so that it prints on a single sheet of paper, double-sided.</p>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Extrusion Terminal App</h2>
+      <ol>
+        <li>
+          <input type="checkbox" aria-label="Complete task">
+          <div class="task-content">
+            <h3>Finalize the Extrusion Terminal app</h3>
+            <p>Verify how the current terminal app displays the overall operational card after all the changes done to the recipe area.</p>
+          </div>
+        </li>
+      </ol>
+    </section>
+  </main>
+</body>
+</html>
