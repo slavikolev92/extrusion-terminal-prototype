@@ -595,6 +595,7 @@ def test_terminal_v8_recipe_table_follows_details_with_matching_recipe_title(con
 
     assert "grid-template-rows: auto auto;" in details_body_rules
     assert "align-content: start;" in details_body_rules
+    assert "gap: 22px;" in details_body_rules
     assert "align-content: start;" in recipe_section_rules
     assert any("color: var(--primary-text);" in rules for rules in shared_head_rules)
     assert any("font-size: 21px;" in rules for rules in shared_head_rules)
@@ -810,7 +811,14 @@ def test_terminal_v8_recipe_body_values_use_homogeneous_regular_style(connection
     assert "color: var(--secondary-text);" in kg_style.group("rules")
     assert "color: var(--secondary-text);" in input_style.group("rules")
 
-    assert "grid-template-columns: 132px" in html
+    assert (
+        "grid-template-columns: 132px minmax(152px, 1fr) 86px 86px "
+        "minmax(140px, .72fr) minmax(110px, .52fr);"
+    ) in html
+    assert (
+        "grid-template-columns: 96px minmax(124px, 1fr) 76px 76px "
+        "minmax(118px, .62fr) minmax(92px, .48fr);"
+    ) in html
     assert "padding: 0 14px;" in html
 
 
@@ -1190,6 +1198,49 @@ def test_terminal_v8_action_and_roll_add_buttons_render_decorative_icons(connect
     )
     assert 'data-icon="play"' in resume_form
     assert "Продължи" in resume_form
+
+
+def test_terminal_v8_finish_form_uses_app_native_confirmation_modal(connection):
+    card_id = release_ready_card("26183", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+
+    html = render_terminal(card_id)
+    finish_form = form_block(html, f"/terminal/cards/{card_id}/finish")
+    pause_form = form_block(html, f"/terminal/cards/{card_id}/timing/pause")
+
+    assert "confirm(" not in html
+    assert "onsubmit=" not in finish_form
+    assert 'data-finish-confirm-form="true"' in finish_form
+    assert 'name="loaded_version"' in finish_form
+    assert "Приключи" in finish_form
+    assert 'data-finish-confirm-form="true"' not in pause_form
+
+    assert 'id="finish-confirm-modal"' in html
+    assert 'data-finish-confirm-modal' in html
+    assert "Приключване на поръчка" in html
+    assert "Сигурни ли сте, че искате да приключите тази поръчка?" in html
+    assert 'data-finish-confirm-submit' in html
+    assert "Да, приключи" in html
+    assert 'data-finish-confirm-cancel' in html
+    assert "Не, назад" in html
+
+
+def test_terminal_v8_finish_confirmation_script_handles_modal_lifecycle(connection):
+    card_id = release_ready_card("26184", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+
+    html = render_terminal(card_id)
+
+    assert 'form[data-finish-confirm-form="true"]' in html
+    assert 'event.preventDefault();' in html
+    assert 'finishConfirmModal.hidden = false;' in html
+    assert 'finishConfirmModal.hidden = true;' in html
+    assert 'data-finish-confirm-cancel' in html
+    assert 'data-finish-confirm-submit' in html
+    assert 'event.key === "Escape"' in html
+    assert "finishConfirmSubmitting || !pendingFinishForm" in html
+    assert "finishConfirmSubmit.disabled = true;" in html
+    assert "pendingFinishForm.requestSubmit();" in html
 
 
 def test_terminal_v8_success_result_renders_one_dismissible_toast(connection):

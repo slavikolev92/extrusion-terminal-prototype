@@ -738,7 +738,7 @@
       display: grid;
       grid-template-rows: auto auto;
       align-content: start;
-      gap: 10px;
+      gap: 22px;
     }
 
     .notes-section {
@@ -844,7 +844,7 @@
     .recipe-head,
     .recipe-row {
       display: grid;
-      grid-template-columns: 132px minmax(180px, 1fr) 58px 86px minmax(140px, .72fr) minmax(110px, .52fr);
+      grid-template-columns: 132px minmax(152px, 1fr) 86px 86px minmax(140px, .72fr) minmax(110px, .52fr);
       align-items: stretch;
     }
 
@@ -1571,7 +1571,7 @@
 
       .recipe-head,
       .recipe-row {
-        grid-template-columns: 96px minmax(150px, 1fr) 50px 76px minmax(118px, .62fr) minmax(92px, .48fr);
+        grid-template-columns: 96px minmax(124px, 1fr) 76px 76px minmax(118px, .62fr) minmax(92px, .48fr);
       }
 
       .history-filters {
@@ -1899,6 +1899,61 @@
       line-height: 1;
     }
 
+    .finish-confirm-modal {
+      position: fixed;
+      z-index: 80;
+      inset: 0;
+      padding: 24px;
+      display: grid;
+      place-items: center;
+      background: rgba(31, 41, 51, .34);
+    }
+
+    .finish-confirm-panel {
+      width: min(420px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .finish-confirm-title {
+      margin: 0;
+      color: var(--primary-text);
+      font-size: 22px;
+      line-height: 1.15;
+      font-weight: 900;
+    }
+
+    .finish-confirm-body {
+      margin: 0;
+      color: var(--secondary-text);
+      font-size: 16px;
+      line-height: 1.35;
+      font-weight: 700;
+    }
+
+    .finish-confirm-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .finish-confirm-primary {
+      background: var(--red);
+      border-color: var(--red);
+      color: #fff;
+    }
+
+    .finish-confirm-secondary {
+      background: #fff;
+      border-color: #b8c4d1;
+      color: #0b355f;
+    }
+
     .no-card {
       min-height: 0;
       grid-row: 3;
@@ -2077,7 +2132,7 @@
               {% endif %}
 
               {% if selected_card and selected_card.status in ["running", "paused"] %}
-                <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post">
+                <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post" data-finish-confirm-form="true">
                   <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                   <button class="action-button {% if selected_card.status == 'running' %}action-primary{% else %}action-secondary{% endif %}" type="submit">{{ button_icon("check-circle") }}<span>Приключи</span></button>
                 </form>
@@ -2347,6 +2402,16 @@
       </section>
     </div>
   </main>
+  <div class="finish-confirm-modal" id="finish-confirm-modal" data-finish-confirm-modal hidden aria-hidden="true">
+    <div class="finish-confirm-panel" role="dialog" aria-modal="true" aria-labelledby="finish-confirm-title" aria-describedby="finish-confirm-body">
+      <h2 class="finish-confirm-title" id="finish-confirm-title">Приключване на поръчка</h2>
+      <p class="finish-confirm-body" id="finish-confirm-body">Сигурни ли сте, че искате да приключите тази поръчка?</p>
+      <div class="finish-confirm-actions">
+        <button class="finish-confirm-secondary" type="button" data-finish-confirm-cancel>Не, назад</button>
+        <button class="finish-confirm-primary" type="button" data-finish-confirm-submit>Да, приключи</button>
+      </div>
+    </div>
+  </div>
   <script>
     (() => {
       const toast = document.querySelector(".terminal-toast");
@@ -2360,6 +2425,60 @@
       if (toast) {
         window.setTimeout(closeToast, 3000);
       }
+    })();
+
+    (() => {
+      const finishConfirmModal = document.getElementById("finish-confirm-modal");
+      const finishConfirmForms = document.querySelectorAll('form[data-finish-confirm-form="true"]');
+      const finishConfirmBack = finishConfirmModal?.querySelector("[data-finish-confirm-cancel]");
+      const finishConfirmSubmit = finishConfirmModal?.querySelector("[data-finish-confirm-submit]");
+      let pendingFinishForm = null;
+      let finishConfirmSubmitting = false;
+
+      if (!finishConfirmModal || finishConfirmForms.length === 0) {
+        return;
+      }
+
+      const openFinishConfirm = (form) => {
+        pendingFinishForm = form;
+        finishConfirmSubmit.disabled = false;
+        finishConfirmModal.hidden = false;
+        finishConfirmModal.setAttribute("aria-hidden", "false");
+        finishConfirmSubmit?.focus();
+      };
+
+      const closeFinishConfirm = () => {
+        finishConfirmModal.hidden = true;
+        finishConfirmModal.setAttribute("aria-hidden", "true");
+        finishConfirmSubmit.disabled = false;
+        pendingFinishForm = null;
+      };
+
+      finishConfirmForms.forEach((form) => {
+        form.addEventListener("submit", (event) => {
+          if (finishConfirmSubmitting) {
+            return;
+          }
+          event.preventDefault();
+          openFinishConfirm(form);
+        });
+      });
+
+      finishConfirmBack?.addEventListener("click", closeFinishConfirm);
+      finishConfirmSubmit?.addEventListener("click", () => {
+        if (finishConfirmSubmitting || !pendingFinishForm) {
+          return;
+        }
+        finishConfirmSubmitting = true;
+        finishConfirmSubmit.disabled = true;
+        pendingFinishForm.requestSubmit();
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !finishConfirmModal.hidden) {
+          closeFinishConfirm();
+        }
+      });
     })();
 
     (() => {
