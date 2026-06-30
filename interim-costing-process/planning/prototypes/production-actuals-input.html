@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Production Actuals Input Prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef1f4;
+      --surface: #ffffff;
+      --surface-soft: #f6f8fa;
+      --line: #d0d7de;
+      --line-strong: #8c959f;
+      --text: #1f2328;
+      --muted: #57606a;
+      --blue: #0b5cad;
+      --blue-dark: #083f78;
+      --green: #1a7f37;
+      --green-soft: #e9f8ee;
+      --shadow: 0 10px 24px rgba(31, 35, 40, 0.08);
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid var(--line);
+      background: #ffffff;
+    }
+
+    .topbar-inner {
+      width: min(1180px, calc(100vw - 32px));
+      min-height: 64px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .nav {
+      display: flex;
+      gap: 4px;
+    }
+
+    .nav button {
+      min-width: 118px;
+      min-height: 42px;
+      border: 0;
+      border-bottom: 3px solid transparent;
+      background: transparent;
+      color: #24292f;
+      font-weight: 780;
+    }
+
+    .nav .active {
+      border-bottom-color: var(--blue);
+      color: var(--blue-dark);
+    }
+
+    .workspace {
+      margin-left: auto;
+      display: grid;
+      justify-items: end;
+      gap: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 720;
+    }
+
+    .workspace strong {
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0 42px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      align-items: start;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-body {
+      padding: 18px;
+    }
+
+    .form-section {
+      margin-top: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-soft);
+      padding: 16px;
+    }
+
+    .form-section:first-child {
+      margin-top: 0;
+    }
+
+    .section-title {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 850;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+
+    .grid.four {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    input,
+    select {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--text);
+      padding: 9px 10px;
+      outline: none;
+    }
+
+    input:focus,
+    select:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.14);
+    }
+
+    input[readonly] {
+      background: var(--surface-soft);
+      color: var(--muted);
+    }
+
+    .calc-value,
+    .calculated-input {
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #eef1f4;
+      color: var(--text);
+      padding: 9px 10px;
+      font-size: 16px;
+      font-weight: 850;
+    }
+
+    .calculated-input {
+      border-color: var(--line);
+      color: var(--text);
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+      padding: 9px 10px;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 780;
+    }
+
+    .checkbox-row input {
+      width: 18px;
+      min-height: 18px;
+      height: 18px;
+      padding: 0;
+    }
+
+    .subsection {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .subsection + .subsection {
+      margin-top: 14px;
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 22px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+
+    .btn {
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+      padding: 0 16px;
+      color: var(--text);
+      font-weight: 850;
+    }
+
+    .btn.primary {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: #ffffff;
+    }
+
+    .btn.danger {
+      color: #9b1c1c;
+    }
+
+    .pill {
+      min-height: 28px;
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid #56d364;
+      border-radius: 999px;
+      padding: 0 10px;
+      background: var(--green-soft);
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(31, 35, 40, 0.42);
+    }
+
+    .modal-backdrop.is-open {
+      display: flex;
+    }
+
+    .modal {
+      width: min(520px, 100%);
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      box-shadow: 0 24px 60px rgba(31, 35, 40, 0.25);
+      padding: 20px;
+    }
+
+    .modal h2 {
+      margin: 0 0 10px;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+
+    .modal p {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    @media (max-width: 960px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .grid,
+      .grid.four,
+      .grid.two {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .topbar-inner {
+        align-items: flex-start;
+        flex-wrap: wrap;
+        padding: 12px 0;
+      }
+
+      .nav {
+        width: 100%;
+        margin-left: 0;
+      }
+
+      .workspace {
+        margin-left: 0;
+        justify-items: start;
+      }
+    }
+
+    @media (max-width: 620px) {
+      main,
+      .topbar-inner {
+        width: min(100vw - 20px, 1180px);
+      }
+
+      .grid,
+      .grid.four,
+      .grid.two {
+        grid-template-columns: 1fr;
+      }
+
+      .nav {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .nav button {
+        min-width: 0;
+      }
+
+      .actions,
+      .modal-actions {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .btn {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <nav class="nav" aria-label="Prototype screens">
+        <button class="active" type="button">Input</button>
+        <button type="button">Orders</button>
+        <button type="button">Verification</button>
+        <button type="button">Export</button>
+      </nav>
+      <div class="workspace">
+        <strong>Marco workspace</strong>
+        <span>saved automatically as Marco</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="layout">
+      <section class="panel">
+        <div class="panel-body">
+          <input type="hidden" name="shift_manager" value="Marco">
+
+          <div class="form-section">
+            <div class="section-title">Card</div>
+            <div class="grid two">
+              <label>
+                Production order
+                <input id="production-order" value="25278" inputmode="numeric">
+              </label>
+              <label>
+                Operation
+                <select id="operation">
+                  <option value="extrusion" selected>Extrusion</option>
+                  <option value="printing">Printing</option>
+                  <option value="rewinding">Rewinding and slitting</option>
+                  <option value="confection">Confection</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <div class="section-title">Time</div>
+            <div class="grid">
+              <label>
+                Start
+                <input id="start-datetime" type="datetime-local" value="2026-07-03T08:10">
+              </label>
+              <label>
+                Stop
+                <input id="stop-datetime" type="datetime-local" value="2026-07-03T14:35">
+              </label>
+              <label>
+                Total time
+                <div class="calc-value" id="total-time">6 h 25 min</div>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <div class="section-title">Quantity</div>
+            <div class="grid four">
+              <label>
+                Gross kg
+                <input id="gross-kg" value="962.40" inputmode="decimal">
+              </label>
+              <label id="tare-count-label">
+                Roll count
+                <input id="tare-count" value="16" inputmode="numeric">
+              </label>
+              <label id="tare-weight-label">
+                Core weight kg
+                <input id="tare-weight" value="0.80" inputmode="decimal">
+              </label>
+              <label>
+                Net kg
+                <input class="calculated-input" id="net-kg" value="949.60" inputmode="decimal">
+              </label>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <div class="section-title">Raw materials used</div>
+            <div class="grid two">
+              <label id="pp-material-field">
+                PP film material
+                <input id="pp-material" value="">
+              </label>
+              <label id="pp-quantity-field">
+                PP film quantity kg
+                <input id="pp-quantity" value="" inputmode="decimal">
+              </label>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <div class="section-title">Secondary metrics</div>
+            <div class="grid">
+              <label id="waste-field">
+                Waste kg
+                <input id="waste-kg" value="8.50" inputmode="decimal">
+              </label>
+              <label id="units-field">
+                Units produced
+                <input id="units-produced" value="" inputmode="numeric">
+              </label>
+              <label id="meters-field">
+                Meters produced
+                <input id="meters-produced" value="" inputmode="decimal">
+              </label>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <div class="section-title">Finished item</div>
+            <label class="checkbox-row">
+              <input id="produces-final-item" type="checkbox" checked>
+              This card produced the final item
+            </label>
+
+            <div class="grid" style="margin-top: 12px;">
+              <label>
+                Item family
+                <select>
+                  <option>LDPE film</option>
+                  <option>Printed film</option>
+                  <option>Bag</option>
+                </select>
+              </label>
+              <label>
+                Form
+                <select>
+                  <option>Film</option>
+                  <option>Sleeve</option>
+                  <option>Bag</option>
+                </select>
+              </label>
+              <label>
+                Thickness
+                <input value="40" inputmode="decimal">
+              </label>
+              <label>
+                Width mm
+                <input value="620" inputmode="decimal">
+              </label>
+              <label>
+                Length mm
+                <input value="" inputmode="decimal">
+              </label>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button class="btn primary" id="save-actual" type="button">Save actual</button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <div class="modal-backdrop" id="duplicate-modal" role="dialog" aria-modal="true" aria-labelledby="duplicate-title">
+    <div class="modal">
+      <h2 id="duplicate-title">This order already has an extrusion actual</h2>
+      <p>If this is a real second card for the same operation, confirm it here. Otherwise cancel and correct the existing card.</p>
+      <label class="checkbox-row">
+        <input type="checkbox">
+        Save as another real card for this operation
+      </label>
+      <div class="modal-actions">
+        <button class="btn" id="cancel-duplicate" type="button">Cancel</button>
+        <button class="btn primary" type="button">Confirm save</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const operationData = {
+      extrusion: {
+        label: "Extrusion",
+        duplicate: true,
+        gross: "962.40",
+        tareCount: "16",
+        tareWeight: "0.80",
+        net: "949.60",
+        totalTime: "6 h 25 min",
+        waste: "8.50",
+        ppMaterial: "",
+        ppQuantity: "",
+        units: "",
+        meters: "18420",
+        tareCountLabel: "Roll count",
+        tareWeightLabel: "Core weight kg",
+        finalItem: true
+      },
+      printing: {
+        label: "Printing",
+        duplicate: false,
+        gross: "946.40",
+        tareCount: "16",
+        tareWeight: "0.80",
+        net: "933.60",
+        totalTime: "4 h 52 min",
+        waste: "",
+        ppMaterial: "BOPP FXC 30 960mm",
+        ppQuantity: "22.00",
+        units: "",
+        meters: "17960",
+        tareCountLabel: "Roll count",
+        tareWeightLabel: "Core weight kg",
+        finalItem: false
+      },
+      rewinding: {
+        label: "Rewinding and slitting",
+        duplicate: false,
+        gross: "940.00",
+        tareCount: "18",
+        tareWeight: "0.70",
+        net: "927.40",
+        totalTime: "2 h 45 min",
+        waste: "",
+        ppMaterial: "",
+        ppQuantity: "",
+        units: "",
+        meters: "18110",
+        tareCountLabel: "Roll count",
+        tareWeightLabel: "Core weight kg",
+        finalItem: false
+      },
+      confection: {
+        label: "Confection",
+        duplicate: false,
+        gross: "938.10",
+        tareCount: "24",
+        tareWeight: "0.05",
+        net: "936.90",
+        totalTime: "6 h 50 min",
+        waste: "",
+        ppMaterial: "",
+        ppQuantity: "",
+        units: "124000",
+        meters: "",
+        tareCountLabel: "Container count",
+        tareWeightLabel: "Container weight kg",
+        finalItem: true
+      }
+    };
+
+    const operationSelect = document.getElementById("operation");
+    const duplicateModal = document.getElementById("duplicate-modal");
+
+    function setReadonly(id, readonly) {
+      document.getElementById(id).toggleAttribute("readonly", readonly);
+    }
+
+    function setOperation(operation) {
+      const data = operationData[operation];
+      document.getElementById("gross-kg").value = data.gross;
+      document.getElementById("tare-count").value = data.tareCount;
+      document.getElementById("tare-weight").value = data.tareWeight;
+      document.getElementById("net-kg").value = data.net;
+      document.getElementById("total-time").textContent = data.totalTime;
+      document.getElementById("waste-kg").value = data.waste;
+      document.getElementById("pp-material").value = data.ppMaterial;
+      document.getElementById("pp-quantity").value = data.ppQuantity;
+      document.getElementById("units-produced").value = data.units;
+      document.getElementById("meters-produced").value = data.meters;
+      document.getElementById("tare-count-label").firstChild.textContent = data.tareCountLabel;
+      document.getElementById("tare-weight-label").firstChild.textContent = data.tareWeightLabel;
+      document.getElementById("produces-final-item").checked = data.finalItem;
+      setReadonly("waste-kg", operation !== "extrusion");
+    }
+
+    operationSelect.addEventListener("change", () => setOperation(operationSelect.value));
+
+    document.getElementById("save-actual").addEventListener("click", () => {
+      if (operationData[operationSelect.value].duplicate) {
+        duplicateModal.classList.add("is-open");
+      }
+    });
+
+    document.getElementById("cancel-duplicate").addEventListener("click", () => {
+      duplicateModal.classList.remove("is-open");
+    });
+  </script>
+</body>
+</html>
