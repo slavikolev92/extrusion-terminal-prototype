@@ -45,8 +45,9 @@ Column role is supplied by the workbook column:
 | `AM:AP` | Base polymer slots |
 | `AQ:AS` | Additive/filler slots |
 
-Base polymer percentages in `AM:AP` should sum to `100%`. Additives and fillers
-in `AQ:AS` are percentages over the base blend.
+All non-empty recipe percentages across `AM:AS` share one final-product recipe
+pool and must sum to exactly `100%`. Additives and fillers in `AQ:AS` are part
+of that same `100%` pool, not percentages over a separate base blend.
 
 ### Invoice Evidence
 

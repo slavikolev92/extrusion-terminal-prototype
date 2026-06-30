@@ -48,7 +48,7 @@
     }
 
     .topbar-inner {
-      width: min(1180px, calc(100vw - 32px));
+      width: min(820px, calc(100vw - 32px));
       min-height: 64px;
       margin: 0 auto;
       display: flex;
@@ -92,7 +92,7 @@
     }
 
     main {
-      width: min(1180px, calc(100vw - 32px));
+      width: min(820px, calc(100vw - 32px));
       margin: 0 auto;
       padding: 24px 0 42px;
     }
@@ -137,17 +137,21 @@
 
     .grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(150px, 1fr));
       gap: 12px;
       align-items: end;
     }
 
     .grid.four {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: 150px 130px 150px 150px;
     }
 
     .grid.two {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(180px, 1fr));
+    }
+
+    .card-grid {
+      grid-template-columns: 220px 320px;
     }
 
     label {
@@ -352,12 +356,13 @@
     @media (max-width: 620px) {
       main,
       .topbar-inner {
-        width: min(100vw - 20px, 1180px);
+        width: min(100vw - 20px, 820px);
       }
 
       .grid,
       .grid.four,
-      .grid.two {
+      .grid.two,
+      .card-grid {
         grid-template-columns: 1fr;
       }
 
@@ -406,7 +411,7 @@
 
           <div class="form-section">
             <div class="section-title">Card</div>
-            <div class="grid two">
+            <div class="grid card-grid">
               <label>
                 Production order
                 <input id="production-order" value="25278" inputmode="numeric">

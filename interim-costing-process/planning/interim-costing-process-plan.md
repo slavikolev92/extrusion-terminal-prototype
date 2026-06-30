@@ -153,8 +153,8 @@ Classification meanings:
 | `AA` | Printing cylinder size | Ignore for costing | Printing spec context only; not a current costing input. |
 | `AB:AI` | Printing ink station slots 1-8 | Required after convention | Must use `Color Identity | Anilox lines/cm`. Ink/color identity supports ink allocation; anilox is preserved for later refinement. |
 | `AJ:AL` | Extrusion/workflow-adjacent fields | Ignore for costing | Workflow/spec context only. |
-| `AM:AP` | Base polymer recipe slots | Required after convention | Must use `Material Name | %`; base percentages must sum to `100%`. |
-| `AQ:AS` | Additive/filler recipe slots | Required after convention | Must use `Material Name | %`; percentages are over the base blend. |
+| `AM:AP` | Base polymer recipe slots | Required after convention | Must use `Material Name | %`; all non-empty `AM:AS` percentages share one final-product recipe pool and must sum to `100%`. |
+| `AQ:AS` | Additive/filler recipe slots | Required after convention | Must use `Material Name | %`; additives/fillers are part of the same final-product `100%` recipe pool, not percentages over a base blend. |
 
 No existing `Database` column is classified as `App-captured`. App-captured data
 is identified in the later workbook/app gap-fit step.
@@ -246,9 +246,9 @@ Use existing extrusion material columns in the `Database` worksheet.
 | `AN` | Raw material B | Base polymer |
 | `AO` | Raw material C | Base polymer |
 | `AP` | Linear PE | Base polymer |
-| `AQ` | Antistatic | Additive over base |
-| `AR` | Masterbatch | Additive over base |
-| `AS` | Chalk | Additive/filler over base |
+| `AQ` | Antistatic | Additive/filler slot in final-product recipe pool |
+| `AR` | Masterbatch | Additive/filler slot in final-product recipe pool |
+| `AS` | Chalk | Additive/filler slot in final-product recipe pool |
 
 Column identity defines the costing role. Do not add `BASE` or `ADD` markers to
 the cell text.
@@ -295,11 +295,13 @@ Parsing rule:
 
 Recipe rule:
 
-- Base polymers are entered in `AM:AP`.
-- Base polymer percentages in `AM:AP` must sum to `100%`.
-- Additives and fillers are entered in `AQ:AS`.
-- Additive percentages are percentages over the base polymer blend.
-- Additives are not included in the base `100%`.
+- Base polymers are normally entered in `AM:AP`.
+- Additives and fillers are normally entered in `AQ:AS`.
+- All non-empty recipe cells in `AM:AS` share one final-product recipe pool.
+- Parsed recipe percentages across `AM:AS` must sum to exactly `100%`.
+- There is no separate "base polymers sum to `100%`, then additives/fillers are
+  added over the base" interpretation for the July 2026 interim costing
+  process.
 
 ### Sales Price Rules
 
@@ -395,8 +397,10 @@ Recipe validation:
 
 - Material cells used for costing must contain a final `|` delimiter.
 - The text after the final `|` must contain one numeric percentage.
-- Percentages in base columns `AM:AP` must sum to `100%`.
-- Additive columns `AQ:AS` may be blank or may contain valid percentages.
+- Percentages across all non-empty recipe cells in `AM:AS` must sum to exactly
+  `100%`.
+- Additive/filler columns `AQ:AS` may be blank or may contain valid
+  final-product percentages.
 - Bag-count formulas such as `1.5 kg/bag`, `1 bag`, or similar shorthand are
   not valid for costing unless converted to percentages first.
 - Free-text material names without percentages are not valid for costing.
@@ -451,9 +455,9 @@ Extrusion recipe structure:
 
 - Do real extrusion recipes fit within four base polymer slots `AM:AP` and three
   additive/filler slots `AQ:AS`?
-- Is the costing interpretation correct: base polymers in `AM:AP` sum to
-  `100%`, and additives/fillers in `AQ:AS` are percentages over the base blend
-  rather than part of the base `100%`?
+- Is the current final-product interpretation clear and workable: all non-empty
+  recipe percentages across `AM:AS`, including additives/fillers, sum to exactly
+  `100%`?
 - Do shift managers need a reference table or calculator to convert current
   shorthand such as ratios, bag counts, or `20% KJ` into percentages?
 
@@ -504,8 +508,8 @@ Solvents:
    reference list, dropdowns, separate document, workbook macro, app-side upload
    validation, or a combination.
 8. Confirm whether current recipes fit within `AM:AS`.
-9. Confirm whether the planned base/additive percentage interpretation matches
-   the way shift managers currently build extrusion recipes.
+9. Confirm whether the final-product percentage interpretation across `AM:AS`
+   matches the way shift managers currently build extrusion recipes.
 10. Confirm whether shift managers need a reference table or calculator to
    convert current shorthand into percentages.
 11. Confirm whether equivalent colors from different ink suppliers are
@@ -633,6 +637,7 @@ operation_actuals
 - expected_operation_slot_id
 - production_order_number
 - operation
+- actual_card_number
 - start_datetime
 - stop_datetime
 - total_minutes
@@ -644,6 +649,10 @@ operation_actuals
 - pp_film_material
 - pp_film_quantity_kg
 - total_unit_count
+- produces_final_item
+- finished_item_id
+- voided_at
+- void_reason
 - notes
 - created_at
 - updated_at
@@ -669,9 +678,38 @@ Duplicate and split work direction:
 - Warn if actuals already exist for the same production order and operation.
 - Allow saving against the expected slot because split work, corrections,
   partial production, or reruns may happen in reality.
-- The final correction/voiding rule is still open. It must be defined before
-  export summing is treated as final, otherwise mistaken duplicate entries could
-  overstate minutes or output quantities.
+- Each saved actual row represents one physical operational card actual.
+- Assign a visible sequential `actual_card_number` per production order and
+  operation, for example `1`, `2`, `3`.
+- If an actual already exists for the same production order and operation, the
+  app must show a clear warning before saving another row.
+- Saving an additional row should require an explicit confirmation such as
+  `Save as additional operational card`.
+- The UI should support an optional reason/note for additional rows, such as
+  split production, shortfall correction, rework, or duplicate correction.
+- Mistaken duplicate actuals should be voided, not physically deleted, so the
+  audit trail remains inspectable.
+- Voided actuals must be excluded from costing/export summations, while
+  remaining visible for review.
+- The exact voiding UI, required/optional void reason, and correction workflow
+  details still need final design before implementation.
+
+Finished-output direction:
+
+- An operation actual may be marked as producing a final item.
+- Use a field such as `produces_final_item`, not a vague "last operation"
+  marker, because the costing event is that this operational card yielded the
+  finished product/item.
+- When `produces_final_item` is true, the app should require a structured
+  finished-item identity.
+- Finished-item identity should use controlled fields and numeric dimension
+  inputs instead of free text, similar in spirit to the workbook recipe builder.
+- The dirty legacy workbook product/type text should not become the finished
+  item identity.
+- Customer should remain separate from item identity unless the later
+  nomenclature design explicitly decides that a product is customer-specific.
+- The exact finished-item nomenclature fields are deferred until the user
+  provides the intended structure from the separate nomenclature work.
 
 ### Fields By Operation
 
@@ -968,7 +1006,8 @@ approved, but the required fields by operation are settled for the current
 planning stage.
 
 If multiple actual rows exist for the same expected operation slot, export
-should sum numeric values where summing is meaningful:
+should exclude voided rows and sum active numeric values where summing is
+meaningful:
 
 ```text
 total_minutes = sum
@@ -984,7 +1023,10 @@ minutes stay separate.
 ### App Open Decisions
 
 - Whether any additional non-costing operational notes should be captured.
-- Correction/voiding rule for mistaken duplicate entries.
+- Exact correction/voiding workflow details for mistaken duplicate entries,
+  including whether a void reason is required.
+- Structured finished-item nomenclature fields required when an actual row
+  produces the final item.
 - Exact export column list.
 - Whether export must be CSV only at first or CSV plus XLSX.
 - Whether the app should be separate or a clearly separated module beside the
@@ -997,10 +1039,12 @@ minutes stay separate.
 3. Translate the settled operation fields and validation rules into the app
    schema and interface.
 4. Define correction/voiding behavior.
-5. Define the exact export columns.
-6. Define the minimum app screens.
-7. Define backup/export/recovery requirements.
-8. Decide implementation location.
+5. Define the structured finished-item nomenclature fields required when
+   `produces_final_item` is true.
+6. Define the exact export columns.
+7. Define the minimum app screens.
+8. Define backup/export/recovery requirements.
+9. Decide implementation location.
 
 ## 4. Costing Layer And Operating Process
 
@@ -1031,36 +1075,34 @@ Direct/raw material costs:
 - Confection has no direct raw materials for this costing process.
 - Smaller consumables are not tracked per order/card and are allocated monthly.
 
-Recipe parts normalization:
+Recipe percentage normalization:
 
 ```text
-material kg = output basis * material parts / total recipe parts
+material kg = output basis * recipe percent / 100
 ```
 
 Example:
 
 ```text
-AM LDPE Rompetrol B20/03 | 60%
-AO MDPE Ethydco 3914 | 20%
-AP LLDPE KJ | 20%
-AQ Ampacet Antistatic | 2%
-AR UV Masterbatch | 3%
+AM LDPE Rompetrol Midilena B20/03 | 77%
+AP LLDPE SABIC 119ZJ | 18%
+AQ Antistatic Novachem AT 04673 LD | 2%
+AR Masterbatch Polibach White 8000 ET | 3%
 ```
 
-Total recipe parts:
+Total recipe percentage:
 
 ```text
-100 base parts + 5 additive parts = 105 total parts
+77% + 18% + 2% + 3% = 100%
 ```
 
 If output basis is `1000 kg`, consumption is:
 
 ```text
-LDPE       = 1000 * 60 / 105
-MDPE       = 1000 * 20 / 105
-LLDPE      = 1000 * 20 / 105
-Antistatic = 1000 * 2 / 105
-UV         = 1000 * 3 / 105
+LDPE        = 1000 * 77 / 100 = 770 kg
+LLDPE       = 1000 * 18 / 100 = 180 kg
+Antistatic  = 1000 * 2 / 100  = 20 kg
+Masterbatch = 1000 * 3 / 100  = 30 kg
 ```
 
 Initial output basis:
