@@ -153,9 +153,9 @@ Recommendation: harden the highest-risk mutations first: release, planning/reseq
 
 Severity: Important.
 
-The terminal dirty-click handler submits the first dirty form and reloads the page. If an operator edits multiple existing roll rows or recipe plus tare before clicking away, later unsaved edits may be lost.
+Status update: the multiple existing-roll correction risk is fixed. Existing terminal roll rows are now read-only by default; `Корекция на ролки` opens a deliberate correction mode that saves gross/tare roll corrections together through one version-checked transaction. The remaining dirty-autosave risk is recipe plus tare edits before clicking away.
 
-Recommendation: either block navigation with a clear unsaved-changes warning when more than one form is dirty, or batch/save all dirty forms before reload.
+Recommendation: for the remaining recipe/tare case, either block navigation with a clear unsaved-changes warning when more than one form is dirty, or batch/save all dirty forms before reload.
 
 ### 3. Backup Integrity Check After Backup Creation
 

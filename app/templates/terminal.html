@@ -965,7 +965,7 @@
 
     .roll-body {
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr) auto auto;
+      grid-template-rows: auto minmax(0, 1fr) auto auto auto;
       gap: 9px;
     }
 
@@ -1079,6 +1079,7 @@
     }
 
     .roll-table {
+      height: 100%;
       min-height: 0;
       border: 1px solid var(--line);
       border-radius: 9px;
@@ -1091,6 +1092,13 @@
     .roll-list {
       min-height: 0;
       overflow: auto;
+    }
+
+    .roll-correction-form {
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr);
     }
 
     .roll-head,
@@ -1137,6 +1145,12 @@
       align-items: center;
     }
 
+    .roll-display-value {
+      display: inline-flex;
+      min-height: 36px;
+      align-items: center;
+    }
+
     .roll-row-error-slot {
       min-height: 14px;
       font-size: 11px;
@@ -1154,6 +1168,61 @@
     }
 
     .roll-delete-panel[hidden] {
+      display: none;
+    }
+
+    .roll-correction-actions {
+      border: 2px solid #2563eb;
+      border-radius: 8px;
+      min-height: 86px;
+      padding: 10px 12px;
+      background: #eff6ff;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "message buttons"
+        "error error";
+      align-items: center;
+      gap: 6px 12px;
+    }
+
+    .roll-body.roll-correction-mode .totals {
+      display: none;
+    }
+
+    .roll-correction-actions[hidden] {
+      display: none;
+    }
+
+    .roll-correction-message {
+      grid-area: message;
+      min-width: 0;
+      font-weight: 800;
+      line-height: 1.25;
+    }
+
+    .roll-correction-buttons {
+      grid-area: buttons;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .roll-correction-save {
+      min-height: 44px;
+      padding: 0 20px;
+      font-weight: 800;
+    }
+
+    .roll-correction-cancel {
+      min-height: 44px;
+    }
+
+    .roll-correction-error-slot {
+      grid-area: error;
+    }
+
+    .roll-correction-error-slot:empty {
       display: none;
     }
 
@@ -1212,7 +1281,7 @@
       color: #fff;
     }
 
-    .menu-panel .roll-correction-open {
+    .menu-panel .roll-delete-open {
       color: #8f1f1f;
     }
 
@@ -2150,7 +2219,8 @@
                 <div class="menu">
                   <button class="menu-btn" type="button" aria-label="Още действия">⋯</button>
                   <div class="menu-panel">
-                    <button class="roll-correction-open" id="roll-correction-open" type="button">Корекции на ролки</button>
+                    <button class="roll-correction-open" id="roll-correction-open" type="button" data-roll-correction-open>Корекция на ролки</button>
+                    <button class="roll-delete-open" id="roll-delete-open" type="button" data-roll-delete-open>Изтриване на ролки</button>
                   </div>
                 </div>
               {% endif %}
@@ -2269,7 +2339,7 @@
               <div class="panel-head">
                 <span>Ролки</span>
               </div>
-              <div class="panel-body roll-body">
+              <div class="panel-body roll-body{% if terminal_feedback.open_roll_corrections %} roll-correction-mode{% endif %}" data-roll-body>
                 <div class="roll-entry">
                   <form action="/terminal/cards/{{ selected_card.id }}/rolls" id="add-roll-form-{{ selected_card.id }}" class="add-roll-form" method="post">
                     <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
@@ -2307,47 +2377,83 @@
                   <button class="roll-add-button" type="submit" form="add-roll-form-{{ selected_card.id }}" {% if not can_edit_rolls %}disabled{% endif %}>{{ button_icon("plus") }}<span>Добави</span></button>
                 </div>
 
-                <div class="roll-table">
-                  <div class="roll-head">
-                    <div>№</div>
-                    <div>Бруто кг</div>
-                    <div>Шпула кг</div>
-                    <div>Нето кг</div>
-                  </div>
-                  <div class="roll-list" data-scroll-bottom="{% if terminal_feedback.scroll_rolls_to_bottom %}true{% else %}false{% endif %}">
-                    {% if selected_card.roll_entries %}
-                      {% for roll in selected_card.roll_entries %}
-                        <div class="roll-row" data-roll-id="{{ roll.id }}">
-                          <div>{{ roll.roll_number }}</div>
-                          <div class="roll-weight-cell">
-                            <form action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}" method="post" data-dirty-autosave="true">
-                              <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                              <input type="hidden" name="tare_weight" value="{{ roll.tare_weight if roll.tare_weight is not none else '' }}">
-                              <input type="number" name="gross_weight" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %}>
-                            </form>
-                            <div class="roll-row-error-slot field-error-slot" data-feedback-roll-id="{{ roll.id }}">
-                              {% set roll_errors = terminal_feedback.errors.roll_rows.get(roll.id) %}
-                              {% if roll_errors %}
-                                <div class="inline-error" role="alert">
-                                  {% for message in roll_errors %}
-                                    <p>{{ message }}</p>
-                                  {% endfor %}
-                                </div>
-                              {% endif %}
+                <form class="roll-correction-form" id="roll-correction-form-{{ selected_card.id }}" action="/terminal/cards/{{ selected_card.id }}/rolls/corrections" method="post" data-roll-correction-root data-correction-open="{% if terminal_feedback.open_roll_corrections %}true{% else %}false{% endif %}">
+                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                  <div class="roll-table">
+                    <div class="roll-head">
+                      <div>№</div>
+                      <div>Бруто кг</div>
+                      <div>Шпула кг</div>
+                      <div>Нето кг</div>
+                    </div>
+                    <div class="roll-list" data-scroll-bottom="{% if terminal_feedback.scroll_rolls_to_bottom %}true{% else %}false{% endif %}">
+                      {% if selected_card.roll_entries %}
+                        {% for roll in selected_card.roll_entries %}
+                          <div class="roll-row" data-roll-id="{{ roll.id }}">
+                            <div>{{ roll.roll_number }}</div>
+                            <div class="roll-weight-cell">
+                              <span class="roll-display-value" data-roll-display="gross">{{ roll.gross_weight if roll.gross_weight is not none else "-" }}</span>
+                              <input
+                                class="roll-correction-input"
+                                data-roll-correction-input
+                                type="number"
+                                name="gross_weight__{{ roll.id }}"
+                                min="0"
+                                step="0.01"
+                                value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}"
+                                {% if not terminal_feedback.open_roll_corrections %}disabled hidden{% endif %}
+                                {% if not can_edit_rolls %}disabled{% endif %}
+                              >
+                              <div class="roll-row-error-slot field-error-slot" data-feedback-roll-id="{{ roll.id }}">
+                                {% set roll_errors = terminal_feedback.errors.roll_rows.get(roll.id) %}
+                                {% if roll_errors %}
+                                  <div class="inline-error" role="alert">
+                                    {% for message in roll_errors %}
+                                      <p>{{ message }}</p>
+                                    {% endfor %}
+                                  </div>
+                                {% endif %}
+                              </div>
                             </div>
+                            <div class="roll-weight-cell">
+                              <span class="roll-display-value" data-roll-display="tare">{{ roll.tare_weight if roll.tare_weight is not none else "-" }}</span>
+                              <input
+                                class="roll-correction-input"
+                                data-roll-correction-input
+                                type="number"
+                                name="tare_weight__{{ roll.id }}"
+                                min="0"
+                                step="0.01"
+                                value="{{ roll.tare_weight if roll.tare_weight is not none else '' }}"
+                                {% if not terminal_feedback.open_roll_corrections %}disabled hidden{% endif %}
+                                {% if not can_edit_rolls %}disabled{% endif %}
+                              >
+                            </div>
+                            <div>{{ roll.net_weight if roll.net_weight is not none else "-" }}</div>
                           </div>
-                          <div class="roll-weight-cell">
-                            <form action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}" method="post" data-dirty-autosave="true">
-                              <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                              <input type="hidden" name="gross_weight" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}">
-                              <input type="number" name="tare_weight" min="0" step="0.01" value="{{ roll.tare_weight if roll.tare_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %}>
-                            </form>
-                          </div>
-                          <div>{{ roll.net_weight if roll.net_weight is not none else "-" }}</div>
-                        </div>
-                      {% endfor %}
-                    {% else %}
-                      <div class="roll-row"><div>-</div><div>Няма въведени ролки.</div><div>-</div><div>-</div></div>
+                        {% endfor %}
+                      {% else %}
+                        <div class="roll-row"><div>-</div><div>Няма въведени ролки.</div><div>-</div><div>-</div></div>
+                      {% endif %}
+                    </div>
+                  </div>
+                </form>
+
+                <div class="roll-correction-actions" data-roll-correction-actions {% if not terminal_feedback.open_roll_corrections %}hidden{% endif %}>
+                  <div class="roll-correction-message">
+                    Корекция на ролки
+                  </div>
+                  <div class="roll-correction-buttons">
+                    <button class="roll-correction-save" type="submit" form="roll-correction-form-{{ selected_card.id }}">Запази данните</button>
+                    <button class="roll-correction-cancel" type="button" data-roll-correction-cancel>Отказ</button>
+                  </div>
+                  <div class="roll-correction-error-slot field-error-slot" data-feedback-target="roll_corrections">
+                    {% if terminal_feedback.errors.roll_corrections %}
+                      <div class="inline-error" role="alert">
+                        {% for message in terminal_feedback.errors.roll_corrections %}
+                          <p>{{ message }}</p>
+                        {% endfor %}
+                      </div>
                     {% endif %}
                   </div>
                 </div>
@@ -2355,7 +2461,7 @@
                 {% if selected_card.roll_entries and can_edit_rolls %}
                   <section class="roll-delete-panel" id="roll-delete-panel" {% if not terminal_feedback.errors.roll_delete %}hidden{% endif %}>
                     <div class="roll-delete-head">
-                      <span>Изтриване на ролка</span>
+                      <span>Изтриване на ролки</span>
                       <button class="roll-delete-close" id="roll-delete-close" type="button">Затвори</button>
                     </div>
                     <form class="roll-delete-form" action="/terminal/cards/{{ selected_card.id }}/rolls/actions/delete-selected" method="post">
@@ -2729,9 +2835,91 @@
       const historyRows = document.querySelectorAll(".history-row");
       const historyResults = document.getElementById("history-results");
       const historyEmpty = document.getElementById("history-empty");
-      const rollCorrectionOpen = document.getElementById("roll-correction-open");
+      const rollCorrectionRoot = document.querySelector("[data-roll-correction-root]");
+      const rollCorrectionOpen = document.querySelector("[data-roll-correction-open]");
+      const rollCorrectionBack = document.querySelector("[data-roll-correction-cancel]");
+      const rollCorrectionActions = document.querySelector("[data-roll-correction-actions]");
+      const rollCorrectionInputs = document.querySelectorAll("[data-roll-correction-input]");
+      const rollDisplayValues = document.querySelectorAll("[data-roll-display]");
+      const rollDeleteOpen = document.querySelector("[data-roll-delete-open]");
       const rollDeletePanel = document.getElementById("roll-delete-panel");
       const rollDeleteClose = document.getElementById("roll-delete-close");
+      const rollBody = document.querySelector("[data-roll-body]");
+      const correctionBlockedControls = document.querySelectorAll(
+        ".actions form button, .menu-btn, [data-roll-correction-open], .roll-add-button, .add-roll-form input, .tare-form input, .recipe-table input, #queue-open, #history-open, [data-roll-delete-open]"
+      );
+      const correctionBlockedLinks = document.querySelectorAll(
+        ".machine-tab, .queue-card, .history-row"
+      );
+      const correctionStartsOpen = rollCorrectionRoot && rollCorrectionRoot.dataset.correctionOpen === "true";
+      let correctionModeOpen = false;
+      let skipCorrectionBeforeUnload = false;
+
+      rollCorrectionInputs.forEach((input) => {
+        input.dataset.correctionLocked = correctionStartsOpen && input.disabled ? "true" : "false";
+      });
+      correctionBlockedControls.forEach((control) => {
+        control.dataset.correctionInitiallyDisabled = control.disabled ? "true" : "false";
+      });
+      const initialCorrectionValues = new Map(
+        Array.from(rollCorrectionInputs).map((input) => [input.name, input.value]),
+      );
+      const hasDirtyRollCorrections = () => Array.from(rollCorrectionInputs).some(
+        (input) => input.value !== initialCorrectionValues.get(input.name),
+      );
+
+      const selectedCardUrl = () => {
+        if (!rollCorrectionRoot) {
+          return "/terminal";
+        }
+        const actionUrl = new URL(rollCorrectionRoot.action, window.location.origin);
+        return actionUrl.pathname.replace(/\/rolls\/corrections$/, "") || "/terminal";
+      };
+
+      const setCorrectionMode = (open) => {
+        correctionModeOpen = open;
+        if (rollCorrectionRoot) {
+          rollCorrectionRoot.dataset.correctionOpen = open ? "true" : "false";
+        }
+        if (rollCorrectionActions) {
+          rollCorrectionActions.hidden = !open;
+        }
+        if (rollBody) {
+          rollBody.classList.toggle("roll-correction-mode", open);
+        }
+        if (open && rollDeletePanel) {
+          rollDeletePanel.hidden = true;
+        }
+        rollCorrectionInputs.forEach((input) => {
+          input.hidden = !open;
+          input.disabled = !open || input.dataset.correctionLocked === "true";
+        });
+        rollDisplayValues.forEach((value) => {
+          value.hidden = open;
+        });
+        correctionBlockedControls.forEach((control) => {
+          if (open) {
+            control.disabled = true;
+          } else {
+            control.disabled = control.dataset.correctionInitiallyDisabled === "true";
+          }
+        });
+        correctionBlockedLinks.forEach((link) => {
+          if (open) {
+            link.setAttribute("aria-disabled", "true");
+            link.classList.add("correction-blocked-link");
+          } else {
+            link.removeAttribute("aria-disabled");
+            link.classList.remove("correction-blocked-link");
+          }
+        });
+        if (open) {
+          const firstInput = Array.from(rollCorrectionInputs).find((input) => !input.disabled);
+          if (firstInput) {
+            firstInput.focus();
+          }
+        }
+      };
 
       const openQueue = () => {
         closeHistory();
@@ -2802,8 +2990,31 @@
       if (historyCloseButton) {
         historyCloseButton.addEventListener("click", closeHistory);
       }
-      if (rollCorrectionOpen && rollDeletePanel) {
+      if (correctionStartsOpen) {
+        setCorrectionMode(true);
+      }
+      if (rollCorrectionOpen) {
         rollCorrectionOpen.addEventListener("click", () => {
+          setCorrectionMode(true);
+        });
+      }
+      if (rollCorrectionRoot) {
+        rollCorrectionRoot.addEventListener("submit", () => {
+          skipCorrectionBeforeUnload = true;
+        });
+      }
+      if (rollCorrectionBack) {
+        rollCorrectionBack.addEventListener("click", () => {
+          skipCorrectionBeforeUnload = true;
+          setCorrectionMode(false);
+          window.location.href = selectedCardUrl();
+        });
+      }
+      if (rollDeleteOpen && rollDeletePanel) {
+        rollDeleteOpen.addEventListener("click", () => {
+          if (correctionModeOpen) {
+            return;
+          }
           rollDeletePanel.hidden = false;
         });
       }
@@ -2821,6 +3032,29 @@
         if (event.target === historyOverlay) {
           closeHistory();
         }
+      });
+      document.addEventListener("click", (event) => {
+        if (!correctionModeOpen) {
+          return;
+        }
+        const blockedLink = event.target.closest(".machine-tab, .queue-card, .history-row");
+        if (blockedLink) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }, true);
+      window.addEventListener("beforeunload", (event) => {
+        if (skipCorrectionBeforeUnload) {
+          return;
+        }
+        if (!rollCorrectionRoot || rollCorrectionRoot.dataset.correctionOpen !== "true") {
+          return;
+        }
+        if (!hasDirtyRollCorrections()) {
+          return;
+        }
+        event.preventDefault();
+        event.returnValue = "";
       });
       queueCards.forEach((card) => card.addEventListener("click", closeQueue));
       historyFilters.forEach((filter) => filter.addEventListener("input", filterHistory));

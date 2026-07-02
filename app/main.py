@@ -59,6 +59,7 @@ from .db import (
     update_roll_weight,
     update_tare_weight,
     update_terminal_recipe_actual_entries,
+    update_terminal_roll_corrections,
     unrelease_pending_card,
 )
 from .importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
@@ -87,6 +88,7 @@ TERMINAL_NOTICE_MESSAGES = {
     "materials_saved": ("Материалите са записани.",),
     "tare_saved": ("Шпула е записана.",),
     "roll_saved": ("Ролката е записана.",),
+    "rolls_saved": ("Ролките са записани.",),
     "roll_updated": ("Ролката е коригирана.",),
     "roll_deleted": ("Ролката е изтрита.",),
     "timing_started": ("Времето е стартирано.",),
@@ -513,6 +515,19 @@ def roll_ledger_from_form(
         delete_roll_ids,
         new_gross_weights,
     )
+
+
+def terminal_roll_corrections_from_form(form: Any) -> dict[int, dict[str, str]]:
+    roll_updates: dict[int, dict[str, str]] = {}
+    for key, value in form.multi_items():
+        text_value = str(value or "")
+        if key.startswith("gross_weight__"):
+            roll_id = int(key.removeprefix("gross_weight__"))
+            roll_updates.setdefault(roll_id, {})["gross_weight"] = text_value
+        elif key.startswith("tare_weight__"):
+            roll_id = int(key.removeprefix("tare_weight__"))
+            roll_updates.setdefault(roll_id, {})["tare_weight"] = text_value
+    return roll_updates
 
 
 def timing_ledger_from_form(
@@ -1473,6 +1488,39 @@ async def add_roll_weight(
     )
 
 
+@app.post("/terminal/cards/{card_id}/rolls/corrections")
+async def save_terminal_roll_corrections(
+    request: Request,
+    card_id: int,
+):
+    form = await request.form()
+    parsed_version, roll_result = parse_loaded_version(
+        str(form.get("loaded_version") or "")
+    )
+    if parsed_version is not None:
+        roll_result = validate_terminal_card_available_for_post(card_id)
+        if roll_result.ok:
+            try:
+                roll_updates = terminal_roll_corrections_from_form(form)
+            except ValueError:
+                roll_result = RuleResult(False, ("Формата съдържа невалидна ролка.",))
+            else:
+                roll_result = update_terminal_roll_corrections(
+                    card_id,
+                    parsed_version,
+                    roll_updates,
+                )
+
+    return terminal_post_response(
+        request,
+        card_id,
+        "roll_result",
+        roll_result,
+        notice_code="rolls_saved",
+        roll_result_target="roll_corrections",
+    )
+
+
 @app.post("/terminal/cards/{card_id}/rolls/{roll_id}")
 async def save_roll_weight(
     request: Request,
@@ -1823,11 +1871,13 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
     feedback: dict[str, Any] = {
         "toast": None,
         "scroll_rolls_to_bottom": False,
+        "open_roll_corrections": False,
         "refresh_required": False,
         "roll_delete_selected_roll_id": results.get("roll_delete_selected_roll_id"),
         "errors": {
             "tare": (),
             "new_roll": (),
+            "roll_corrections": (),
             "roll_delete": (),
             "roll_rows": {},
             "material": (),
@@ -1865,6 +1915,9 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
             feedback["refresh_required"] = True
             continue
 
+        if target == "roll_corrections":
+            feedback["open_roll_corrections"] = True
+
         if target == "roll_row":
             roll_id = results.get("roll_result_roll_id")
             if roll_id is not None:
@@ -1888,7 +1941,7 @@ def is_terminal_card_state_error(messages: tuple[str, ...]) -> bool:
 
 def terminal_roll_feedback_target(results: dict[str, Any]) -> str:
     target = str(results.get("roll_result_target") or "new_roll")
-    if target in {"tare", "new_roll", "roll_row", "roll_delete"}:
+    if target in {"tare", "new_roll", "roll_row", "roll_delete", "roll_corrections"}:
         return target
     return "new_roll"
 

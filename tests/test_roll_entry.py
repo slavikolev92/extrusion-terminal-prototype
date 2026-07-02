@@ -68,6 +68,13 @@ def start_card(card_id: int) -> None:
     ).ok
 
 
+def roll_values(card_id: int) -> list[tuple[float | None, float | None, float | None]]:
+    return [
+        (roll["gross_weight"], roll["tare_weight"], roll["net_weight"])
+        for roll in db.fetch_terminal_card_detail(card_id)["roll_entries"]
+    ]
+
+
 def test_tare_update_persists_and_checks_loaded_version(connection):
     card_id = import_and_release_card("25500")
     loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
@@ -401,6 +408,150 @@ def test_roll_tare_rejects_more_than_two_decimal_places_and_tare_above_gross(con
         (roll["gross_weight"], roll["tare_weight"], roll["net_weight"])
         for roll in final_card["roll_entries"]
     ] == [(50, 2, 48)]
+
+
+def test_terminal_roll_corrections_update_multiple_rolls_in_one_version(connection):
+    card_id = import_and_release_card("25560")
+    start_card(card_id)
+    assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
+    assert db.add_roll_gross_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "50.00").ok
+    assert db.add_roll_gross_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "60.00").ok
+    card = db.fetch_terminal_card_detail(card_id)
+    first_id = int(card["roll_entries"][0]["id"])
+    second_id = int(card["roll_entries"][1]["id"])
+
+    result = db.update_terminal_roll_corrections(
+        card_id,
+        card["version"],
+        {
+            first_id: {"gross_weight": "51.00", "tare_weight": "2.50"},
+            second_id: {"gross_weight": "62.00", "tare_weight": "3.00"},
+        },
+    )
+    updated = db.fetch_terminal_card_detail(card_id)
+
+    assert result.ok
+    assert result.messages == ("Ролките са записани.",)
+    assert updated["version"] == card["version"] + 1
+    assert roll_values(card_id) == [(51, 2.5, 48.5), (62, 3, 59)]
+    assert updated["total_gross_weight"] == "113.00"
+    assert updated["total_net_weight"] == "107.50"
+
+
+def test_terminal_roll_corrections_only_touch_changed_roll_rows(connection):
+    card_id = import_and_release_card("25565")
+    start_card(card_id)
+    assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
+    assert db.add_roll_gross_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "50.00").ok
+    assert db.add_roll_gross_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "60.00").ok
+    card = db.fetch_terminal_card_detail(card_id)
+    first_id = int(card["roll_entries"][0]["id"])
+    second_id = int(card["roll_entries"][1]["id"])
+    connection.execute(
+        "UPDATE roll_entries SET updated_at = '2000-01-01 00:00:00' WHERE id = ?",
+        (second_id,),
+    )
+    connection.commit()
+
+    result = db.update_terminal_roll_corrections(
+        card_id,
+        card["version"],
+        {
+            first_id: {"gross_weight": "51.00", "tare_weight": "2.50"},
+            second_id: {"gross_weight": "60.00", "tare_weight": "2.00"},
+        },
+    )
+    unchanged_row = connection.execute(
+        "SELECT updated_at FROM roll_entries WHERE id = ?",
+        (second_id,),
+    ).fetchone()
+
+    assert result.ok
+    assert unchanged_row["updated_at"] == "2000-01-01 00:00:00"
+
+
+def test_terminal_roll_corrections_block_stale_version_without_partial_update(connection):
+    card_id = import_and_release_card("25561")
+    start_card(card_id)
+    assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
+    assert db.add_roll_gross_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "50.00").ok
+    card = db.fetch_terminal_card_detail(card_id)
+    roll_id = int(card["roll_entries"][0]["id"])
+    assert db.update_tare_weight(card_id, card["version"], "2.25").ok
+
+    result = db.update_terminal_roll_corrections(
+        card_id,
+        card["version"],
+        {roll_id: {"gross_weight": "51.00", "tare_weight": "2.50"}},
+    )
+
+    assert not result.ok
+    assert result.messages == (
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
+    )
+    assert roll_values(card_id) == [(50, 2, 48)]
+
+
+def test_terminal_roll_corrections_validate_all_rows_before_saving(connection):
+    card_id = import_and_release_card("25562")
+    start_card(card_id)
+    assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
+    assert db.add_roll_gross_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "50.00").ok
+    assert db.add_roll_gross_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "60.00").ok
+    card = db.fetch_terminal_card_detail(card_id)
+    first_id = int(card["roll_entries"][0]["id"])
+    second_id = int(card["roll_entries"][1]["id"])
+
+    result = db.update_terminal_roll_corrections(
+        card_id,
+        card["version"],
+        {
+            first_id: {"gross_weight": "55.00", "tare_weight": "2.00"},
+            second_id: {"gross_weight": "1.00", "tare_weight": "3.00"},
+        },
+    )
+
+    assert not result.ok
+    assert result.messages == ("Бруто теглото не може да бъде по-малко от шпулата.",)
+    assert roll_values(card_id) == [(50, 2, 48), (60, 2, 58)]
+
+
+def test_terminal_roll_corrections_reject_unknown_roll_id(connection):
+    card_id = import_and_release_card("25563")
+    start_card(card_id)
+    assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
+    assert db.add_roll_gross_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "50.00").ok
+    card = db.fetch_terminal_card_detail(card_id)
+
+    result = db.update_terminal_roll_corrections(
+        card_id,
+        card["version"],
+        {999999: {"gross_weight": "55.00", "tare_weight": "2.00"}},
+    )
+
+    assert not result.ok
+    assert result.messages == ("Избрана ролка не принадлежи към тази карта.",)
+    assert roll_values(card_id) == [(50, 2, 48)]
+
+
+def test_terminal_roll_corrections_completed_card_keeps_final_gross_roll(connection):
+    card_id = import_and_release_card("25564")
+    start_card(card_id)
+    assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
+    assert db.add_roll_gross_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "50.00").ok
+    assert db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"]).ok
+    card = db.fetch_terminal_card_detail(card_id)
+    roll_id = int(card["roll_entries"][0]["id"])
+
+    result = db.update_terminal_roll_corrections(
+        card_id,
+        card["version"],
+        {roll_id: {"gross_weight": "", "tare_weight": "2.00"}},
+    )
+
+    assert not result.ok
+    assert result.messages == ("Завършените карти трябва да запазят поне едно бруто тегло на ролка.",)
+    assert roll_values(card_id) == [(50, 2, 48)]
 
 
 def test_stale_roll_add_and_update_are_blocked(connection):

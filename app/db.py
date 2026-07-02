@@ -2522,6 +2522,117 @@ def update_roll_weight(
     return RuleResult(True, (f"Ролка {roll['roll_number']} е записана.",))
 
 
+def update_terminal_roll_corrections(
+    card_id: int,
+    loaded_version: int,
+    roll_updates: dict[int, dict[str, str]],
+) -> RuleResult:
+    with connect() as connection:
+        card = fetch_roll_action_card(connection, card_id)
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        roll_entry_result = validate_card_allows_roll_entry(card)
+        if not roll_entry_result.ok:
+            return roll_entry_result
+
+        existing_rolls = connection.execute(
+            """
+            SELECT id, gross_weight, tare_weight
+            FROM roll_entries
+            WHERE card_id = ?
+            ORDER BY roll_number, id
+            """,
+            (card_id,),
+        ).fetchall()
+        existing_ids = {int(roll["id"]) for roll in existing_rolls}
+        unknown_ids = set(roll_updates) - existing_ids
+        if unknown_ids:
+            return RuleResult(False, ("Избрана ролка не принадлежи към тази карта.",))
+
+        changed_updates: dict[int, tuple[Decimal | None, Decimal | None, Decimal | None]] = {}
+        gross_roll_count = 0
+        for roll in existing_rolls:
+            roll_id = int(roll["id"])
+            existing_gross = decimal_from_database(roll["gross_weight"])
+            existing_tare = decimal_from_database(roll["tare_weight"])
+            submitted = roll_updates.get(roll_id, {})
+            gross_text = submitted.get(
+                "gross_weight",
+                decimal_to_storage(existing_gross) if existing_gross is not None else "",
+            )
+            tare_text = submitted.get(
+                "tare_weight",
+                decimal_to_storage(existing_tare) if existing_tare is not None else "",
+            )
+
+            parsed_gross, parse_error = parse_weight(
+                gross_text,
+                "Бруто тегло",
+                allow_blank=True,
+            )
+            if parse_error:
+                return RuleResult(False, (parse_error,))
+            parsed_tare, parse_error = parse_weight(
+                tare_text,
+                "Шпула",
+                allow_blank=True,
+            )
+            if parse_error:
+                return RuleResult(False, (parse_error,))
+
+            net = net_weight_for_roll(parsed_gross, parsed_tare)
+            if parsed_gross is not None:
+                gross_roll_count += 1
+            if parsed_gross is not None and parsed_tare is not None and net is None:
+                return RuleResult(
+                    False,
+                    ("Бруто теглото не може да бъде по-малко от шпулата.",),
+                )
+
+            if parsed_gross != existing_gross or parsed_tare != existing_tare:
+                changed_updates[roll_id] = (parsed_gross, parsed_tare, net)
+
+        if str(card["status"]) in PRODUCTION_COMPLETE_STATUSES and gross_roll_count < 1:
+            return RuleResult(
+                False,
+                ("Завършените карти трябва да запазят поне едно бруто тегло на ролка.",),
+            )
+
+        if changed_updates:
+            for roll_id, (gross, tare, net) in changed_updates.items():
+                connection.execute(
+                    """
+                    UPDATE roll_entries
+                    SET gross_weight = ?,
+                        tare_weight = ?,
+                        net_weight = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                      AND card_id = ?
+                    """,
+                    (
+                        decimal_to_storage(gross) if gross is not None else None,
+                        decimal_to_storage(tare) if tare is not None else None,
+                        decimal_to_storage(net) if net is not None else None,
+                        roll_id,
+                        card_id,
+                    ),
+                )
+            connection.execute(
+                """
+                UPDATE cards
+                SET version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (card_id,),
+            )
+
+    return RuleResult(True, ("Ролките са записани.",))
+
+
 def update_roll_gross_weight(
     card_id: int,
     roll_id: int,
