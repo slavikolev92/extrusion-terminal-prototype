@@ -56,6 +56,7 @@ from .db import (
     update_admin_timing_ledger,
     update_card_planning,
     update_roll_gross_weight,
+    update_roll_weight,
     update_tare_weight,
     update_terminal_recipe_actual_entries,
     unrelease_pending_card,
@@ -485,15 +486,21 @@ def material_ledger_from_form(
     return planned_materials, actual_entries
 
 
-def roll_ledger_from_form(form: Any) -> tuple[str, dict[int, str], set[int], list[str]]:
-    roll_updates: dict[int, str] = {}
+def roll_ledger_from_form(
+    form: Any,
+) -> tuple[str, dict[int, dict[str, str]], set[int], list[str]]:
+    roll_updates: dict[int, dict[str, str]] = {}
     delete_roll_ids: set[int] = set()
     new_gross_weights: list[str] = []
 
     for key, value in form.multi_items():
         text_value = str(value or "")
         if key.startswith("gross_weight__"):
-            roll_updates[int(key.removeprefix("gross_weight__"))] = text_value
+            roll_id = int(key.removeprefix("gross_weight__"))
+            roll_updates.setdefault(roll_id, {})["gross_weight"] = text_value
+        elif key.startswith("tare_weight__"):
+            roll_id = int(key.removeprefix("tare_weight__"))
+            roll_updates.setdefault(roll_id, {})["tare_weight"] = text_value
         elif key == "delete_roll_id":
             delete_roll_ids.add(int(text_value))
         elif key == "new_gross_weight":
@@ -1153,15 +1160,25 @@ async def save_admin_roll_weight(
     roll_id: int,
     loaded_version: str = Form(...),
     gross_weight: str = Form(""),
+    tare_weight: str | None = Form(None),
 ):
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        roll_result = update_roll_gross_weight(
-            card_id=card_id,
-            roll_id=roll_id,
-            loaded_version=parsed_version,
-            gross_weight=gross_weight,
-        )
+        if tare_weight is None or not isinstance(tare_weight, str):
+            roll_result = update_roll_gross_weight(
+                card_id=card_id,
+                roll_id=roll_id,
+                loaded_version=parsed_version,
+                gross_weight=gross_weight,
+            )
+        else:
+            roll_result = update_roll_weight(
+                card_id=card_id,
+                roll_id=roll_id,
+                loaded_version=parsed_version,
+                gross_weight=gross_weight,
+                tare_weight=tare_weight,
+            )
 
     return admin_card_post_response(
         request,
@@ -1450,15 +1467,25 @@ async def save_roll_weight(
     roll_id: int,
     loaded_version: str = Form(...),
     gross_weight: str = Form(""),
+    tare_weight: str | None = Form(None),
 ):
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        roll_result = update_roll_gross_weight(
-            card_id=card_id,
-            roll_id=roll_id,
-            loaded_version=parsed_version,
-            gross_weight=gross_weight,
-        )
+        if tare_weight is None or not isinstance(tare_weight, str):
+            roll_result = update_roll_gross_weight(
+                card_id=card_id,
+                roll_id=roll_id,
+                loaded_version=parsed_version,
+                gross_weight=gross_weight,
+            )
+        else:
+            roll_result = update_roll_weight(
+                card_id=card_id,
+                roll_id=roll_id,
+                loaded_version=parsed_version,
+                gross_weight=gross_weight,
+                tare_weight=tare_weight,
+            )
 
     return terminal_post_response(
         request,

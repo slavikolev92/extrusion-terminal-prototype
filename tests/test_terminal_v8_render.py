@@ -17,6 +17,7 @@ from app.main import (
     finish_terminal_card,
     progress_percent,
     remaining_gross_display,
+    save_roll_weight,
     save_tare_weight,
     target_gross_decimal,
     terminal_card,
@@ -139,6 +140,19 @@ def form_block(html: str, action: str) -> str:
     )
     assert match is not None
     return match.group(0)
+
+
+def form_blocks(html: str, action: str) -> list[str]:
+    forms = [
+        match.group(0)
+        for match in re.finditer(
+            rf'<form[^>]* action="{re.escape(action)}"[^>]*>.*?</form>',
+            html,
+            flags=re.S,
+        )
+    ]
+    assert forms
+    return forms
 
 
 def roll_row_block(html: str, roll_id: int) -> str:
@@ -1272,6 +1286,39 @@ def test_terminal_v8_roll_rows_are_compact_and_vertically_centered(connection):
     assert ".roll-row-error-slot:empty {\n      display: none;" in html
 
 
+def test_terminal_roll_table_renders_editable_gross_and_tare_with_readonly_net(connection):
+    card_id = release_ready_card("26196", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "2.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "50.00").ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "3.00").ok
+    card = db.fetch_terminal_card_detail(card_id)
+    roll = card["roll_entries"][0]
+    assert card["tare_weight"] == 3
+    assert roll["tare_weight"] == 2
+
+    html = render_terminal(card_id)
+    row_html = roll_row_block(html, int(roll["id"]))
+    roll_action = f"/terminal/cards/{card_id}/rolls/{roll['id']}"
+    row_forms = form_blocks(row_html, roll_action)
+    gross_edit_form = next(
+        form for form in row_forms if 'type="number" name="gross_weight"' in form
+    )
+    tare_edit_form = next(
+        form for form in row_forms if 'type="number" name="tare_weight"' in form
+    )
+
+    assert "Бруто кг" in html
+    assert "Шпула кг" in html
+    assert "Нето кг" in html
+    assert 'type="number" name="gross_weight"' in gross_edit_form
+    assert 'type="hidden" name="tare_weight" value="2"' in gross_edit_form
+    assert 'type="hidden" name="gross_weight" value="50"' in tare_edit_form
+    assert 'type="number" name="tare_weight"' in tare_edit_form
+    assert 'name="net_weight"' not in row_html
+    assert ">48<" in row_html
+
+
 def test_terminal_v8_roll_saved_notice_scrolls_roll_list_to_bottom(connection):
     card_id = release_ready_card("26192", machine_id=1, sequence=1)
 
@@ -1416,6 +1463,65 @@ def test_terminal_v8_failed_roll_edit_result_renders_in_affected_row_only(connec
     second_row = roll_row_block(html, roll_ids[1])
     assert "row edit failure" not in first_row
     assert "row edit failure" in second_row
+
+
+def test_terminal_roll_weight_route_preserves_row_tare_when_tare_field_omitted(connection):
+    card_id = release_ready_card("26175", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "60.00").ok
+    card = db.fetch_terminal_card_detail(card_id)
+    roll = card["roll_entries"][0]
+    assert roll["tare_weight"] == 1.2
+
+    response = asyncio.run(
+        save_roll_weight(
+            make_test_request(f"/terminal/cards/{card_id}/rolls/{roll['id']}"),
+            card_id,
+            roll["id"],
+            str(card["version"]),
+            "61.00",
+            None,
+        )
+    )
+
+    updated_roll = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=roll_updated"
+    )
+    assert updated_roll["gross_weight"] == 61
+    assert updated_roll["tare_weight"] == 1.2
+    assert updated_roll["net_weight"] == 59.8
+
+
+def test_terminal_roll_weight_route_updates_row_tare_with_hidden_gross(connection):
+    card_id = release_ready_card("26176", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "2.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "50.00").ok
+    card = db.fetch_terminal_card_detail(card_id)
+    roll = card["roll_entries"][0]
+
+    response = asyncio.run(
+        save_roll_weight(
+            make_test_request(f"/terminal/cards/{card_id}/rolls/{roll['id']}"),
+            card_id,
+            roll["id"],
+            str(card["version"]),
+            "50.00",
+            "3.00",
+        )
+    )
+
+    updated_roll = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=roll_updated"
+    )
+    assert updated_roll["gross_weight"] == 50
+    assert updated_roll["tare_weight"] == 3
+    assert updated_roll["net_weight"] == 47
 
 
 def test_terminal_v8_roll_delete_is_hidden_behind_menu_correction_action(connection):
@@ -1650,7 +1756,7 @@ def test_terminal_finish_failure_renders_inline_without_redirect(connection):
     assert "location" not in response.headers
     assert "workflow_result" in response.context
     assert response.context["workflow_result"].messages == (
-        "Шпула е задължителна преди приключване.",
+        "Времето трябва да бъде стартирано преди приключване.",
     )
     assert 'class="terminal-toast"' not in response.body.decode("utf-8")
 

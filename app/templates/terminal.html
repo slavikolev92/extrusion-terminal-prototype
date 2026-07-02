@@ -1096,7 +1096,7 @@
     .roll-head,
     .roll-row {
       display: grid;
-      grid-template-columns: 48px minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
       align-items: stretch;
     }
 
@@ -2305,7 +2305,8 @@
                   <div class="roll-head">
                     <div>№</div>
                     <div>Бруто кг</div>
-                    <div>Нето</div>
+                    <div>Шпула кг</div>
+                    <div>Нето кг</div>
                   </div>
                   <div class="roll-list" data-scroll-bottom="{% if terminal_feedback.scroll_rolls_to_bottom %}true{% else %}false{% endif %}">
                     {% if selected_card.roll_entries %}
@@ -2315,6 +2316,7 @@
                           <div class="roll-weight-cell">
                             <form action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}" method="post">
                               <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                              <input type="hidden" name="tare_weight" value="{{ roll.tare_weight if roll.tare_weight is not none else '' }}">
                               <input type="number" name="gross_weight" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %}>
                             </form>
                             <div class="roll-row-error-slot field-error-slot" data-feedback-roll-id="{{ roll.id }}">
@@ -2328,11 +2330,18 @@
                               {% endif %}
                             </div>
                           </div>
+                          <div class="roll-weight-cell">
+                            <form action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}" method="post">
+                              <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                              <input type="hidden" name="gross_weight" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}">
+                              <input type="number" name="tare_weight" min="0" step="0.01" value="{{ roll.tare_weight if roll.tare_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %}>
+                            </form>
+                          </div>
                           <div>{{ roll.net_weight if roll.net_weight is not none else "-" }}</div>
                         </div>
                       {% endfor %}
                     {% else %}
-                      <div class="roll-row"><div>-</div><div>Няма въведени ролки.</div><div>-</div></div>
+                      <div class="roll-row"><div>-</div><div>Няма въведени ролки.</div><div>-</div><div>-</div></div>
                     {% endif %}
                   </div>
                 </div>

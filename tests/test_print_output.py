@@ -134,11 +134,11 @@ def make_completed_printable_card(
             connection.execute(
                 """
                 INSERT INTO roll_entries (
-                    card_id, order_number, roll_number, gross_weight, net_weight
+                    card_id, order_number, roll_number, gross_weight, tare_weight, net_weight
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (card_id, order_number, roll_number, gross_weight, net_weight),
+                (card_id, order_number, roll_number, gross_weight, "1.25", net_weight),
             )
         connection.commit()
     return card_id
@@ -156,10 +156,15 @@ def set_card_status(card_id: int, status: str) -> None:
 def set_roll_gross_weight(card_id: int, roll_number: int, gross_weight: str) -> None:
     with db.connect() as connection:
         tare_weight = connection.execute(
-            "SELECT tare_weight FROM cards WHERE id = ?",
-            (card_id,),
+            """
+            SELECT tare_weight
+            FROM roll_entries
+            WHERE card_id = ?
+              AND roll_number = ?
+            """,
+            (card_id, roll_number),
         ).fetchone()["tare_weight"]
-        net_weight = db.net_weight_for_gross(
+        net_weight = db.net_weight_for_roll(
             db.decimal_from_database(gross_weight),
             db.decimal_from_database(tare_weight),
         )
@@ -258,7 +263,9 @@ def test_only_produced_or_archived_cards_are_printable(connection, status):
     assert "Печатът е разрешен само за произведени или завършени карти." in result.messages
 
 
-def test_completed_card_with_missing_tare_is_blocked(connection):
+def test_completed_card_with_missing_default_tare_is_printable_with_roll_tares(
+    connection,
+):
     card_id = make_completed_printable_card("27002")
     with db.connect() as connection:
         connection.execute("UPDATE cards SET tare_weight = NULL WHERE id = ?", (card_id,))
@@ -266,9 +273,10 @@ def test_completed_card_with_missing_tare_is_blocked(connection):
 
     result = build_print_readiness(card_id)
 
-    assert not result.ok
-    assert result.data is None
-    assert "Шпула е задължителна преди печат." in result.messages
+    assert result.ok
+    assert result.messages == []
+    assert result.data is not None
+    assert result.data["back"]["tare_display"] == "1.3"
 
 
 def test_incomplete_print_readiness_does_not_show_numeric_corruption_message(connection):
@@ -288,7 +296,6 @@ def test_incomplete_print_readiness_does_not_show_numeric_corruption_message(con
 
     assert not result.ok
     assert result.data is None
-    assert "Шпула е задължителна преди печат." in result.messages
     assert "Поне едно бруто тегло на ролка е задължително преди печат." in result.messages
     assert "Критичните тегла за печат трябва да са валидни числа." not in result.messages
 
@@ -341,7 +348,7 @@ def test_completed_card_with_invalid_numeric_weight_is_blocked(connection):
     with db.connect() as connection:
         connection.execute("PRAGMA ignore_check_constraints = ON")
         connection.execute(
-            "UPDATE cards SET tare_weight = 'Infinity' WHERE id = ?",
+            "UPDATE roll_entries SET tare_weight = 'Infinity' WHERE card_id = ?",
             (card_id,),
         )
         connection.commit()
@@ -356,8 +363,14 @@ def test_completed_card_with_invalid_numeric_weight_is_blocked(connection):
 def test_completed_card_with_negative_net_total_is_blocked(connection):
     card_id = make_completed_printable_card("27007")
     with db.connect() as connection:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
         connection.execute(
-            "UPDATE cards SET tare_weight = 100 WHERE id = ?",
+            """
+            UPDATE roll_entries
+            SET tare_weight = 60.00,
+                net_weight = -8.75
+            WHERE card_id = ?
+            """,
             (card_id,),
         )
         connection.commit()
@@ -960,6 +973,67 @@ def test_print_route_back_page_summary_weights_use_one_decimal(connection):
     assert rendered_text(data_block(response.text, "data-summary-field", "tare")) == "1.3"
     assert rendered_text(data_block(response.text, "data-summary-field", "total-gross")) == "61.3"
     assert rendered_text(data_block(response.text, "data-summary-field", "total-net")) == "58.8"
+
+
+def test_print_summary_tare_uses_range_for_mixed_roll_tares(connection):
+    card_id = make_completed_printable_card("27060", roll_count=2)
+    with db.connect() as connection:
+        connection.execute(
+            """
+            UPDATE roll_entries
+            SET tare_weight = 2.50,
+                net_weight = CAST(gross_weight AS NUMERIC) - 2.50
+            WHERE card_id = ?
+              AND roll_number = 1
+            """,
+            (card_id,),
+        )
+        connection.execute(
+            """
+            UPDATE roll_entries
+            SET tare_weight = 2.00,
+                net_weight = CAST(gross_weight AS NUMERIC) - 2.00
+            WHERE card_id = ?
+              AND roll_number = 2
+            """,
+            (card_id,),
+        )
+        connection.commit()
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    assert rendered_text(data_block(response.text, "data-summary-field", "tare")) == "2.0-2.5"
+
+
+def test_print_readiness_blocks_gross_roll_without_tare(connection):
+    card_id = make_completed_printable_card("27062", roll_count=1)
+    with db.connect() as connection:
+        connection.execute(
+            "UPDATE roll_entries SET tare_weight = NULL WHERE card_id = ?",
+            (card_id,),
+        )
+        connection.commit()
+
+    readiness = build_print_readiness(card_id)
+
+    assert not readiness.ok
+    assert "Всяка ролка с бруто тегло трябва да има шпула преди печат." in readiness.messages
+
+
+def test_print_readiness_blocks_gross_roll_without_net(connection):
+    card_id = make_completed_printable_card("27063", roll_count=1)
+    with db.connect() as connection:
+        connection.execute(
+            "UPDATE roll_entries SET net_weight = NULL WHERE card_id = ?",
+            (card_id,),
+        )
+        connection.commit()
+
+    readiness = build_print_readiness(card_id)
+
+    assert not readiness.ok
+    assert "Всяка ролка с бруто тегло трябва да има шпула преди печат." in readiness.messages
 
 
 def test_print_route_back_page_date_shift_cells_are_blank(connection):

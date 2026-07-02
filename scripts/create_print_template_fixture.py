@@ -174,6 +174,7 @@ def create_dense_completed_card(order_number: str = "PRINT-TEMPLATE-001") -> int
                     order_number,
                     roll_number,
                     decimal_text(gross),
+                    decimal_text(tare),
                     decimal_text(net),
                 )
             )
@@ -184,9 +185,10 @@ def create_dense_completed_card(order_number: str = "PRINT-TEMPLATE-001") -> int
                 order_number,
                 roll_number,
                 gross_weight,
+                tare_weight,
                 net_weight
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             roll_rows,
         )

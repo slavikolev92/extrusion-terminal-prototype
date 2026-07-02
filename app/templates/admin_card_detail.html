@@ -314,6 +314,7 @@
           <div class="admin-ledger-head">
             <div>№</div>
             <div>Бруто, кг</div>
+            <div>Шпула, кг</div>
             <div>Нето, кг</div>
             <div><span class="visually-hidden">Изтриване</span></div>
           </div>
@@ -322,6 +323,9 @@
               <div>{{ roll.roll_number }}</div>
               <div>
                 <input type="number" name="gross_weight__{{ roll.id }}" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}">
+              </div>
+              <div>
+                <input type="number" name="tare_weight__{{ roll.id }}" min="0" step="0.01" value="{{ roll.tare_weight if roll.tare_weight is not none else '' }}">
               </div>
               <div class="readonly-cell">{{ roll.net_weight if roll.net_weight is not none else "-" }}</div>
               <div class="ledger-row-actions">

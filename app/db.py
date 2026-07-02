@@ -191,6 +191,7 @@ CREATE TABLE IF NOT EXISTS roll_entries (
     order_number TEXT NOT NULL,
     roll_number INTEGER NOT NULL CHECK (roll_number >= 1),
     gross_weight NUMERIC CHECK (gross_weight IS NULL OR gross_weight >= 0),
+    tare_weight NUMERIC CHECK (tare_weight IS NULL OR tare_weight >= 0),
     net_weight NUMERIC CHECK (net_weight IS NULL OR net_weight >= 0),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -322,6 +323,7 @@ def init_db() -> None:
         # Existing pilot databases may still have legacy cards.validation_status;
         # current code ignores it and validates current card fields directly.
         ensure_column(connection, "cards", "max_roll_weight", "TEXT")
+        ensure_roll_entry_tare_weight(connection)
         backfill_card_import_sources(connection)
         ensure_column(
             connection,
@@ -351,7 +353,7 @@ def ensure_column(
     table_name: str,
     column_name: str,
     column_definition: str,
-) -> None:
+) -> bool:
     columns = {
         row["name"]
         for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
@@ -360,6 +362,50 @@ def ensure_column(
         connection.execute(
             f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
         )
+        return True
+    return False
+
+
+def ensure_roll_entry_tare_weight(connection: sqlite3.Connection) -> None:
+    added_tare_weight = ensure_column(
+        connection,
+        "roll_entries",
+        "tare_weight",
+        "NUMERIC CHECK (tare_weight IS NULL OR tare_weight >= 0)",
+    )
+    if not added_tare_weight:
+        return
+
+    connection.execute(
+        """
+        UPDATE roll_entries
+        SET tare_weight = (
+            SELECT cards.tare_weight
+            FROM cards
+            WHERE cards.id = roll_entries.card_id
+        )
+        WHERE tare_weight IS NULL
+          AND EXISTS (
+              SELECT 1
+              FROM cards
+              WHERE cards.id = roll_entries.card_id
+                AND cards.tare_weight IS NOT NULL
+          )
+        """
+    )
+    connection.execute(
+        """
+        UPDATE roll_entries
+        SET net_weight = CASE
+            WHEN gross_weight IS NOT NULL
+             AND tare_weight IS NOT NULL
+             AND CAST(gross_weight AS NUMERIC) >= CAST(tare_weight AS NUMERIC)
+                THEN CAST(gross_weight AS NUMERIC) - CAST(tare_weight AS NUMERIC)
+            ELSE NULL
+        END
+        WHERE gross_weight IS NOT NULL
+        """
+    )
 
 
 def _quote_identifier(identifier: str) -> str:
@@ -695,7 +741,7 @@ def fetch_admin_card_detail(card_id: int) -> dict[str, Any] | None:
             ),
             None,
         )
-        roll_data = fetch_roll_entries_and_totals(connection, card_id, card["tare_weight"])
+        roll_data = fetch_roll_entries_and_totals(connection, card_id)
         card.update(roll_data)
         card["recipe_actual_entries"] = fetch_recipe_actual_entries(connection, card_id)
         card["recipe_components"] = fetch_recipe_components(connection, card_id)
@@ -741,7 +787,7 @@ def fetch_terminal_card_detail(card_id: int) -> dict[str, Any] | None:
             ),
             None,
         )
-        roll_data = fetch_roll_entries_and_totals(connection, card_id, card["tare_weight"])
+        roll_data = fetch_roll_entries_and_totals(connection, card_id)
         card.update(roll_data)
         card["recipe_actual_entries"] = fetch_recipe_actual_entries(connection, card_id)
         card["recipe_components"] = fetch_recipe_components(connection, card_id)
@@ -858,11 +904,10 @@ def fetch_recipe_components(
 def fetch_roll_entries_and_totals(
     connection: sqlite3.Connection,
     card_id: int,
-    tare_weight: Any,
 ) -> dict[str, Any]:
     rows = connection.execute(
         """
-        SELECT id, roll_number, gross_weight, net_weight, updated_at
+        SELECT id, roll_number, gross_weight, tare_weight, net_weight, updated_at
         FROM roll_entries
         WHERE card_id = ?
         ORDER BY roll_number
@@ -870,16 +915,28 @@ def fetch_roll_entries_and_totals(
         (card_id,),
     ).fetchall()
     roll_entries = rows_to_dicts(rows)
-    tare = decimal_from_database(tare_weight)
+    gross_rolls = [entry for entry in roll_entries if entry["gross_weight"] is not None]
     gross_values = [
-        decimal_from_database(entry["gross_weight"])
-        for entry in roll_entries
-        if entry["gross_weight"] is not None
+        decimal_from_roll_value(entry["gross_weight"])
+        for entry in gross_rolls
     ]
     gross_values = [gross for gross in gross_values if gross is not None]
-    roll_count = len(gross_values)
-    total_gross = sum(gross_values, Decimal("0"))
-    total_net = None if tare is None else total_gross - (tare * roll_count)
+    gross_total_is_complete = len(gross_rolls) == len(gross_values)
+    net_values = []
+    for entry in gross_rolls:
+        gross = decimal_from_roll_value(entry["gross_weight"])
+        tare = decimal_from_roll_value(entry["tare_weight"])
+        net = decimal_from_roll_value(entry["net_weight"])
+        expected_net = net_weight_for_roll(gross, tare)
+        if expected_net is not None and net == expected_net:
+            net_values.append(net)
+    roll_count = len(gross_rolls)
+    total_gross = sum(gross_values, Decimal("0")) if gross_total_is_complete else None
+    total_net = (
+        sum(net_values, Decimal("0"))
+        if gross_total_is_complete and len(gross_rolls) == len(net_values)
+        else None
+    )
     next_roll_number = (
         max((int(entry["roll_number"]) for entry in roll_entries), default=0) + 1
     )
@@ -888,9 +945,43 @@ def fetch_roll_entries_and_totals(
         "roll_entries": roll_entries,
         "roll_count": roll_count,
         "next_roll_number": next_roll_number,
-        "total_gross_weight": decimal_to_display(total_gross),
+        "total_gross_weight": decimal_to_display(total_gross) if total_gross is not None else None,
         "total_net_weight": decimal_to_display(total_net) if total_net is not None else None,
+        "tare_summary_display": roll_tare_summary_display(roll_entries),
     }
+
+
+def decimal_from_roll_value(value: Any) -> Decimal | None:
+    try:
+        parsed = decimal_from_database(value)
+    except (InvalidOperation, ValueError):
+        return None
+    if parsed is None or not parsed.is_finite():
+        return None
+    return parsed
+
+
+def decimal_to_tare_summary_display(value: Decimal) -> str:
+    return format(value.quantize(Decimal("0.1")), "f")
+
+
+def roll_tare_summary_display(roll_entries: list[dict[str, Any]]) -> str | None:
+    tare_values = [
+        decimal_from_roll_value(entry.get("tare_weight"))
+        for entry in roll_entries
+        if entry.get("gross_weight") is not None and entry.get("tare_weight") is not None
+    ]
+    tare_values = [tare for tare in tare_values if tare is not None]
+    if not tare_values:
+        return None
+
+    lowest = min(tare_values)
+    highest = max(tare_values)
+    lowest_display = decimal_to_tare_summary_display(lowest)
+    highest_display = decimal_to_tare_summary_display(highest)
+    if lowest_display == highest_display:
+        return lowest_display
+    return f"{lowest_display}-{highest_display}"
 
 
 def fetch_timing_segments_for_card(
@@ -1931,9 +2022,6 @@ def validate_card_ready_to_finish(
     if not card:
         return RuleResult(False, ("Картата не е намерена в активната опашка на терминала.",))
 
-    if card["tare_weight"] is None:
-        return RuleResult(False, ("Шпула е задължителна преди приключване.",))
-
     segment_count = connection.execute(
         """
         SELECT COUNT(*)
@@ -1947,7 +2035,7 @@ def validate_card_ready_to_finish(
 
     roll_rows = connection.execute(
         """
-        SELECT roll_number, gross_weight
+        SELECT roll_number, gross_weight, tare_weight, net_weight
         FROM roll_entries
         WHERE card_id = ?
         ORDER BY roll_number
@@ -1957,6 +2045,12 @@ def validate_card_ready_to_finish(
     gross_rolls = [roll for roll in roll_rows if roll["gross_weight"] is not None]
     if not gross_rolls:
         return RuleResult(False, ("Поне едно бруто тегло на ролка е задължително преди приключване.",))
+
+    if any(not gross_roll_is_ready_to_finish(roll) for roll in gross_rolls):
+        return RuleResult(
+            False,
+            ("Всяка ролка с бруто тегло трябва да има шпула преди приключване.",),
+        )
 
     found_empty_roll = False
     for roll in roll_rows:
@@ -1969,6 +2063,17 @@ def validate_card_ready_to_finish(
             )
 
     return RuleResult(True)
+
+
+def gross_roll_is_ready_to_finish(roll: sqlite3.Row) -> bool:
+    gross = decimal_from_roll_value(roll["gross_weight"])
+    tare = decimal_from_roll_value(roll["tare_weight"])
+    net = decimal_from_roll_value(roll["net_weight"])
+    if gross is None or tare is None or net is None:
+        return False
+
+    expected_net = net_weight_for_roll(gross, tare)
+    return expected_net is not None and net == expected_net
 
 
 def fetch_timing_action_card(
@@ -2102,8 +2207,11 @@ def validate_loaded_card_version(card: sqlite3.Row | None, loaded_version: int) 
     return RuleResult(True)
 
 
-def net_weight_for_gross(gross_weight: Decimal, tare_weight: Decimal | None) -> Decimal | None:
-    if tare_weight is None:
+def net_weight_for_roll(
+    gross_weight: Decimal | None,
+    tare_weight: Decimal | None,
+) -> Decimal | None:
+    if gross_weight is None or tare_weight is None:
         return None
 
     net_weight = gross_weight - tare_weight
@@ -2136,31 +2244,6 @@ def update_tare_weight(card_id: int, loaded_version: int, tare_weight: str) -> R
         if not version_result.ok:
             return version_result
 
-        rolls = connection.execute(
-            """
-            SELECT id, gross_weight
-            FROM roll_entries
-            WHERE card_id = ?
-              AND gross_weight IS NOT NULL
-            ORDER BY roll_number
-            """,
-            (card_id,),
-        ).fetchall()
-        recalculated_rolls: list[tuple[str | None, int]] = []
-        for roll in rolls:
-            gross = decimal_from_database(roll["gross_weight"])
-            if gross is None:
-                continue
-            net = net_weight_for_gross(gross, parsed_tare)
-            if parsed_tare is not None and net is None:
-                return RuleResult(
-                    False,
-                    ("Шпулата не може да бъде по-голяма от съществуващо бруто тегло на ролка.",),
-                )
-            recalculated_rolls.append(
-                (decimal_to_storage(net) if net is not None else None, int(roll["id"]))
-            )
-
         connection.execute(
             """
             UPDATE cards
@@ -2173,15 +2256,6 @@ def update_tare_weight(card_id: int, loaded_version: int, tare_weight: str) -> R
                 decimal_to_storage(parsed_tare) if parsed_tare is not None else None,
                 card_id,
             ),
-        )
-        connection.executemany(
-            """
-            UPDATE roll_entries
-            SET net_weight = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            recalculated_rolls,
         )
 
     message = "Шпулата е изчистена." if parsed_tare is None else "Шпулата е записана."
@@ -2208,9 +2282,9 @@ def add_roll_gross_weight(card_id: int, loaded_version: int, gross_weight: str) 
         if not roll_entry_result.ok:
             return roll_entry_result
 
-        tare = decimal_from_database(card["tare_weight"])
-        net = net_weight_for_gross(parsed_gross, tare)
-        if tare is not None and net is None:
+        default_tare = decimal_from_database(card["tare_weight"])
+        net = net_weight_for_roll(parsed_gross, default_tare)
+        if default_tare is not None and net is None:
             return RuleResult(
                 False,
                 ("Бруто теглото не може да бъде по-малко от шпулата.",),
@@ -2233,15 +2307,17 @@ def add_roll_gross_weight(card_id: int, loaded_version: int, gross_weight: str) 
                 order_number,
                 roll_number,
                 gross_weight,
+                tare_weight,
                 net_weight
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 card_id,
                 card["order_number"],
                 next_roll_number,
                 decimal_to_storage(parsed_gross),
+                decimal_to_storage(default_tare) if default_tare is not None else None,
                 decimal_to_storage(net) if net is not None else None,
             ),
         )
@@ -2258,11 +2334,12 @@ def add_roll_gross_weight(card_id: int, loaded_version: int, gross_weight: str) 
     return RuleResult(True, (f"Ролка {next_roll_number} е записана.",))
 
 
-def update_roll_gross_weight(
+def update_roll_weight(
     card_id: int,
     roll_id: int,
     loaded_version: int,
     gross_weight: str,
+    tare_weight: str,
 ) -> RuleResult:
     parsed_gross, parse_error = parse_weight(
         gross_weight,
@@ -2271,6 +2348,14 @@ def update_roll_gross_weight(
     )
     if parse_error:
         return RuleResult(False, (parse_error,))
+
+    parsed_tare, tare_parse_error = parse_weight(
+        tare_weight,
+        "Шпула",
+        allow_blank=True,
+    )
+    if tare_parse_error:
+        return RuleResult(False, (tare_parse_error,))
 
     with connect() as connection:
         card = fetch_roll_action_card(connection, card_id)
@@ -2284,7 +2369,7 @@ def update_roll_gross_weight(
 
         roll = connection.execute(
             """
-            SELECT id, roll_number, gross_weight
+            SELECT id, roll_number, gross_weight, tare_weight
             FROM roll_entries
             WHERE id = ?
               AND card_id = ?
@@ -2316,9 +2401,8 @@ def update_roll_gross_weight(
                     ("Завършените карти трябва да запазят поне едно бруто тегло на ролка.",),
                 )
 
-        tare = decimal_from_database(card["tare_weight"])
-        net = net_weight_for_gross(parsed_gross, tare) if parsed_gross is not None else None
-        if tare is not None and parsed_gross is not None and net is None:
+        net = net_weight_for_roll(parsed_gross, parsed_tare)
+        if parsed_gross is not None and parsed_tare is not None and net is None:
             return RuleResult(
                 False,
                 ("Бруто теглото не може да бъде по-малко от шпулата.",),
@@ -2328,12 +2412,14 @@ def update_roll_gross_weight(
             """
             UPDATE roll_entries
             SET gross_weight = ?,
+                tare_weight = ?,
                 net_weight = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (
                 decimal_to_storage(parsed_gross) if parsed_gross is not None else None,
+                decimal_to_storage(parsed_tare) if parsed_tare is not None else None,
                 decimal_to_storage(net) if net is not None else None,
                 roll_id,
             ),
@@ -2349,6 +2435,34 @@ def update_roll_gross_weight(
         )
 
     return RuleResult(True, (f"Ролка {roll['roll_number']} е записана.",))
+
+
+def update_roll_gross_weight(
+    card_id: int,
+    roll_id: int,
+    loaded_version: int,
+    gross_weight: str,
+) -> RuleResult:
+    with connect() as connection:
+        roll = connection.execute(
+            """
+            SELECT tare_weight
+            FROM roll_entries
+            WHERE id = ?
+              AND card_id = ?
+            """,
+            (roll_id, card_id),
+        ).fetchone()
+    if not roll:
+        return RuleResult(False, ("Ролката не е намерена.",))
+    existing_tare = decimal_from_database(roll["tare_weight"])
+    return update_roll_weight(
+        card_id=card_id,
+        roll_id=roll_id,
+        loaded_version=loaded_version,
+        gross_weight=gross_weight,
+        tare_weight=decimal_to_storage(existing_tare) if existing_tare is not None else "",
+    )
 
 
 def delete_roll_entry(card_id: int, roll_id: int, loaded_version: int) -> RuleResult:
@@ -2450,7 +2564,7 @@ def update_admin_roll_ledger(
     card_id: int,
     loaded_version: int,
     tare_weight: str,
-    roll_updates: dict[int, str],
+    roll_updates: dict[int, dict[str, str]],
     delete_roll_ids: set[int],
     new_gross_weights: list[str],
     *,
@@ -2484,7 +2598,7 @@ def _update_admin_roll_ledger(
     card_id: int,
     loaded_version: int,
     tare_weight: str,
-    roll_updates: dict[int, str],
+    roll_updates: dict[int, dict[str, str]],
     delete_roll_ids: set[int],
     new_gross_weights: list[str],
 ) -> RuleResult:
@@ -2507,7 +2621,7 @@ def _update_admin_roll_ledger(
 
     existing_rolls = connection.execute(
         """
-        SELECT id, roll_number, gross_weight
+        SELECT id, roll_number, gross_weight, tare_weight
         FROM roll_entries
         WHERE card_id = ?
         ORDER BY roll_number
@@ -2518,23 +2632,49 @@ def _update_admin_roll_ledger(
     unknown_ids = (set(roll_updates) | delete_roll_ids) - existing_ids
     if unknown_ids:
         return RuleResult(False, ("Избрана ролка не принадлежи към тази карта.",))
-    existing_gross_by_id = {
-        int(row["id"]): decimal_from_database(row["gross_weight"])
+    existing_values_by_id = {
+        int(row["id"]): {
+            "gross_weight": decimal_from_database(row["gross_weight"]),
+            "tare_weight": decimal_from_database(row["tare_weight"]),
+        }
         for row in existing_rolls
     }
 
-    parsed_updates: dict[int, Decimal | None] = {}
-    for roll_id, gross_weight in roll_updates.items():
+    parsed_updates: dict[int, dict[str, Decimal | None]] = {}
+    for roll_id, values in roll_updates.items():
         if roll_id in delete_roll_ids:
             continue
+        current = existing_values_by_id[roll_id]
+        gross_text = values.get(
+            "gross_weight",
+            decimal_to_storage(current["gross_weight"])
+            if current["gross_weight"] is not None
+            else "",
+        )
+        tare_text = values.get(
+            "tare_weight",
+            decimal_to_storage(current["tare_weight"])
+            if current["tare_weight"] is not None
+            else "",
+        )
         parsed_gross, parse_error = parse_weight(
-            gross_weight,
+            gross_text,
             "Бруто тегло",
             allow_blank=True,
         )
         if parse_error:
             return RuleResult(False, (parse_error,))
-        parsed_updates[roll_id] = parsed_gross
+        parsed_row_tare, parse_error = parse_weight(
+            tare_text,
+            "Шпула",
+            allow_blank=True,
+        )
+        if parse_error:
+            return RuleResult(False, (parse_error,))
+        parsed_updates[roll_id] = {
+            "gross_weight": parsed_gross,
+            "tare_weight": parsed_row_tare,
+        }
 
     parsed_new: list[Decimal] = []
     for gross_weight in new_gross_weights:
@@ -2553,8 +2693,11 @@ def _update_admin_roll_ledger(
     roll_mutation_requested = bool(delete_roll_ids or parsed_new)
     if not roll_mutation_requested:
         roll_mutation_requested = any(
-            parsed_gross != existing_gross_by_id[roll_id]
-            for roll_id, parsed_gross in parsed_updates.items()
+            parsed_values["gross_weight"]
+            != existing_values_by_id[roll_id]["gross_weight"]
+            or parsed_values["tare_weight"]
+            != existing_values_by_id[roll_id]["tare_weight"]
+            for roll_id, parsed_values in parsed_updates.items()
         )
 
     if roll_mutation_requested:
@@ -2562,28 +2705,34 @@ def _update_admin_roll_ledger(
         if not roll_entry_result.ok:
             return roll_entry_result
 
-    remaining_updates: dict[int, tuple[Decimal | None, Decimal | None]] = {}
+    remaining_updates: dict[
+        int,
+        tuple[Decimal | None, Decimal | None, Decimal | None],
+    ] = {}
     gross_roll_count = len(parsed_new)
     for roll in existing_rolls:
         roll_id = int(roll["id"])
         if roll_id in delete_roll_ids:
             continue
-        gross = parsed_updates.get(
-            roll_id,
-            decimal_from_database(roll["gross_weight"]),
-        )
+        parsed_values = parsed_updates.get(roll_id)
+        if parsed_values is None:
+            gross = decimal_from_database(roll["gross_weight"])
+            row_tare = decimal_from_database(roll["tare_weight"])
+        else:
+            gross = parsed_values["gross_weight"]
+            row_tare = parsed_values["tare_weight"]
         if gross is not None:
             gross_roll_count += 1
-        net = net_weight_for_gross(gross, parsed_tare) if gross is not None else None
-        if parsed_tare is not None and gross is not None and net is None:
+        net = net_weight_for_roll(gross, row_tare)
+        if gross is not None and row_tare is not None and net is None:
             return RuleResult(
                 False,
                 ("Бруто теглото не може да бъде по-малко от шпулата.",),
             )
-        remaining_updates[roll_id] = (gross, net)
+        remaining_updates[roll_id] = (gross, row_tare, net)
 
     for gross in parsed_new:
-        net = net_weight_for_gross(gross, parsed_tare)
+        net = net_weight_for_roll(gross, parsed_tare)
         if parsed_tare is not None and net is None:
             return RuleResult(
                 False,
@@ -2620,11 +2769,12 @@ def _update_admin_roll_ledger(
             (roll_id, card_id),
         )
 
-    for roll_id, (gross, net) in remaining_updates.items():
+    for roll_id, (gross, row_tare, net) in remaining_updates.items():
         connection.execute(
             """
             UPDATE roll_entries
             SET gross_weight = ?,
+                tare_weight = ?,
                 net_weight = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
@@ -2632,6 +2782,7 @@ def _update_admin_roll_ledger(
             """,
             (
                 decimal_to_storage(gross) if gross is not None else None,
+                decimal_to_storage(row_tare) if row_tare is not None else None,
                 decimal_to_storage(net) if net is not None else None,
                 roll_id,
                 card_id,
@@ -2649,7 +2800,7 @@ def _update_admin_roll_ledger(
         ).fetchone()["next_roll_number"]
     )
     for gross in parsed_new:
-        net = net_weight_for_gross(gross, parsed_tare)
+        net = net_weight_for_roll(gross, parsed_tare)
         connection.execute(
             """
             INSERT INTO roll_entries (
@@ -2657,15 +2808,17 @@ def _update_admin_roll_ledger(
                 order_number,
                 roll_number,
                 gross_weight,
+                tare_weight,
                 net_weight
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 card_id,
                 str(card["order_number"]),
                 next_roll_number,
                 decimal_to_storage(gross),
+                decimal_to_storage(parsed_tare) if parsed_tare is not None else None,
                 decimal_to_storage(net) if net is not None else None,
             ),
         )

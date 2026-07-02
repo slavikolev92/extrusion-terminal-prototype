@@ -207,6 +207,163 @@ def test_gross_and_net_totals_calculate_with_tare(connection):
     assert rolls[1]["net_weight"] == 28.75
 
 
+def test_total_net_is_unknown_when_gross_roll_lacks_tare(connection):
+    card_id = import_and_release_card("25543")
+    start_card(card_id)
+    connection.execute(
+        """
+        INSERT INTO roll_entries (
+            card_id, order_number, roll_number, gross_weight, tare_weight, net_weight
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (card_id, "25543", 1, "25.00", None, "24.00"),
+    )
+    connection.commit()
+
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert card["roll_count"] == 1
+    assert card["total_gross_weight"] == "25.00"
+    assert card["total_net_weight"] is None
+
+
+def test_total_gross_is_unknown_when_gross_roll_is_invalid(connection):
+    card_id = import_and_release_card("25544")
+    start_card(card_id)
+    connection.executemany(
+        """
+        INSERT INTO roll_entries (
+            card_id, order_number, roll_number, gross_weight, tare_weight, net_weight
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            (card_id, "25544", 1, "bad", "1.00", "1.00"),
+            (card_id, "25544", 2, "10.00", "1.00", "9.00"),
+        ),
+    )
+    connection.commit()
+
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert card["roll_count"] == 2
+    assert card["total_gross_weight"] is None
+    assert card["total_net_weight"] is None
+
+
+def test_total_net_is_unknown_when_gross_roll_lacks_net(connection):
+    card_id = import_and_release_card("25545")
+    start_card(card_id)
+    connection.execute(
+        """
+        INSERT INTO roll_entries (
+            card_id, order_number, roll_number, gross_weight, tare_weight, net_weight
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (card_id, "25545", 1, "25.00", "1.00", None),
+    )
+    connection.commit()
+
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert card["roll_count"] == 1
+    assert card["total_gross_weight"] == "25.00"
+    assert card["total_net_weight"] is None
+
+
+def test_total_net_is_unknown_when_stored_net_does_not_match_gross_minus_tare(connection):
+    card_id = import_and_release_card("25546")
+    start_card(card_id)
+    connection.execute(
+        """
+        INSERT INTO roll_entries (
+            card_id, order_number, roll_number, gross_weight, tare_weight, net_weight
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (card_id, "25546", 1, "25.00", "1.00", "20.00"),
+    )
+    connection.commit()
+
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert card["roll_count"] == 1
+    assert card["total_gross_weight"] == "25.00"
+    assert card["total_net_weight"] is None
+
+
+def test_new_roll_copies_current_default_tare_without_mutating_existing_rolls(connection):
+    card_id = import_and_release_card("25540")
+    start_card(card_id)
+    assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
+    assert db.add_roll_gross_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "50.00").ok
+    assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.50").ok
+    assert db.add_roll_gross_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "60.00").ok
+
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert card["tare_weight"] == 2.5
+    assert [(roll["gross_weight"], roll["tare_weight"], roll["net_weight"]) for roll in card["roll_entries"]] == [
+        (50, 2, 48),
+        (60, 2.5, 57.5),
+    ]
+    assert card["total_gross_weight"] == "110.00"
+    assert card["total_net_weight"] == "105.50"
+
+
+def test_editing_roll_tare_recalculates_only_that_roll_and_not_default_tare(connection):
+    card_id = import_and_release_card("25541")
+    start_card(card_id)
+    assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
+    assert db.add_roll_gross_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "50.00").ok
+    assert db.add_roll_gross_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "60.00").ok
+    card = db.fetch_terminal_card_detail(card_id)
+    first_roll_id = int(card["roll_entries"][0]["id"])
+
+    result = db.update_roll_weight(
+        card_id=card_id,
+        roll_id=first_roll_id,
+        loaded_version=card["version"],
+        gross_weight="50.00",
+        tare_weight="3.00",
+    )
+    updated = db.fetch_terminal_card_detail(card_id)
+
+    assert result.ok
+    assert updated["tare_weight"] == 2
+    assert [(roll["tare_weight"], roll["net_weight"]) for roll in updated["roll_entries"]] == [
+        (3, 47),
+        (2, 58),
+    ]
+    assert updated["total_net_weight"] == "105.00"
+
+
+def test_roll_tare_rejects_more_than_two_decimal_places_and_tare_above_gross(connection):
+    card_id = import_and_release_card("25542")
+    start_card(card_id)
+    assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
+    assert db.add_roll_gross_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "50.00").ok
+    card = db.fetch_terminal_card_detail(card_id)
+    roll_id = int(card["roll_entries"][0]["id"])
+
+    too_precise = db.update_roll_weight(card_id, roll_id, card["version"], "50.00", "1.234")
+    unchanged = db.fetch_terminal_card_detail(card_id)
+    too_large = db.update_roll_weight(card_id, roll_id, unchanged["version"], "50.00", "60.00")
+
+    assert not too_precise.ok
+    assert too_precise.messages == ("Шпула поддържа най-много два знака след десетичната запетая.",)
+    assert not too_large.ok
+    assert too_large.messages == ("Бруто теглото не може да бъде по-малко от шпулата.",)
+    final_card = db.fetch_terminal_card_detail(card_id)
+    assert final_card["tare_weight"] == 2
+    assert [
+        (roll["gross_weight"], roll["tare_weight"], roll["net_weight"])
+        for roll in final_card["roll_entries"]
+    ] == [(50, 2, 48)]
+
+
 def test_stale_roll_add_and_update_are_blocked(connection):
     card_id = import_and_release_card("25505")
     start_card(card_id)

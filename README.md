@@ -37,11 +37,11 @@ Confirmed workflow facts:
 - Operators should have a back/input view for entering gross roll weights.
 - The terminal UI does not need to preserve a strict front-page/back-page split. It can combine the necessary operator-facing information into one compact working screen.
 - The printed output must still preserve the old front/back operational-card format.
-- The app needs one tare-weight field for the order.
+- The app keeps a current/default tare-weight field for the order.
 - Tare weight means the actual weight of the roll core.
-- The tare weight is the same for the whole order.
+- Each roll stores the tare weight that applied when that roll was entered; changing the order default affects future rolls only.
 - Operators input gross weight for each roll.
-- The app calculates net weight per roll from gross roll weight and order-level tare weight.
+- The app calculates net weight per roll from that roll's gross weight and stored tare weight.
 - The app calculates total net weight for the order from the roll net weights.
 - At the end of the order, operators click `Finished` to mark the card as produced.
 - After production is finished, shift-manager/admin reviews and prints/reprints from the admin operational card detail.
@@ -185,7 +185,7 @@ Confirmed workstation screen structure:
 - The workstation roll table should not show always-visible delete buttons next to every roll row.
 - Gross and net columns in the workstation roll table should use equal width.
 - Tare/core weight should be labelled `Шпула, кг` on the workstation.
-- `Шпула, кг` is an order-level editable field and should not dominate the repeated roll-entry workflow.
+- `Шпула, кг` is the current/default tare field for future rolls and should not dominate the repeated roll-entry workflow.
 - `Шпула, кг` should save inline on `Enter` and on blur, using the same conflict/version checks as other terminal edits.
 - Do not use a separate `Save` button for `Шпула, кг` unless inline save proves unreliable in testing.
 - Show `Макс. тегло ролка, кг` in the `Детайли` pane after `Материал`, using the same plain label/value treatment as the other details fields.
@@ -527,8 +527,8 @@ Each group has a date/shift column, roll number column, and kg column. Rows `47:
 Confirmed for the app:
 
 - Operators enter gross roll weights.
-- The app stores one order-level tare weight.
-- Net roll weight is calculated from gross roll weight minus tare weight.
+- The app stores a current/default tare weight on the order/card and stores the copied tare weight on each roll.
+- Net roll weight is calculated from that roll's gross weight minus that roll's tare weight.
 - Total gross order weight is the sum of gross roll weights.
 - Total net order weight is the sum of net roll weights.
 
@@ -551,9 +551,9 @@ Recommended conceptual schema:
 
 | Entity | Purpose |
 | --- | --- |
-| `orders` / `cards` | One row per imported extrusion operational card/order. Stores the structured fields imported from Excel, current status, order-level tare, and print/workflow timestamps. |
+| `orders` / `cards` | One row per imported extrusion operational card/order. Stores the structured fields imported from Excel, current status, current/default tare for future rolls, and print/workflow timestamps. |
 | `recipe_material_entries` | One row per recipe material line for a card. Stores the row type, imported/source material, operator-entered actual used material, and operator-entered batch/lot. |
-| `roll_entries` | One row per produced roll. Linked to the parent order/card by internal ID and order number. Stores roll number, gross weight, and calculated net weight. |
+| `roll_entries` | One row per produced roll. Linked to the parent order/card by internal ID and order number. Stores roll number, gross weight, copied roll tare weight, and calculated net weight. |
 | `production_time_segments` | One row per production run segment. Stores each start/resume and pause/finish interval so total production time can exclude pauses. |
 | `imports` / `import_batches` | One row per CSV import event, so the app can show which file/import created drafts. |
 | `machines` | Four fixed machine records used for assignment, sequencing, and terminal quick navigation. |
@@ -576,11 +576,11 @@ Confirmed storage behavior:
 - Roll weights entered at the terminal must be linked to the same order/card.
 - Roll number is an index starting at `1` and increasing upward for the order.
 - Gross weight is entered by workers after each roll is counted.
-- Net weight is calculated as `gross weight - order tare weight`.
-- Per-roll net weight formula: `roll_net_weight = roll_gross_weight - tare_weight`.
-- Total net weight formula: `total_net_weight = total_gross_weight - (number_of_rolls * tare_weight)`.
-- Tare weight is stored once on the order/card.
-- The same tare weight applies to every roll in the order.
+- Net weight is calculated as `roll gross weight - roll tare weight`.
+- Per-roll net weight formula: `roll_net_weight = roll_gross_weight - roll_tare_weight`.
+- Total net weight formula: `total_net_weight = sum(roll_net_weight)`.
+- The order/card tare weight is the current/default tare copied into newly added rolls.
+- Changing the order/card tare weight does not mutate existing roll tare or net weights.
 - Maximum roll weight is stored on the order/card when provided by the shift manager.
 - Maximum roll weight is informational for operators and must not block or validate roll entry in this pilot.
 - Roll entries do not need notes for the pilot.

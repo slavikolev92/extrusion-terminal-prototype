@@ -44,8 +44,6 @@ def validate_print_readiness(card: dict[str, Any]) -> list[str]:
         messages.append("Печатът е разрешен само за произведени или завършени карти.")
     if card.get("cancelled_at"):
         messages.append("Анулирани карти не могат да се печатат.")
-    if card.get("tare_weight") is None:
-        messages.append("Шпула е задължителна преди печат.")
     if not card.get("first_started_at"):
         messages.append("Началният час на производство е задължителен преди печат.")
     if not card.get("finished_at"):
@@ -65,7 +63,7 @@ def validate_print_readiness(card: dict[str, Any]) -> list[str]:
     ):
         messages.append("Печатът поддържа най-много 120 ролки.")
 
-    if card.get("tare_weight") is not None and gross_rolls:
+    if gross_rolls:
         messages.extend(validate_print_weight_values(card, gross_rolls))
 
     if int(card.get("total_production_seconds") or 0) < 0:
@@ -78,23 +76,26 @@ def validate_print_weight_values(
     card: dict[str, Any],
     gross_rolls: list[dict[str, Any]],
 ) -> list[str]:
-    values = [
-        card.get("tare_weight"),
-        card.get("total_gross_weight"),
-        card.get("total_net_weight"),
-        *(roll.get("gross_weight") for roll in gross_rolls),
-    ]
-    if any(decimal_from_value(value) is None for value in values):
-        return ["Критичните тегла за печат трябва да са валидни числа."]
+    if any(
+        roll.get("tare_weight") is None or roll.get("net_weight") is None
+        for roll in gross_rolls
+    ):
+        return ["Всяка ролка с бруто тегло трябва да има шпула преди печат."]
 
-    tare = decimal_from_value(card.get("tare_weight"))
+    total_gross = decimal_from_value(card.get("total_gross_weight"))
     total_net = decimal_from_value(card.get("total_net_weight"))
     gross_values = [decimal_from_value(roll.get("gross_weight")) for roll in gross_rolls]
-    if (
-        tare is not None
-        and total_net is not None
-        and (total_net < 0 or any(gross is not None and gross < tare for gross in gross_values))
-    ):
+    tare_values = [decimal_from_value(roll.get("tare_weight")) for roll in gross_rolls]
+    net_values = [decimal_from_value(roll.get("net_weight")) for roll in gross_rolls]
+
+    if any(net is not None and net < 0 for net in net_values):
+        return ["Нето теглото за печат не може да бъде отрицателно."]
+
+    values = [total_gross, total_net, *gross_values, *tare_values, *net_values]
+    if any(value is None for value in values):
+        return ["Критичните тегла за печат трябва да са валидни числа."]
+
+    if total_net is not None and total_net < 0:
         return ["Нето теглото за печат не може да бъде отрицателно."]
 
     return []
@@ -134,7 +135,7 @@ def assemble_print_data(card: dict[str, Any]) -> dict[str, Any]:
         "duration_display": format_duration(
             int(card.get("total_production_seconds") or 0)
         ),
-        "tare_display": format_weight(card.get("tare_weight")),
+        "tare_display": tare_summary_display(card),
         "total_gross_display": format_weight(card.get("total_gross_weight")),
         "total_net_display": format_weight(card.get("total_net_weight")),
     }
@@ -207,6 +208,23 @@ def gross_roll_entries(card: dict[str, Any]) -> list[dict[str, Any]]:
         for roll in card.get("roll_entries", [])
         if roll.get("gross_weight") is not None
     ]
+
+
+def tare_summary_display(card: dict[str, Any]) -> str:
+    tare_values = [
+        decimal_from_value(roll.get("tare_weight"))
+        for roll in gross_roll_entries(card)
+        if roll.get("tare_weight") is not None
+    ]
+    tare_values = [tare for tare in tare_values if tare is not None]
+    if not tare_values:
+        return format_weight(card.get("tare_weight"))
+
+    lowest = min(tare_values)
+    highest = max(tare_values)
+    if lowest == highest:
+        return format_weight(lowest)
+    return f"{format_weight(lowest)}-{format_weight(highest)}"
 
 
 def format_datetime(value: Any) -> str:

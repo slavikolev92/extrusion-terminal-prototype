@@ -409,6 +409,30 @@ def test_admin_detail_uses_single_roll_ledger_without_repeated_save_buttons(conn
     assert "Общо произведено" in html
 
 
+def test_admin_roll_ledger_renders_editable_per_roll_tare(connection):
+    card_id = prepare_dense_completed_card("27120", roll_count=1)
+    card = db.fetch_admin_card_detail(card_id)
+    roll = card["roll_entries"][0]
+    roll_id = int(roll["id"])
+
+    html = render_admin_detail(card_id)
+    roll_ledger_html = html.split('<div class="admin-ledger-table roll-ledger">', 1)[1]
+    header_html = roll_ledger_html.split('<div class="admin-ledger-head">', 1)[1].split(
+        '<div class="admin-ledger-row admin-roll-ledger-row">',
+        1,
+    )[0]
+
+    assert ">Бруто, кг<" in header_html
+    assert ">Шпула, кг<" in header_html
+    assert ">Нето, кг<" in header_html
+    assert f'name="gross_weight__{roll_id}"' in roll_ledger_html
+    assert f'name="tare_weight__{roll_id}"' in roll_ledger_html
+    assert str(roll["net_weight"]) in roll_ledger_html
+    assert f'form="roll-delete-{roll_id}"' in roll_ledger_html
+    assert 'name="new_gross_weight"' in html
+    assert 'name="new_tare_weight"' not in html
+
+
 def test_admin_detail_uses_single_timing_ledger_without_duplicate_segment_forms(connection):
     card_id = prepare_dense_completed_card("27003", roll_count=2)
 
@@ -576,6 +600,7 @@ def test_admin_global_save_updates_order_materials_and_roll_data(connection):
                         ("batch_lot__raw_material_a", "Global batch A"),
                         ("tare_weight", "2.00"),
                         (f"gross_weight__{roll_id}", "60.00"),
+                        (f"tare_weight__{roll_id}", "3.00"),
                     ]
                 )
             ),
@@ -595,7 +620,8 @@ def test_admin_global_save_updates_order_materials_and_roll_data(connection):
     assert updated["recipe_actual_entries"]["raw_material_a"]["batch_lot"] == "Global batch A"
     assert updated["tare_weight"] == 2
     assert updated["roll_entries"][0]["gross_weight"] == 60
-    assert updated["roll_entries"][0]["net_weight"] == 58
+    assert updated["roll_entries"][0]["tare_weight"] == 3
+    assert updated["roll_entries"][0]["net_weight"] == 57
 
 
 def test_admin_global_save_rolls_back_all_sections_when_timing_is_invalid(connection):
@@ -810,7 +836,9 @@ def test_admin_roll_ledger_updates_tare_rolls_deletes_and_adds(connection):
         card_id=card_id,
         loaded_version=loaded_version,
         tare_weight="1.50",
-        roll_updates={int(first_roll["id"]): "55.00"},
+        roll_updates={
+            int(first_roll["id"]): {"gross_weight": "55.00", "tare_weight": "2.00"}
+        },
         delete_roll_ids={int(second_roll["id"])},
         new_gross_weights=["56.25"],
     )
@@ -821,6 +849,11 @@ def test_admin_roll_ledger_updates_tare_rolls_deletes_and_adds(connection):
     assert updated["roll_count"] == 3
     assert [roll["roll_number"] for roll in updated["roll_entries"]] == [1, 2, 3]
     assert updated["roll_entries"][0]["gross_weight"] == 55
+    assert updated["roll_entries"][0]["tare_weight"] == 2
+    assert updated["roll_entries"][0]["net_weight"] == 53
+    assert updated["roll_entries"][2]["gross_weight"] == 56.25
+    assert updated["roll_entries"][2]["tare_weight"] == 1.5
+    assert updated["roll_entries"][2]["net_weight"] == 54.75
     assert updated["version"] == loaded_version + 1
 
 

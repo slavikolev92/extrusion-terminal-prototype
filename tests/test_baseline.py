@@ -182,6 +182,258 @@ def test_database_initialization_adds_max_roll_weight_to_existing_cards_table(
     assert "max_roll_weight" in columns
 
 
+def test_database_initialization_adds_roll_entry_tare_weight_to_existing_table(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "legacy.sqlite3"
+    monkeypatch.setattr(db, "DB_PATH", database_path)
+    with db.connect() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE cards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_number TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'imported',
+                machine_id INTEGER,
+                machine_sequence INTEGER,
+                import_batch_id INTEGER,
+                order_date TEXT,
+                delivery_date TEXT,
+                customer TEXT,
+                city TEXT,
+                product_type TEXT,
+                quantity_1 TEXT,
+                unit_1 TEXT,
+                quantity_2 TEXT,
+                unit_2 TEXT,
+                product_form TEXT,
+                material TEXT,
+                max_roll_weight TEXT,
+                size_thickness TEXT,
+                notes TEXT,
+                extrusion_flag TEXT,
+                extrusion_folding TEXT,
+                extrusion_next_operation TEXT,
+                extrusion_treatment TEXT,
+                raw_material_a TEXT,
+                raw_material_b TEXT,
+                raw_material_c TEXT,
+                linear_pe TEXT,
+                antistatic TEXT,
+                masterbatch TEXT,
+                chalk TEXT,
+                packaging_method TEXT,
+                actual_raw_material_used TEXT,
+                raw_material_brand_grade TEXT,
+                raw_material_batch_lot TEXT,
+                tare_weight NUMERIC,
+                first_started_at TEXT,
+                finished_at TEXT,
+                cancelled_at TEXT,
+                version INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE roll_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_id INTEGER NOT NULL,
+                order_number TEXT NOT NULL,
+                roll_number INTEGER NOT NULL,
+                gross_weight NUMERIC,
+                net_weight NUMERIC,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (card_id, roll_number)
+            );
+            INSERT INTO cards (id, order_number, status, tare_weight)
+            VALUES (1, '29001', 'running', 1.25);
+            INSERT INTO roll_entries (card_id, order_number, roll_number, gross_weight, net_weight)
+            VALUES (1, '29001', 1, 51.25, 50.00);
+            """
+        )
+
+    db.init_db()
+
+    with db.connect() as connection:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(roll_entries)").fetchall()
+        }
+        roll = connection.execute(
+            "SELECT tare_weight, net_weight FROM roll_entries WHERE card_id = 1"
+        ).fetchone()
+
+    assert "tare_weight" in columns
+    assert roll["tare_weight"] == 1.25
+    assert roll["net_weight"] == 50
+
+
+def test_database_initialization_recalculates_legacy_roll_net_from_roll_tare(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "legacy-net.sqlite3"
+    monkeypatch.setattr(db, "DB_PATH", database_path)
+    with db.connect() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE cards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_number TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'imported',
+                machine_id INTEGER,
+                machine_sequence INTEGER,
+                import_batch_id INTEGER,
+                order_date TEXT,
+                delivery_date TEXT,
+                customer TEXT,
+                city TEXT,
+                product_type TEXT,
+                quantity_1 TEXT,
+                unit_1 TEXT,
+                quantity_2 TEXT,
+                unit_2 TEXT,
+                product_form TEXT,
+                material TEXT,
+                max_roll_weight TEXT,
+                size_thickness TEXT,
+                notes TEXT,
+                extrusion_flag TEXT,
+                extrusion_folding TEXT,
+                extrusion_next_operation TEXT,
+                extrusion_treatment TEXT,
+                raw_material_a TEXT,
+                raw_material_b TEXT,
+                raw_material_c TEXT,
+                linear_pe TEXT,
+                antistatic TEXT,
+                masterbatch TEXT,
+                chalk TEXT,
+                packaging_method TEXT,
+                actual_raw_material_used TEXT,
+                raw_material_brand_grade TEXT,
+                raw_material_batch_lot TEXT,
+                tare_weight NUMERIC,
+                first_started_at TEXT,
+                finished_at TEXT,
+                cancelled_at TEXT,
+                version INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE roll_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_id INTEGER NOT NULL,
+                order_number TEXT NOT NULL,
+                roll_number INTEGER NOT NULL,
+                gross_weight NUMERIC,
+                net_weight NUMERIC,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (card_id, roll_number)
+            );
+            INSERT INTO cards (id, order_number, status, tare_weight)
+            VALUES (1, '29002', 'running', 2.50);
+            INSERT INTO roll_entries (card_id, order_number, roll_number, gross_weight, net_weight)
+            VALUES (1, '29002', 1, 60.00, 60.00);
+            """
+        )
+
+    db.init_db()
+
+    with db.connect() as connection:
+        roll = connection.execute(
+            "SELECT tare_weight, net_weight FROM roll_entries WHERE card_id = 1"
+        ).fetchone()
+
+    assert roll["tare_weight"] == 2.5
+    assert roll["net_weight"] == 57.5
+
+
+def test_database_initialization_does_not_backfill_existing_blank_roll_tare(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "existing-roll-tare.sqlite3"
+    monkeypatch.setattr(db, "DB_PATH", database_path)
+    with db.connect() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE cards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_number TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'imported',
+                machine_id INTEGER,
+                machine_sequence INTEGER,
+                import_batch_id INTEGER,
+                order_date TEXT,
+                delivery_date TEXT,
+                customer TEXT,
+                city TEXT,
+                product_type TEXT,
+                quantity_1 TEXT,
+                unit_1 TEXT,
+                quantity_2 TEXT,
+                unit_2 TEXT,
+                product_form TEXT,
+                material TEXT,
+                max_roll_weight TEXT,
+                size_thickness TEXT,
+                notes TEXT,
+                extrusion_flag TEXT,
+                extrusion_folding TEXT,
+                extrusion_next_operation TEXT,
+                extrusion_treatment TEXT,
+                raw_material_a TEXT,
+                raw_material_b TEXT,
+                raw_material_c TEXT,
+                linear_pe TEXT,
+                antistatic TEXT,
+                masterbatch TEXT,
+                chalk TEXT,
+                packaging_method TEXT,
+                actual_raw_material_used TEXT,
+                raw_material_brand_grade TEXT,
+                raw_material_batch_lot TEXT,
+                tare_weight NUMERIC,
+                first_started_at TEXT,
+                finished_at TEXT,
+                cancelled_at TEXT,
+                version INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE roll_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_id INTEGER NOT NULL,
+                order_number TEXT NOT NULL,
+                roll_number INTEGER NOT NULL,
+                gross_weight NUMERIC,
+                tare_weight NUMERIC,
+                net_weight NUMERIC,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (card_id, roll_number)
+            );
+            INSERT INTO cards (id, order_number, status, tare_weight)
+            VALUES (1, '29003', 'running', 2.50);
+            INSERT INTO roll_entries (card_id, order_number, roll_number, gross_weight, tare_weight, net_weight)
+            VALUES (1, '29003', 1, 60.00, NULL, NULL);
+            """
+        )
+
+    db.init_db()
+
+    with db.connect() as connection:
+        roll = connection.execute(
+            "SELECT tare_weight, net_weight FROM roll_entries WHERE card_id = 1"
+        ).fetchone()
+
+    assert roll["tare_weight"] is None
+    assert roll["net_weight"] is None
+
+
 def test_database_initialization_updates_existing_status_check_to_allow_archived(
     monkeypatch,
 ):

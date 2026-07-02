@@ -435,6 +435,31 @@ def test_admin_successful_roll_add_redirects_and_get_refresh_does_not_repeat(con
     assert [roll["gross_weight"] for roll in card["roll_entries"]] == [25, 30]
 
 
+def test_admin_roll_weight_route_preserves_row_tare_when_tare_field_omitted(connection):
+    card_id = prepare_completed_card("26033")
+    card = db.fetch_admin_card_detail(card_id)
+    roll = card["roll_entries"][0]
+    assert roll["tare_weight"] == 1
+
+    response = asyncio.run(
+        save_admin_roll_weight(
+            FormRequest({}),
+            card_id,
+            roll["id"],
+            str(card["version"]),
+            "27.00",
+            None,
+        )
+    )
+
+    updated_roll = db.fetch_admin_card_detail(card_id)["roll_entries"][0]
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/admin/cards/{card_id}#rolls"
+    assert updated_roll["gross_weight"] == 27
+    assert updated_roll["tare_weight"] == 1
+    assert updated_roll["net_weight"] == 26
+
+
 def test_admin_successful_roll_delete_redirects_and_get_refresh_does_not_repeat(connection):
     card_id = prepare_completed_card("26017")
     assert db.add_roll_gross_weight(card_id, card_version(card_id), "30.00").ok
@@ -544,25 +569,21 @@ def test_admin_stale_roll_add_still_renders_inline_without_redirect(connection):
     )
 
 
-def test_admin_tare_correction_recalculates_net_weights_and_blocks_invalid_tare(connection):
+def test_admin_tare_correction_updates_default_without_mutating_existing_rolls(connection):
     card_id = release_ready_card("26004")
     start_card(card_id)
     add_tare(card_id, "1.00")
     add_roll(card_id, "10.00")
     loaded_version = card_version(card_id)
 
-    result = db.update_tare_weight(card_id, loaded_version, "2.50")
-    invalid_result = db.update_tare_weight(card_id, card_version(card_id), "11.00")
+    result = db.update_tare_weight(card_id, loaded_version, "11.00")
     card = db.fetch_admin_card_detail(card_id)
 
     assert result.ok
-    assert card["tare_weight"] == 2.5
-    assert card["roll_entries"][0]["net_weight"] == 7.5
-    assert card["total_net_weight"] == "7.50"
-    assert not invalid_result.ok
-    assert invalid_result.messages == (
-        "Шпулата не може да бъде по-голяма от съществуващо бруто тегло на ролка.",
-    )
+    assert card["tare_weight"] == 11
+    assert card["roll_entries"][0]["tare_weight"] == 1
+    assert card["roll_entries"][0]["net_weight"] == 9
+    assert card["total_net_weight"] == "9.00"
 
 
 def test_admin_roll_add_update_delete_preserves_numbering_and_completed_final_roll(connection):
@@ -616,11 +637,75 @@ def test_archived_card_roll_weights_remain_editable(connection):
     assert card["status"] == STATUS_ARCHIVED
     assert card["tare_weight"] == 1.1
     assert card["roll_count"] == 2
-    assert card["roll_entries"][0]["net_weight"] == 23.9
+    assert card["roll_entries"][0]["tare_weight"] == 1
+    assert card["roll_entries"][0]["net_weight"] == 24
     assert card["roll_entries"][-1]["gross_weight"] == 35
+    assert card["roll_entries"][-1]["tare_weight"] == 1.1
     assert card["roll_entries"][-1]["net_weight"] == 33.9
     assert card["total_gross_weight"] == "60.00"
-    assert card["total_net_weight"] == "57.80"
+    assert card["total_net_weight"] == "57.90"
+
+
+def test_admin_roll_ledger_preserves_existing_blank_row_tare(connection):
+    card_id = release_ready_card("26032")
+    start_card(card_id)
+    with db.connect() as connection:
+        roll_id = int(
+            connection.execute(
+                """
+                INSERT INTO roll_entries (
+                    card_id, order_number, roll_number, gross_weight, tare_weight, net_weight
+                )
+                VALUES (?, '26032', 1, 25.00, NULL, NULL)
+                RETURNING id
+                """,
+                (card_id,),
+            ).fetchone()["id"]
+        )
+    loaded_version = card_version(card_id)
+
+    result = db.update_admin_roll_ledger(
+        card_id,
+        loaded_version,
+        tare_weight="1.10",
+        roll_updates={roll_id: {"gross_weight": "25.00"}},
+        delete_roll_ids=set(),
+        new_gross_weights=[],
+    )
+
+    card = db.fetch_admin_card_detail(card_id)
+    roll = card["roll_entries"][0]
+    assert result.ok
+    assert card["tare_weight"] == 1.1
+    assert roll["gross_weight"] == 25
+    assert roll["tare_weight"] is None
+    assert roll["net_weight"] is None
+    assert card["total_gross_weight"] == "25.00"
+    assert card["total_net_weight"] is None
+
+
+def test_admin_roll_ledger_updates_per_roll_tare_without_changing_default_tare(connection):
+    card_id = release_ready_card("26040")
+    start_card(card_id)
+    add_tare(card_id, "2.00")
+    add_roll(card_id, "50.00")
+    card = db.fetch_admin_card_detail(card_id)
+    roll_id = int(card["roll_entries"][0]["id"])
+
+    result = db.update_admin_roll_ledger(
+        card_id,
+        card["version"],
+        tare_weight="2.00",
+        roll_updates={roll_id: {"gross_weight": "50.00", "tare_weight": "3.00"}},
+        delete_roll_ids=set(),
+        new_gross_weights=[],
+    )
+    updated = db.fetch_admin_card_detail(card_id)
+
+    assert result.ok
+    assert updated["tare_weight"] == 2
+    assert updated["roll_entries"][0]["tare_weight"] == 3
+    assert updated["roll_entries"][0]["net_weight"] == 47
 
 
 def test_archived_card_materials_remain_editable(connection):

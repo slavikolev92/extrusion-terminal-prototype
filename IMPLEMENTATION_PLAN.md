@@ -142,7 +142,7 @@ Status: done
 
 Scope:
 
-- order-level tare input.
+- current/default tare input for future rolls.
 - fixed gross-weight input for next roll.
 - Enter or Add saves immediately.
 - roll numbers assigned automatically from `1`.
@@ -154,7 +154,7 @@ Scope:
 Review checkpoint:
 
 - roll entry blocked when card is not running.
-- gross/net calculations verified.
+- gross/net calculations verified from per-roll tare values.
 - roll correction verified.
 - persistence after page refresh verified.
 - tests and manual workflow pass.
@@ -419,6 +419,38 @@ Review checkpoint:
 - software implementation, template-fidelity pass, PDF/browser rehearsal, and physical printer output are accepted for app readiness.
 - any remaining printer behavior is workstation/printer-environment setup, not app print-output work.
 - commit only when explicitly requested.
+
+## Milestone 10a - Roll-Level Tare Weights
+
+Status: done
+
+Scope:
+
+- keep `cards.tare_weight` as the current/default tare copied into future rolls.
+- store `roll_entries.tare_weight` on every roll.
+- adding a roll copies the current/default tare into that roll.
+- changing the default tare does not mutate existing rolls.
+- workstation and admin can edit each roll's gross and tare; net remains read-only and recalculates from that row only.
+- total net is the sum of per-roll net weights.
+- finish and print readiness block gross rolls missing per-roll tare/net.
+- print summary displays mixed roll tares as a lowest-to-highest range.
+- legacy roll rows are migrated from the existing card tare and net values are recalculated.
+
+Completed state:
+
+- backend schema, migration, roll totals, finish validation, admin/terminal routes, admin UI, terminal UI, print readiness, print summary, docs, and tests have been implemented.
+- verification passed with the full Python suite, `git diff --check`, and live FastAPI Playwright screenshots against a temporary database.
+- Playwright screenshots:
+  - `artifacts/ui-checks/roll-level-tare-terminal.png`
+  - `artifacts/ui-checks/roll-level-tare-admin.png`
+  - `artifacts/ui-checks/roll-level-tare-print.png`
+
+Review checkpoint:
+
+- full relevant Python tests pass using temporary SQLite database paths.
+- UI checked against the live FastAPI app with Playwright screenshots.
+- README and plan reflect default-vs-roll tare behavior.
+- no unrelated dirty work is staged or reverted.
 
 ## Milestone 11 - Admin Global Navigation Rework
 

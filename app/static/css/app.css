@@ -1111,7 +1111,7 @@ select {
 
 .roll-ledger .admin-ledger-head,
 .roll-ledger .admin-ledger-row {
-  grid-template-columns: 70px minmax(140px, 0.6fr) minmax(140px, 0.6fr) 110px;
+  grid-template-columns: 70px minmax(120px, 0.6fr) minmax(120px, 0.6fr) minmax(120px, 0.6fr) 110px;
 }
 
 .timing-ledger .admin-ledger-head,
@@ -1746,7 +1746,7 @@ thead th {
 
   .roll-ledger .admin-ledger-head,
   .roll-ledger .admin-ledger-row {
-    min-width: 520px;
+    min-width: 640px;
   }
 
   .timing-ledger .admin-ledger-head,
