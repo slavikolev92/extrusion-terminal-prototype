@@ -101,7 +101,18 @@ def prepare_running_finishable_card(order_number: str, **release_kwargs: int) ->
 def test_finish_blocks_roll_added_without_row_tare(connection):
     card_id = import_and_release_card("25600")
     start_card(card_id)
+    add_tare(card_id)
     add_roll(card_id)
+    with db.connect() as connection:
+        connection.execute(
+            """
+            UPDATE roll_entries
+            SET tare_weight = NULL,
+                net_weight = NULL
+            WHERE card_id = ?
+            """,
+            (card_id,),
+        )
 
     result = db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"])
 
@@ -215,16 +226,19 @@ def test_finish_blocks_gross_roll_with_invalid_stored_weight(connection):
     assert result.messages == ("Всяка ролка с бруто тегло трябва да има шпула преди приключване.",)
 
 
-def test_finish_blocks_roll_added_before_default_tare_was_set(connection):
+def test_roll_entry_blocks_roll_added_before_default_tare_was_set(connection):
     card_id = import_and_release_card("25641")
     start_card(card_id)
-    add_roll(card_id)
-    add_tare(card_id)
 
-    result = db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"])
+    result = db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "25.00",
+    )
 
     assert not result.ok
-    assert result.messages == ("Всяка ролка с бруто тегло трябва да има шпула преди приключване.",)
+    assert result.messages == ("Въведете шпула преди да добавите ролка.",)
+    assert db.fetch_terminal_card_detail(card_id)["roll_entries"] == []
 
 
 def test_finish_from_running_closes_active_segment_and_archives_card(connection):

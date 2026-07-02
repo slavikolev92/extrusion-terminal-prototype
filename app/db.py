@@ -2350,6 +2350,9 @@ def add_roll_gross_weight(
             if tare_weight is not None
             else decimal_from_database(card["tare_weight"])
         )
+        if default_tare is None:
+            return RuleResult(False, ("Въведете шпула преди да добавите ролка.",))
+
         net = net_weight_for_roll(parsed_gross, default_tare)
         if default_tare is not None and net is None:
             return RuleResult(

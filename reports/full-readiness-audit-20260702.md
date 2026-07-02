@@ -116,6 +116,29 @@ Fix:
 - Add button flow remains covered by Playwright.
 - Added render regression test proving new-roll form is not dirty-autosaved.
 
+## Fixed After Audit
+
+### 6. Roll Entry Allowed Before Tare Was Set
+
+Severity: Important.
+
+Problem: The backend allowed a gross roll to be inserted before an order default tare existed. That created a roll row without roll tare/net values and deferred the failure until finish validation.
+
+Decision: Roll entry is the correct enforcement point. Operators may start timing before tare, but they must set a default tare or submit a roll tare before adding a gross roll. Each new roll stores the tare used for that roll, and later default-tare changes affect future rolls only.
+
+Fix:
+
+- `add_roll_gross_weight()` now rejects new gross roll creation when neither a submitted tare nor the card's current default tare exists.
+- The submitted-tare path remains valid and updates the card default tare while storing the same tare/net on the new roll.
+- Finish validation still defensively blocks corrupted or legacy rows that have gross weight without valid roll tare/net values.
+- Added regression tests for tare-required roll entry, submitted-tare roll entry, and defensive finish validation.
+
+Verification:
+
+- `python -m compileall app` passed.
+- `python -m pytest` passed with `434 passed`.
+- `git diff --check` passed.
+
 ## Remaining Hardening Recommendations
 
 ### 1. Atomic Optimistic Version Checks
@@ -134,23 +157,7 @@ The terminal dirty-click handler submits the first dirty form and reloads the pa
 
 Recommendation: either block navigation with a clear unsaved-changes warning when more than one form is dirty, or batch/save all dirty forms before reload.
 
-### 3. Finish Zero/Default Tare Semantics
-
-Severity: Important pending business decision.
-
-The app enforces roll-level tare/net readiness, but it can finish if the current order default tare was later cleared, as long as existing roll tare/net values are valid. Zero gross/tare is also allowed.
-
-Recommendation: decide whether default tare must be present and greater than zero at finish. If yes, add backend tests and validation.
-
-### 4. Print Route Direct URL Access
-
-Severity: Medium.
-
-The terminal UI does not expose print/reprint, but `/cards/{id}/print` is still reachable by URL for printable cards.
-
-Recommendation: decide whether practical separation is enough for the pilot. If workstation print must be impossible even by URL, split admin print route from generic print route or require an admin-only route prefix.
-
-### 5. Backup Integrity Check After Backup Creation
+### 3. Backup Integrity Check After Backup Creation
 
 Severity: Medium.
 
@@ -158,7 +165,7 @@ Restore validates the restored DB, but backup creation does not run `PRAGMA inte
 
 Recommendation: validate each new backup file before retention pruning.
 
-### 6. UX/Accessibility Follow-Ups
+### 4. UX/Accessibility Follow-Ups
 
 Severity: Medium/Minor.
 
@@ -176,4 +183,4 @@ Recommendation: handle these as a focused UI hardening pass with Playwright keyb
 
 Current recommendation: ready for controlled pilot rehearsal after reviewing the remaining recommendations above.
 
-The most serious data-integrity issues found in this audit were fixed and verified. The main remaining risks are concurrency hardening and terminal dirty-autosave edge cases involving multiple dirty forms, plus UX/accessibility improvements that affect operator confidence more than core data integrity.
+The most serious data-integrity issues found in this audit were fixed and verified. The main remaining risks are concurrency hardening and terminal dirty-autosave edge cases involving multiple dirty forms, plus backup verification and UX/accessibility improvements that affect operator confidence more than core data integrity.

@@ -88,6 +88,11 @@ def test_tare_update_persists_and_checks_loaded_version(connection):
 def test_add_roll_while_running_assigns_roll_numbers(connection):
     card_id = import_and_release_card("25501")
     start_card(card_id)
+    assert db.update_tare_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "1.00",
+    ).ok
 
     first_result = db.add_roll_gross_weight(
         card_id,
@@ -117,6 +122,40 @@ def test_add_roll_while_running_assigns_roll_numbers(connection):
         (1, 25.50),
         (2, 30),
     ]
+
+
+def test_add_roll_requires_default_tare(connection):
+    card_id = import_and_release_card("25546")
+    start_card(card_id)
+    loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
+
+    result = db.add_roll_gross_weight(card_id, loaded_version, "25.00")
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert not result.ok
+    assert result.messages == ("Въведете шпула преди да добавите ролка.",)
+    assert card["roll_entries"] == []
+    assert card["version"] == loaded_version
+
+
+def test_add_roll_allows_submitted_tare_without_existing_default(connection):
+    card_id = import_and_release_card("25547")
+    start_card(card_id)
+
+    result = db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "25.00",
+        tare_weight="1.50",
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert result.ok
+    assert card["tare_weight"] == 1.5
+    assert [
+        (roll["gross_weight"], roll["tare_weight"], roll["net_weight"])
+        for roll in card["roll_entries"]
+    ] == [(25, 1.5, 23.5)]
 
 
 def test_add_roll_is_blocked_when_card_is_not_running(connection):
@@ -367,6 +406,11 @@ def test_roll_tare_rejects_more_than_two_decimal_places_and_tare_above_gross(con
 def test_stale_roll_add_and_update_are_blocked(connection):
     card_id = import_and_release_card("25505")
     start_card(card_id)
+    assert db.update_tare_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "1.00",
+    ).ok
     loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
     assert db.add_roll_gross_weight(card_id, loaded_version, "20").ok
     roll_id = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]["id"]
@@ -487,6 +531,11 @@ def test_delete_roll_is_blocked_when_card_is_not_running_or_completed(connection
 def test_delete_roll_checks_loaded_version(connection):
     card_id = import_and_release_card("25510")
     start_card(card_id)
+    assert db.update_tare_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "1.00",
+    ).ok
     loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
     assert db.add_roll_gross_weight(card_id, loaded_version, "20.00").ok
     roll_id = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]["id"]
