@@ -1445,10 +1445,16 @@ async def add_roll_weight(
     card_id: int,
     loaded_version: str = Form(...),
     gross_weight: str = Form(""),
+    tare_weight: str | None = Form(None),
 ):
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        roll_result = add_roll_gross_weight(card_id, parsed_version, gross_weight)
+        roll_result = add_roll_gross_weight(
+            card_id,
+            parsed_version,
+            gross_weight,
+            tare_weight=tare_weight,
+        )
 
     return terminal_post_response(
         request,

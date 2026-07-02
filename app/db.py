@@ -2262,7 +2262,12 @@ def update_tare_weight(card_id: int, loaded_version: int, tare_weight: str) -> R
     return RuleResult(True, (message,))
 
 
-def add_roll_gross_weight(card_id: int, loaded_version: int, gross_weight: str) -> RuleResult:
+def add_roll_gross_weight(
+    card_id: int,
+    loaded_version: int,
+    gross_weight: str,
+    tare_weight: str | None = None,
+) -> RuleResult:
     parsed_gross, parse_error = parse_weight(
         gross_weight,
         "Бруто тегло",
@@ -2271,6 +2276,16 @@ def add_roll_gross_weight(card_id: int, loaded_version: int, gross_weight: str) 
     if parse_error:
         return RuleResult(False, (parse_error,))
     assert parsed_gross is not None
+
+    parsed_submitted_tare: Decimal | None = None
+    if tare_weight is not None:
+        parsed_submitted_tare, tare_parse_error = parse_weight(
+            tare_weight,
+            "Шпула",
+            allow_blank=True,
+        )
+        if tare_parse_error:
+            return RuleResult(False, (tare_parse_error,))
 
     with connect() as connection:
         card = fetch_roll_action_card(connection, card_id)
@@ -2282,7 +2297,11 @@ def add_roll_gross_weight(card_id: int, loaded_version: int, gross_weight: str) 
         if not roll_entry_result.ok:
             return roll_entry_result
 
-        default_tare = decimal_from_database(card["tare_weight"])
+        default_tare = (
+            parsed_submitted_tare
+            if tare_weight is not None
+            else decimal_from_database(card["tare_weight"])
+        )
         net = net_weight_for_roll(parsed_gross, default_tare)
         if default_tare is not None and net is None:
             return RuleResult(
@@ -2321,15 +2340,30 @@ def add_roll_gross_weight(card_id: int, loaded_version: int, gross_weight: str) 
                 decimal_to_storage(net) if net is not None else None,
             ),
         )
-        connection.execute(
-            """
-            UPDATE cards
-            SET version = version + 1,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (card_id,),
-        )
+        if tare_weight is not None:
+            connection.execute(
+                """
+                UPDATE cards
+                SET tare_weight = ?,
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    decimal_to_storage(default_tare) if default_tare is not None else None,
+                    card_id,
+                ),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE cards
+                SET version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (card_id,),
+            )
 
     return RuleResult(True, (f"Ролка {next_roll_number} е записана.",))
 

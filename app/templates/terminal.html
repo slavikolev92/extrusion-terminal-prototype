@@ -1849,7 +1849,12 @@
 
     .add-roll-form {
       flex: 1 1 auto;
-      grid-template-columns: minmax(0, 1fr) 110px;
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .roll-entry > .roll-add-button {
+      flex: 0 0 110px;
+      align-self: end;
     }
 
     .tare-form label,
@@ -2266,11 +2271,28 @@
               </div>
               <div class="panel-body roll-body">
                 <div class="roll-entry">
-                  <form class="tare-form core-weight-field" action="/terminal/cards/{{ selected_card.id }}/tare" method="post" data-autosubmit="true">
+                  <form action="/terminal/cards/{{ selected_card.id }}/rolls" id="add-roll-form-{{ selected_card.id }}" class="add-roll-form" method="post" data-dirty-autosave="true" data-dirty-autosave-group="roll-entry">
+                    <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                    <input type="hidden" name="tare_weight" value="{{ selected_card.tare_weight if selected_card.tare_weight is not none else '' }}" data-new-roll-tare-copy="true">
+                    <label>
+                      <span class="field-label">Нова ролка, кг</span>
+                      <input type="number" name="gross_weight" min="0" step="0.01" {% if not can_edit_rolls %}disabled{% endif %}>
+                    </label>
+                    <div class="field-error-slot" data-feedback-target="new_roll">
+                      {% if terminal_feedback.errors.new_roll %}
+                        <div class="inline-error" role="alert">
+                          {% for message in terminal_feedback.errors.new_roll %}
+                            <p>{{ message }}</p>
+                          {% endfor %}
+                        </div>
+                      {% endif %}
+                    </div>
+                  </form>
+                  <form class="tare-form core-weight-field" action="/terminal/cards/{{ selected_card.id }}/tare" method="post" data-dirty-autosave="true" data-dirty-autosave-group="roll-entry">
                     <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                     <label>
                       <span class="field-label">Шпула, кг</span>
-                      <input type="number" name="tare_weight" min="0" step="0.01" value="{{ selected_card.tare_weight if selected_card.tare_weight is not none else '' }}" {% if not can_edit_card %}disabled{% endif %}>
+                      <input type="number" name="tare_weight" min="0" step="0.01" value="{{ selected_card.tare_weight if selected_card.tare_weight is not none else '' }}" data-current-tare-input="true" {% if not can_edit_card %}disabled{% endif %}>
                     </label>
                     <div class="field-error-slot" data-feedback-target="tare">
                       {% if terminal_feedback.errors.tare %}
@@ -2282,23 +2304,7 @@
                       {% endif %}
                     </div>
                   </form>
-                  <form action="/terminal/cards/{{ selected_card.id }}/rolls" class="add-roll-form" method="post">
-                    <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                    <label>
-                      <span class="field-label">Нова ролка, кг</span>
-                      <input type="number" name="gross_weight" min="0" step="0.01" {% if not can_edit_rolls %}disabled{% endif %}>
-                    </label>
-                    <button class="roll-add-button" type="submit" {% if not can_edit_rolls %}disabled{% endif %}>{{ button_icon("plus") }}<span>Добави</span></button>
-                    <div class="field-error-slot" data-feedback-target="new_roll">
-                      {% if terminal_feedback.errors.new_roll %}
-                        <div class="inline-error" role="alert">
-                          {% for message in terminal_feedback.errors.new_roll %}
-                            <p>{{ message }}</p>
-                          {% endfor %}
-                        </div>
-                      {% endif %}
-                    </div>
-                  </form>
+                  <button class="roll-add-button" type="submit" form="add-roll-form-{{ selected_card.id }}" {% if not can_edit_rolls %}disabled{% endif %}>{{ button_icon("plus") }}<span>Добави</span></button>
                 </div>
 
                 <div class="roll-table">
@@ -2314,7 +2320,7 @@
                         <div class="roll-row" data-roll-id="{{ roll.id }}">
                           <div>{{ roll.roll_number }}</div>
                           <div class="roll-weight-cell">
-                            <form action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}" method="post">
+                            <form action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}" method="post" data-dirty-autosave="true">
                               <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                               <input type="hidden" name="tare_weight" value="{{ roll.tare_weight if roll.tare_weight is not none else '' }}">
                               <input type="number" name="gross_weight" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %}>
@@ -2331,7 +2337,7 @@
                             </div>
                           </div>
                           <div class="roll-weight-cell">
-                            <form action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}" method="post">
+                            <form action="/terminal/cards/{{ selected_card.id }}/rolls/{{ roll.id }}" method="post" data-dirty-autosave="true">
                               <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                               <input type="hidden" name="gross_weight" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}">
                               <input type="number" name="tare_weight" min="0" step="0.01" value="{{ roll.tare_weight if roll.tare_weight is not none else '' }}" {% if not can_edit_rolls %}disabled{% endif %}>
@@ -2491,84 +2497,128 @@
     })();
 
     (() => {
-      const recipeForm = document.querySelector('form[data-recipe-autosave="true"]');
-      if (!recipeForm) {
-        return;
-      }
-
-      const recipeInputs = Array.from(
-        recipeForm.querySelectorAll("input:not([type='hidden']):not([disabled])"),
-      );
-      if (recipeInputs.length === 0) {
-        return;
-      }
-
-      const initialValues = new Map(
-        recipeInputs.map((input) => [input.name, input.value]),
-      );
-      let recipeSubmitting = false;
-
-      const isRecipeDirty = () => recipeInputs.some(
-        (input) => input.value !== initialValues.get(input.name),
-      );
-
-      const rememberRecipeValues = () => {
-        recipeInputs.forEach((input) => {
-          initialValues.set(input.name, input.value);
-        });
-      };
-
-      const submitRecipeIfDirty = () => {
-        if (recipeSubmitting || !isRecipeDirty()) {
-          return false;
+      const currentTareInput = document.querySelector("input[data-current-tare-input='true']");
+      const newRollTareCopy = document.querySelector("input[data-new-roll-tare-copy='true']");
+      const syncNewRollTare = () => {
+        if (currentTareInput && newRollTareCopy) {
+          newRollTareCopy.value = currentTareInput.value;
         }
-        recipeSubmitting = true;
-        recipeForm.requestSubmit();
-        return true;
+      };
+      currentTareInput?.addEventListener("input", syncNewRollTare);
+      newRollTareCopy?.form?.addEventListener("submit", syncNewRollTare);
+
+      const dirtyAutosaveForms = Array.from(
+        document.querySelectorAll('form[data-recipe-autosave="true"], form[data-dirty-autosave="true"]'),
+      );
+      if (dirtyAutosaveForms.length === 0) {
+        return;
+      }
+
+      const autosaveStates = [];
+
+      const bindDirtyAutosaveForm = (form) => {
+        const inputs = Array.from(
+          form.querySelectorAll("input:not([type='hidden']):not([disabled])"),
+        );
+        if (inputs.length === 0) {
+          return null;
+        }
+
+        const initialValues = new Map(
+          inputs.map((input) => [input.name, input.value]),
+        );
+        let submitting = false;
+
+        const isDirty = () => inputs.some(
+          (input) => input.value !== initialValues.get(input.name),
+        );
+
+        const rememberValues = () => {
+          inputs.forEach((input) => {
+            initialValues.set(input.name, input.value);
+          });
+        };
+
+        const submitDirtyForm = () => {
+          if (submitting || !isDirty()) {
+            return false;
+          }
+          form.requestSubmit();
+          return true;
+        };
+
+        form.addEventListener("submit", () => {
+          submitting = true;
+          rememberValues();
+        });
+
+        const group = (
+          form.dataset.dirtyAutosaveGroup
+            ? form.closest(`.${form.dataset.dirtyAutosaveGroup}`)
+            : form
+        ) || form;
+
+        inputs.forEach((input) => {
+          input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              submitDirtyForm();
+            }
+          });
+
+          input.addEventListener("blur", (event) => {
+            const nextTarget = event.relatedTarget;
+            if (nextTarget && group.contains(nextTarget)) {
+              return;
+            }
+            submitDirtyForm();
+          });
+        });
+
+        return {
+          form,
+          group,
+          isDirty,
+          isSubmitting: () => submitting,
+          submitDirtyForm,
+        };
       };
 
-      recipeForm.addEventListener("submit", () => {
-        recipeSubmitting = true;
-        rememberRecipeValues();
+      dirtyAutosaveForms.forEach((form) => {
+        const state = bindDirtyAutosaveForm(form);
+        if (state) {
+          autosaveStates.push(state);
+        }
       });
 
-      recipeInputs.forEach((input) => {
-        input.addEventListener("keydown", (event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            submitRecipeIfDirty();
-          }
-        });
-
-        input.addEventListener("blur", (event) => {
-          const nextTarget = event.relatedTarget;
-          if (nextTarget && recipeForm.contains(nextTarget)) {
-            return;
-          }
-          submitRecipeIfDirty();
-        });
-      });
+      if (autosaveStates.length === 0) {
+        return;
+      }
 
       document.addEventListener("click", (event) => {
         const target = event.target;
-        if (target instanceof Node && recipeForm.contains(target)) {
-          return;
-        }
-        if (recipeSubmitting) {
+        const submittingState = autosaveStates.find((state) => state.isSubmitting());
+        if (submittingState) {
           event.preventDefault();
           event.stopPropagation();
           return;
         }
-        if (!isRecipeDirty()) {
+
+        const dirtyState = autosaveStates.find((state) => state.isDirty());
+        if (!dirtyState || (target instanceof Node && dirtyState.group.contains(target))) {
           return;
         }
+
         event.preventDefault();
         event.stopPropagation();
-        submitRecipeIfDirty();
+        dirtyState.submitDirtyForm();
       }, true);
 
       window.addEventListener("beforeunload", (event) => {
-        if (recipeSubmitting || !isRecipeDirty()) {
+        const hasDirtyForm = autosaveStates.some(
+          (state) => !state.isSubmitting() && state.isDirty(),
+        );
+        if (!hasDirtyForm) {
           return;
         }
         event.preventDefault();
@@ -2679,7 +2729,6 @@
       const historyRows = document.querySelectorAll(".history-row");
       const historyResults = document.getElementById("history-results");
       const historyEmpty = document.getElementById("history-empty");
-      const autoSubmitForms = document.querySelectorAll("form[data-autosubmit='true']");
       const rollCorrectionOpen = document.getElementById("roll-correction-open");
       const rollDeletePanel = document.getElementById("roll-delete-panel");
       const rollDeleteClose = document.getElementById("roll-delete-close");
@@ -2781,27 +2830,6 @@
           closeQueue();
           closeHistory();
         }
-      });
-
-      autoSubmitForms.forEach((form) => {
-        const input = form.querySelector("input:not([type='hidden'])");
-        let initialValue = input?.value || "";
-        let submitted = false;
-        form.addEventListener("submit", () => {
-          submitted = true;
-          initialValue = input?.value || "";
-        });
-        input?.addEventListener("keydown", (event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            form.requestSubmit();
-          }
-        });
-        input?.addEventListener("blur", () => {
-          if (!submitted && input.value !== initialValue) {
-            form.requestSubmit();
-          }
-        });
       });
     })();
   </script>

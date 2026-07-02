@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import re
+from urllib.parse import urlencode
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.requests import Request
@@ -166,6 +167,14 @@ def roll_row_block(html: str, roll_id: int) -> str:
     return html[start : min(end_candidates)]
 
 
+def roll_entry_block(html: str) -> str:
+    start = html.find('<div class="roll-entry">')
+    assert start != -1
+    end = html.find('<div class="roll-table">', start)
+    assert end != -1
+    return html[start:end]
+
+
 def css_rules(html: str, selector_pattern: str) -> str:
     match = re.search(rf"{selector_pattern}\s*\{{(?P<rules>.*?)\}}", html, flags=re.S)
     assert match is not None
@@ -195,6 +204,45 @@ def make_test_request(path: str, method: str = "POST") -> Request:
             "app": app,
         }
     )
+
+
+async def post_form_to_app(path: str, data: dict[str, str]) -> tuple[int, dict[str, str]]:
+    body = urlencode(data).encode("utf-8")
+    messages = []
+
+    async def receive():
+        return {
+            "type": "http.request",
+            "body": body,
+            "more_body": False,
+        }
+
+    async def send(message):
+        messages.append(message)
+
+    await app(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": path,
+            "headers": [
+                (b"content-type", b"application/x-www-form-urlencoded"),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 50000),
+        },
+        receive,
+        send,
+    )
+    response_start = next(message for message in messages if message["type"] == "http.response.start")
+    headers = {
+        key.decode("latin-1").lower(): value.decode("latin-1")
+        for key, value in response_start["headers"]
+    }
+    return int(response_start["status"]), headers
 
 
 def test_terminal_v8_route_is_registered_and_cancel_restore_routes_are_absent():
@@ -956,17 +1004,17 @@ def test_terminal_v8_recipe_autosave_script_tracks_dirty_exit_and_beforeunload(
     html = render_terminal(card_id)
 
     assert 'form[data-recipe-autosave="true"]' in html
-    assert "const isRecipeDirty" in html
-    assert "submitRecipeIfDirty" in html
+    assert 'form[data-recipe-autosave="true"], form[data-dirty-autosave="true"]' in html
+    assert "bindDirtyAutosaveForm" in html
+    assert "const isDirty" in html
+    assert "submitDirtyForm" in html
     assert 'event.key === "Enter"' in html
-    assert "recipeForm.contains(nextTarget)" in html
+    assert "group.contains(nextTarget)" in html
     assert 'document.addEventListener("click"' in html
     assert "event.stopPropagation()" in html
     assert re.search(
-        r"if \(target instanceof Node && recipeForm\.contains\(target\)\) {\s*"
-        r"return;\s*"
-        r"}\s*"
-        r"if \(recipeSubmitting\) {\s*"
+        r"const submittingState = autosaveStates\.find\(\(state\) => state\.isSubmitting\(\)\);\s*"
+        r"if \(submittingState\) {\s*"
         r"event\.preventDefault\(\);\s*"
         r"event\.stopPropagation\(\);\s*"
         r"return;\s*"
@@ -1197,12 +1245,15 @@ def test_terminal_v8_action_and_roll_add_buttons_render_decorative_icons(connect
     )
     finish_form = form_block(running_html, f"/terminal/cards/{card_id}/finish")
     roll_form = form_block(running_html, f"/terminal/cards/{card_id}/rolls")
+    roll_entry = roll_entry_block(running_html)
     assert 'data-icon="pause"' in pause_form
     assert "Пауза" in pause_form
     assert 'data-icon="check-circle"' in finish_form
     assert "Приключи" in finish_form
-    assert 'data-icon="plus"' in roll_form
-    assert "Добави" in roll_form
+    assert f'id="add-roll-form-{card_id}"' in roll_form
+    assert 'data-icon="plus"' in roll_entry
+    assert f'form="add-roll-form-{card_id}"' in roll_entry
+    assert "Добави" in roll_entry
 
     assert db.pause_production_timing(card_id, card_version(card_id)).ok
     paused_html = render_terminal(card_id)
@@ -1317,6 +1368,45 @@ def test_terminal_roll_table_renders_editable_gross_and_tare_with_readonly_net(c
     assert 'type="number" name="tare_weight"' in tare_edit_form
     assert 'name="net_weight"' not in row_html
     assert ">48<" in row_html
+
+
+def test_terminal_roll_entry_controls_follow_roll_table_weight_order(connection):
+    card_id = release_ready_card("26197", machine_id=1, sequence=1)
+
+    html = render_terminal(card_id)
+    entry_html = roll_entry_block(html)
+
+    assert entry_html.find('class="add-roll-form"') < entry_html.find('class="tare-form')
+    assert entry_html.find("Нова ролка, кг") < entry_html.find("Шпула, кг")
+    assert entry_html.find("Шпула, кг") < entry_html.find('class="roll-add-button"')
+
+
+def test_terminal_roll_and_tare_forms_use_dirty_autosave_contract(connection):
+    card_id = release_ready_card("26198", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "2.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "50.00").ok
+    card = db.fetch_terminal_card_detail(card_id)
+    roll = card["roll_entries"][0]
+
+    html = render_terminal(card_id)
+    tare_form = form_block(html, f"/terminal/cards/{card_id}/tare")
+    add_roll_form = form_block(html, f"/terminal/cards/{card_id}/rolls")
+    row_forms = form_blocks(html, f"/terminal/cards/{card_id}/rolls/{roll['id']}")
+
+    assert 'data-dirty-autosave="true"' in tare_form
+    assert 'data-dirty-autosave="true"' in add_roll_form
+    assert 'data-dirty-autosave-group="roll-entry"' in tare_form
+    assert 'data-dirty-autosave-group="roll-entry"' in add_roll_form
+    assert 'data-new-roll-tare-copy="true"' in add_roll_form
+    assert 'data-current-tare-input="true"' in tare_form
+    assert all('data-dirty-autosave="true"' in form for form in row_forms)
+    assert 'form[data-recipe-autosave="true"], form[data-dirty-autosave="true"]' in html
+    assert "syncNewRollTare" in html
+    assert "dirtyAutosaveGroup" in html
+    assert "bindDirtyAutosaveForm" in html
+    assert "submitDirtyForm" in html
+    assert 'window.addEventListener("beforeunload"' in html
 
 
 def test_terminal_v8_roll_saved_notice_scrolls_roll_list_to_bottom(connection):
@@ -1522,6 +1612,35 @@ def test_terminal_roll_weight_route_updates_row_tare_with_hidden_gross(connectio
     assert updated_roll["gross_weight"] == 50
     assert updated_roll["tare_weight"] == 3
     assert updated_roll["net_weight"] == 47
+
+
+def test_terminal_new_roll_route_can_save_current_tare_before_adding_roll(connection):
+    card_id = release_ready_card("26201", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "2.00").ok
+    loaded_version = card_version(card_id)
+
+    status_code, headers = asyncio.run(
+        post_form_to_app(
+            f"/terminal/cards/{card_id}/rolls",
+            {
+                "loaded_version": str(loaded_version),
+                "gross_weight": "50.00",
+                "tare_weight": "2.50",
+            },
+        )
+    )
+
+    card = db.fetch_terminal_card_detail(card_id)
+    roll = card["roll_entries"][0]
+    assert status_code == 303
+    assert headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=roll_saved"
+    )
+    assert card["tare_weight"] == 2.5
+    assert roll["gross_weight"] == 50
+    assert roll["tare_weight"] == 2.5
+    assert roll["net_weight"] == 47.5
 
 
 def test_terminal_v8_roll_delete_is_hidden_behind_menu_correction_action(connection):
