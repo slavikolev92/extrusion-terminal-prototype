@@ -8,11 +8,13 @@ shift-manager workbook.
 - Validates selected `Database` rows before CSV export.
 - Provides standalone selected-row validation.
 - Provides configured-range validation from `ExportConfig!FirstValidationRow`.
-- Validates printing ink/anilox cells in `Database!AB:AI` against
+- Validates printing ink/anilox cells in `Database!W:AD` against
   `RecipeCatalogPrinting`.
-- Validates extrusion recipe cells in `Database!AM:AS` against
+- Validates extrusion recipe cells in `Database!AH:AN` against
   `RecipeCatalogExtrusion`.
 - Requires `Database!G` to contain positive gross kilograms for each validated
+  production order row.
+- Requires `Database!O` to contain a positive sales price for each validated
   production order row.
 - Exports only the extrusion-terminal CSV fields used by the app.
 - Creates an `exports` folder next to the `.xlsm` workbook if it does not exist.
@@ -62,7 +64,7 @@ Type | Value | Notes
 Use `Type = Ink` for approved color identities and `Type = Anilox` for approved
 anilox values.
 
-Printing cells in `Database!AB:AI` may be:
+Printing cells in `Database!W:AD` may be:
 
 ```text
 White
@@ -77,7 +79,7 @@ Pantone 485/255
 Category | Producer | GradeCode | Notes
 ```
 
-Extrusion cells in `Database!AM:AS` use:
+Extrusion cells in `Database!AH:AN` use:
 
 ```text
 [Category] [Producer] [GradeCode] | [%]
@@ -88,10 +90,13 @@ final `Database` cell text.
 
 ## Install For Testing
 
+Preferred installation is through `workbook-tools-master-installer.bas`.
+Direct installation remains available for development/debugging.
+
 1. Open a copy of the shift-manager workbook in Excel.
 2. Press `Alt+F11`.
 3. In the VBA editor, choose `File > Import File...`.
-4. Select `interim-costing-process/excel-tools/export-validation/ExportExtrusionOrders.bas`.
+4. Select `interim-costing-process/excel-tools/export-validation/export-validation.bas`.
 5. Run macro `InstallExportValidation`.
 6. Set `ExportConfig!FirstValidationRow` to the first row of the new
    nomenclature period.

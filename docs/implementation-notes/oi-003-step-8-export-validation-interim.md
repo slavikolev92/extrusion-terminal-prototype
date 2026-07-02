@@ -36,8 +36,8 @@ therefore be independent of the builder.
 As of the current workbook-builder design, the builder supports both printing
 and extrusion entry:
 
-- `Database!AB:AI` - printing ink/anilox station cells;
-- `Database!AM:AS` - extrusion raw-material recipe cells.
+- `Database!W:AD` - printing ink/anilox station cells;
+- `Database!AH:AN` - extrusion raw-material recipe cells.
 
 The builder owns the double-click routing for these ranges, but Step 8 remains
 focused on export-side validation and export behavior.
@@ -48,7 +48,7 @@ or preserves:
 - `RecipeCatalogExtrusion` with `Category | Producer | GradeCode | Notes`;
 - `RecipeCatalogPrinting` with `Type | Value | Notes`.
 
-It routes `Database!AB:AI` to the printing builder and `Database!AM:AS` to the
+It routes `Database!W:AD` to the printing builder and `Database!AH:AN` to the
 extrusion builder. The printing builder writes either `Ink` or `Ink/Anilox`,
 depending on whether an anilox value is selected.
 
@@ -82,7 +82,7 @@ Implication: the export-side bundle becomes the place where shift managers can
 both validate workbook rows and export valid selected rows to CSV.
 
 The CSV export schema remains the extrusion-terminal schema. Printing fields
-`AB:AI` are validated for workbook/costing discipline but are not added to the
+`W:AD` are validated for workbook/costing discipline but are not added to the
 CSV export because there is no printing terminal and the current app import is
 for the extrusion terminal workflow only.
 
@@ -206,7 +206,7 @@ validation macros can be finalized during implementation planning, but the
 four-command shape is approved.
 
 The export-side work should remain one installable module/bundle. The preferred
-implementation is to update the existing `ExportExtrusionOrders.bas` module in
+implementation is to update the existing `export-validation.bas` module in
 place rather than splitting validation into a separate `.bas` file. Internal VBA
 functions can still be organized by responsibility, but operationally there
 should be one export-side module to import/install.
@@ -277,16 +277,16 @@ operation. It should validate the fixed material columns directly.
 
 Columns of interest:
 
-- printing ink/anilox stations: `AB:AI`;
-- extrusion raw materials: `AM:AS`.
+- printing ink/anilox stations: `W:AD`;
+- extrusion raw materials: `AH:AN`.
 
 If a row is selected, or if it is within the configured validation range, these
 columns are always considered. If a section has no data, that section can pass.
 If a section has data, that data must follow the relevant structure.
 
 Rationale: if a row has no extrusion operation, there should be no extrusion
-material data in `AM:AS`. If a row has no printing operation, there should be no
-printing data in `AB:AI`. If such data is present anyway, the workbook row is
+material data in `AH:AN`. If a row has no printing operation, there should be no
+printing data in `W:AD`. If such data is present anyway, the workbook row is
 dirty and should be corrected rather than hidden from validation.
 
 Implication: validation should not depend on operation flags or app importer
@@ -299,9 +299,9 @@ sections are valid.
 
 Rules:
 
-- if all `AM:AS` cells are blank, extrusion recipe validation passes for that
+- if all `AH:AN` cells are blank, extrusion recipe validation passes for that
   row;
-- if all `AB:AI` cells are blank, printing material validation passes for that
+- if all `W:AD` cells are blank, printing material validation passes for that
   row;
 - if any cells in a section contain data, that section must satisfy its
   validation rules.
@@ -311,7 +311,7 @@ still be in progress. Blank material sections should not fail just because the
 row is selected.
 
 Implication: the extrusion `100%` total rule only applies when there is at least
-one non-empty extrusion recipe cell in `AM:AS`.
+one non-empty extrusion recipe cell in `AH:AN`.
 
 If a material section has at least one non-empty cell, every non-empty cell in
 that section must validate. Empty slots inside the same section remain allowed.
@@ -328,7 +328,7 @@ values remain meaningful and must match the catalog/contract.
 
 ### 10. Extrusion Validation Uses The Structured Recipe Contract
 
-For non-empty extrusion recipe cells in `AM:AS`, validation should follow the
+For non-empty extrusion recipe cells in `AH:AN`, validation should follow the
 structured extrusion recipe contract already used by the app:
 
 ```text
@@ -346,7 +346,7 @@ Accepted behavior:
 - percentage must include `%`;
 - dot and comma decimals are accepted;
 - percentage must be greater than `0`;
-- all non-empty extrusion recipe percentages in `AM:AS` must total exactly
+- all non-empty extrusion recipe percentages in `AH:AN` must total exactly
   `100%`.
 
 Approved extrusion categories from the locked app contract:
@@ -455,7 +455,7 @@ recipe-builder installer owns any old `RecipeCatalog` to
 
 ### 11. Printing Validation Uses `RecipeCatalogPrinting`
 
-Printing validation applies to printing ink/anilox station cells in `AB:AI`.
+Printing validation applies to printing ink/anilox station cells in `W:AD`.
 Solvents are not entered per order in the shift-manager workbook and are not
 validated in these fields.
 
@@ -488,7 +488,7 @@ Type | Value | Notes
 Rows with `Type = Ink` define approved ink/color identities. Rows with
 `Type = Anilox` define approved anilox roller values.
 
-For each non-empty `AB:AI` cell:
+For each non-empty `W:AD` cell:
 
 - if `/` is not present, the full cell value must exist in
   `RecipeCatalogPrinting` where `Type = Ink`;
@@ -513,11 +513,11 @@ Rationale: printing material cost/invoicing needs an approved ink/color
 identity. The anilox value is optional because it is not required for the current
 costing goal, but when it is entered it should still be controlled through the
 same printing catalog. Solvents are handled outside these per-order workbook
-fields as monthly allocated consumption, not as `AB:AI` station entries.
+fields as monthly allocated consumption, not as `W:AD` station entries.
 
 Implication: the export-side validator must read `RecipeCatalogPrinting`, filter
 approved values by `Type`, and validate both sides of the printing cell
-delimiter without attempting to validate solvents in `AB:AI`.
+delimiter without attempting to validate solvents in `W:AD`.
 
 The export-side setup macro may create `RecipeCatalogPrinting` with headers
 `Type | Value | Notes` if the sheet is missing. If the sheet already exists, the
@@ -592,7 +592,7 @@ of looking for kg-like units in `H`, `I`, or `J`.
 Column `G` is required for every validated row. If a row is selected for
 validation/export, or if it falls within the configured "validate all" range,
 `G` must contain a positive numeric gross-kilogram value. This applies even when
-`AB:AI` and `AM:AS` are blank.
+`W:AD` and `AH:AN` are blank.
 
 Rationale: Step 8 now supports not only app import quality, but also the broader
 workbook-costing goal. If `G` is the canonical holder of target manufacturing

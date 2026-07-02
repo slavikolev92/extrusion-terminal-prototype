@@ -273,12 +273,20 @@
         </div>
         {% for row in recipe_rows %}
           <div class="admin-ledger-row material-ledger-row">
-            <div class="component">{{ row.material_category or row.source_label }}</div>
             <div>
-              <div class="structured-planned">{{ row.planned_material or "-" }}</div>
-              <input name="planned_material__{{ row.field }}" value="{{ row.source_text }}" aria-label="{{ row.source_label }} източник по карта">
+              <select name="material_category__{{ row.field }}" aria-label="{{ row.source_label }} категория">
+                <option value=""></option>
+                {% for category in recipe_categories %}
+                  <option value="{{ category }}"{% if row.material_category == category %} selected{% endif %}>{{ category }}</option>
+                {% endfor %}
+              </select>
             </div>
-            <div class="readonly-cell recipe-number">{{ row.recipe_percent or "" }}</div>
+            <div>
+              <input name="planned_material__{{ row.field }}" value="{{ row.planned_material_edit or '' }}" aria-label="{{ row.source_label }} планиран материал">
+            </div>
+            <div>
+              <input name="recipe_percent__{{ row.field }}" value="{{ row.recipe_percent_edit or '' }}" aria-label="{{ row.source_label }} процент">
+            </div>
             <div class="readonly-cell recipe-number">{{ row.planned_kg or "" }}</div>
             <div>
               <input name="actual_material__{{ row.field }}" value="{{ row.actual_material or '' }}" aria-label="{{ row.source_label }} вложен материал">

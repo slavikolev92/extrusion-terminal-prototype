@@ -1,4 +1,4 @@
-Attribute VB_Name = "ExportExtrusionOrders"
+Attribute VB_Name = "ExportValidation"
 Option Explicit
 
 Private Const EXPORT_FOLDER_NAME As String = "exports"
@@ -9,14 +9,14 @@ Private Const EXTRUSION_CATALOG_SHEET_NAME As String = "RecipeCatalogExtrusion"
 Private Const CONFIG_FIRST_VALIDATION_ROW As String = "FirstValidationRow"
 Private Const FIRST_PRODUCTION_ROW As Long = 5
 Private Const MAX_DISPLAYED_VALIDATION_ERRORS As Long = 10
-Private Const PRINTING_FIRST_COLUMN As String = "AB"
-Private Const PRINTING_LAST_COLUMN As String = "AI"
-Private Const EXTRUSION_FIRST_COLUMN As String = "AM"
-Private Const EXTRUSION_LAST_COLUMN As String = "AS"
+Private Const PRINTING_FIRST_COLUMN As String = "W"
+Private Const PRINTING_LAST_COLUMN As String = "AD"
+Private Const EXTRUSION_FIRST_COLUMN As String = "AH"
+Private Const EXTRUSION_LAST_COLUMN As String = "AN"
 
 Public Sub InstallExportValidation()
     Dim workbook As Workbook
-    Set workbook = ActiveWorkbook
+    Set workbook = ThisWorkbook
 
     Dim errors As Collection
     Set errors = New Collection
@@ -35,7 +35,7 @@ End Sub
 
 Public Sub ValidateSelectedExportRows()
     Dim workbook As Workbook
-    Set workbook = ActiveWorkbook
+    Set workbook = ThisWorkbook
 
     Dim shapeErrors As Collection
     Set shapeErrors = New Collection
@@ -50,7 +50,7 @@ Public Sub ValidateSelectedExportRows()
         Exit Sub
     End If
 
-    If ActiveSheet.Name <> DATABASE_SHEET_NAME Then
+    If Not ActiveSheet Is wsDatabase Then
         MsgBox "Open the Database sheet, select rows to validate, and run the macro again.", vbExclamation
         Exit Sub
     End If
@@ -83,7 +83,7 @@ End Sub
 
 Public Sub ValidateConfiguredExportRows()
     Dim workbook As Workbook
-    Set workbook = ActiveWorkbook
+    Set workbook = ThisWorkbook
 
     Dim shapeErrors As Collection
     Set shapeErrors = New Collection
@@ -129,7 +129,7 @@ End Sub
 
 Public Sub ExportSelectedExtrusionOrdersCsv()
     Dim workbook As Workbook
-    Set workbook = ActiveWorkbook
+    Set workbook = ThisWorkbook
 
     Dim shapeErrors As Collection
     Set shapeErrors = New Collection
@@ -144,7 +144,7 @@ Public Sub ExportSelectedExtrusionOrdersCsv()
         Exit Sub
     End If
 
-    If ActiveSheet.Name <> DATABASE_SHEET_NAME Then
+    If Not ActiveSheet Is wsDatabase Then
         MsgBox "Open the Database sheet, select rows to export, and run the macro again.", vbExclamation
         Exit Sub
     End If
@@ -739,6 +739,7 @@ Private Function ValidateRows(ByVal wsDatabase As Worksheet, ByVal wsPrintingCat
         rowNumber = CLng(item)
 
         ValidateTargetGross wsDatabase, rowNumber, errors
+        ValidateSalesPrice wsDatabase, rowNumber, errors
         ValidatePrintingCells wsDatabase, rowNumber, printingInkValues, printingAniloxValues, errors
         ValidateExtrusionCells wsDatabase, rowNumber, extrusionIdentities, errors
     Next item
@@ -756,6 +757,19 @@ Private Sub ValidateTargetGross(ByVal ws As Worksheet, ByVal rowNumber As Long, 
     Dim parsedGross As Double
     If Not TryParsePositiveNumber(grossCell.Value, parsedGross) Then
         AddValidationError errors, rowNumber, orderNumber, "G", DisplayCellText(grossCell), "target gross kilograms must be a positive number."
+    End If
+End Sub
+
+Private Sub ValidateSalesPrice(ByVal ws As Worksheet, ByVal rowNumber As Long, ByVal errors As Collection)
+    Dim orderNumber As String
+    orderNumber = TrimmedCellText(ws.Cells(rowNumber, 1))
+
+    Dim priceCell As Range
+    Set priceCell = ws.Range("O" & rowNumber)
+
+    Dim parsedPrice As Double
+    If Not TryParsePositiveNumber(priceCell.Value, parsedPrice) Then
+        AddValidationError errors, rowNumber, orderNumber, "O", DisplayCellText(priceCell), "sales price must be a positive number."
     End If
 End Sub
 
@@ -883,9 +897,9 @@ Private Function BuildCsv(ByVal ws As Worksheet, ByVal exportRows As Collection)
     sourceColumns = Array( _
         "A", "B", "C", "D", "E", "F", _
         "G", "H", "I", "J", "K", "L", _
-        "M", "N", "W", "AJ", _
-        "AK", "AL", "AM", "AN", _
-        "AO", "AP", "AQ", "AR", "AS", "AT" _
+        "M", "N", "R", "AE", _
+        "AF", "AG", "AH", "AI", _
+        "AJ", "AK", "AL", "AM", "AN", "AO" _
     )
 
     Dim lines As Collection

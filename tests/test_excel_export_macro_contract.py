@@ -4,18 +4,32 @@ import re
 from pathlib import Path
 
 
-MACRO_PATH = Path(
-    "interim-costing-process/excel-tools/export-validation/ExportExtrusionOrders.bas"
+EXPORT_MACRO_PATH = Path(
+    "interim-costing-process/excel-tools/export-validation/export-validation.bas"
 )
-README_PATH = Path("interim-costing-process/excel-tools/export-validation/README.md")
+EXPORT_README_PATH = Path("interim-costing-process/excel-tools/export-validation/README.md")
+RECIPE_BUILDER_PATH = Path(
+    "interim-costing-process/excel-tools/recipe-builder/recipe-builder-installer.bas"
+)
+RECIPE_BUILDER_README_PATH = Path(
+    "interim-costing-process/excel-tools/recipe-builder/README.md"
+)
 
 
 def macro_text() -> str:
-    return MACRO_PATH.read_text(encoding="utf-8")
+    return EXPORT_MACRO_PATH.read_text(encoding="utf-8")
 
 
-def readme_text() -> str:
-    return README_PATH.read_text(encoding="utf-8")
+def recipe_builder_text() -> str:
+    return RECIPE_BUILDER_PATH.read_text(encoding="utf-8")
+
+
+def export_readme_text() -> str:
+    return EXPORT_README_PATH.read_text(encoding="utf-8")
+
+
+def recipe_builder_readme_text() -> str:
+    return RECIPE_BUILDER_README_PATH.read_text(encoding="utf-8")
 
 
 def array_body(text: str, assignment_name: str) -> str:
@@ -55,14 +69,16 @@ def test_export_macro_uses_approved_workbook_sheets_and_ranges():
         'PRINTING_CATALOG_SHEET_NAME As String = "RecipeCatalogPrinting"',
         'EXTRUSION_CATALOG_SHEET_NAME As String = "RecipeCatalogExtrusion"',
         'CONFIG_FIRST_VALIDATION_ROW As String = "FirstValidationRow"',
-        'PRINTING_FIRST_COLUMN As String = "AB"',
-        'PRINTING_LAST_COLUMN As String = "AI"',
-        'EXTRUSION_FIRST_COLUMN As String = "AM"',
-        'EXTRUSION_LAST_COLUMN As String = "AS"',
+        'PRINTING_FIRST_COLUMN As String = "W"',
+        'PRINTING_LAST_COLUMN As String = "AD"',
+        'EXTRUSION_FIRST_COLUMN As String = "AH"',
+        'EXTRUSION_LAST_COLUMN As String = "AN"',
     ):
         assert expected in text
 
     assert 'EXPORT_FOLDER_NAME As String = "extracts"' not in text
+    assert 'PRINTING_FIRST_COLUMN As String = "AB"' not in text
+    assert 'EXTRUSION_FIRST_COLUMN As String = "AM"' not in text
 
 
 def test_export_csv_schema_remains_extrusion_terminal_only():
@@ -113,21 +129,43 @@ def test_export_csv_schema_remains_extrusion_terminal_only():
         "L",
         "M",
         "N",
-        "W",
+        "R",
+        "AE",
+        "AF",
+        "AG",
+        "AH",
+        "AI",
         "AJ",
         "AK",
         "AL",
         "AM",
         "AN",
         "AO",
-        "AP",
-        "AQ",
-        "AR",
-        "AS",
-        "AT",
     ]
-    assert "AB" not in source_columns
-    assert "AI" not in source_columns
+    assert "O" not in source_columns
+    assert "AT" not in source_columns
+
+
+def test_export_macro_requires_positive_sales_price_without_exporting_it():
+    text = macro_text()
+
+    assert "ValidateSalesPrice wsDatabase, rowNumber, errors" in text
+    assert 'ws.Range("O" & rowNumber)' in text
+    assert "sales price must be a positive number." in text
+    assert '"sales_price"' not in text
+
+
+def test_selected_row_macros_require_active_sheet_to_be_thisworkbook_database():
+    selected_validation = procedure_body(macro_text(), "ValidateSelectedExportRows")
+    selected_export = procedure_body(macro_text(), "ExportSelectedExtrusionOrdersCsv")
+    configured_validation = procedure_body(macro_text(), "ValidateConfiguredExportRows")
+
+    for body in (selected_validation, selected_export):
+        assert "If Not ActiveSheet Is wsDatabase Then" in body
+        assert "ActiveSheet.Name <> DATABASE_SHEET_NAME" not in body
+
+    assert "ActiveSheet" not in configured_validation
+    assert "Selection" not in configured_validation
 
 
 def test_export_macro_keeps_catalog_omission_control_case_sensitive():
@@ -153,14 +191,49 @@ def test_export_macro_source_is_ascii_only_for_vba_import_safety():
 
 
 def test_export_macro_documents_validation_and_exports_folder():
-    text = readme_text()
+    text = export_readme_text()
 
     assert "InstallExportValidation" in text
     assert "ValidateSelectedExportRows" in text
     assert "ValidateConfiguredExportRows" in text
     assert "ExportSelectedExtrusionOrdersCsv" in text
+    assert "export-validation.bas" in text
     assert "exports" in text
     assert "RecipeCatalogPrinting" in text
     assert "RecipeCatalogExtrusion" in text
     assert "ExportConfig" in text
+    assert "Database!W:AD" in text
+    assert "Database!AH:AN" in text
     assert "extracts" not in text
+
+
+def test_recipe_builder_installer_uses_plain_names_and_cleaned_ranges():
+    text = recipe_builder_text()
+
+    assert 'Attribute VB_Name = "RecipeBuilderInstaller"' in text
+    assert "Public Sub InstallRecipeBuilder()" in text
+    assert "Public Function IsExtrusionRecipeBuilderCell(" in text
+    assert "Public Function IsPrintingRecipeBuilderCell(" in text
+    assert "Public Sub OpenExtrusionRecipeBuilder(" in text
+    assert "Public Sub OpenPrintingRecipeBuilder(" in text
+    assert "V2" not in text
+    assert "InstallRecipeBuilderV2" not in text
+
+    for expected in (
+        'PRINTING_FIRST_COLUMN As String = "W"',
+        'PRINTING_LAST_COLUMN As String = "AD"',
+        'EXTRUSION_FIRST_COLUMN As String = "AH"',
+        'EXTRUSION_LAST_COLUMN As String = "AN"',
+    ):
+        assert expected in text
+
+
+def test_recipe_builder_readme_uses_plain_installer_name_and_cleaned_ranges():
+    text = recipe_builder_readme_text()
+
+    assert "recipe-builder-installer.bas" in text
+    assert "InstallRecipeBuilder" in text
+    assert "InstallRecipeBuilderV2" not in text
+    assert "modRecipeBuilderCascadingInstaller" not in text
+    assert "Database!W:AD" in text
+    assert "Database!AH:AN" in text

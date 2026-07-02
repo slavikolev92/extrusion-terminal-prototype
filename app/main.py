@@ -64,8 +64,9 @@ from .db import (
 )
 from .importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
 from .printing import build_print_readiness
-from .recipe_parser import RECIPE_SOURCE_FIELDS
-from .rules import RuleResult, target_gross_weight_from_card
+from .recipe_parser import APPROVED_RECIPE_CATEGORIES, RECIPE_SOURCE_FIELDS
+from .recipe_parser import parse_recipe_source_fields
+from .rules import RECIPE_RELEASE_FIELD_LABELS, RuleResult, target_gross_weight_from_card
 
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
@@ -204,6 +205,7 @@ def admin_card_detail_context(card_id: int, **extra: Any) -> dict[str, Any] | No
         "import_field_labels": IMPORT_FIELD_LABELS,
         "status_labels": STATUS_LABELS,
         "timing_reason_labels": TIMING_REASON_LABELS,
+        "recipe_categories": APPROVED_RECIPE_CATEGORIES,
         "quantity_lines": build_quantity_lines(card),
         "recipe_rows": build_recipe_rows(card),
     }
@@ -408,10 +410,12 @@ def build_recipe_rows(
             material_category = str(component.get("material_category") or "")
             normalized_planned_material = str(component.get("planned_material") or "")
             planned_material = normalized_planned_material or material_category
+            planned_material_edit = normalized_planned_material
             recipe_percent = recipe_percent_display(
                 component.get("recipe_percent"),
                 rounded=rounded_operator_values,
             )
+            recipe_percent_edit = recipe_percent.rstrip("%")
             planned_kg = planned_kg_display(
                 card,
                 component.get("recipe_percent"),
@@ -420,8 +424,10 @@ def build_recipe_rows(
             is_structured = True
         else:
             planned_material = source_text
+            planned_material_edit = source_text
             material_category = ""
             recipe_percent = ""
+            recipe_percent_edit = ""
             planned_kg = ""
             is_structured = False
 
@@ -433,7 +439,9 @@ def build_recipe_rows(
                 "label": source_label,
                 "material_category": material_category,
                 "planned_material": planned_material,
+                "planned_material_edit": planned_material_edit,
                 "recipe_percent": recipe_percent,
+                "recipe_percent_edit": recipe_percent_edit,
                 "planned_kg": planned_kg,
                 "source_text": source_text,
                 "planned": source_text,
@@ -481,12 +489,58 @@ def material_ledger_from_form(
     planned_materials: dict[str, str] = {}
     actual_entries: dict[str, dict[str, str]] = {}
     for _, field in RECIPE_FIELD_ROWS:
-        planned_materials[field] = str(form.get(f"planned_material__{field}") or "")
+        planned_materials[field] = compose_recipe_source_text(
+            category=str(form.get(f"material_category__{field}") or ""),
+            planned_material=str(form.get(f"planned_material__{field}") or ""),
+            recipe_percent=str(form.get(f"recipe_percent__{field}") or ""),
+        )
         actual_entries[field] = {
             "actual_material_used": str(form.get(f"actual_material__{field}") or ""),
             "batch_lot": str(form.get(f"batch_lot__{field}") or ""),
         }
     return planned_materials, actual_entries
+
+
+def normalize_recipe_percent_input(recipe_percent: str) -> str:
+    percent = recipe_percent.strip()
+    if not percent:
+        return ""
+    if percent.endswith("%"):
+        percent = percent[:-1].strip()
+    return f"{percent}%"
+
+
+def compose_recipe_source_text(
+    *,
+    category: str,
+    planned_material: str,
+    recipe_percent: str,
+) -> str:
+    category = category.strip()
+    planned_material = planned_material.strip()
+    recipe_percent = normalize_recipe_percent_input(recipe_percent)
+    identity = " ".join(part for part in (category, planned_material) if part)
+    if not identity and not recipe_percent:
+        return ""
+    if recipe_percent:
+        return f"{identity} | {recipe_percent}"
+    return identity
+
+
+def validate_admin_recipe_source_fields(source_fields: dict[str, str]) -> RuleResult:
+    result = parse_recipe_source_fields(source_fields)
+    messages: list[str] = []
+    for error in result.errors:
+        if error.component_key == "__total__":
+            reason = error.message
+        else:
+            label = RECIPE_RELEASE_FIELD_LABELS.get(error.component_key, error.component_key)
+            reason = f"{label}: {error.message}"
+        messages.append(
+            f"Рецептата не може да бъде записана: {reason}. "
+            "Коригирайте рецептата и опитайте отново."
+        )
+    return RuleResult(not messages, tuple(messages))
 
 
 def roll_ledger_from_form(
@@ -759,6 +813,18 @@ def imported_fields_from_form(
             if field in submitted_fields
         }
     )
+    for field in RECIPE_SOURCE_FIELDS:
+        structured_keys = (
+            f"material_category__{field}",
+            f"planned_material__{field}",
+            f"recipe_percent__{field}",
+        )
+        if any(key in submitted_fields for key in structured_keys):
+            preserved_fields[field] = compose_recipe_source_text(
+                category=submitted_fields.get(f"material_category__{field}", ""),
+                planned_material=submitted_fields.get(f"planned_material__{field}", ""),
+                recipe_percent=submitted_fields.get(f"recipe_percent__{field}", ""),
+            )
     if "max_roll_weight" in submitted_fields:
         preserved_fields["max_roll_weight"] = submitted_fields["max_roll_weight"]
     return preserved_fields, RuleResult(True)
@@ -792,6 +858,11 @@ def save_all_admin_card_changes(
     preserved_fields, result = imported_fields_from_form(card_id, form)
     if preserved_fields is None:
         return result
+    recipe_result = validate_admin_recipe_source_fields(
+        {field: preserved_fields.get(field, "") for field in RECIPE_SOURCE_FIELDS}
+    )
+    if not recipe_result.ok:
+        return recipe_result
 
     with connect() as connection:
         result = update_admin_imported_fields(
@@ -816,6 +887,10 @@ def save_all_admin_card_changes(
         assert current_version is not None
 
         planned_materials, actual_entries = material_ledger_from_form(form)
+        result = validate_admin_recipe_source_fields(planned_materials)
+        if not result.ok:
+            connection.rollback()
+            return result
         result = update_admin_material_ledger(
             card_id=card_id,
             loaded_version=current_version,
@@ -1081,12 +1156,14 @@ async def save_admin_materials_ledger(request: Request, card_id: int):
     )
     if parsed_version is not None:
         planned_materials, actual_entries = material_ledger_from_form(form)
-        material_result = update_admin_material_ledger(
-            card_id=card_id,
-            loaded_version=parsed_version,
-            planned_materials=planned_materials,
-            actual_entries=actual_entries,
-        )
+        material_result = validate_admin_recipe_source_fields(planned_materials)
+        if material_result.ok:
+            material_result = update_admin_material_ledger(
+                card_id=card_id,
+                loaded_version=parsed_version,
+                planned_materials=planned_materials,
+                actual_entries=actual_entries,
+            )
 
     return admin_card_post_response(
         request,

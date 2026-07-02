@@ -11,7 +11,7 @@ under `OI-003`.
 ## Purpose
 
 The app will continue importing the shift-manager workbook recipe fields from
-the existing extrusion columns `AM:AS`. Those cells will use a parseable text
+the cleaned extrusion columns `AH:AN`. Those cells will use a parseable text
 convention so the app can display and store clean recipe-component rows while
 still preserving the original imported workbook text.
 
@@ -25,13 +25,13 @@ The source recipe fields remain:
 
 | Workbook column | App field | Current label |
 | --- | --- | --- |
-| `AM` | `raw_material_a` | Raw material A |
-| `AN` | `raw_material_b` | Raw material B |
-| `AO` | `raw_material_c` | Raw material C |
-| `AP` | `linear_pe` | Linear PE |
-| `AQ` | `antistatic` | Antistatic |
-| `AR` | `masterbatch` | Masterbatch |
-| `AS` | `chalk` | Chalk |
+| `AH` | `raw_material_a` | Raw material A |
+| `AI` | `raw_material_b` | Raw material B |
+| `AJ` | `raw_material_c` | Raw material C |
+| `AK` | `linear_pe` | Linear PE |
+| `AL` | `antistatic` | Antistatic |
+| `AM` | `masterbatch` | Masterbatch |
+| `AN` | `chalk` | Chalk |
 
 The original imported source text in these fields remains stored on `cards` and
 continues to be used by print output.
@@ -55,7 +55,7 @@ Masterbatch Polibach White 8000 ET | 3%
 
 The Excel recipe builder also supports intentional producer and/or grade
 omissions through `N/A` values in `RecipeCatalog`. `N/A` is a catalog control
-value only. It is not printed into the final `AM:AS` source cell. When both
+value only. It is not printed into the final `AH:AN` source cell. When both
 producer and grade are `N/A`, the final source cell is category-only before the
 delimiter:
 
@@ -109,7 +109,7 @@ to the canonical category spelling listed above. For example, `uv`, `UV`, and
 
 ## Percentage Rule
 
-All non-empty recipe rows in `AM:AS` are part of one recipe percentage pool.
+All non-empty recipe rows in `AH:AN` are part of one recipe percentage pool.
 Together they must sum to exactly `100%`.
 
 The canonical percentage format uses a dot decimal, such as `2.5%`. Comma
@@ -181,7 +181,7 @@ recipe source text before release.
 
 Release to the terminal should be blocked when:
 
-- any non-empty `AM:AS` row cannot be parsed;
+- any non-empty `AH:AN` row cannot be parsed;
 - any non-empty row has missing identity text before `|`, an unapproved
   category, or invalid category text;
 - any non-empty row has missing or invalid percentage text;

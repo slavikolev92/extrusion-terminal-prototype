@@ -210,6 +210,51 @@ class FormRequest:
         return f"/{name}"
 
 
+def admin_material_form_items(
+    card_id: int,
+    *,
+    overrides: dict[str, dict[str, str]] | None = None,
+) -> list[tuple[str, str]]:
+    overrides = overrides or {}
+    context = admin_card_detail_context(card_id)
+    assert context is not None
+    items: list[tuple[str, str]] = []
+    for row in context["recipe_rows"]:
+        field = row["field"]
+        row_overrides = overrides.get(field, {})
+        percent = str(row["recipe_percent"] or "")
+        if percent.endswith("%"):
+            percent = percent[:-1]
+        items.extend(
+            [
+                (
+                    f"material_category__{field}",
+                    row_overrides.get("material_category", str(row["material_category"] or "")),
+                ),
+                (
+                    f"planned_material__{field}",
+                    row_overrides.get(
+                        "planned_material",
+                        str(row["planned_material_edit"] or ""),
+                    ),
+                ),
+                (
+                    f"recipe_percent__{field}",
+                    row_overrides.get("recipe_percent", percent),
+                ),
+                (
+                    f"actual_material__{field}",
+                    row_overrides.get("actual_material", str(row["actual_material"] or "")),
+                ),
+                (
+                    f"batch_lot__{field}",
+                    row_overrides.get("batch_lot", str(row["batch"] or "")),
+                ),
+            ]
+        )
+    return items
+
+
 def test_admin_detail_combines_recipe_and_machine_materials(connection):
     card_id = prepare_dense_completed_card("27001")
 
@@ -223,10 +268,14 @@ def test_admin_detail_combines_recipe_and_machine_materials(connection):
     assert "Вложени материали" in html
     assert "Рецепта" not in html
     assert "Материал на машината" not in html
+    assert html.count('name="material_category__raw_material_a"') == 1
     assert html.count('name="planned_material__raw_material_a"') == 1
-    assert 'value="LDPE Planned A | 50%"' in html
+    assert html.count('name="recipe_percent__raw_material_a"') == 1
+    assert 'value="Planned A"' in html
+    assert 'value="50"' in html
+    assert 'value="50%"' not in html
+    assert 'value="LDPE Planned A | 50%"' not in html
     assert "Planned A" in html
-    assert "50%" in html
     assert "1625.25" in html
     assert html.count('name="actual_material__raw_material_a"') == 1
     assert html.count('name="batch_lot__raw_material_a"') == 1
@@ -475,9 +524,27 @@ def test_admin_materials_ledger_omits_brand_class_field(connection):
     assert "Вложени материали" in html
     assert "Марка / клас" not in html
     assert 'name="raw_material_brand_grade"' not in html
+    assert html.count('name="material_category__raw_material_a"') == 1
     assert html.count('name="planned_material__raw_material_a"') == 1
+    assert html.count('name="recipe_percent__raw_material_a"') == 1
     assert html.count('name="actual_material__raw_material_a"') == 1
     assert html.count('name="batch_lot__raw_material_a"') == 1
+
+
+def test_admin_materials_ledger_renders_structured_planned_inputs(connection):
+    card_id = prepare_dense_completed_card("27120", roll_count=1)
+
+    html = render_admin_detail(card_id)
+
+    assert 'name="material_category__raw_material_a"' in html
+    assert 'name="planned_material__raw_material_a" value="Planned A"' in html
+    assert 'name="recipe_percent__raw_material_a" value="50"' in html
+    assert 'name="recipe_percent__raw_material_a" value="50%"' not in html
+    assert 'aria-label="A категория"' in html
+    assert 'aria-label="A планиран материал"' in html
+    assert 'aria-label="A процент"' in html
+    assert 'aria-label="A източник по карта"' not in html
+    assert 'value="LDPE Planned A | 50%"' not in html
 
 
 def test_admin_roll_and_timing_ledgers_use_explicit_x_delete_actions(connection):
@@ -583,6 +650,55 @@ def test_admin_order_form_save_preserves_omitted_recipe_fields(connection):
     assert updated["chalk"] == "Filler Planned chalk | 2%"
 
 
+def test_admin_global_save_updates_structured_materials_on_imported_card(connection):
+    card_id = import_ready_card(
+        "27121",
+        raw_material_a="LDPE Initial A | 80%",
+        raw_material_b="",
+        raw_material_c="",
+        linear_pe="LLDPE Initial L | 20%",
+        antistatic="",
+        masterbatch="",
+        chalk="",
+    )
+    card = db.fetch_admin_card_detail(card_id)
+
+    response = asyncio.run(
+        save_admin_card_changes(
+            FormRequest(
+                MultiItemForm(
+                    [
+                        ("loaded_version", str(card["version"])),
+                        ("material_category__raw_material_a", "reLDPE"),
+                        ("planned_material__raw_material_a", ""),
+                        ("recipe_percent__raw_material_a", "80"),
+                        ("material_category__linear_pe", "LLDPE"),
+                        ("planned_material__linear_pe", "SABIC 119ZJ"),
+                        ("recipe_percent__linear_pe", "20"),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+    updated = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 303
+    assert updated["raw_material_a"] == "reLDPE | 80%"
+    assert updated["linear_pe"] == "LLDPE SABIC 119ZJ | 20%"
+    components = {
+        component_key: (source_text, category, planned_material, percent)
+        for component_key, source_text, category, planned_material, percent in recipe_component_snapshot(card_id)
+    }
+    assert components["raw_material_a"] == ("reLDPE | 80%", "reLDPE", "", "80")
+    assert components["linear_pe"] == (
+        "LLDPE SABIC 119ZJ | 20%",
+        "LLDPE",
+        "SABIC 119ZJ",
+        "20",
+    )
+
+
 def test_admin_global_save_updates_order_materials_and_roll_data(connection):
     card_id = prepare_dense_completed_card("27107", roll_count=1)
     card = db.fetch_admin_card_detail(card_id)
@@ -595,9 +711,18 @@ def test_admin_global_save_updates_order_materials_and_roll_data(connection):
                     [
                         ("loaded_version", str(card["version"])),
                         ("customer", "Global Save Customer"),
-                        ("planned_material__raw_material_a", "Global planned A"),
-                        ("actual_material__raw_material_a", "Global actual A"),
-                        ("batch_lot__raw_material_a", "Global batch A"),
+                        *admin_material_form_items(
+                            card_id,
+                            overrides={
+                                "raw_material_a": {
+                                    "material_category": "LLDPE",
+                                    "planned_material": "Global planned A",
+                                    "recipe_percent": "50",
+                                    "actual_material": "Global actual A",
+                                    "batch_lot": "Global batch A",
+                                }
+                            },
+                        ),
                         ("tare_weight", "2.00"),
                         (f"gross_weight__{roll_id}", "60.00"),
                         (f"tare_weight__{roll_id}", "3.00"),
@@ -612,7 +737,7 @@ def test_admin_global_save_updates_order_materials_and_roll_data(connection):
     assert response.status_code == 303
     assert response.headers["location"] == f"/admin/cards/{card_id}"
     assert updated["customer"] == "Global Save Customer"
-    assert updated["raw_material_a"] == "Global planned A"
+    assert updated["raw_material_a"] == "LLDPE Global planned A | 50%"
     assert (
         updated["recipe_actual_entries"]["raw_material_a"]["actual_material_used"]
         == "Global actual A"
@@ -622,6 +747,77 @@ def test_admin_global_save_updates_order_materials_and_roll_data(connection):
     assert updated["roll_entries"][0]["gross_weight"] == 60
     assert updated["roll_entries"][0]["tare_weight"] == 3
     assert updated["roll_entries"][0]["net_weight"] == 57
+
+
+def test_admin_global_save_blocks_material_percent_total_over_100(connection):
+    card_id = prepare_dense_completed_card("27122", roll_count=1)
+    before = db.fetch_admin_card_detail(card_id)
+    roll_id = int(before["roll_entries"][0]["id"])
+
+    response = asyncio.run(
+        save_admin_card_changes(
+            FormRequest(
+                MultiItemForm(
+                    [
+                        ("loaded_version", str(before["version"])),
+                        *admin_material_form_items(
+                            card_id,
+                            overrides={
+                                "raw_material_a": {
+                                    "recipe_percent": "350",
+                                }
+                            },
+                        ),
+                        ("tare_weight", "2.00"),
+                        (f"gross_weight__{roll_id}", "60.00"),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+    body = response.body.decode("utf-8")
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 200
+    assert "сборът на процентите трябва да е точно 100%" in body
+    assert after["version"] == before["version"]
+    assert after["raw_material_a"] == before["raw_material_a"]
+    assert after["tare_weight"] == before["tare_weight"]
+    assert after["roll_entries"][0]["gross_weight"] == before["roll_entries"][0]["gross_weight"]
+
+
+def test_admin_global_save_blocks_invalid_material_percent_number(connection):
+    card_id = prepare_dense_completed_card("27123", roll_count=1)
+    before = db.fetch_admin_card_detail(card_id)
+
+    response = asyncio.run(
+        save_admin_card_changes(
+            FormRequest(
+                MultiItemForm(
+                    [
+                        ("loaded_version", str(before["version"])),
+                        *admin_material_form_items(
+                            card_id,
+                            overrides={
+                                "raw_material_a": {
+                                    "recipe_percent": "abc",
+                                }
+                            },
+                        ),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+    body = response.body.decode("utf-8")
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 200
+    assert "Суровина A: невалиден процент" in body
+    assert after["version"] == before["version"]
+    assert after["raw_material_a"] == before["raw_material_a"]
 
 
 def test_admin_global_save_rolls_back_all_sections_when_timing_is_invalid(connection):
@@ -646,9 +842,16 @@ def test_admin_global_save_rolls_back_all_sections_when_timing_is_invalid(connec
                     [
                         ("loaded_version", str(before["version"])),
                         ("customer", "Should Not Persist"),
-                        ("planned_material__raw_material_a", "Should Not Persist"),
-                        ("actual_material__raw_material_a", "Should Not Persist"),
-                        ("batch_lot__raw_material_a", "Should Not Persist"),
+                        *admin_material_form_items(
+                            card_id,
+                            overrides={
+                                "raw_material_a": {
+                                    "planned_material": "Should Not Persist",
+                                    "actual_material": "Should Not Persist",
+                                    "batch_lot": "Should Not Persist",
+                                }
+                            },
+                        ),
                         ("tare_weight", "2.00"),
                         (f"gross_weight__{roll_id}", "60.00"),
                         ("delete_segment_id", str(segment_id)),
@@ -713,7 +916,14 @@ def test_admin_global_save_rolls_back_recipe_components_when_timing_is_invalid(c
                         ("loaded_version", str(before["version"])),
                         ("raw_material_a", "LDPE After Rollback | 70%"),
                         ("linear_pe", "LLDPE After Rollback | 30%"),
-                        ("planned_material__raw_material_a", "Should Not Persist"),
+                        *admin_material_form_items(
+                            card_id,
+                            overrides={
+                                "raw_material_a": {
+                                    "planned_material": "Should Not Persist",
+                                }
+                            },
+                        ),
                         ("tare_weight", "2.00"),
                         (f"gross_weight__{roll_id}", "60.00"),
                         ("delete_segment_id", str(segment_id)),

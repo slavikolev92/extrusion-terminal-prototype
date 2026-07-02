@@ -45,8 +45,8 @@ Recommended follow-up:
 - Severity: important
 - Found in: Structured recipe redesign discussion, 2026-06-24
 
-The shift-manager workbook will keep its current structure, but extrusion recipe
-source cells `AM:AS` will use a structured text convention:
+The shift-manager workbook will keep its current cleaned structure, but
+extrusion recipe source cells `AH:AN` will use a structured text convention:
 
 `[Material category] [Producer] [Grade/Brand] | [% of total layer]`
 
@@ -69,7 +69,7 @@ Accepted implementation roadmap:
    - Record the contract before implementation plans are written.
 
 2. Build the app parser.
-   - Add a central Python parser for non-empty `AM:AS` recipe source cells.
+   - Add a central Python parser for non-empty `AH:AN` recipe source cells.
    - Normalize extra spaces and parse category, planned raw material, and percent.
    - Return clear validation errors for malformed rows.
    - Add focused parser tests before downstream changes.
@@ -128,10 +128,11 @@ Accepted implementation roadmap:
      `ExportConfig!FirstValidationRow`.
    - Validate `Database!G` as positive gross kilograms for every validated
      production-order row.
-   - Validate printing `AB:AI` cells against `RecipeCatalogPrinting`; do not add
+   - Validate printing `W:AD` cells against `RecipeCatalogPrinting`; do not add
      printing fields to the extrusion-terminal CSV.
-   - Validate extrusion `AM:AS` cells against the structured recipe contract and
+   - Validate extrusion `AH:AN` cells against the structured recipe contract and
      `RecipeCatalogExtrusion`.
+   - Validate sales price in `Database!O` as a positive number.
    - Block CSV writing with a clear English row/order/column/value/reason
      message when validation fails.
    - Keep the macro read-only with respect to existing workbook production-order
@@ -189,8 +190,8 @@ Resolution:
 - Found in: workbook macro validation discussion, 2026-06-26
 - Must consider after: OI-003 Step 8 Excel export validation
 - Evidence:
-  - `interim-costing-process/excel-tools/export-validation/ExportExtrusionOrders.bas`
-  - `interim-costing-process/excel-tools/recipe-builder/modRecipeBuilderCascadingInstaller.bas`
+  - `interim-costing-process/excel-tools/export-validation/export-validation.bas`
+  - `interim-costing-process/excel-tools/recipe-builder/recipe-builder-installer.bas`
 
 The workbook helper macro workflow currently requires separate installation
 paths for the recipe builder and export validation. In practice this is fragile:
@@ -224,7 +225,7 @@ Recommended fix:
 - Found in: workbook macro validation discussion, 2026-06-26
 - Must consider after: OI-005 workbook helper installation consolidation
 - Evidence:
-  - `interim-costing-process/excel-tools/export-validation/ExportExtrusionOrders.bas`
+  - `interim-costing-process/excel-tools/export-validation/export-validation.bas`
   - `tests/test_excel_export_macro_contract.py`
 
 The export-validation macro was temporarily converted to English-only messages

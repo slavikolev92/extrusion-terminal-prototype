@@ -387,12 +387,12 @@ The user described these stable column groups:
 
 | Columns | Group |
 | --- | --- |
-| `A:U` | General production-order fields |
-| `V:Y` | Operation flags |
-| `Z:AI` | Printing-specific fields |
-| `AJ:AT` | Extrusion-specific fields |
-| `AU:AV` | Rewinding/slitting-specific fields |
-| `AW:AY` | Confection-specific fields |
+| `A:P` | General production-order fields |
+| `Q:T` | Operation flags |
+| `U:AD` | Printing-specific fields |
+| `AE:AO` | Extrusion-specific fields |
+| `AP:AQ` | Rewinding/slitting-specific fields |
+| `AR:AT` | Confection-specific fields |
 
 The pilot needs the general fields plus the extrusion group.
 
@@ -416,18 +416,18 @@ These fields are the observed minimum needed to render the extrusion operational
 | `L` | Material |
 | `M` | Size/thickness |
 | `N` | Notes |
-| `W` | Extrusion operation flag |
-| `AJ` | Extrusion folding |
-| `AK` | Extrusion next operation |
-| `AL` | Extrusion treatment |
-| `AM` | Extrusion raw material A |
-| `AN` | Extrusion raw material B |
-| `AO` | Extrusion raw material C |
-| `AP` | Extrusion linear PE |
-| `AQ` | Extrusion antistatic |
-| `AR` | Extrusion masterbatch |
-| `AS` | Extrusion chalk |
-| `AT` | Extrusion packaging method |
+| `R` | Extrusion operation flag |
+| `AE` | Extrusion folding |
+| `AF` | Extrusion next operation |
+| `AG` | Extrusion treatment |
+| `AH` | Extrusion raw material A |
+| `AI` | Extrusion raw material B |
+| `AJ` | Extrusion raw material C |
+| `AK` | Extrusion linear PE |
+| `AL` | Extrusion antistatic |
+| `AM` | Extrusion masterbatch |
+| `AN` | Extrusion chalk |
+| `AO` | Extrusion packaging method |
 
 The app should preserve raw workbook values as much as possible. The workbook contains mixed human-entered content: dates, numbers, quantities embedded in text, units, notes, Bulgarian labels, and inconsistent text casing.
 
@@ -437,14 +437,14 @@ The workbook has four operation flag columns:
 
 | Operation | Flag column |
 | --- | --- |
-| Printing / flexo | `V` |
-| Extrusion | `W` |
-| Rewinding/slitting | `X` |
-| Confection | `Y` |
+| Printing / flexo | `Q` |
+| Extrusion | `R` |
+| Rewinding/slitting | `S` |
+| Confection | `T` |
 
 The Excel formulas compare operation flags against `Да`. Inspected data also contained lowercase `да`, and Excel still displayed the matching cards. Treat operation flags case-insensitively.
 
-For the pilot app, only the extrusion flag in `W` matters.
+For the pilot app, only the extrusion flag in `R` matters.
 
 ## Excel Formula Mechanism
 
@@ -461,7 +461,8 @@ Implications:
 
 - The app does not need to reproduce the `A4` selector if it imports a full source row.
 - If the app reads directly from the workbook by order number, it must account for Excel-style lookup behavior and duplicate order numbers.
-- The formulas reference `A5:CO1048576`, but meaningful inspected source data stopped at `AY`.
+- The formulas reference a broad source range, but meaningful cleaned source
+  data stops at `AT`.
 
 ## `Technology Cards` Sheet
 
@@ -477,10 +478,10 @@ This sheet contains four front-card blocks side by side:
 
 | Card | Cell range | Operation flag |
 | --- | --- | --- |
-| Printing / flexo | `A1:K56` | `Database!V` |
-| Extrusion | `L1:V56` | `Database!W` |
-| Rewinding/slitting | `W1:AG56` | `Database!X` |
-| Confection | `AH1:AR56` | `Database!Y` |
+| Printing / flexo | `A1:K56` | `Database!Q` |
+| Extrusion | `L1:V56` | `Database!R` |
+| Rewinding/slitting | `W1:AG56` | `Database!S` |
+| Confection | `AH1:AR56` | `Database!T` |
 
 Pilot app printing should reproduce the extrusion block, not the other three blocks.
 
@@ -488,7 +489,7 @@ Extrusion front block uses:
 
 - Common order fields from `A:M`
 - Notes from `N`
-- Extrusion fields from `AJ:AT`
+- Extrusion fields from `AE:AO`
 
 For selected order `25278`, cached values showed that the printing and extrusion blocks displayed, while rewinding/slitting and confection did not. That matches the inspected operation flags for that row.
 

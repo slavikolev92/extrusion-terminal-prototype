@@ -204,7 +204,7 @@ Review checkpoint:
 
 ## Milestone 9 - Pre-Print Workflow Completion
 
-Status: in progress
+Status: done
 
 Current state:
 
@@ -358,6 +358,7 @@ Verification completed:
   - `artifacts/ui-checks/print-output-preview.png`
   - `artifacts/ui-checks/print-output-preview.pdf`
 - `pdfinfo artifacts/ui-checks/print-output-preview.pdf` reported 2 pages and A4 page size.
+
 - Browser verification checked two print pages, front/back landmarks, 120 roll rows, blank date/shift cells, gross-only roll values, summary labels, front labels, and app-only field absence.
 - Template-fidelity pass added repeatable local verification helpers:
   - `scripts/create_print_template_fixture.py` creates a dense completed-card fixture only under `.test-runtime/`.
@@ -484,7 +485,7 @@ Structured recipe redesign follow-up:
 - OI-003 Step 6 complete: terminal and admin recipe displays now use normalized structured recipe rows with category, planned material, percent, planned kilograms, actual material, and batch/lot columns; admin source-text correction remains available for all seven source fields; terminal/admin actual material and batch/lot saves preserve version checks and existing actual-entry data; print output remains unchanged.
 - OI-003 Step 6.5 complete: parser, release validation, normalized sync, admin/terminal structured display, sample CSV template, and print-boundary tests now accept Excel-builder category-only source cells such as `reLDPE | 80%` for approved categories while preserving original source text and release protections for malformed rows.
 - OI-003 Step 7 complete: structured sample CSV data now verifies import, normalized recipe-component sync, admin review/correction, release gating, terminal structured display, actual material/batch saving, completion behavior, and unchanged print source-text output. Focused pytest coverage uses `tests/fixtures/structured_recipe_sample.csv`, and live Playwright verification captures admin/terminal screenshots under `artifacts/ui-checks/structured-sample-csv/` with a temporary database under `.test-runtime/structured-sample-csv/`.
-- OI-003 Step 8 complete: the Excel export macro now provides setup, selected validation, configured-range validation, and export-gated validation for `Database!G`, printing `AB:AI`, and extrusion `AM:AS`; CSV output remains the extrusion-terminal schema and writes to `exports`.
+- OI-003 Step 8 complete: the Excel export macro now provides setup, selected validation, configured-range validation, and export-gated validation for `Database!G`, `Database!O`, printing `W:AD`, and extrusion `AH:AN`; CSV output remains the extrusion-terminal schema and writes to `exports`.
 - OI-004 complete: app release validation, planned kilograms, terminal target kilograms, remaining kilograms, and progress percentage now use canonical `quantity_1` (`Database!G`) only; `unit_1`, `quantity_2`, and `unit_2` remain imported/displayed workbook fields and are ignored for target-gross calculations.
 - Step 5 deliberately did not add terminal/admin recipe display redesign, print changes, or Excel macro/export validation; Step 6 completed the display redesign while print changes and Excel macro/export validation remain outside this slice.
 

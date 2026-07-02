@@ -141,20 +141,17 @@ Classification meanings:
 | `M` | Size/thickness | Ignore for costing | Descriptive/spec field only. Final product identity should come from a forward-looking nomenclature if practical. |
 | `N` | Notes | Ignore for costing | Free text, not parseable costing data. |
 | `O` | Sales price | Required after confirmation | Must use the approved numeric-only convention if shift managers confirm it is workable. |
-| `P` | Payment terms | Ignore for costing | Sales/admin context only. |
-| `Q` | Produced quantity / `Изработено количество` | Ignore for costing | Shift-manager-owned free text. Do not change meaning, format, or workflow. Actuals come from the app. |
-| `R:T` | Invoice, contact, delivery fields | Ignore for costing | Admin/logistics context only. |
-| `U` | Cliche payment | Ignore for costing | Not part of current per-order production costing unless direct tooling/cliche allocation is explicitly added later. |
-| `V` | Flexo printing flag | Required as-is | `Да` means printing actuals are expected. |
-| `W` | Extrusion flag | Required as-is | `Да` means extrusion actuals are expected. |
-| `X` | Rewinding/slitting flag | Required as-is | `Да` means rewinding/slitting actuals are expected. |
-| `Y` | Confection flag | Required as-is | `Да` means confection actuals are expected. |
-| `Z` | Printing next operation | Ignore for costing | Workflow/spec context only. |
-| `AA` | Printing cylinder size | Ignore for costing | Printing spec context only; not a current costing input. |
-| `AB:AI` | Printing ink station slots 1-8 | Required after convention | Must use `Color Identity | Anilox lines/cm`. Ink/color identity supports ink allocation; anilox is preserved for later refinement. |
-| `AJ:AL` | Extrusion/workflow-adjacent fields | Ignore for costing | Workflow/spec context only. |
-| `AM:AP` | Base polymer recipe slots | Required after convention | Must use `Material Name | %`; all non-empty `AM:AS` percentages share one final-product recipe pool and must sum to `100%`. |
-| `AQ:AS` | Additive/filler recipe slots | Required after convention | Must use `Material Name | %`; additives/fillers are part of the same final-product `100%` recipe pool, not percentages over a base blend. |
+| `P` | Produced quantity / `Изработено количество` | Ignore for costing | Shift-manager-owned free text. Do not change meaning, format, or workflow. Actuals come from the app. |
+| `Q` | Flexo printing flag | Required as-is | `Да` means printing actuals are expected. |
+| `R` | Extrusion flag | Required as-is | `Да` means extrusion actuals are expected. |
+| `S` | Rewinding/slitting flag | Required as-is | `Да` means rewinding/slitting actuals are expected. |
+| `T` | Confection flag | Required as-is | `Да` means confection actuals are expected. |
+| `U` | Printing next operation | Ignore for costing | Workflow/spec context only. |
+| `V` | Printing cylinder size | Ignore for costing | Printing spec context only; not a current costing input. |
+| `W:AD` | Printing ink station slots 1-8 | Required after convention | Must use `Color Identity | Anilox lines/cm`. Ink/color identity supports ink allocation; anilox is preserved for later refinement. |
+| `AE:AG` | Extrusion/workflow-adjacent fields | Ignore for costing | Workflow/spec context only. |
+| `AH:AK` | Base polymer recipe slots | Required after convention | Must use `Material Name | %`; all non-empty `AH:AN` percentages share one final-product recipe pool and must sum to `100%`. |
+| `AL:AN` | Additive/filler recipe slots | Required after convention | Must use `Material Name | %`; additives/fillers are part of the same final-product `100%` recipe pool, not percentages over a base blend. |
 
 No existing `Database` column is classified as `App-captured`. App-captured data
 is identified in the later workbook/app gap-fit step.
@@ -169,12 +166,12 @@ process:
     shift-manager files.
   - `source_workbook` should still be retained by the import process for
     provenance and review.
-- `V:Y`: expected operation flags.
+- `Q:T`: expected operation flags.
 - `O`: agreed sales price, if the numeric EUR/kg excluding-VAT convention is
   confirmed by shift managers.
-- `AB:AI`: printing ink/color and anilox values after the new convention is
+- `W:AD`: printing ink/color and anilox values after the new convention is
   adopted.
-- `AM:AS`: extrusion recipe material names and percentages after the new
+- `AH:AN`: extrusion recipe material names and percentages after the new
   convention is adopted.
 
 The workbook can also provide navigation context for the app:
@@ -295,10 +292,10 @@ Parsing rule:
 
 Recipe rule:
 
-- Base polymers are normally entered in `AM:AP`.
-- Additives and fillers are normally entered in `AQ:AS`.
-- All non-empty recipe cells in `AM:AS` share one final-product recipe pool.
-- Parsed recipe percentages across `AM:AS` must sum to exactly `100%`.
+- Base polymers are normally entered in `AH:AK`.
+- Additives and fillers are normally entered in `AL:AN`.
+- All non-empty recipe cells in `AH:AN` share one final-product recipe pool.
+- Parsed recipe percentages across `AH:AN` must sum to exactly `100%`.
 - There is no separate "base polymers sum to `100%`, then additives/fillers are
   added over the base" interpretation for the July 2026 interim costing
   process.
@@ -339,7 +336,7 @@ Use existing printing ink station columns in the `Database` worksheet.
 
 | Column range | Existing meaning | Costing role |
 | --- | --- | --- |
-| `AB:AI` | Printing ink station slots 1-8 | Ink/color presence and anilox value |
+| `W:AD` | Printing ink station slots 1-8 | Ink/color presence and anilox value |
 
 Current workbook values such as `W/110`, `Y/255`, `P 485/110`, `W 110`, and
 `Black 255` are legacy free-text ink station entries.
@@ -397,9 +394,9 @@ Recipe validation:
 
 - Material cells used for costing must contain a final `|` delimiter.
 - The text after the final `|` must contain one numeric percentage.
-- Percentages across all non-empty recipe cells in `AM:AS` must sum to exactly
+- Percentages across all non-empty recipe cells in `AH:AN` must sum to exactly
   `100%`.
-- Additive/filler columns `AQ:AS` may be blank or may contain valid
+- Additive/filler columns `AL:AN` may be blank or may contain valid
   final-product percentages.
 - Bag-count formulas such as `1.5 kg/bag`, `1 bag`, or similar shorthand are
   not valid for costing unless converted to percentages first.
@@ -421,7 +418,7 @@ Planning/spec validation:
 
 Printing ink validation:
 
-- Filled ink station cells in `AB:AI` should contain a final `|` delimiter.
+- Filled ink station cells in `W:AD` should contain a final `|` delimiter.
 - The text before the final `|` must contain an accepted color identity.
 - The text after the final `|` must contain one anilox value.
 - Blank ink station cells are allowed.
@@ -453,10 +450,10 @@ Naming conventions:
 
 Extrusion recipe structure:
 
-- Do real extrusion recipes fit within four base polymer slots `AM:AP` and three
-  additive/filler slots `AQ:AS`?
+- Do real extrusion recipes fit within four base polymer slots `AH:AK` and three
+  additive/filler slots `AL:AN`?
 - Is the current final-product interpretation clear and workable: all non-empty
-  recipe percentages across `AM:AS`, including additives/fillers, sum to exactly
+  recipe percentages across `AH:AN`, including additives/fillers, sum to exactly
   `100%`?
 - Do shift managers need a reference table or calculator to convert current
   shorthand such as ratios, bag counts, or `20% KJ` into percentages?
@@ -507,8 +504,8 @@ Solvents:
 7. Confirm the preferred support method for using the new names and formats:
    reference list, dropdowns, separate document, workbook macro, app-side upload
    validation, or a combination.
-8. Confirm whether current recipes fit within `AM:AS`.
-9. Confirm whether the final-product percentage interpretation across `AM:AS`
+8. Confirm whether current recipes fit within `AH:AN`.
+9. Confirm whether the final-product percentage interpretation across `AH:AN`
    matches the way shift managers currently build extrusion recipes.
 10. Confirm whether shift managers need a reference table or calculator to
    convert current shorthand into percentages.

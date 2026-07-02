@@ -1,15 +1,15 @@
-Attribute VB_Name = "modRecipeBuilderCascadingInstallerV2"
+Attribute VB_Name = "RecipeBuilderInstaller"
 Option Explicit
 
-' Cascading Recipe Builder installer.
+' Recipe Builder installer.
 ' Import this module into the workbook, then run:
-' InstallRecipeBuilderV2
+' InstallRecipeBuilder
 '
 ' The installer creates:
 ' - RecipeCatalogExtrusion helper sheet header if needed
 ' - RecipeCatalogPrinting helper sheet header if needed
-' - extrusion UserForm for AM:AS recipe cells
-' - printing UserForm for AB:AI ink/anilox cells
+' - extrusion UserForm for AH:AN recipe cells
+' - printing UserForm for W:AD ink/anilox cells
 ' - Database sheet double-click router for both builders
 '
 ' Excel may block the UserForm/event installation unless this setting is enabled:
@@ -20,10 +20,10 @@ Private Const EXTRUSION_CATALOG_SHEET_NAME As String = "RecipeCatalogExtrusion"
 Private Const LEGACY_EXTRUSION_CATALOG_SHEET_NAME As String = "RecipeCatalog"
 Private Const PRINTING_CATALOG_SHEET_NAME As String = "RecipeCatalogPrinting"
 Private Const DATABASE_SHEET_NAME As String = "Database"
-Private Const PRINTING_FIRST_COLUMN As String = "AB"
-Private Const PRINTING_LAST_COLUMN As String = "AI"
-Private Const EXTRUSION_FIRST_COLUMN As String = "AM"
-Private Const EXTRUSION_LAST_COLUMN As String = "AS"
+Private Const PRINTING_FIRST_COLUMN As String = "W"
+Private Const PRINTING_LAST_COLUMN As String = "AD"
+Private Const EXTRUSION_FIRST_COLUMN As String = "AH"
+Private Const EXTRUSION_LAST_COLUMN As String = "AN"
 Private Const EXTRUSION_FORM_NAME As String = "frmRecipeBuilderExtrusion"
 Private Const LEGACY_EXTRUSION_FORM_NAME As String = "frmRecipeBuilderCascading"
 Private Const PRINTING_FORM_NAME As String = "frmRecipeBuilderPrinting"
@@ -33,14 +33,14 @@ Private Const FORM_INPUT_FONT_SIZE As Long = 15
 Private Const FORM_BUTTON_FONT_SIZE As Long = 14
 Private Const FORM_DROPDOWN_VISIBLE_ROWS As Long = 24
 
-Public Sub InstallRecipeBuilderV2()
+Public Sub InstallRecipeBuilder()
     CreateExtrusionRecipeCatalogSheet
     CreatePrintingRecipeCatalogSheet
 
     If Not TryInstallFormAndEvent() Then
         MsgBox _
             "The recipe catalog sheets/headers were created or preserved, but Excel blocked automatic form installation." & vbCrLf & vbCrLf & _
-            "Enable this setting and run InstallRecipeBuilderV2 again:" & vbCrLf & _
+            "Enable this setting and run InstallRecipeBuilder again:" & vbCrLf & _
             "File > Options > Trust Center > Trust Center Settings > Macro Settings >" & vbCrLf & _
             "Trust access to the VBA project object model.", _
             vbExclamation, _
@@ -56,54 +56,54 @@ Public Sub InstallRecipeBuilderV2()
         "Recipe Builder"
 End Sub
 
-Public Function IsExtrusionRecipeBuilderCellV2(ByVal target As Range) As Boolean
+Public Function IsExtrusionRecipeBuilderCell(ByVal target As Range) As Boolean
     If target Is Nothing Then
-        IsExtrusionRecipeBuilderCellV2 = False
+        IsExtrusionRecipeBuilderCell = False
         Exit Function
     End If
 
     If target.Worksheet.Name <> DATABASE_SHEET_NAME Then
-        IsExtrusionRecipeBuilderCellV2 = False
+        IsExtrusionRecipeBuilderCell = False
         Exit Function
     End If
 
     If target.CountLarge <> 1 Then
-        IsExtrusionRecipeBuilderCellV2 = False
+        IsExtrusionRecipeBuilderCell = False
         Exit Function
     End If
 
-    IsExtrusionRecipeBuilderCellV2 = Not Intersect( _
+    IsExtrusionRecipeBuilderCell = Not Intersect( _
         target, _
         target.Worksheet.Range(EXTRUSION_FIRST_COLUMN & ":" & EXTRUSION_LAST_COLUMN) _
     ) Is Nothing
 End Function
 
-Public Function IsPrintingRecipeBuilderCellV2(ByVal target As Range) As Boolean
+Public Function IsPrintingRecipeBuilderCell(ByVal target As Range) As Boolean
     If target Is Nothing Then
-        IsPrintingRecipeBuilderCellV2 = False
+        IsPrintingRecipeBuilderCell = False
         Exit Function
     End If
 
     If target.Worksheet.Name <> DATABASE_SHEET_NAME Then
-        IsPrintingRecipeBuilderCellV2 = False
+        IsPrintingRecipeBuilderCell = False
         Exit Function
     End If
 
     If target.CountLarge <> 1 Then
-        IsPrintingRecipeBuilderCellV2 = False
+        IsPrintingRecipeBuilderCell = False
         Exit Function
     End If
 
-    IsPrintingRecipeBuilderCellV2 = Not Intersect( _
+    IsPrintingRecipeBuilderCell = Not Intersect( _
         target, _
         target.Worksheet.Range(PRINTING_FIRST_COLUMN & ":" & PRINTING_LAST_COLUMN) _
     ) Is Nothing
 End Function
 
-Public Sub OpenExtrusionRecipeBuilderV2(ByVal target As Range)
+Public Sub OpenExtrusionRecipeBuilder(ByVal target As Range)
     Dim form As Object
 
-    If Not IsExtrusionRecipeBuilderCellV2(target) Then
+    If Not IsExtrusionRecipeBuilderCell(target) Then
         Exit Sub
     End If
 
@@ -112,10 +112,10 @@ Public Sub OpenExtrusionRecipeBuilderV2(ByVal target As Range)
     form.Show
 End Sub
 
-Public Sub OpenPrintingRecipeBuilderV2(ByVal target As Range)
+Public Sub OpenPrintingRecipeBuilder(ByVal target As Range)
     Dim form As Object
 
-    If Not IsPrintingRecipeBuilderCellV2(target) Then
+    If Not IsPrintingRecipeBuilderCell(target) Then
         Exit Sub
     End If
 
@@ -124,12 +124,12 @@ Public Sub OpenPrintingRecipeBuilderV2(ByVal target As Range)
     form.Show
 End Sub
 
-Public Sub OpenExtrusionRecipeBuilderForActiveCellV2()
-    OpenExtrusionRecipeBuilderV2 ActiveCell
+Public Sub OpenExtrusionRecipeBuilderForActiveCell()
+    OpenExtrusionRecipeBuilder ActiveCell
 End Sub
 
-Public Sub OpenPrintingRecipeBuilderForActiveCellV2()
-    OpenPrintingRecipeBuilderV2 ActiveCell
+Public Sub OpenPrintingRecipeBuilderForActiveCell()
+    OpenPrintingRecipeBuilder ActiveCell
 End Sub
 
 Private Sub CreateExtrusionRecipeCatalogSheet()
@@ -408,12 +408,12 @@ Private Sub InstallDatabaseDoubleClickHandler()
 
     codeModule.AddFromString _
         "Private Sub Worksheet_BeforeDoubleClick(ByVal Target As Range, Cancel As Boolean)" & vbCrLf & _
-        "    If IsPrintingRecipeBuilderCellV2(Target) Then" & vbCrLf & _
+        "    If IsPrintingRecipeBuilderCell(Target) Then" & vbCrLf & _
         "        Cancel = True" & vbCrLf & _
-        "        OpenPrintingRecipeBuilderV2 Target" & vbCrLf & _
-        "    ElseIf IsExtrusionRecipeBuilderCellV2(Target) Then" & vbCrLf & _
+        "        OpenPrintingRecipeBuilder Target" & vbCrLf & _
+        "    ElseIf IsExtrusionRecipeBuilderCell(Target) Then" & vbCrLf & _
         "        Cancel = True" & vbCrLf & _
-        "        OpenExtrusionRecipeBuilderV2 Target" & vbCrLf & _
+        "        OpenExtrusionRecipeBuilder Target" & vbCrLf & _
         "    End If" & vbCrLf & _
         "End Sub"
 End Sub

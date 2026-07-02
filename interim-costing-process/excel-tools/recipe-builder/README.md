@@ -8,14 +8,14 @@ structure, while making structured entry hard to mistype.
 
 The installer owns one `Database` double-click event and routes by column range:
 
-- `AB:AI` - printing ink/anilox builder.
-- `AM:AS` - extrusion raw-material builder.
+- `W:AD` - printing ink/anilox builder.
+- `AH:AN` - extrusion raw-material builder.
 
 ## Why This Changed
 
-The first accepted design only handled extrusion raw materials in `AM:AS`. We
+The first accepted design only handled extrusion raw materials in `AH:AN`. We
 then agreed to add the same controlled-entry mechanism for printing ink stations
-in `AB:AI`, but with a simpler convention:
+in `W:AD`, but with a simpler convention:
 
 ```text
 Ink / Color Identity
@@ -70,7 +70,7 @@ Output:
 reLDPE | 80%
 ```
 
-The extrusion form opens when the user double-clicks `Database!AM:AS`. It has:
+The extrusion form opens when the user double-clicks `Database!AH:AN`. It has:
 
 - `Material Category`
 - `Producer`
@@ -103,7 +103,7 @@ Pantone 485/110
 Black/255
 ```
 
-The printing form opens when the user double-clicks `Database!AB:AI`. It has:
+The printing form opens when the user double-clicks `Database!W:AD`. It has:
 
 - `Find Ink / Color`
 - matching ink list
@@ -200,7 +200,7 @@ Recommended printing rules:
 ## Files
 
 - `README.md` - this explanation and operating guide.
-- `modRecipeBuilderCascadingInstaller.bas` - installer module. It creates or
+- `recipe-builder-installer.bas` - installer module. It creates or
   preserves helper sheets, creates the extrusion and printing UserForms, and
   installs the double-click router.
 
@@ -209,13 +209,16 @@ inside the installed workbook helper sheets.
 
 ## Install In A Workbook
 
+Preferred installation is through `workbook-tools-master-installer.bas`.
+Direct installation remains available for development/debugging.
+
 1. Open the target workbook, or use a copy first if testing installation.
 2. Press `Alt+F11` to open the VBA editor.
 3. Remove older recipe-builder modules/forms if duplicate-name errors exist.
 4. Use `File > Import File...` and import:
-   - `modRecipeBuilderCascadingInstaller.bas`
+   - `recipe-builder-installer.bas`
 5. Run this macro:
-   - `InstallRecipeBuilderV2`
+   - `InstallRecipeBuilder`
 6. Save the workbook as `.xlsm`.
 7. Fill or paste reviewed catalog rows into the helper sheets.
 8. Return to Excel and double-click a supported `Database` cell.
@@ -229,8 +232,8 @@ The installation and catalog data are separate.
 
 Install the mechanism once:
 
-- `modRecipeBuilderCascadingInstaller.bas`
-- `InstallRecipeBuilderV2`
+- `recipe-builder-installer.bas`
+- `InstallRecipeBuilder`
 
 Then maintain catalog content by editing or pasting rows into:
 
