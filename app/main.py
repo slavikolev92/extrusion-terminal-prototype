@@ -71,6 +71,7 @@ templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
 CARD_NOT_FOUND_MESSAGE = "Картата не е намерена."
 INVALID_LOADED_VERSION_MESSAGE = "Версията на заредената карта е невалидна. Презаредете картата."
+TERMINAL_CARD_UNAVAILABLE_MESSAGE = "Картата не е налична на терминала."
 DEFAULT_PLANNING_ANCHOR = "unreleased-queue"
 DRAFT_SORT_DEFAULT = "order_number"
 DRAFT_SORT_DIRECTIONS = {"asc", "desc"}
@@ -1403,11 +1404,13 @@ async def save_terminal_materials(
     except ValueError:
         material_result = RuleResult(False, (INVALID_LOADED_VERSION_MESSAGE,))
     else:
-        material_result = update_terminal_recipe_actual_entries(
-            card_id=card_id,
-            loaded_version=parsed_version,
-            entries=recipe_actual_entries_from_form(form),
-        )
+        material_result = validate_terminal_card_available_for_post(card_id)
+        if material_result.ok:
+            material_result = update_terminal_recipe_actual_entries(
+                card_id=card_id,
+                loaded_version=parsed_version,
+                entries=recipe_actual_entries_from_form(form),
+            )
 
     return terminal_post_response(
         request,
@@ -1427,7 +1430,9 @@ async def save_tare_weight(
 ):
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        roll_result = update_tare_weight(card_id, parsed_version, tare_weight)
+        roll_result = validate_terminal_card_available_for_post(card_id)
+        if roll_result.ok:
+            roll_result = update_tare_weight(card_id, parsed_version, tare_weight)
 
     return terminal_post_response(
         request,
@@ -1449,12 +1454,14 @@ async def add_roll_weight(
 ):
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        roll_result = add_roll_gross_weight(
-            card_id,
-            parsed_version,
-            gross_weight,
-            tare_weight=tare_weight,
-        )
+        roll_result = validate_terminal_card_available_for_post(card_id)
+        if roll_result.ok:
+            roll_result = add_roll_gross_weight(
+                card_id,
+                parsed_version,
+                gross_weight,
+                tare_weight=tare_weight,
+            )
 
     return terminal_post_response(
         request,
@@ -1477,21 +1484,23 @@ async def save_roll_weight(
 ):
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        if tare_weight is None or not isinstance(tare_weight, str):
-            roll_result = update_roll_gross_weight(
-                card_id=card_id,
-                roll_id=roll_id,
-                loaded_version=parsed_version,
-                gross_weight=gross_weight,
-            )
-        else:
-            roll_result = update_roll_weight(
-                card_id=card_id,
-                roll_id=roll_id,
-                loaded_version=parsed_version,
-                gross_weight=gross_weight,
-                tare_weight=tare_weight,
-            )
+        roll_result = validate_terminal_card_available_for_post(card_id)
+        if roll_result.ok:
+            if tare_weight is None or not isinstance(tare_weight, str):
+                roll_result = update_roll_gross_weight(
+                    card_id=card_id,
+                    roll_id=roll_id,
+                    loaded_version=parsed_version,
+                    gross_weight=gross_weight,
+                )
+            else:
+                roll_result = update_roll_weight(
+                    card_id=card_id,
+                    roll_id=roll_id,
+                    loaded_version=parsed_version,
+                    gross_weight=gross_weight,
+                    tare_weight=tare_weight,
+                )
 
     return terminal_post_response(
         request,
@@ -1514,12 +1523,14 @@ async def delete_roll_weight(
 ):
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        roll_result = delete_terminal_roll_with_confirmation(
-            card_id,
-            roll_id,
-            parsed_version,
-            confirm_roll_number,
-        )
+        roll_result = validate_terminal_card_available_for_post(card_id)
+        if roll_result.ok:
+            roll_result = delete_terminal_roll_with_confirmation(
+                card_id,
+                roll_id,
+                parsed_version,
+                confirm_roll_number,
+            )
 
     return terminal_post_response(
         request,
@@ -1543,17 +1554,19 @@ async def delete_selected_roll_weight(
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     parsed_roll_id: int | None = None
     if parsed_version is not None:
-        try:
-            parsed_roll_id = int(roll_id)
-        except ValueError:
-            roll_result = RuleResult(False, ("Изберете валидна ролка за изтриване.",))
-        else:
-            roll_result = delete_terminal_roll_with_confirmation(
-                card_id,
-                parsed_roll_id,
-                parsed_version,
-                confirm_roll_number,
-            )
+        roll_result = validate_terminal_card_available_for_post(card_id)
+        if roll_result.ok:
+            try:
+                parsed_roll_id = int(roll_id)
+            except ValueError:
+                roll_result = RuleResult(False, ("Изберете валидна ролка за изтриване.",))
+            else:
+                roll_result = delete_terminal_roll_with_confirmation(
+                    card_id,
+                    parsed_roll_id,
+                    parsed_version,
+                    confirm_roll_number,
+                )
 
     return terminal_post_response(
         request,
@@ -1574,7 +1587,9 @@ async def start_timing(
 ):
     parsed_version, timing_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        timing_result = start_production_timing(card_id, parsed_version)
+        timing_result = validate_terminal_card_available_for_post(card_id)
+        if timing_result.ok:
+            timing_result = start_production_timing(card_id, parsed_version)
 
     return terminal_post_response(
         request,
@@ -1593,7 +1608,9 @@ async def pause_timing(
 ):
     parsed_version, timing_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        timing_result = pause_production_timing(card_id, parsed_version)
+        timing_result = validate_terminal_card_available_for_post(card_id)
+        if timing_result.ok:
+            timing_result = pause_production_timing(card_id, parsed_version)
 
     return terminal_post_response(
         request,
@@ -1612,7 +1629,9 @@ async def resume_timing(
 ):
     parsed_version, timing_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        timing_result = resume_production_timing(card_id, parsed_version)
+        timing_result = validate_terminal_card_available_for_post(card_id)
+        if timing_result.ok:
+            timing_result = resume_production_timing(card_id, parsed_version)
 
     return terminal_post_response(
         request,
@@ -1631,7 +1650,9 @@ async def finish_terminal_card(
 ):
     parsed_version, workflow_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        workflow_result = finish_card(card_id, parsed_version)
+        workflow_result = validate_terminal_card_available_for_post(card_id)
+        if workflow_result.ok:
+            workflow_result = finish_card(card_id, parsed_version)
 
     return terminal_post_response(
         request,
@@ -1647,6 +1668,12 @@ def parse_loaded_version(loaded_version: str) -> tuple[int | None, RuleResult]:
         return int(loaded_version), RuleResult(True)
     except ValueError:
         return None, RuleResult(False, (INVALID_LOADED_VERSION_MESSAGE,))
+
+
+def validate_terminal_card_available_for_post(card_id: int) -> RuleResult:
+    if fetch_terminal_card_detail(card_id) is None:
+        return RuleResult(False, (TERMINAL_CARD_UNAVAILABLE_MESSAGE,))
+    return RuleResult(True)
 
 
 def delete_terminal_roll_with_confirmation(
@@ -1854,6 +1881,7 @@ def is_terminal_card_state_error(messages: tuple[str, ...]) -> bool:
     state_messages = {
         STALE_CARD_MESSAGE,
         INVALID_LOADED_VERSION_MESSAGE,
+        TERMINAL_CARD_UNAVAILABLE_MESSAGE,
     }
     return any(message in state_messages for message in messages)
 

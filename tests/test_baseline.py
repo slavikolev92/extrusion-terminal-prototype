@@ -843,7 +843,7 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
             extrusion_row(
                 "25281",
                 customer="Updated Customer",
-                raw_material_a="Updated LDPE",
+                raw_material_a="LDPE Updated | 100%",
             )
         ),
         overwrite_existing=True,
@@ -876,7 +876,7 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
     assert card["machine_sequence"] == 1
     assert card["customer"] == "Updated Customer"
     assert card["max_roll_weight"] == "60.0"
-    assert card["raw_material_a"] == "Updated LDPE"
+    assert card["raw_material_a"] == "LDPE Updated | 100%"
     assert card["tare_weight"] == 1.25
     assert card["actual_raw_material_used"] == "Actual LDPE"
     assert card["raw_material_brand_grade"] == "Grade A"
@@ -884,6 +884,60 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
     assert card["first_started_at"] == "2026-06-12T08:00:00"
     assert roll_count == 1
     assert segment_count == 1
+
+
+def test_overwrite_import_blocks_invalid_release_recipe_for_released_card(connection):
+    card_id = import_one_ready_card("25321")
+    assert db.release_card(
+        card_id,
+        machine_id=2,
+        machine_sequence=1,
+        max_roll_weight="60.0",
+    ).ok
+    before = db.fetch_admin_card_detail(card_id)
+
+    result = import_cards_from_csv(
+        "overwrite-invalid-released.csv",
+        csv_bytes(
+            extrusion_row(
+                "25321",
+                customer="Invalid Update Customer",
+                raw_material_a="Updated LDPE",
+            )
+        ),
+        overwrite_existing=True,
+    )
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert result.rows_imported == 0
+    assert result.skipped == 1
+    assert result.row_results[0].action == "blocked"
+    assert "Рецептата не може да бъде пусната" in result.row_results[0].message
+    assert after["customer"] == before["customer"]
+    assert after["raw_material_a"] == before["raw_material_a"]
+    assert after["version"] == before["version"]
+
+
+def test_overwrite_import_allows_invalid_release_recipe_for_unreleased_draft(connection):
+    card_id = import_one_ready_card("25322")
+
+    result = import_cards_from_csv(
+        "overwrite-invalid-draft.csv",
+        csv_bytes(
+            extrusion_row(
+                "25322",
+                customer="Draft Update Customer",
+                raw_material_a="Updated LDPE",
+            )
+        ),
+        overwrite_existing=True,
+    )
+    card = db.fetch_admin_card_detail(card_id)
+
+    assert result.rows_imported == 1
+    assert result.updated == 1
+    assert card["customer"] == "Draft Update Customer"
+    assert card["raw_material_a"] == "Updated LDPE"
 
 
 def test_overwrite_import_blocks_stale_source_after_admin_imported_field_correction(connection):

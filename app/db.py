@@ -1217,6 +1217,8 @@ def finish_card(card_id: int, loaded_version: int) -> RuleResult:
             """,
             (STATUS_COMPLETED, now, card_id),
         )
+        if card["machine_id"] is not None:
+            normalize_machine_queue(connection, int(card["machine_id"]))
 
     return RuleResult(True, (f"Поръчка {card['order_number']} е приключена.",))
 
@@ -1287,6 +1289,8 @@ def cancel_card(card_id: int, loaded_version: int) -> RuleResult:
             """,
             (STATUS_CANCELLED, now, card_id),
         )
+        if card["machine_id"] is not None:
+            normalize_machine_queue(connection, int(card["machine_id"]))
 
     return RuleResult(True, (f"Поръчка {card['order_number']} е анулирана.",))
 
@@ -1306,45 +1310,28 @@ def restore_cancelled_card(card_id: int, loaded_version: int) -> RuleResult:
         if not version_result.ok:
             return version_result
 
-        if card["machine_id"] is not None and card["machine_sequence"] is not None:
-            duplicate = connection.execute(
-                f"""
-                SELECT order_number
-                FROM cards
-                WHERE id <> ?
-                  AND machine_id = ?
-                  AND machine_sequence = ?
-                  AND status IN ({", ".join("?" for _ in ACTIVE_TERMINAL_STATUSES)})
-                LIMIT 1
-                """,
-                (
-                    card_id,
-                    card["machine_id"],
-                    card["machine_sequence"],
-                    *ACTIVE_TERMINAL_STATUSES,
-                ),
-            ).fetchone()
-            if duplicate:
-                return RuleResult(
-                    False,
-                    (
-                        f"Машина {card['machine_id']} вече има активен ред "
-                        f"{card['machine_sequence']} за поръчка {duplicate['order_number']}.",
-                    ),
-                )
-
         try:
+            temporary_sequence = -int(card["id"])
             connection.execute(
                 """
                 UPDATE cards
                 SET status = ?,
+                    machine_sequence = ?,
                     cancelled_at = NULL,
-                    version = version + 1,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (STATUS_PENDING, card_id),
+                (STATUS_PENDING, temporary_sequence, card_id),
             )
+            if card["machine_id"] is not None and card["machine_sequence"] is not None:
+                normalize_machine_queue(
+                    connection,
+                    machine_id=int(card["machine_id"]),
+                    moving_card_id=card_id,
+                    target_position=int(card["machine_sequence"]),
+                )
+            else:
+                touch_card(connection, card_id)
         except sqlite3.IntegrityError:
             connection.rollback()
             return RuleResult(
@@ -1422,6 +1409,7 @@ def add_timing_segment(
         invariant_result = validate_timing_segment_change(
             connection=connection,
             card=card,
+            started_at=parsed["started_at"],
             ended_at=parsed["ended_at"],
         )
         if not invariant_result.ok:
@@ -1482,6 +1470,7 @@ def update_timing_segment(
         invariant_result = validate_timing_segment_change(
             connection=connection,
             card=card,
+            started_at=parsed["started_at"],
             ended_at=parsed["ended_at"],
             segment_id=segment_id,
         )
@@ -1687,6 +1676,26 @@ def _update_admin_timing_ledger(
             ("Картите в изработване трябва да запазят един отворен времеви сегмент.",),
         )
 
+    final_segments: list[dict[str, str | None]] = []
+    for row in existing_segments:
+        segment_id = int(row["id"])
+        if segment_id in delete_segment_ids:
+            continue
+        final_segments.append(
+            parsed_updates.get(
+                segment_id,
+                {
+                    "started_at": str(row["started_at"]),
+                    "ended_at": row["ended_at"],
+                    "end_reason": row["end_reason"],
+                },
+            )
+        )
+    final_segments.extend(parsed_new)
+    overlap_result = validate_no_overlapping_closed_segments(final_segments)
+    if not overlap_result.ok:
+        return overlap_result
+
     try:
         for segment_id in delete_segment_ids:
             connection.execute(
@@ -1818,6 +1827,27 @@ def _update_admin_timing_ledger(
     return RuleResult(True, ("Времето е записано.",))
 
 
+def validate_no_overlapping_closed_segments(
+    segments: list[dict[str, str | None]],
+) -> RuleResult:
+    closed_segments = sorted(
+        (
+            segment
+            for segment in segments
+            if segment.get("ended_at") is not None
+        ),
+        key=lambda segment: (str(segment["started_at"]), str(segment["ended_at"])),
+    )
+    previous_end: str | None = None
+    for segment in closed_segments:
+        started_at = str(segment["started_at"])
+        ended_at = str(segment["ended_at"])
+        if previous_end is not None and started_at < previous_end:
+            return RuleResult(False, ("Времевите сегменти не могат да се застъпват.",))
+        previous_end = ended_at
+    return RuleResult(True)
+
+
 def parse_timing_segment_values(
     started_at: str,
     ended_at: str,
@@ -1875,6 +1905,7 @@ def parse_timing_timestamp(
 def validate_timing_segment_change(
     connection: sqlite3.Connection,
     card: sqlite3.Row,
+    started_at: str,
     ended_at: str | None,
     segment_id: int | None = None,
 ) -> RuleResult:
@@ -1903,6 +1934,23 @@ def validate_timing_segment_change(
         )
         if open_segment_count == 0:
             return RuleResult(False, ("Картите в изработване трябва да запазят отворен времеви сегмент.",))
+
+    if ended_at is not None:
+        overlap = connection.execute(
+            """
+            SELECT id
+            FROM production_time_segments
+            WHERE card_id = ?
+              AND ended_at IS NOT NULL
+              AND started_at < ?
+              AND ended_at > ?
+              AND (? IS NULL OR id <> ?)
+            LIMIT 1
+            """,
+            (card["id"], ended_at, started_at, segment_id, segment_id),
+        ).fetchone()
+        if overlap:
+            return RuleResult(False, ("Времевите сегменти не могат да се застъпват.",))
 
     return RuleResult(True)
 
@@ -2005,7 +2053,7 @@ def fetch_active_terminal_action_card(
 ) -> sqlite3.Row | None:
     return connection.execute(
         f"""
-        SELECT id, order_number, status, tare_weight, version
+        SELECT id, order_number, status, machine_id, tare_weight, version
         FROM cards
         WHERE id = ?
           AND status IN ({", ".join("?" for _ in ACTIVE_TERMINAL_STATUSES)})

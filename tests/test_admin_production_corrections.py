@@ -197,7 +197,7 @@ def test_admin_cancel_closes_running_segment_and_blocks_stale_version(connection
     )
 
 
-def test_admin_restore_returns_cancelled_card_to_pending_and_blocks_duplicate_sequence(connection):
+def test_admin_restore_returns_cancelled_card_to_pending_and_shifts_duplicate_sequence(connection):
     cancelled_id = release_ready_card("26001", machine_id=2, sequence=1)
     assert db.cancel_card(cancelled_id, card_version(cancelled_id)).ok
     restore_version = card_version(cancelled_id)
@@ -210,11 +210,22 @@ def test_admin_restore_returns_cancelled_card_to_pending_and_blocks_duplicate_se
     assert restored["version"] == restore_version + 1
 
     assert db.cancel_card(cancelled_id, card_version(cancelled_id)).ok
-    release_ready_card("26002", machine_id=2, sequence=1)
-    blocked = db.restore_cancelled_card(cancelled_id, card_version(cancelled_id))
+    other_card_id = release_ready_card("26002", machine_id=2, sequence=1)
+    shifted = db.restore_cancelled_card(cancelled_id, card_version(cancelled_id))
+    active_rows = connection.execute(
+        """
+        SELECT id, machine_sequence
+        FROM cards
+        WHERE machine_id = 2 AND status IN ('pending', 'running', 'paused')
+        ORDER BY machine_sequence
+        """
+    ).fetchall()
 
-    assert not blocked.ok
-    assert blocked.messages == ("Машина 2 вече има активен ред 1 за поръчка 26002.",)
+    assert shifted.ok
+    assert [(row["id"], row["machine_sequence"]) for row in active_rows] == [
+        (cancelled_id, 1),
+        (other_card_id, 2),
+    ]
 
 
 def test_admin_material_correction_updates_terminal_fields_and_blocks_stale_version(connection):
@@ -789,6 +800,85 @@ def test_admin_timing_correction_rejects_invalid_intervals_and_multiple_open_seg
     assert open_result.messages == ("Картата вече има отворен времеви сегмент.",)
     assert not non_running_open_result.ok
     assert non_running_open_result.messages == ("Само карти в изработване могат да имат отворен времеви сегмент.",)
+
+
+def test_admin_timing_correction_rejects_overlapping_closed_segments(connection):
+    card_id = release_ready_card("26050")
+    assert db.add_timing_segment(
+        card_id,
+        card_version(card_id),
+        "2026-06-14 08:00:00",
+        "2026-06-14 10:00:00",
+        "pause",
+    ).ok
+
+    result = db.add_timing_segment(
+        card_id,
+        card_version(card_id),
+        "2026-06-14 09:00:00",
+        "2026-06-14 11:00:00",
+        "pause",
+    )
+
+    assert not result.ok
+    assert result.messages == ("Времевите сегменти не могат да се застъпват.",)
+
+
+def test_admin_timing_ledger_rejects_overlapping_closed_segments(connection):
+    card_id = release_ready_card("26051")
+    assert db.add_timing_segment(
+        card_id,
+        card_version(card_id),
+        "2026-06-14 08:00:00",
+        "2026-06-14 09:00:00",
+        "pause",
+    ).ok
+    card = db.fetch_admin_card_detail(card_id)
+    segment_id = card["timing_segments"][0]["id"]
+
+    result = db.update_admin_timing_ledger(
+        card_id,
+        card["version"],
+        {
+            segment_id: {
+                "started_at": "2026-06-14 08:00:00",
+                "ended_at": "2026-06-14 10:00:00",
+                "end_reason": "pause",
+            }
+        },
+        set(),
+        [
+            {
+                "started_at": "2026-06-14 09:00:00",
+                "ended_at": "2026-06-14 11:00:00",
+                "end_reason": "pause",
+            }
+        ],
+    )
+
+    assert not result.ok
+    assert result.messages == ("Времевите сегменти не могат да се застъпват.",)
+
+
+def test_admin_timing_correction_allows_adjacent_closed_segments(connection):
+    card_id = release_ready_card("26052")
+    assert db.add_timing_segment(
+        card_id,
+        card_version(card_id),
+        "2026-06-14 08:00:00",
+        "2026-06-14 09:00:00",
+        "pause",
+    ).ok
+
+    result = db.add_timing_segment(
+        card_id,
+        card_version(card_id),
+        "2026-06-14 09:00:00",
+        "2026-06-14 10:00:00",
+        "pause",
+    )
+
+    assert result.ok
 
 
 def test_admin_timing_correction_blocks_deleting_all_timing_from_completed_card(connection):

@@ -255,6 +255,28 @@ def test_finish_from_running_closes_active_segment_and_archives_card(connection)
     assert card_id in archive_ids
 
 
+def test_finish_normalizes_active_machine_queue_after_removed_card(connection):
+    first_id = prepare_running_finishable_card("25650", machine_id=1, machine_sequence=1)
+    second_id = import_and_release_card("25651", machine_id=1, machine_sequence=2)
+    third_id = import_and_release_card("25652", machine_id=1, machine_sequence=3)
+
+    result = db.finish_card(first_id, db.fetch_terminal_card_detail(first_id)["version"])
+    active_rows = connection.execute(
+        """
+        SELECT id, machine_sequence
+        FROM cards
+        WHERE machine_id = 1 AND status IN ('pending', 'running', 'paused')
+        ORDER BY machine_sequence
+        """
+    ).fetchall()
+
+    assert result.ok
+    assert [(row["id"], row["machine_sequence"]) for row in active_rows] == [
+        (second_id, 1),
+        (third_id, 2),
+    ]
+
+
 def test_finish_from_paused_succeeds_without_open_segment(connection):
     card_id = prepare_running_finishable_card("25605")
     assert db.pause_production_timing(
@@ -366,6 +388,28 @@ def test_cancel_pending_card_moves_it_out_of_workstation_visibility(connection):
     assert db.fetch_terminal_card_detail(card_id) is None
 
 
+def test_cancel_normalizes_active_machine_queue_after_removed_card(connection):
+    first_id = import_and_release_card("25653", machine_id=2, machine_sequence=1)
+    second_id = import_and_release_card("25654", machine_id=2, machine_sequence=2)
+    third_id = import_and_release_card("25655", machine_id=2, machine_sequence=3)
+
+    result = db.cancel_card(second_id, db.fetch_terminal_card_detail(second_id)["version"])
+    active_rows = connection.execute(
+        """
+        SELECT id, machine_sequence
+        FROM cards
+        WHERE machine_id = 2 AND status IN ('pending', 'running', 'paused')
+        ORDER BY machine_sequence
+        """
+    ).fetchall()
+
+    assert result.ok
+    assert [(row["id"], row["machine_sequence"]) for row in active_rows] == [
+        (first_id, 1),
+        (third_id, 2),
+    ]
+
+
 def test_cancel_running_card_closes_open_segment(connection):
     card_id = import_and_release_card("25607")
     start_card(card_id)
@@ -406,25 +450,33 @@ def test_restore_cancelled_card_returns_to_pending(connection):
     assert card_id in active_ids
 
 
-def test_restore_blocks_duplicate_active_machine_sequence(connection):
+def test_restore_inserts_at_original_sequence_and_shifts_active_queue(connection):
     cancelled_card_id = import_and_release_card("25609", machine_id=2, machine_sequence=1)
     assert db.cancel_card(
         cancelled_card_id,
         db.fetch_terminal_card_detail(cancelled_card_id)["version"],
     ).ok
-    import_and_release_card("25610", machine_id=2, machine_sequence=1)
+    other_card_id = import_and_release_card("25610", machine_id=2, machine_sequence=1)
 
     result = db.restore_cancelled_card(
         cancelled_card_id,
         db.fetch_admin_card_detail(cancelled_card_id)["version"],
     )
+    active_rows = connection.execute(
+        """
+        SELECT id, machine_sequence
+        FROM cards
+        WHERE machine_id = 2 AND status IN ('pending', 'running', 'paused')
+        ORDER BY machine_sequence
+        """
+    ).fetchall()
 
-    assert not result.ok
-    assert result.messages == (
-        "Машина 2 вече има активен ред 1 за поръчка 25610.",
-    )
-    assert db.fetch_admin_card_detail(cancelled_card_id)["status"] == STATUS_CANCELLED
-    assert db.fetch_terminal_card_detail(cancelled_card_id) is None
+    assert result.ok
+    assert [(row["id"], row["machine_sequence"]) for row in active_rows] == [
+        (cancelled_card_id, 1),
+        (other_card_id, 2),
+    ]
+    assert db.fetch_terminal_card_detail(cancelled_card_id)["status"] == STATUS_PENDING
 
 
 def test_stale_finish_cancel_and_restore_edits_are_blocked(connection):

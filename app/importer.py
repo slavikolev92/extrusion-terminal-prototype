@@ -8,6 +8,7 @@ from typing import Any
 
 from .constants import STATUS_IMPORTED
 from .db import connect, insert_import_batch_row, sync_recipe_components_for_card
+from .rules import RuleResult, validate_structured_recipe_release
 
 
 IMPORT_FIELDS = (
@@ -285,6 +286,16 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                 if has_stale_import_overwrite_conflict(connection, int(existing["id"]), card):
                     block_import_row(result, row_number, order_number, STALE_IMPORT_MESSAGE, connection)
                     continue
+                release_validity = validate_active_overwrite_release_fields(existing, card)
+                if not release_validity.ok:
+                    block_import_row(
+                        result,
+                        row_number,
+                        order_number,
+                        " ".join(release_validity.messages),
+                        connection,
+                    )
+                    continue
                 update_imported_card_fields(connection, int(existing["id"]), int(result.batch_id), card)
                 result.updated += 1
                 action = "updated"
@@ -335,6 +346,15 @@ def import_success_message(*, updated: bool) -> str:
     if updated:
         return "Обновена съществуваща технологична карта; готова за планиране."
     return "Създадена нова технологична карта; готова за планиране."
+
+
+def validate_active_overwrite_release_fields(
+    existing: sqlite3.Row,
+    incoming_card: dict[str, str],
+) -> RuleResult:
+    if existing["status"] == STATUS_IMPORTED:
+        return RuleResult(True)
+    return validate_structured_recipe_release(incoming_card)
 
 
 def decode_csv(content: bytes) -> str:
@@ -446,7 +466,7 @@ def find_existing_import_card(
     order_number: str,
 ) -> sqlite3.Row | None:
     existing = connection.execute(
-        "SELECT id, order_number FROM cards WHERE order_number = ?",
+        "SELECT id, order_number, status FROM cards WHERE order_number = ?",
         (order_number,),
     ).fetchone()
     if existing:
@@ -454,7 +474,7 @@ def find_existing_import_card(
 
     return connection.execute(
         """
-        SELECT cards.id, cards.order_number
+        SELECT cards.id, cards.order_number, cards.status
         FROM card_import_sources
         JOIN cards ON cards.id = card_import_sources.card_id
         WHERE card_import_sources.order_number = ?

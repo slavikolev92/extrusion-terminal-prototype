@@ -343,13 +343,13 @@ def test_terminal_recipe_actual_entries_survive_reimport(connection):
 
     result = import_cards_from_csv(
         "overwrite.csv",
-        csv_bytes(extrusion_row("25342", raw_material_a="Updated A")),
+        csv_bytes(extrusion_row("25342", raw_material_a="LDPE Updated A | 100%")),
         overwrite_existing=True,
     )
     card = db.fetch_terminal_card_detail(card_id)
 
     assert result.updated == 1
-    assert card["raw_material_a"] == "Updated A"
+    assert card["raw_material_a"] == "LDPE Updated A | 100%"
     assert card["recipe_actual_entries"]["raw_material_a"]["actual_material_used"] == "Actual A"
     assert card["recipe_actual_entries"]["raw_material_a"]["batch_lot"] == "Batch A"
 

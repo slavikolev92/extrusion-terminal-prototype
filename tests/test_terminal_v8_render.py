@@ -13,6 +13,7 @@ from app import db
 from app.db import STALE_CARD_MESSAGE
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 from app.main import (
+    TERMINAL_CARD_UNAVAILABLE_MESSAGE,
     app,
     delete_selected_roll_weight,
     finish_terminal_card,
@@ -1381,7 +1382,7 @@ def test_terminal_roll_entry_controls_follow_roll_table_weight_order(connection)
     assert entry_html.find("Шпула, кг") < entry_html.find('class="roll-add-button"')
 
 
-def test_terminal_roll_and_tare_forms_use_dirty_autosave_contract(connection):
+def test_terminal_tare_and_correction_forms_use_dirty_autosave_without_new_roll_autosave(connection):
     card_id = release_ready_card("26198", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "2.00").ok
@@ -1395,9 +1396,9 @@ def test_terminal_roll_and_tare_forms_use_dirty_autosave_contract(connection):
     row_forms = form_blocks(html, f"/terminal/cards/{card_id}/rolls/{roll['id']}")
 
     assert 'data-dirty-autosave="true"' in tare_form
-    assert 'data-dirty-autosave="true"' in add_roll_form
+    assert 'data-dirty-autosave="true"' not in add_roll_form
     assert 'data-dirty-autosave-group="roll-entry"' in tare_form
-    assert 'data-dirty-autosave-group="roll-entry"' in add_roll_form
+    assert 'data-dirty-autosave-group="roll-entry"' not in add_roll_form
     assert 'data-new-roll-tare-copy="true"' in add_roll_form
     assert 'data-current-tare-input="true"' in tare_form
     assert all('data-dirty-autosave="true"' in form for form in row_forms)
@@ -1858,6 +1859,88 @@ def test_terminal_stale_tare_submit_renders_refresh_alert_without_overwrite(conn
     assert "Презаредете картата, преди да продължите." in html
     assert STALE_CARD_MESSAGE not in html
     assert 'class="terminal-toast"' not in html
+
+
+def test_terminal_tare_route_blocks_cancelled_card_direct_post(connection):
+    card_id = release_ready_card("26210", machine_id=1, sequence=1)
+    assert db.cancel_card(card_id, card_version(card_id)).ok
+    loaded_version = db.fetch_admin_card_detail(card_id)["version"]
+
+    response = asyncio.run(
+        save_tare_weight(
+            make_test_request(f"/terminal/cards/{card_id}/tare"),
+            card_id,
+            str(loaded_version),
+            "9.99",
+        )
+    )
+    card = db.fetch_admin_card_detail(card_id)
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert card["status"] == "cancelled"
+    assert card["tare_weight"] is None
+    assert card["version"] == loaded_version
+    assert 'id="terminal-refresh-alert"' in html
+    assert "Данните са променени" in html
+    assert "Презаредете картата, преди да продължите." in html
+    assert TERMINAL_CARD_UNAVAILABLE_MESSAGE not in html
+
+
+def test_terminal_material_route_blocks_archived_card_direct_post(connection):
+    card_id = release_ready_card("26211", machine_id=2, sequence=1)
+    complete_card(card_id)
+    assert db.archive_completed_card(card_id, card_version(card_id)).ok
+    loaded_version = db.fetch_admin_card_detail(card_id)["version"]
+
+    response_status, headers = asyncio.run(
+        post_form_to_app(
+            f"/terminal/cards/{card_id}/materials",
+            {
+                "loaded_version": str(loaded_version),
+                "actual_material__raw_material_a": "Terminal overwrite",
+                "batch_lot__raw_material_a": "Bad batch",
+            },
+        )
+    )
+    card = db.fetch_admin_card_detail(card_id)
+
+    assert response_status == 200
+    assert "location" not in headers
+    assert card["status"] == "archived"
+    assert (
+        card["recipe_actual_entries"]
+        .get("raw_material_a", {})
+        .get("actual_material_used")
+        != "Terminal overwrite"
+    )
+    assert card["version"] == loaded_version
+
+
+def test_terminal_roll_route_blocks_archived_card_direct_post(connection):
+    card_id = release_ready_card("26212", machine_id=3, sequence=1)
+    complete_card(card_id)
+    assert db.archive_completed_card(card_id, card_version(card_id)).ok
+    card = db.fetch_admin_card_detail(card_id)
+    loaded_version = card["version"]
+    roll = card["roll_entries"][0]
+
+    response = asyncio.run(
+        save_roll_weight(
+            make_test_request(f"/terminal/cards/{card_id}/rolls/{roll['id']}"),
+            card_id,
+            roll["id"],
+            str(loaded_version),
+            "99.99",
+            None,
+        )
+    )
+    updated = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 200
+    assert updated["status"] == "archived"
+    assert updated["roll_entries"][0]["gross_weight"] == roll["gross_weight"]
+    assert updated["version"] == loaded_version
 
 
 def test_terminal_finish_failure_renders_inline_without_redirect(connection):

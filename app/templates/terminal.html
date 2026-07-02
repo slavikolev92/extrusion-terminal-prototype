@@ -2271,7 +2271,7 @@
               </div>
               <div class="panel-body roll-body">
                 <div class="roll-entry">
-                  <form action="/terminal/cards/{{ selected_card.id }}/rolls" id="add-roll-form-{{ selected_card.id }}" class="add-roll-form" method="post" data-dirty-autosave="true" data-dirty-autosave-group="roll-entry">
+                  <form action="/terminal/cards/{{ selected_card.id }}/rolls" id="add-roll-form-{{ selected_card.id }}" class="add-roll-form" method="post">
                     <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                     <input type="hidden" name="tare_weight" value="{{ selected_card.tare_weight if selected_card.tare_weight is not none else '' }}" data-new-roll-tare-copy="true">
                     <label>
