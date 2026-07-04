@@ -190,8 +190,8 @@ Resolution:
 - Found in: workbook macro validation discussion, 2026-06-26
 - Must consider after: OI-003 Step 8 Excel export validation
 - Evidence:
-  - `interim-costing-process/excel-tools/export-validation/export-validation.bas`
-  - `interim-costing-process/excel-tools/recipe-builder/recipe-builder-installer.bas`
+  - `production-workbook-tooling/interim-costing-process/excel-tools/export-validation/export-validation.bas`
+  - `production-workbook-tooling/interim-costing-process/excel-tools/recipe-builder/recipe-builder-installer.bas`
 
 The workbook helper macro workflow currently requires separate installation
 paths for the recipe builder and export validation. In practice this is fragile:
@@ -225,8 +225,8 @@ Recommended fix:
 - Found in: workbook macro validation discussion, 2026-06-26
 - Must consider after: OI-005 workbook helper installation consolidation
 - Evidence:
-  - `interim-costing-process/excel-tools/export-validation/export-validation.bas`
-  - `tests/test_excel_export_macro_contract.py`
+  - `production-workbook-tooling/interim-costing-process/excel-tools/export-validation/export-validation.bas`
+  - `production-workbook-tooling/tests/test_excel_export_macro_contract.py`
 
 The export-validation macro was temporarily converted to English-only messages
 because raw Cyrillic string literals in imported `.bas` files displayed as
