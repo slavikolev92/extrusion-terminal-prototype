@@ -7,6 +7,7 @@ from typing import Any
 
 from . import db
 from .constants import PRINTABLE_STATUSES
+from .recipe_parser import parse_recipe_cell
 
 MAX_PRINT_ROLLS = 120
 
@@ -168,7 +169,10 @@ def build_recipe_rows(
             {
                 "component_key": component_key,
                 "label": label,
-                "planned_material": text_value(card.get(card_field)),
+                "planned_material": planned_recipe_display(
+                    component_key,
+                    card.get(card_field),
+                ),
                 "actual_material_used": text_value(
                     actual_entry.get("actual_material_used")
                 ),
@@ -185,6 +189,21 @@ def build_recipe_rows(
         rows[0]["batch_lot"] = text_value(card.get("raw_material_batch_lot"))
 
     return rows
+
+
+def planned_recipe_display(component_key: str, source_text: Any) -> str:
+    raw_source_text = text_value(source_text)
+    component, errors = parse_recipe_cell(component_key, raw_source_text)
+    if component is None or errors:
+        return raw_source_text
+    return (
+        f"{component.planned_material} "
+        f"{format_recipe_percent(component.recipe_percent)}%"
+    )
+
+
+def format_recipe_percent(value: Decimal) -> str:
+    return format(value.normalize(), "f")
 
 
 def build_roll_slots(gross_rolls: list[dict[str, Any]]) -> list[dict[str, Any]]:

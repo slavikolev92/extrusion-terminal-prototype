@@ -3,14 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from app import db
-from app.constants import STATUS_COMPLETED, STATUS_IMPORTED, STATUS_PENDING
+from app.constants import STATUS_COMPLETED, STATUS_PENDING
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 from app.main import admin_card_detail_context, terminal_context
 from app.printing import build_print_readiness
 
 
 FIXTURE_PATH = Path("tests/fixtures/structured_recipe_sample.csv")
-RECIPE_RELEASE_PREFIX = "Рецептата не може да бъде пусната"
 
 
 def import_sample_csv() -> object:
@@ -91,71 +90,101 @@ def test_structured_sample_csv_imports_and_normalizes_recipe_components(connecti
     assert result.row_errors == []
 
     full_id = card_id_for_order("SR-SAMPLE-001")
-    category_only_id = card_id_for_order("SR-SAMPLE-002")
+    recycled_id = card_id_for_order("SR-SAMPLE-002")
     one_sided_id = card_id_for_order("SR-SAMPLE-003")
     correction_id = card_id_for_order("SR-SAMPLE-004")
 
     assert component_summary(full_id) == [
         (
             "raw_material_a",
-            "LDPE Rompetrol Midilena B20/03 | 77%",
+            "LDPE; Rompetrol Midilena B20/03 | 77%",
             "LDPE",
             "Rompetrol Midilena B20/03",
             "77",
         ),
-        ("linear_pe", "LLDPE SABIC 119ZJ | 18%", "LLDPE", "SABIC 119ZJ", "18"),
+        ("linear_pe", "LLDPE; SABIC 119ZJ | 18%", "LLDPE", "SABIC 119ZJ", "18"),
         (
             "antistatic",
-            "Antistatic Novachem AT 04673 LD | 2%",
+            "Antistatic; Novachem AT 04673 LD | 2%",
             "Antistatic",
             "Novachem AT 04673 LD",
             "2",
         ),
         (
             "masterbatch",
-            "Masterbatch Polibach White 8000 ET | 3%",
+            "Masterbatch; Polibach White 8000 ET | 3%",
             "Masterbatch",
             "Polibach White 8000 ET",
             "3",
         ),
     ]
-    assert component_summary(category_only_id) == [
-        ("raw_material_a", "reLDPE | 80%", "reLDPE", "", "80"),
-        ("linear_pe", "LLDPE SABIC 119ZJ | 20%", "LLDPE", "SABIC 119ZJ", "20"),
+    assert component_summary(recycled_id) == [
+        ("raw_material_a", "reLDPE; Recycled LDPE | 80%", "reLDPE", "Recycled LDPE", "80"),
+        ("linear_pe", "LLDPE; SABIC 119ZJ | 20%", "LLDPE", "SABIC 119ZJ", "20"),
     ]
     assert component_summary(one_sided_id) == [
-        ("raw_material_a", "LDPE B20/03 | 95%", "LDPE", "B20/03", "95"),
-        ("masterbatch", "Masterbatch | 5%", "Masterbatch", "", "5"),
+        ("raw_material_a", "LDPE; B20/03 | 95%", "LDPE", "B20/03", "95"),
+        ("masterbatch", "Masterbatch; White MB | 5%", "Masterbatch", "White MB", "5"),
     ]
     assert component_summary(correction_id) == [
-        ("raw_material_a", "LDPE Correction A | 80%", "LDPE", "Correction A", "80"),
-        ("linear_pe", "LLDPE Correction L | 19%", "LLDPE", "Correction L", "19"),
+        ("raw_material_a", "LDPE; Correction A | 80%", "LDPE", "Correction A", "80"),
+        ("linear_pe", "LLDPE; Correction L | 20%", "LLDPE", "Correction L", "20"),
     ]
 
 
-def test_structured_sample_invalid_total_blocks_release_until_admin_correction(connection):
+def test_structured_sample_invalid_total_variant_is_blocked_at_import(connection):
+    invalid_bytes = FIXTURE_PATH.read_bytes().replace(
+        b"LLDPE; Correction L | 20%",
+        b"LLDPE; Correction L | 19%",
+    )
+
+    result = import_cards_from_csv(
+        "structured_recipe_sample_invalid_total.csv",
+        invalid_bytes,
+        overwrite_existing=False,
+    )
+
+    assert result.rows_seen == 4
+    assert result.rows_imported == 3
+    assert result.skipped == 1
+
+    blocked_results = [row for row in result.row_results if row.action == "blocked"]
+    assert len(blocked_results) == 1
+    assert "Рецептата не може да бъде импортирана" in blocked_results[0].message
+
+    with db.connect() as connection:
+        imported_orders = {
+            str(row["order_number"])
+            for row in connection.execute("SELECT order_number FROM cards")
+        }
+
+    assert "SR-SAMPLE-004" not in imported_orders
+    assert {
+        "SR-SAMPLE-001",
+        "SR-SAMPLE-002",
+        "SR-SAMPLE-003",
+    }.issubset(imported_orders)
+
+
+def test_structured_sample_valid_total_releases_and_admin_correction_stays_structured(
+    connection,
+):
     import_sample_csv()
     card_id = card_id_for_order("SR-SAMPLE-004")
 
-    blocked = release_card(card_id)
-    card = db.fetch_admin_card_detail(card_id)
-
-    assert not blocked.ok
-    assert blocked.messages == (
-        f"{RECIPE_RELEASE_PREFIX}: сборът на процентите трябва да е точно 100%. "
-        "Коригирайте рецептата и опитайте отново.",
-    )
-    assert card["status"] == STATUS_IMPORTED
-    assert card["machine_id"] is None
-    assert card["machine_sequence"] is None
-
     fields = current_import_fields(card_id)
-    fields["linear_pe"] = "LLDPE Correction L | 20%"
+    fields["linear_pe"] = "LLDPE; Adjusted Correction L | 20%"
     saved = db.update_admin_imported_fields(card_id, card_version(card_id), fields)
     assert saved.ok
     assert component_summary(card_id) == [
-        ("raw_material_a", "LDPE Correction A | 80%", "LDPE", "Correction A", "80"),
-        ("linear_pe", "LLDPE Correction L | 20%", "LLDPE", "Correction L", "20"),
+        ("raw_material_a", "LDPE; Correction A | 80%", "LDPE", "Correction A", "80"),
+        (
+            "linear_pe",
+            "LLDPE; Adjusted Correction L | 20%",
+            "LLDPE",
+            "Adjusted Correction L",
+            "20",
+        ),
     ]
 
     released = release_card(card_id, machine_id=2, sequence=1)
@@ -178,16 +207,16 @@ def test_structured_sample_admin_and_terminal_display_structured_rows(connection
     admin_rows = {row["field"]: row for row in admin_context["recipe_rows"]}
     terminal_rows = {row["field"]: row for row in terminal["recipe_rows"]}
 
-    assert admin_rows["raw_material_a"]["source_text"] == "reLDPE | 80%"
+    assert admin_rows["raw_material_a"]["source_text"] == "reLDPE; Recycled LDPE | 80%"
     assert admin_rows["raw_material_a"]["material_category"] == "reLDPE"
-    assert admin_rows["raw_material_a"]["planned_material"] == "reLDPE"
+    assert admin_rows["raw_material_a"]["planned_material"] == "Recycled LDPE"
     assert admin_rows["raw_material_a"]["recipe_percent"] == "80%"
     assert admin_rows["raw_material_a"]["planned_kg"] == "1000.00"
     assert admin_rows["raw_material_a"]["is_structured"] is True
 
-    assert terminal_rows["raw_material_a"]["source_text"] == "reLDPE | 80%"
+    assert terminal_rows["raw_material_a"]["source_text"] == "reLDPE; Recycled LDPE | 80%"
     assert terminal_rows["raw_material_a"]["material_category"] == "reLDPE"
-    assert terminal_rows["raw_material_a"]["planned_material"] == "reLDPE"
+    assert terminal_rows["raw_material_a"]["planned_material"] == "Recycled LDPE"
     assert terminal_rows["raw_material_a"]["recipe_percent"] == "80%"
     assert terminal_rows["raw_material_a"]["planned_kg"] == "1000"
     assert terminal_rows["linear_pe"]["planned_material"] == "SABIC 119ZJ"
@@ -237,7 +266,7 @@ def test_structured_sample_terminal_material_save_and_completion(connection):
     assert completed["total_net_weight"] is not None
 
 
-def test_structured_sample_print_output_uses_original_source_text(connection):
+def test_structured_sample_print_output_uses_compact_material_and_percent(connection):
     import_sample_csv()
     card_id = card_id_for_order("SR-SAMPLE-001")
     assert release_card(card_id, machine_id=1, sequence=1).ok
@@ -251,14 +280,8 @@ def test_structured_sample_print_output_uses_original_source_text(connection):
         row["component_key"]: row
         for row in readiness.data["front"]["recipe_rows"]
     }
-    assert rows["raw_material_a"]["planned_material"] == (
-        "LDPE Rompetrol Midilena B20/03 | 77%"
-    )
-    assert rows["linear_pe"]["planned_material"] == "LLDPE SABIC 119ZJ | 18%"
-    assert rows["antistatic"]["planned_material"] == (
-        "Antistatic Novachem AT 04673 LD | 2%"
-    )
-    assert rows["masterbatch"]["planned_material"] == (
-        "Masterbatch Polibach White 8000 ET | 3%"
-    )
+    assert rows["raw_material_a"]["planned_material"] == "Rompetrol Midilena B20/03 77%"
+    assert rows["linear_pe"]["planned_material"] == "SABIC 119ZJ 18%"
+    assert rows["antistatic"]["planned_material"] == "Novachem AT 04673 LD 2%"
+    assert rows["masterbatch"]["planned_material"] == "Polibach White 8000 ET 3%"
     assert "material_category" not in rows["raw_material_a"]

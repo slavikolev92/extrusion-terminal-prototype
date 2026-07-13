@@ -488,10 +488,20 @@ Structured recipe redesign follow-up:
 - OI-003 Step 8 complete: the Excel export macro now provides setup, selected validation, configured-range validation, and export-gated validation for `Database!G`, `Database!O`, printing `W:AD`, and extrusion `AH:AN`; CSV output remains the extrusion-terminal schema and writes to `exports`.
 - OI-004 complete: app release validation, planned kilograms, terminal target kilograms, remaining kilograms, and progress percentage now use canonical `quantity_1` (`Database!G`) only; `unit_1`, `quantity_2`, and `unit_2` remain imported/displayed workbook fields and are ignored for target-gross calculations.
 - Step 5 deliberately did not add terminal/admin recipe display redesign, print changes, or Excel macro/export validation; Step 6 completed the display redesign while print changes and Excel macro/export validation remain outside this slice.
+- Semicolon recipe-category contract complete: terminal import now validates `Category; Material name | Percent`, supports multi-word categories without app-side category approval, stores arbitrary recipe categories, normalizes admin recipe saves to semicolon format, rejects ambiguous semicolons inside category/material text, and prints compact material-plus-percent recipe rows.
 
 ## Milestone 12 - Pilot Rehearsal
 
 Status: pending
+
+Pending audit hardening before rehearsal:
+
+- OI-007: harden optimistic version checks atomically for high-risk card mutations.
+- OI-008: resolve the remaining terminal multi-form dirty autosave edge case.
+- OI-009: build the unattended production backup system, including schedule,
+  validation, retention, recovery drills, and backup health visibility.
+- OI-010: run a focused terminal/admin UX and accessibility hardening pass.
+- OI-002: decide whether admin save-all needs a stronger post-save success confirmation.
 
 Completed audit follow-up before rehearsal:
 

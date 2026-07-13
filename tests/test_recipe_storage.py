@@ -153,28 +153,35 @@ def test_recipe_components_reject_unknown_component_key(connection):
         raise AssertionError("recipe_components accepted an unknown component_key")
 
 
-def test_recipe_components_reject_unknown_material_category(connection):
+def test_recipe_components_accept_arbitrary_material_category(connection):
     card_id = insert_card(connection)
 
-    try:
-        connection.execute(
-            """
-            INSERT INTO recipe_components (
-                card_id,
-                component_key,
-                source_text,
-                material_category,
-                planned_material,
-                recipe_percent
-            )
-            VALUES (?, 'raw_material_a', 'mLLDPE A | 100%', 'mLLDPE', 'A', 100)
-            """,
-            (card_id,),
+    connection.execute(
+        """
+        INSERT INTO recipe_components (
+            card_id,
+            component_key,
+            source_text,
+            material_category,
+            planned_material,
+            recipe_percent
         )
-    except sqlite3.IntegrityError as exc:
-        assert "CHECK constraint failed" in str(exc)
-    else:
-        raise AssertionError("recipe_components accepted an unknown material_category")
+        VALUES (?, 'raw_material_a', 'UV Protection Additive | 100%', 'UV Protection', 'Additive', 100)
+        """,
+        (card_id,),
+    )
+
+    row = connection.execute(
+        """
+        SELECT material_category
+        FROM recipe_components
+        WHERE card_id = ?
+          AND component_key = 'raw_material_a'
+        """,
+        (card_id,),
+    ).fetchone()
+
+    assert row["material_category"] == "UV Protection"
 
 
 def test_recipe_components_cascade_when_card_is_deleted(connection):
@@ -238,6 +245,115 @@ def test_database_initialization_adds_recipe_components_to_existing_database(
 
     assert table is not None
     assert row_count == 0
+
+
+def test_database_initialization_removes_legacy_recipe_category_constraint(
+    tmp_path,
+    monkeypatch,
+):
+    legacy_data_dir = tmp_path / "legacy-recipe-category-data"
+    legacy_data_dir.mkdir()
+    legacy_db_path = legacy_data_dir / "legacy-recipe-category.sqlite3"
+    with sqlite3.connect(legacy_db_path) as legacy_connection:
+        legacy_connection.execute("PRAGMA foreign_keys = ON")
+        legacy_connection.execute(
+            """
+            CREATE TABLE cards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_number TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'imported',
+                raw_material_a TEXT
+            )
+            """
+        )
+        legacy_connection.execute(
+            """
+            CREATE TABLE recipe_components (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                component_key TEXT NOT NULL CHECK (component_key IN ('raw_material_a', 'linear_pe')),
+                source_text TEXT NOT NULL,
+                material_category TEXT NOT NULL CHECK (material_category IN ('LDPE', 'LLDPE')),
+                planned_material TEXT NOT NULL,
+                recipe_percent NUMERIC NOT NULL CHECK (recipe_percent > 0),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (card_id, component_key)
+            )
+            """
+        )
+        legacy_connection.execute(
+            """
+            INSERT INTO cards (order_number, raw_material_a)
+            VALUES ('LEGACY-RS-CATEGORY-1', 'LDPE Legacy A | 100%')
+            """
+        )
+        legacy_connection.execute(
+            """
+            INSERT INTO recipe_components (
+                card_id,
+                component_key,
+                source_text,
+                material_category,
+                planned_material,
+                recipe_percent
+            )
+            VALUES (1, 'raw_material_a', 'LDPE Legacy A | 100%', 'LDPE', 'Legacy A', 100)
+            """
+        )
+
+    monkeypatch.setattr(db, "DATA_DIR", legacy_data_dir)
+    monkeypatch.setattr(db, "DB_PATH", legacy_db_path)
+
+    db.init_db()
+    db.init_db()
+
+    with db.connect() as migrated_connection:
+        schema_sql = migrated_connection.execute(
+            """
+            SELECT sql
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name = 'recipe_components'
+            """
+        ).fetchone()["sql"]
+        migrated_row = migrated_connection.execute(
+            """
+            SELECT component_key, material_category, planned_material, recipe_percent
+            FROM recipe_components
+            WHERE card_id = 1
+            """
+        ).fetchone()
+        migrated_connection.execute(
+            """
+            INSERT INTO recipe_components (
+                card_id,
+                component_key,
+                source_text,
+                material_category,
+                planned_material,
+                recipe_percent
+            )
+            VALUES (1, 'linear_pe', 'UV Protection Additive | 5%', 'UV Protection', 'Additive', 5)
+            """
+        )
+        inserted_category = migrated_connection.execute(
+            """
+            SELECT material_category
+            FROM recipe_components
+            WHERE card_id = 1
+              AND component_key = 'linear_pe'
+            """
+        ).fetchone()["material_category"]
+
+    assert "material_category IN" not in schema_sql
+    assert dict(migrated_row) == {
+        "component_key": "raw_material_a",
+        "material_category": "LDPE",
+        "planned_material": "Legacy A",
+        "recipe_percent": 100,
+    }
+    assert inserted_category == "UV Protection"
 
 
 def test_database_initialization_handles_legacy_assigned_cards_before_machines_exist(
@@ -389,21 +505,21 @@ def test_parse_and_replace_recipe_components_for_card_stores_only_valid_parse(co
     assert [row["component_key"] for row in rows] == ["raw_material_a", "linear_pe"]
 
 
-def test_recipe_components_store_category_only_planned_material_as_empty_string(connection):
-    card_id = insert_card(connection, raw_material_a="reLDPE | 100%")
+def test_recipe_components_store_arbitrary_parsed_material_category(connection):
+    card_id = insert_card(connection, raw_material_a="UV Protection; Additive | 100%")
 
     result = db.parse_and_replace_recipe_components_for_card(
         connection,
         card_id,
-        {"raw_material_a": "reLDPE | 100%"},
+        {"raw_material_a": "UV Protection; Additive | 100%"},
     )
 
     assert result.ok
     rows = db.fetch_recipe_components(connection, card_id)
     assert len(rows) == 1
-    assert rows[0]["source_text"] == "reLDPE | 100%"
-    assert rows[0]["material_category"] == "reLDPE"
-    assert rows[0]["planned_material"] == ""
+    assert rows[0]["source_text"] == "UV Protection; Additive | 100%"
+    assert rows[0]["material_category"] == "UV Protection"
+    assert rows[0]["planned_material"] == "Additive"
     assert rows[0]["recipe_percent"] == Decimal("100")
 
 

@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 
+import pytest
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app import db
@@ -46,13 +47,13 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "extrusion_folding": "single fold",
         "extrusion_next_operation": "rewind",
         "extrusion_treatment": "corona",
-        "raw_material_a": "LDPE Planned A | 50%",
-        "raw_material_b": "LLDPE Planned B | 30%",
-        "raw_material_c": "MDPE Planned C | 5%",
-        "linear_pe": "LLDPE Planned mLLDPE | 8%",
-        "antistatic": "Antistatic Planned antistatic | 1%",
-        "masterbatch": "Masterbatch Planned masterbatch | 4%",
-        "chalk": "Filler Planned chalk | 2%",
+        "raw_material_a": "LDPE; Planned A | 50%",
+        "raw_material_b": "LLDPE; Planned B | 30%",
+        "raw_material_c": "MDPE; Planned C | 5%",
+        "linear_pe": "LLDPE; Planned mLLDPE | 8%",
+        "antistatic": "Antistatic; Planned antistatic | 1%",
+        "masterbatch": "Masterbatch; Planned masterbatch | 4%",
+        "chalk": "Filler; Planned chalk | 2%",
         "packaging_method": "rolls",
     }
     row.update(overrides)
@@ -257,9 +258,12 @@ def admin_material_form_items(
 
 def test_admin_detail_combines_recipe_and_machine_materials(connection):
     card_id = prepare_dense_completed_card("27001")
+    context = admin_card_detail_context(card_id)
 
     html = render_admin_detail(card_id)
 
+    assert context is not None
+    assert "recipe_categories" not in context
     assert "Материали" in html
     assert "Категория" in html
     assert "Планирани материали" in html
@@ -268,6 +272,8 @@ def test_admin_detail_combines_recipe_and_machine_materials(connection):
     assert "Вложени материали" in html
     assert "Рецепта" not in html
     assert "Материал на машината" not in html
+    assert '<input name="material_category__raw_material_a"' in html
+    assert '<select name="material_category__raw_material_a"' not in html
     assert html.count('name="material_category__raw_material_a"') == 1
     assert html.count('name="planned_material__raw_material_a"') == 1
     assert html.count('name="recipe_percent__raw_material_a"') == 1
@@ -537,6 +543,8 @@ def test_admin_materials_ledger_renders_structured_planned_inputs(connection):
     html = render_admin_detail(card_id)
 
     assert 'name="material_category__raw_material_a"' in html
+    assert '<input name="material_category__raw_material_a"' in html
+    assert '<select name="material_category__raw_material_a"' not in html
     assert 'name="planned_material__raw_material_a" value="Planned A"' in html
     assert 'name="recipe_percent__raw_material_a" value="50"' in html
     assert 'name="recipe_percent__raw_material_a" value="50%"' not in html
@@ -641,22 +649,77 @@ def test_admin_order_form_save_preserves_omitted_recipe_fields(connection):
     assert response.status_code == 303
     assert updated["customer"] == "Grouped Order Customer"
     assert updated["max_roll_weight"] == "70.5"
-    assert updated["raw_material_a"] == "LDPE Planned A | 50%"
-    assert updated["raw_material_b"] == "LLDPE Planned B | 30%"
-    assert updated["raw_material_c"] == "MDPE Planned C | 5%"
-    assert updated["linear_pe"] == "LLDPE Planned mLLDPE | 8%"
-    assert updated["antistatic"] == "Antistatic Planned antistatic | 1%"
-    assert updated["masterbatch"] == "Masterbatch Planned masterbatch | 4%"
-    assert updated["chalk"] == "Filler Planned chalk | 2%"
+    assert updated["raw_material_a"] == "LDPE; Planned A | 50%"
+    assert updated["raw_material_b"] == "LLDPE; Planned B | 30%"
+    assert updated["raw_material_c"] == "MDPE; Planned C | 5%"
+    assert updated["linear_pe"] == "LLDPE; Planned mLLDPE | 8%"
+    assert updated["antistatic"] == "Antistatic; Planned antistatic | 1%"
+    assert updated["masterbatch"] == "Masterbatch; Planned masterbatch | 4%"
+    assert updated["chalk"] == "Filler; Planned chalk | 2%"
+
+
+def test_admin_imported_fields_route_rejects_raw_old_recipe_format(connection):
+    card_id = import_ready_card("27107")
+    before = db.fetch_admin_card_detail(card_id)
+
+    response = asyncio.run(
+        save_admin_imported_fields(
+            FormRequest(
+                MultiItemForm(
+                    [
+                        ("loaded_version", str(before["version"])),
+                        ("order_number", "27107"),
+                        ("raw_material_a", "LDPE Updated | 100%"),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 200
+    assert after["raw_material_a"] == before["raw_material_a"]
+    assert after["version"] == before["version"]
+    assert "липсва разделител ;" in response.body.decode()
+
+
+def test_admin_imported_fields_route_rejects_raw_extra_semicolon(connection):
+    card_id = import_ready_card("27108")
+    before = db.fetch_admin_card_detail(card_id)
+
+    response = asyncio.run(
+        save_admin_imported_fields(
+            FormRequest(
+                MultiItemForm(
+                    [
+                        ("loaded_version", str(before["version"])),
+                        ("order_number", "27108"),
+                        (
+                            "raw_material_a",
+                            "UV Protection; Additech; Shield | 100%",
+                        ),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 200
+    assert after["raw_material_a"] == before["raw_material_a"]
+    assert after["version"] == before["version"]
+    assert "неподдържан разделител ; в материала" in response.body.decode()
 
 
 def test_admin_global_save_updates_structured_materials_on_imported_card(connection):
     card_id = import_ready_card(
         "27121",
-        raw_material_a="LDPE Initial A | 80%",
+        raw_material_a="LDPE; Initial A | 80%",
         raw_material_b="",
         raw_material_c="",
-        linear_pe="LLDPE Initial L | 20%",
+        linear_pe="LLDPE; Initial L | 20%",
         antistatic="",
         masterbatch="",
         chalk="",
@@ -670,7 +733,7 @@ def test_admin_global_save_updates_structured_materials_on_imported_card(connect
                     [
                         ("loaded_version", str(card["version"])),
                         ("material_category__raw_material_a", "reLDPE"),
-                        ("planned_material__raw_material_a", ""),
+                        ("planned_material__raw_material_a", "Recycled LDPE"),
                         ("recipe_percent__raw_material_a", "80"),
                         ("material_category__linear_pe", "LLDPE"),
                         ("planned_material__linear_pe", "SABIC 119ZJ"),
@@ -684,19 +747,123 @@ def test_admin_global_save_updates_structured_materials_on_imported_card(connect
     updated = db.fetch_admin_card_detail(card_id)
 
     assert response.status_code == 303
-    assert updated["raw_material_a"] == "reLDPE | 80%"
-    assert updated["linear_pe"] == "LLDPE SABIC 119ZJ | 20%"
+    assert updated["raw_material_a"] == "reLDPE; Recycled LDPE | 80%"
+    assert updated["linear_pe"] == "LLDPE; SABIC 119ZJ | 20%"
     components = {
         component_key: (source_text, category, planned_material, percent)
         for component_key, source_text, category, planned_material, percent in recipe_component_snapshot(card_id)
     }
-    assert components["raw_material_a"] == ("reLDPE | 80%", "reLDPE", "", "80")
+    assert components["raw_material_a"] == (
+        "reLDPE; Recycled LDPE | 80%",
+        "reLDPE",
+        "Recycled LDPE",
+        "80",
+    )
     assert components["linear_pe"] == (
-        "LLDPE SABIC 119ZJ | 20%",
+        "LLDPE; SABIC 119ZJ | 20%",
         "LLDPE",
         "SABIC 119ZJ",
         "20",
     )
+
+
+def test_admin_global_save_accepts_multi_word_category_as_free_text(connection):
+    card_id = import_ready_card(
+        "27124",
+        raw_material_a="LDPE; Initial A | 80%",
+        raw_material_b="",
+        raw_material_c="",
+        linear_pe="LLDPE; Initial L | 20%",
+        antistatic="",
+        masterbatch="",
+        chalk="",
+    )
+    card = db.fetch_admin_card_detail(card_id)
+
+    response = asyncio.run(
+        save_admin_card_changes(
+            FormRequest(
+                MultiItemForm(
+                    [
+                        ("loaded_version", str(card["version"])),
+                        ("material_category__raw_material_a", "UV Protection"),
+                        ("planned_material__raw_material_a", "Additech UV Shield XZ-204"),
+                        ("recipe_percent__raw_material_a", "2"),
+                        ("material_category__linear_pe", "LLDPE"),
+                        ("planned_material__linear_pe", "SABIC 119ZJ"),
+                        ("recipe_percent__linear_pe", "98"),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+    updated = db.fetch_admin_card_detail(card_id)
+    components = {
+        component_key: (source_text, category, planned_material, percent)
+        for component_key, source_text, category, planned_material, percent in recipe_component_snapshot(card_id)
+    }
+
+    assert response.status_code == 303
+    assert updated["raw_material_a"] == "UV Protection; Additech UV Shield XZ-204 | 2%"
+    assert components["raw_material_a"] == (
+        "UV Protection; Additech UV Shield XZ-204 | 2%",
+        "UV Protection",
+        "Additech UV Shield XZ-204",
+        "2",
+    )
+
+
+@pytest.mark.parametrize(
+    ("category", "planned_material"),
+    [
+        ("UV; Protection", "Additech"),
+        ("UV Protection", "Additech; Shield"),
+    ],
+)
+def test_admin_global_save_rejects_semicolon_in_structured_recipe_fields(
+    connection,
+    category,
+    planned_material,
+):
+    card_id = import_ready_card(
+        f"27125-{category.count(';')}{planned_material.count(';')}",
+        raw_material_a="LDPE; Initial A | 80%",
+        raw_material_b="",
+        raw_material_c="",
+        linear_pe="LLDPE; Initial L | 20%",
+        antistatic="",
+        masterbatch="",
+        chalk="",
+    )
+    before = db.fetch_admin_card_detail(card_id)
+
+    response = asyncio.run(
+        save_admin_card_changes(
+            FormRequest(
+                MultiItemForm(
+                    [
+                        ("loaded_version", str(before["version"])),
+                        ("material_category__raw_material_a", category),
+                        ("planned_material__raw_material_a", planned_material),
+                        ("recipe_percent__raw_material_a", "2"),
+                        ("material_category__linear_pe", "LLDPE"),
+                        ("planned_material__linear_pe", "SABIC 119ZJ"),
+                        ("recipe_percent__linear_pe", "98"),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+    body = response.body.decode("utf-8")
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 200
+    assert "Рецептата не може да бъде записана" in body
+    assert ";" in body
+    assert after["version"] == before["version"]
+    assert after["raw_material_a"] == before["raw_material_a"]
 
 
 def test_admin_global_save_updates_order_materials_and_roll_data(connection):
@@ -737,7 +904,7 @@ def test_admin_global_save_updates_order_materials_and_roll_data(connection):
     assert response.status_code == 303
     assert response.headers["location"] == f"/admin/cards/{card_id}"
     assert updated["customer"] == "Global Save Customer"
-    assert updated["raw_material_a"] == "LLDPE Global planned A | 50%"
+    assert updated["raw_material_a"] == "LLDPE; Global planned A | 50%"
     assert (
         updated["recipe_actual_entries"]["raw_material_a"]["actual_material_used"]
         == "Global actual A"
@@ -894,10 +1061,10 @@ def test_admin_global_save_rolls_back_all_sections_when_timing_is_invalid(connec
 def test_admin_global_save_rolls_back_recipe_components_when_timing_is_invalid(connection):
     card_id = prepare_dense_completed_card("27109", roll_count=1)
     seed_fields = current_import_fields(card_id)
-    seed_fields["raw_material_a"] = "LDPE Before Rollback | 80%"
+    seed_fields["raw_material_a"] = "LDPE; Before Rollback | 80%"
     seed_fields["raw_material_b"] = ""
     seed_fields["raw_material_c"] = ""
-    seed_fields["linear_pe"] = "LLDPE Before Rollback | 20%"
+    seed_fields["linear_pe"] = "LLDPE; Before Rollback | 20%"
     seed_fields["antistatic"] = ""
     seed_fields["masterbatch"] = ""
     seed_fields["chalk"] = ""
@@ -914,8 +1081,8 @@ def test_admin_global_save_rolls_back_recipe_components_when_timing_is_invalid(c
                 MultiItemForm(
                     [
                         ("loaded_version", str(before["version"])),
-                        ("raw_material_a", "LDPE After Rollback | 70%"),
-                        ("linear_pe", "LLDPE After Rollback | 30%"),
+                        ("raw_material_a", "LDPE; After Rollback | 70%"),
+                        ("linear_pe", "LLDPE; After Rollback | 30%"),
                         *admin_material_form_items(
                             card_id,
                             overrides={
@@ -937,8 +1104,8 @@ def test_admin_global_save_rolls_back_recipe_components_when_timing_is_invalid(c
     after = db.fetch_admin_card_detail(card_id)
 
     assert before_components == [
-        ("raw_material_a", "LDPE Before Rollback | 80%", "LDPE", "Before Rollback", "80"),
-        ("linear_pe", "LLDPE Before Rollback | 20%", "LLDPE", "Before Rollback", "20"),
+        ("raw_material_a", "LDPE; Before Rollback | 80%", "LDPE", "Before Rollback", "80"),
+        ("linear_pe", "LLDPE; Before Rollback | 20%", "LLDPE", "Before Rollback", "20"),
     ]
     assert response.status_code == 200
     assert "Завършена карта трябва да има поне един времеви сегмент." in body
@@ -956,13 +1123,13 @@ def test_admin_material_ledger_updates_planned_and_actual_fields(connection):
         card_id=card_id,
         loaded_version=loaded_version,
         planned_materials={
-            "raw_material_a": "Corrected planned A",
-            "raw_material_b": "Corrected planned B",
-            "raw_material_c": "Corrected planned C",
-            "linear_pe": "Corrected linear",
-            "antistatic": "Corrected antistatic",
-            "masterbatch": "Corrected masterbatch",
-            "chalk": "Corrected chalk",
+            "raw_material_a": "LDPE; Corrected planned A | 50%",
+            "raw_material_b": "LLDPE; Corrected planned B | 30%",
+            "raw_material_c": "MDPE; Corrected planned C | 5%",
+            "linear_pe": "LLDPE; Corrected linear | 8%",
+            "antistatic": "Antistatic; Corrected antistatic | 1%",
+            "masterbatch": "Masterbatch; Corrected masterbatch | 4%",
+            "chalk": "Filler; Corrected chalk | 2%",
         },
         actual_entries={
             "raw_material_a": {
@@ -983,8 +1150,8 @@ def test_admin_material_ledger_updates_planned_and_actual_fields(connection):
     card = db.fetch_admin_card_detail(card_id)
 
     assert result.ok
-    assert card["raw_material_a"] == "Corrected planned A"
-    assert card["raw_material_b"] == "Corrected planned B"
+    assert card["raw_material_a"] == "LDPE; Corrected planned A | 50%"
+    assert card["raw_material_b"] == "LLDPE; Corrected planned B | 30%"
     assert (
         card["recipe_actual_entries"]["raw_material_a"]["actual_material_used"]
         == "Corrected actual A"
@@ -1003,7 +1170,15 @@ def test_admin_material_ledger_preserves_legacy_brand_class_when_omitted(connect
     result = db.update_admin_material_ledger(
         card_id=card_id,
         loaded_version=loaded_version,
-        planned_materials={"raw_material_a": "Corrected planned A"},
+        planned_materials={
+            "raw_material_a": "LDPE; Corrected planned A | 50%",
+            "raw_material_b": "LLDPE; Corrected planned B | 30%",
+            "raw_material_c": "MDPE; Corrected planned C | 5%",
+            "linear_pe": "LLDPE; Corrected linear | 8%",
+            "antistatic": "Antistatic; Corrected antistatic | 1%",
+            "masterbatch": "Masterbatch; Corrected masterbatch | 4%",
+            "chalk": "Filler; Corrected chalk | 2%",
+        },
         actual_entries={
             "raw_material_a": {
                 "actual_material_used": "Corrected actual A",

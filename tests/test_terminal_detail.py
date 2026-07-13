@@ -30,7 +30,7 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "extrusion_folding": "single",
         "extrusion_next_operation": "rewind",
         "extrusion_treatment": "corona",
-        "raw_material_a": "LDPE A | 100%",
+        "raw_material_a": "LDPE; A | 100%",
         "packaging_method": "rolls",
     }
     row.update(overrides)
@@ -70,7 +70,7 @@ def test_terminal_card_detail_fetches_released_card_fields(connection):
     assert card["customer"] == "Terminal Customer"
     assert card["max_roll_weight"] == "62.5"
     assert card["extrusion_folding"] == "single"
-    assert card["raw_material_a"] == "LDPE A | 100%"
+    assert card["raw_material_a"] == "LDPE; A | 100%"
     assert card["actual_raw_material_used"] is None
     assert card["version"] >= 2
 
@@ -244,13 +244,13 @@ def recipe_actual_entries() -> dict[str, dict[str, str]]:
 def test_terminal_recipe_actual_entries_persist_all_rows_and_survive_finish(connection):
     card_id = import_ready_card(
         "25340",
-        raw_material_a="LDPE A | 50%",
-        raw_material_b="LDPE B | 30%",
-        raw_material_c="MDPE C | 5%",
-        linear_pe="LLDPE Linear PE | 8%",
-        antistatic="Antistatic Agent | 1%",
-        masterbatch="Masterbatch White | 4%",
-        chalk="Filler Chalk | 2%",
+        raw_material_a="LDPE; A | 50%",
+        raw_material_b="LDPE; B | 30%",
+        raw_material_c="MDPE; C | 5%",
+        linear_pe="LLDPE; Linear PE | 8%",
+        antistatic="Antistatic; Agent | 1%",
+        masterbatch="Masterbatch; White | 4%",
+        chalk="Filler; Chalk | 2%",
     )
     assert db.release_card(
         card_id,
@@ -328,7 +328,7 @@ def test_terminal_recipe_actual_entries_block_stale_version(connection):
 
 
 def test_terminal_recipe_actual_entries_survive_reimport(connection):
-    card_id = import_ready_card("25342", raw_material_a="LDPE Original A | 100%")
+    card_id = import_ready_card("25342", raw_material_a="LDPE; Original A | 100%")
     assert db.release_card(
         card_id,
         machine_id=3,
@@ -343,13 +343,13 @@ def test_terminal_recipe_actual_entries_survive_reimport(connection):
 
     result = import_cards_from_csv(
         "overwrite.csv",
-        csv_bytes(extrusion_row("25342", raw_material_a="LDPE Updated A | 100%")),
+        csv_bytes(extrusion_row("25342", raw_material_a="LDPE; Updated A | 100%")),
         overwrite_existing=True,
     )
     card = db.fetch_terminal_card_detail(card_id)
 
     assert result.updated == 1
-    assert card["raw_material_a"] == "LDPE Updated A | 100%"
+    assert card["raw_material_a"] == "LDPE; Updated A | 100%"
     assert card["recipe_actual_entries"]["raw_material_a"]["actual_material_used"] == "Actual A"
     assert card["recipe_actual_entries"]["raw_material_a"]["batch_lot"] == "Batch A"
 
@@ -381,8 +381,8 @@ def test_terminal_recipe_actual_entries_reject_unknown_component(connection):
 def test_terminal_recipe_actual_update_preserves_omitted_component_entries(connection):
     card_id = import_ready_card(
         "25344",
-        raw_material_a="LDPE A | 80%",
-        linear_pe="LLDPE Linear PE | 20%",
+        raw_material_a="LDPE; A | 80%",
+        linear_pe="LLDPE; Linear PE | 20%",
     )
     assert db.release_card(
         card_id,

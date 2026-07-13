@@ -16,21 +16,11 @@ RECIPE_SOURCE_FIELDS = (
     "chalk",
 )
 
-APPROVED_RECIPE_CATEGORIES = (
-    "LDPE",
-    "LLDPE",
-    "MDPE",
-    "reLDPE",
-    "Antistatic",
-    "Masterbatch",
-    "Filler",
-    "UV",
-    "Antislip",
-)
-
 MISSING_DELIMITER_MESSAGE = "липсва разделител |"
-UNKNOWN_CATEGORY_MESSAGE = "непозната категория"
+MISSING_CATEGORY_DELIMITER_MESSAGE = "липсва разделител ;"
+MISSING_CATEGORY_MESSAGE = "липсва категория"
 MISSING_MATERIAL_MESSAGE = "липсва материал след категория"
+EMBEDDED_MATERIAL_DELIMITER_MESSAGE = "неподдържан разделител ; в материала"
 MISSING_PERCENT_MESSAGE = "липсва процент"
 INVALID_PERCENT_MESSAGE = "невалиден процент"
 NON_POSITIVE_PERCENT_MESSAGE = "процентът трябва да е по-голям от 0%"
@@ -38,9 +28,6 @@ TOTAL_PERCENT_MESSAGE = "сборът на процентите трябва д�
 
 TOTAL_PERCENT = Decimal("100")
 PERCENT_PATTERN = re.compile(r"^\d+(?:[\.,]\d+)?$")
-CATEGORY_BY_NORMALIZED_NAME = {
-    category.casefold(): category for category in APPROVED_RECIPE_CATEGORIES
-}
 
 
 @dataclass(frozen=True)
@@ -76,7 +63,12 @@ class RecipeParseResult:
         )
 
 
-def parse_recipe_source_fields(source_fields: Mapping[str, str | None]) -> RecipeParseResult:
+def parse_recipe_source_fields(
+    source_fields: Mapping[str, str | None],
+    *,
+    require_semicolon_delimiter: bool = False,
+    reject_embedded_semicolon: bool = False,
+) -> RecipeParseResult:
     components: list[ParsedRecipeComponent] = []
     errors: list[RecipeParseError] = []
 
@@ -84,6 +76,8 @@ def parse_recipe_source_fields(source_fields: Mapping[str, str | None]) -> Recip
         component, cell_errors = parse_recipe_cell(
             component_key,
             source_fields.get(component_key),
+            require_semicolon_delimiter=require_semicolon_delimiter,
+            reject_embedded_semicolon=reject_embedded_semicolon,
         )
         if component is not None:
             components.append(component)
@@ -112,6 +106,9 @@ def parse_recipe_source_fields(source_fields: Mapping[str, str | None]) -> Recip
 def parse_recipe_cell(
     component_key: str,
     source_text: str | None,
+    *,
+    require_semicolon_delimiter: bool = False,
+    reject_embedded_semicolon: bool = False,
 ) -> tuple[ParsedRecipeComponent | None, tuple[RecipeParseError, ...]]:
     original_source_text = "" if source_text is None else str(source_text)
     stripped_source_text = original_source_text.strip()
@@ -129,23 +126,37 @@ def parse_recipe_cell(
 
     identity_text, percent_text = stripped_source_text.rsplit("|", 1)
     normalized_identity = normalize_spaces(identity_text)
-    if not normalized_identity:
+    if require_semicolon_delimiter and ";" not in normalized_identity:
+        return None, (
+            RecipeParseError(
+                component_key=component_key,
+                source_text=original_source_text,
+                message=MISSING_CATEGORY_DELIMITER_MESSAGE,
+            ),
+        )
+    if reject_embedded_semicolon and normalized_identity.count(";") > 1:
+        return None, (
+            RecipeParseError(
+                component_key=component_key,
+                source_text=original_source_text,
+                message=EMBEDDED_MATERIAL_DELIMITER_MESSAGE,
+            ),
+        )
+    category_text, planned_material = split_category_and_material(normalized_identity)
+    if not category_text:
+        return None, (
+            RecipeParseError(
+                component_key=component_key,
+                source_text=original_source_text,
+                message=MISSING_CATEGORY_MESSAGE,
+            ),
+        )
+    if not planned_material:
         return None, (
             RecipeParseError(
                 component_key=component_key,
                 source_text=original_source_text,
                 message=MISSING_MATERIAL_MESSAGE,
-            ),
-        )
-
-    category_text, planned_material = split_category_and_material(normalized_identity)
-    material_category = CATEGORY_BY_NORMALIZED_NAME.get(category_text.casefold())
-    if material_category is None:
-        return None, (
-            RecipeParseError(
-                component_key=component_key,
-                source_text=original_source_text,
-                message=UNKNOWN_CATEGORY_MESSAGE,
             ),
         )
 
@@ -158,7 +169,7 @@ def parse_recipe_cell(
         ParsedRecipeComponent(
             component_key=component_key,
             source_text=original_source_text,
-            material_category=material_category,
+            material_category=category_text,
             planned_material=planned_material,
             recipe_percent=recipe_percent,
         ),
@@ -167,6 +178,10 @@ def parse_recipe_cell(
 
 
 def split_category_and_material(identity_text: str) -> tuple[str, str]:
+    if ";" in identity_text:
+        category_text, material_text = identity_text.split(";", 1)
+        return normalize_spaces(category_text), normalize_spaces(material_text)
+
     parts = identity_text.split(" ", 1)
     if len(parts) == 1:
         return parts[0], ""

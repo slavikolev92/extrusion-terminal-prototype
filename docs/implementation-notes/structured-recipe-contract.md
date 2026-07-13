@@ -33,79 +33,54 @@ The source recipe fields remain:
 | `AM` | `masterbatch` | Masterbatch |
 | `AN` | `chalk` | Chalk |
 
-The original imported source text in these fields remains stored on `cards` and
-continues to be used by print output.
+The original imported source text in these fields remains stored on `cards`.
+Print output parses that text and renders a compact material-plus-percent view.
 
 ## Accepted Cell Format
 
-The normal final source-cell format is still:
+The normal final source-cell format is:
 
 ```text
-[Material/Additive Category] [Producer or Brand] [Full Commercial Grade/Code] | [% of final product]
+Category; Material name | Percent
 ```
 
 Example:
 
 ```text
-LDPE Rompetrol Midilena B20/03 | 77%
-LLDPE SABIC 119ZJ | 18%
-Antistatic Novachem AT 04673 LD | 2%
-Masterbatch Polibach White 8000 ET | 3%
+LDPE; Rompetrol Midilena B20/03 | 77%
+LLDPE; SABIC 119ZJ | 18%
+UV Protection; Additech UV Shield XZ-204 | 2%
+Masterbatch; Polibach White 8000 ET | 3%
 ```
 
-The Excel recipe builder also supports intentional producer and/or grade
-omissions through `N/A` values in `RecipeCatalog`. `N/A` is a catalog control
-value only. It is not printed into the final `AH:AN` source cell. When both
-producer and grade are `N/A`, the final source cell is category-only before the
-delimiter:
+The app requires both sides of the `;` delimiter. If the material is reusable
+LDPE and the only useful display text is also the category-like name, Excel
+should still export a non-empty material name:
 
 ```text
-reLDPE | 80%
+reLDPE; Recycled LDPE | 80%
 ```
 
-When only one of producer or grade is `N/A`, the final source cell contains the
-category plus the remaining non-`N/A` text:
-
-```text
-LDPE Midilena | 77%
-LDPE B20/03 | 77%
-```
-
-The parser should split on the final `|`. The text before the final `|` is the
-material identity. The text after the final `|` is the recipe percentage.
+The parser splits on the final `|`. The text before the final `|` is the
+material identity. Within that identity, the first `;` separates category from
+material name. The text after the final `|` is the recipe percentage.
 
 Extra whitespace is not meaningful. For example, these should parse the same:
 
 ```text
-LDPE Rompetrol Midilena B20/03 | 77%
-LDPE  Rompetrol Midilena B20/03  |  77 %
+LDPE; Rompetrol Midilena B20/03 | 77%
+LDPE  ;  Rompetrol Midilena B20/03  |  77 %
 ```
 
-## Approved Categories
+## Category Ownership
 
-The material category is a controlled app contract list. The initial approved
-categories are:
+Excel owns the recipe catalog and category validity. The terminal app validates
+recipe structure only. It does not keep an approved category list and does not
+decide whether category text such as `UV Protection` is valid business data.
 
-- `LDPE`
-- `LLDPE`
-- `MDPE`
-- `reLDPE`
-- `Antistatic`
-- `Masterbatch`
-- `Filler`
-- `UV`
-- `Antislip`
-
-`Processing Aid` is not approved for the initial list.
-
-The list can be amended after operational review, including the planned monthly
-reconciliation on 2026-07-01. Any category change that affects existing imported
-or normalized recipe data requires an explicit data-normalization decision before
-the contract is changed.
-
-Category matching should be case-insensitive and should normalize accepted input
-to the canonical category spelling listed above. For example, `uv`, `UV`, and
-`Uv` all normalize to `UV`; `reldpe` normalizes to `reLDPE`.
+The app stores whatever category text Excel exports, as long as the source cell
+matches the structural contract. Category and material names must not contain
+the reserved `;` delimiter in this pilot contract.
 
 ## Percentage Rule
 
@@ -144,14 +119,9 @@ recipe-component rows with the meaningful parts split into fields:
 | `card_id` | Owning production card |
 | `component_key` | Source app field, such as `raw_material_a` |
 | `source_text` | Original imported/editable source cell text |
-| `material_category` | First approved category token, such as `LDPE` |
-| `planned_material` | Remaining material identity after the category; empty string when the Excel builder intentionally omitted both producer and grade |
+| `material_category` | Text before the `;` delimiter, such as `LDPE` or `UV Protection` |
+| `planned_material` | Non-empty text after the `;` delimiter and before the final `|` |
 | `recipe_percent` | Percentage of final product |
-
-For structured admin/terminal display, category-only rows should use the
-canonical category as the visible planned material fallback. The normalized
-stored value remains an empty string so the app does not invent producer or
-grade data that did not exist in the workbook.
 
 Planned kilograms are calculated from `recipe_percent * target_gross_weight`.
 They do not need to be authoritative stored source data unless a later
@@ -176,18 +146,21 @@ labels:
 
 ## Validation Intent
 
-The app should allow imported draft cards to exist so an admin can correct bad
-recipe source text before release.
+CSV import validates recipe structure for extrusion rows before saving the row.
+Invalid recipe rows are blocked per row, while valid rows in the same CSV still
+import.
 
-Release to the terminal should be blocked when:
+Import and admin recipe saves are blocked when:
 
 - any non-empty `AH:AN` row cannot be parsed;
-- any non-empty row has missing identity text before `|`, an unapproved
-  category, or invalid category text;
+- any non-empty row has missing category or material text;
 - any non-empty row has missing or invalid percentage text;
 - any non-empty row has a zero or negative percentage;
 - parsed recipe percentages do not sum to exactly `100%`;
-- target gross weight is missing, zero, or invalid.
+- category or material text contains the reserved `;` delimiter.
+
+Release to the terminal also blocks when target gross weight is missing, zero,
+or invalid.
 
 Validation messages shown to admins/operators should be concise Bulgarian
 messages. The general form should be:
@@ -200,7 +173,10 @@ Row-specific reasons should identify the source field or row and use wording in
 this style:
 
 - `липсва разделител |`
-- `непозната категория`
+- `липсва разделител ;`
+- `липсва категория`
+- `липсва материал след категория`
+- `неподдържан разделител ; в материала`
 - `липсва процент`
 - `процентът трябва да е по-голям от 0%`
 - `сборът на процентите трябва да е точно 100%`
@@ -212,8 +188,21 @@ cells.
 
 ## Print Output
 
-Print output remains unchanged. It should continue to render the original
-imported source text, including the `|` delimiter and percentage text.
+Print output renders compact parsed recipe text:
+
+```text
+Material name Percent
+```
+
+Examples:
+
+```text
+Additech UV Shield XZ-204 2%
+Rompetrol Midilena B20/03 77%
+```
+
+The print view omits the category, semicolon, and pipe delimiter for valid
+parsed rows.
 
 ## Out Of Scope
 
@@ -232,20 +221,18 @@ This redesign does not add:
 The locked contract decisions were initially approved on 2026-06-24 and extended
 by later structured-recipe follow-up work:
 
-1. The approved category list is controlled and amendable, with the initial
-   categories listed above.
+1. Excel owns category validity; the app validates structure only and stores
+   arbitrary category text.
 2. Dot decimal percentages are canonical; comma decimals are accepted and
    normalized. The `%` symbol is required, and row percentages must be greater
    than `0`.
-3. Category matching is case-insensitive and normalizes accepted input to the
-   canonical approved spelling.
+3. Category text is preserved from the source cell; the app does not canonicalize
+   it against an approved list.
 4. Parsed recipe percentages must sum to exactly `100%`.
 5. Missing, zero, or invalid target gross weight blocks release.
 6. The new admin/terminal recipe column labels are the Bulgarian labels listed
    above.
 7. Release/admin validation messages use concise Bulgarian wording with
    row-specific reasons.
-8. Intentional producer/grade omissions from the Excel recipe builder are valid
-   when represented by omitted text in the final source cell. The app allows
-   category-only rows for all approved categories because it imports final cell
-   text, not the Excel `RecipeCatalog`.
+8. Category-only rows are no longer valid. Excel should export a category and a
+   non-empty material name, even when those texts are similar.

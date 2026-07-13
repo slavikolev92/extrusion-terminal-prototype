@@ -8,7 +8,7 @@ This file records issues that occur as part of audits and reviews of the extrusi
 
 ### OI-001 - Active machine queue is not normalized after finish/archive
 
-- Status: open
+- Status: complete
 - Severity: important
 - Found in: Fast Software Audit, 2026-06-24
 - Evidence:
@@ -22,6 +22,13 @@ Recommended fix:
 
 - Add regression tests for queue normalization after finish and cancel.
 - Normalize the affected machine queue when a card leaves the active queue through finish, archive, or cancellation paths as appropriate.
+
+Resolution:
+
+- Fixed during the Full Readiness Audit, 2026-07-02.
+- `finish_card()` and `cancel_card()` now normalize the affected active machine queue.
+- Restoring a cancelled card now treats the stored sequence as a target insertion position and shifts active cards as needed.
+- Regression tests cover finish, cancel, and restore queue normalization.
 
 ### OI-002 - Admin save-all correction has weak visible confirmation
 
@@ -41,31 +48,36 @@ Recommended follow-up:
 
 ### OI-003 - Structured extrusion recipe display and export validation
 
-- Status: open
+- Status: complete
 - Severity: important
 - Found in: Structured recipe redesign discussion, 2026-06-24
 
 The shift-manager workbook will keep its current cleaned structure, but
 extrusion recipe source cells `AH:AN` will use a structured text convention:
 
-`[Material category] [Producer] [Grade/Brand] | [% of total layer]`
+`[Material category]; [Full material name] | [% of total layer]`
 
 Example:
 
-`LDPE Rompetrol B20/03 | 80%`
+`UV Protection; Additech UV Shield XZ-204 | 2%`
 
-The app should keep storing and printing the imported source text as-is. In
-parallel, the app should parse and normalize the recipe rows into clean internal
-recipe-component records so the terminal/admin display and future app-side
-exports can work from structured data. The print output remains unchanged and
-continues to show the original imported source text.
+Excel owns category validity. The terminal app validates structure only:
+category is required, material name is required, percent is required, percent
+must be positive, recipe rows must total exactly `100%`, and `;` is reserved as
+the category/material delimiter. The app keeps storing the imported source text,
+syncs normalized recipe-component records from that text, and displays category
+and material separately in admin/terminal views. Print output intentionally shows
+only compact `Material name Percent`, with no category, semicolon, or pipe.
+
+Durable current contract:
+
+- `docs/implementation-notes/structured-recipe-contract.md`
 
 Accepted implementation roadmap:
 
 1. Lock the recipe contract.
-   - Confirm approved material categories.
-   - Confirm accepted text format, percent decimal rules, total-percent tolerance,
-     target-gross behavior, and Bulgarian UI labels.
+   - Confirm accepted text format, delimiter rules, percent decimal rules,
+     exact total-percent behavior, target-gross behavior, and Bulgarian UI labels.
    - Record the contract before implementation plans are written.
 
 2. Build the app parser.
@@ -90,10 +102,9 @@ Accepted implementation roadmap:
 
 5. Add the app release gate.
    - Block release when non-empty recipe rows are malformed.
-   - Block release when parsed recipe percentages do not total `100%` within the
-     accepted tolerance.
-   - Keep imported draft storage permissive enough for admin correction before
-     release.
+   - Block release when parsed recipe percentages do not total exactly `100%`.
+   - Keep legacy parser fallback only for existing/development stored rows; new
+     import/admin source saves must use the semicolon contract.
 
 6. Redesign terminal/admin recipe display.
    - Replace the rigid recipe grid with parsed columns:
@@ -105,19 +116,20 @@ Accepted implementation roadmap:
      conflict checks.
 
 6.5. Align app parser with Excel recipe-builder `N/A` omissions.
-   - Allow final source cells such as `reLDPE | 80%` when the category is
-     approved and producer/grade were intentionally omitted by the Excel
-     builder.
-   - Keep app-side validation limited to the final source-cell contract because
+   - Superseded by the semicolon contract. Even reusable material rows require
+     both category and non-empty material name, for example
+     `reLDPE; reLDPE | 80%`.
+   - Keep app-side validation limited to the final source-cell structure because
      the app does not import `RecipeCatalog`.
-   - Preserve original source text for print and admin correction.
-   - Keep malformed rows, invalid percentages, non-100 totals, and missing
-     target gross blocked at release.
+   - Preserve original source text for storage/admin correction, but print
+     compact material-plus-percent text.
+   - Keep malformed rows, invalid percentages, non-100 totals, and missing target
+     gross blocked.
 
 7. Verify with structured sample CSV data.
    - Create several sample orders using the new convention.
    - Verify import, admin review/correction, release, terminal display, actual
-     material/batch save, completion behavior, and unchanged print output.
+     material/batch save, completion behavior, and compact print output.
    - Add automated tests and at least one focused Playwright screenshot for the
      changed UI.
 
@@ -142,6 +154,22 @@ Immediate follow-up after Step 8:
 
 - Address `OI-004` so the app release gate aligns with the workbook/export
   contract that `Database!G` is the only canonical target gross kilograms source.
+
+Resolution:
+
+- Completed across OI-003 Steps 2 through 8, then updated for the final
+  semicolon contract.
+- The app now parses and stores normalized recipe components, syncs them from
+  import/re-import/admin source corrections, gates import/admin saves/release on
+  valid structured recipes, and displays structured recipe rows in
+  terminal/admin views.
+- Category validity is no longer hard-coded in the terminal app; Excel owns
+  category validity.
+- Print output now shows compact material-plus-percent text.
+- Structured sample CSV verification and Playwright screenshots were completed.
+- The Excel export validation work was completed before workbook tooling was
+  moved out of this repository.
+- OI-004 completed the required canonical target-gross follow-up.
 
 ### OI-004 - App target gross validation should align to canonical Database column G
 
@@ -185,7 +213,7 @@ Resolution:
 
 ### OI-005 - Consolidate workbook helper macro installation
 
-- Status: open
+- Status: transferred
 - Severity: important
 - Found in: workbook macro validation discussion, 2026-06-26
 - Must consider after: OI-003 Step 8 Excel export validation
@@ -218,9 +246,14 @@ Recommended fix:
   reliable across workstations.
 - Document one installation workflow for the shift-manager workbook.
 
+Current disposition:
+
+- This is no longer tracked as app work in this repository.
+- Production workbook tooling has been moved to a separate repository, so this item should be handled there if still needed.
+
 ### OI-006 - Restore Bulgarian workbook runtime messages safely
 
-- Status: open
+- Status: transferred
 - Severity: important
 - Found in: workbook macro validation discussion, 2026-06-26
 - Must consider after: OI-005 workbook helper installation consolidation
@@ -252,3 +285,97 @@ Recommended fix:
   source files until the safe message strategy is implemented and verified.
 - Verify messages manually in a copied workbook on the target Excel
   workstation.
+
+Current disposition:
+
+- This is no longer tracked as app work in this repository.
+- Production workbook tooling has been moved to a separate repository, so this item should be handled there if still needed.
+
+### OI-007 - Harden optimistic version checks atomically
+
+- Status: open
+- Severity: important
+- Found in: Full Readiness Audit, 2026-07-02
+
+Most card mutations currently read the card, compare `version`, and then update
+by `id`. Normal stale pages are blocked, and SQLite write locking lowers the
+practical risk, but the tighter pattern is to make the first state-changing
+write atomic with `WHERE id = ? AND version = ?` and check `rowcount`.
+
+Recommended fix:
+
+- Convert the highest-risk mutations first: release, planning/resequence,
+  cancel, restore, archive, terminal tare, terminal roll, and terminal material
+  writes.
+- Use the existing `unrelease_pending_card()` pattern as the model.
+- Add stale-write regression tests for each converted flow.
+
+### OI-008 - Resolve remaining multi-form dirty autosave edge case
+
+- Status: open
+- Severity: important
+- Found in: Full Readiness Audit, 2026-07-02
+
+The new-roll autosave issue and existing-roll correction autosave issue are
+fixed. The remaining terminal risk is when recipe fields and the tare field are
+both dirty before the operator clicks away; the current client behavior can save
+only the first dirty form it sees.
+
+Recommended fix:
+
+- Either block navigation/action with a clear unsaved-changes warning when more
+  than one terminal form is dirty, or batch/save all dirty forms before reload.
+- Verify with Playwright using dirty recipe plus dirty tare, then attempted
+  machine navigation, queue navigation, produced-card navigation, and finish.
+
+### OI-009 - Build unattended production backup system
+
+- Status: open
+- Severity: important
+- Found in: Full Readiness Audit, 2026-07-02
+
+The app has a SQLite-safe backup/restore helper, but it does not yet have the
+production backup system needed for pilot use or future ERP rehearsal. Backups
+must not depend on shift-manager/admin clicks. They need to run unattended on a
+fixed schedule, be validated, be retained according to an explicit policy, and
+support tested recovery drills.
+
+Recommended fix:
+
+- Create an unattended scheduler-owned backup job for the app server.
+- Keep using SQLite-safe backup behavior rather than raw file copy.
+- Run `PRAGMA integrity_check` on each newly created backup immediately after
+  the SQLite backup copy completes.
+- Write backup metadata, including status, timestamp, source path, backup path,
+  file size, checksum, and validation result.
+- Apply an explicit retention policy suitable for pilot use, such as frequent
+  short-term backups plus daily longer-term backups.
+- Support at least one off-machine/off-disk copy target, or document the chosen
+  deployment constraint if off-machine storage is not available yet.
+- Provide a no-shift-manager recovery procedure and a tested restore drill using
+  scratch databases, including intentional bad-backup/corruption tests.
+- Expose backup health in developer/admin diagnostics without requiring anyone
+  to manually trigger routine backups.
+
+### OI-010 - Terminal/admin UX and accessibility hardening pass
+
+- Status: open
+- Severity: medium/minor
+- Found in: Full Readiness Audit, 2026-07-02
+
+The remaining audit UX items are about operator confidence and keyboard/screen
+reader behavior rather than core data integrity.
+
+Recommended fix:
+
+- Move focus into queue and produced drawers when they open, trap focus while
+  open if appropriate, and restore focus when they close.
+- Change the finish confirmation modal so the non-destructive back/cancel action
+  receives initial focus, and restore focus after close.
+- Improve admin planning validation so row/action errors appear near the affected
+  card instead of only as global notices.
+- Check admin correction ledgers for per-row accessible labels and keyboard flow.
+- Decide whether terminal sync should auto-refresh when no operator input is
+  dirty/focused, or keep the manual refresh banner as an accepted limitation and
+  document it.
+- Verify with focused Playwright keyboard checks and screenshots.

@@ -38,7 +38,7 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "material": "LDPE",
         "size_thickness": "600/0.050",
         "extrusion_flag": "da",
-        "raw_material_a": "LDPE A | 100%",
+        "raw_material_a": "LDPE; A | 100%",
         "packaging_method": "rolls",
     }
     row.update(overrides)
@@ -78,7 +78,7 @@ def test_csv_template_uses_valid_structured_recipe_sample():
     content = csv_template()
 
     assert "raw_material_a" in content
-    assert "reLDPE | 100%" in content
+    assert "reLDPE; recycled LDPE | 100%" in content
     assert "N/A" not in content
 
 
@@ -143,6 +143,43 @@ def test_csv_import_creates_imported_ready_cards(connection):
     assert card["status"] == STATUS_IMPORTED
     assert card["customer"] == "Test Customer"
     assert card["max_roll_weight"] is None
+
+
+def test_csv_import_rejects_old_recipe_format_for_new_export_rows(connection):
+    result = import_cards_from_csv(
+        "orders.csv",
+        csv_bytes(extrusion_row("25278", raw_material_a="LDPE A | 100%")),
+        overwrite_existing=False,
+    )
+
+    card_count = connection.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+
+    assert result.rows_seen == 1
+    assert result.rows_imported == 0
+    assert result.row_results[0].action == "blocked"
+    assert "липсва разделител ;" in result.row_results[0].message
+    assert card_count == 0
+
+
+def test_csv_import_rejects_extra_semicolon_in_recipe_material(connection):
+    result = import_cards_from_csv(
+        "orders.csv",
+        csv_bytes(
+            extrusion_row(
+                "25279",
+                raw_material_a="UV Protection; Additech; Shield | 100%",
+            )
+        ),
+        overwrite_existing=False,
+    )
+
+    card_count = connection.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+
+    assert result.rows_seen == 1
+    assert result.rows_imported == 0
+    assert result.row_results[0].action == "blocked"
+    assert "неподдържан разделител ; в материала" in result.row_results[0].message
+    assert card_count == 0
 
 
 def test_database_initialization_adds_max_roll_weight_to_existing_cards_table(
@@ -667,7 +704,7 @@ def test_csv_import_ignores_max_roll_weight_alias(connection):
             "max_roll_weight_kg": "75",
             "size_thickness": "600/0.050",
             "extrusion_flag": "da",
-            "raw_material_a": "LDPE A | 100%",
+            "raw_material_a": "LDPE; A | 100%",
             "packaging_method": "rolls",
         }
     )
@@ -710,6 +747,40 @@ def test_csv_import_skips_rows_without_extrusion_step(connection):
     assert card is None
 
 
+def test_csv_import_blocks_invalid_recipe_row_without_blocking_valid_rows(connection):
+    result = import_cards_from_csv(
+        "mixed-recipe-validity.csv",
+        csv_bytes(
+            extrusion_row(
+                "25330",
+                raw_material_a="UV Protection; Additech UV Shield XZ-204 | 2%",
+                linear_pe="LLDPE; HIP Petrohemija TR-130 | 98%",
+            ),
+            extrusion_row(
+                "25331",
+                raw_material_a="UV Protection; | 2%",
+                linear_pe="LLDPE; HIP Petrohemija TR-130 | 98%",
+            ),
+        ),
+        overwrite_existing=False,
+    )
+
+    existing_orders = [
+        row["order_number"]
+        for row in connection.execute(
+            "SELECT order_number FROM cards ORDER BY order_number"
+        ).fetchall()
+    ]
+
+    assert result.rows_seen == 2
+    assert result.rows_imported == 1
+    assert result.created == 1
+    assert result.skipped == 1
+    assert [row.action for row in result.row_results] == ["created", "blocked"]
+    assert existing_orders == ["25330"]
+    assert "Рецептата не може да бъде импортирана" in result.row_results[1].message
+
+
 def test_duplicate_import_is_skipped_by_default(connection):
     first = import_cards_from_csv(
         "first.csv",
@@ -738,6 +809,24 @@ def test_duplicate_import_is_skipped_by_default(connection):
     assert card["customer"] == "Original Customer"
 
 
+def test_existing_duplicate_import_with_invalid_recipe_is_still_skipped(connection):
+    import_one_ready_card("25332")
+
+    result = import_cards_from_csv(
+        "duplicate-invalid-recipe.csv",
+        csv_bytes(extrusion_row("25332", raw_material_a="Invalid Recipe")),
+        overwrite_existing=False,
+    )
+
+    assert result.rows_seen == 1
+    assert result.rows_imported == 0
+    assert result.skipped == 1
+    assert result.duplicate_rows == ["25332"]
+    assert result.row_results[0].action == "skipped"
+    assert "обновяване" in result.row_results[0].message
+    assert "Рецептата не може да бъде импортирана" not in result.row_results[0].message
+
+
 def test_duplicate_row_inside_same_csv_is_reported_and_skipped(connection):
     result = import_cards_from_csv(
         "duplicate-in-file.csv",
@@ -760,6 +849,31 @@ def test_duplicate_row_inside_same_csv_is_reported_and_skipped(connection):
     assert [row.action for row in result.row_results] == ["created", "skipped"]
     assert result.row_results[1].row_number == 3
     assert "Дублиран номер на поръчка" in result.row_results[1].message
+    assert card["customer"] == "First Customer"
+
+
+def test_duplicate_row_inside_same_csv_with_invalid_recipe_is_still_skipped(connection):
+    result = import_cards_from_csv(
+        "duplicate-invalid-recipe-in-file.csv",
+        csv_bytes(
+            extrusion_row("25333", customer="First Customer"),
+            extrusion_row("25333", customer="Second Customer", raw_material_a="Invalid Recipe"),
+        ),
+        overwrite_existing=False,
+    )
+
+    card = connection.execute(
+        "SELECT customer FROM cards WHERE order_number = '25333'"
+    ).fetchone()
+
+    assert result.rows_seen == 2
+    assert result.rows_imported == 1
+    assert result.created == 1
+    assert result.skipped == 1
+    assert result.duplicate_rows == ["25333"]
+    assert [row.action for row in result.row_results] == ["created", "skipped"]
+    assert "Дублиран номер на поръчка" in result.row_results[1].message
+    assert "Рецептата не може да бъде импортирана" not in result.row_results[1].message
     assert card["customer"] == "First Customer"
 
 
@@ -843,7 +957,7 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
             extrusion_row(
                 "25281",
                 customer="Updated Customer",
-                raw_material_a="LDPE Updated | 100%",
+                raw_material_a="LDPE; Updated | 100%",
             )
         ),
         overwrite_existing=True,
@@ -876,7 +990,7 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
     assert card["machine_sequence"] == 1
     assert card["customer"] == "Updated Customer"
     assert card["max_roll_weight"] == "60.0"
-    assert card["raw_material_a"] == "LDPE Updated | 100%"
+    assert card["raw_material_a"] == "LDPE; Updated | 100%"
     assert card["tare_weight"] == 1.25
     assert card["actual_raw_material_used"] == "Actual LDPE"
     assert card["raw_material_brand_grade"] == "Grade A"
@@ -886,7 +1000,7 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
     assert segment_count == 1
 
 
-def test_overwrite_import_blocks_invalid_release_recipe_for_released_card(connection):
+def test_overwrite_import_blocks_invalid_recipe_for_released_card(connection):
     card_id = import_one_ready_card("25321")
     assert db.release_card(
         card_id,
@@ -918,8 +1032,9 @@ def test_overwrite_import_blocks_invalid_release_recipe_for_released_card(connec
     assert after["version"] == before["version"]
 
 
-def test_overwrite_import_allows_invalid_release_recipe_for_unreleased_draft(connection):
+def test_overwrite_import_blocks_invalid_recipe_for_unreleased_draft(connection):
     card_id = import_one_ready_card("25322")
+    before = db.fetch_admin_card_detail(card_id)
 
     result = import_cards_from_csv(
         "overwrite-invalid-draft.csv",
@@ -934,10 +1049,14 @@ def test_overwrite_import_allows_invalid_release_recipe_for_unreleased_draft(con
     )
     card = db.fetch_admin_card_detail(card_id)
 
-    assert result.rows_imported == 1
-    assert result.updated == 1
-    assert card["customer"] == "Draft Update Customer"
-    assert card["raw_material_a"] == "Updated LDPE"
+    assert result.rows_imported == 0
+    assert result.updated == 0
+    assert result.skipped == 1
+    assert result.row_results[0].action == "blocked"
+    assert "Рецептата не може да бъде импортирана" in result.row_results[0].message
+    assert card["customer"] == before["customer"]
+    assert card["raw_material_a"] == before["raw_material_a"]
+    assert card["version"] == before["version"]
 
 
 def test_overwrite_import_blocks_stale_source_after_admin_imported_field_correction(connection):
@@ -945,7 +1064,7 @@ def test_overwrite_import_blocks_stale_source_after_admin_imported_field_correct
     fields = current_import_fields(connection, card_id)
     fields["city"] = "Corrected City"
     fields["product_type"] = "Corrected Product"
-    fields["raw_material_a"] = "Corrected LDPE"
+    fields["raw_material_a"] = "LDPE; Corrected LDPE | 100%"
     card = db.fetch_admin_card_detail(card_id)
     assert db.update_admin_imported_fields(card_id, card["version"], fields).ok
     corrected = db.fetch_admin_card_detail(card_id)
@@ -965,9 +1084,33 @@ def test_overwrite_import_blocks_stale_source_after_admin_imported_field_correct
     assert "преглед" in result.row_results[0].message.casefold()
     assert unchanged["city"] == "Corrected City"
     assert unchanged["product_type"] == "Corrected Product"
-    assert unchanged["raw_material_a"] == "Corrected LDPE"
+    assert unchanged["raw_material_a"] == "LDPE; Corrected LDPE | 100%"
     assert unchanged["version"] == corrected["version"]
     assert unchanged["import_batch_id"] == corrected["import_batch_id"]
+
+
+def test_overwrite_stale_conflict_with_invalid_recipe_reports_stale_first(connection):
+    card_id = import_one_ready_card("25334")
+    fields = current_import_fields(connection, card_id)
+    fields["city"] = "Corrected City"
+    card = db.fetch_admin_card_detail(card_id)
+    assert db.update_admin_imported_fields(card_id, card["version"], fields).ok
+
+    result = import_cards_from_csv(
+        "stale-invalid-recipe-overwrite.csv",
+        csv_bytes(extrusion_row("25334", raw_material_a="Invalid Recipe")),
+        overwrite_existing=True,
+    )
+
+    unchanged = db.fetch_admin_card_detail(card_id)
+    assert result.rows_imported == 0
+    assert result.updated == 0
+    assert result.skipped == 1
+    assert result.row_results[0].action == "blocked"
+    assert "администратор" in result.row_results[0].message.casefold()
+    assert "преглед" in result.row_results[0].message.casefold()
+    assert "Рецептата не може да бъде импортирана" not in result.row_results[0].message
+    assert unchanged["city"] == "Corrected City"
 
 
 def test_overwrite_import_allows_when_current_fields_match_incoming_after_admin_correction(connection):

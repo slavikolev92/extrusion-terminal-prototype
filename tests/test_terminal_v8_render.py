@@ -55,13 +55,13 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "extrusion_folding": "single",
         "extrusion_next_operation": "rewind",
         "extrusion_treatment": "corona",
-        "raw_material_a": "LDPE A | 50%",
-        "raw_material_b": "LLDPE B | 30%",
-        "raw_material_c": "MDPE HDPE C | 5%",
-        "linear_pe": "LLDPE Линеен PE | 8%",
-        "antistatic": "Antistatic Антистатик 1% | 1%",
-        "masterbatch": "Masterbatch Бял мастербач | 4%",
-        "chalk": "Filler Креда 5% | 2%",
+        "raw_material_a": "LDPE; A | 50%",
+        "raw_material_b": "LLDPE; B | 30%",
+        "raw_material_c": "MDPE; HDPE C | 5%",
+        "linear_pe": "LLDPE; Линеен PE | 8%",
+        "antistatic": "Antistatic; Антистатик 1% | 1%",
+        "masterbatch": "Masterbatch; Бял мастербач | 4%",
+        "chalk": "Filler; Креда 5% | 2%",
         "packaging_method": "rolls",
     }
     row.update(overrides)
@@ -785,13 +785,13 @@ def test_terminal_v8_recipe_and_roll_table_headers_share_style(connection):
     assert ".recipe-head div,\n      .roll-head > div {\n        padding: 4px 6px;" in short_height_rules
 
 
-def test_terminal_v8_renders_category_only_recipe_without_na_control_value(connection):
+def test_terminal_v8_renders_semicolon_reusable_recipe_without_na_control_value(connection):
     card_id = release_ready_card(
         "26241",
         machine_id=1,
         sequence=1,
-        raw_material_a="reLDPE | 80%",
-        linear_pe="LLDPE SABIC 119ZJ | 20%",
+        raw_material_a="reLDPE; Recycled LDPE | 80%",
+        linear_pe="LLDPE; SABIC 119ZJ | 20%",
         raw_material_b="",
         raw_material_c="",
         antistatic="",
@@ -803,6 +803,7 @@ def test_terminal_v8_renders_category_only_recipe_without_na_control_value(conne
     recipe_html = form_block(html, f"/terminal/cards/{card_id}/materials")
 
     assert "reLDPE" in recipe_html
+    assert "Recycled LDPE" in recipe_html
     assert "80%" in recipe_html
     assert "400.00" not in recipe_html
     assert "400" in recipe_html
@@ -823,13 +824,13 @@ def test_terminal_v8_recipe_display_rounds_operator_percent_and_kg_values(connec
         machine_id=1,
         sequence=1,
         quantity_1="1250",
-        raw_material_a="LDPE A | 37.5%",
-        raw_material_b="LLDPE B | 23.5%",
-        raw_material_c="MDPE C | 12%",
-        linear_pe="reLDPE D | 10%",
-        antistatic="Antistatic E | 2.5%",
-        masterbatch="Masterbatch F | 9%",
-        chalk="Filler G | 5.5%",
+        raw_material_a="LDPE; A | 37.5%",
+        raw_material_b="LLDPE; B | 23.5%",
+        raw_material_c="MDPE; C | 12%",
+        linear_pe="reLDPE; D | 10%",
+        antistatic="Antistatic; E | 2.5%",
+        masterbatch="Masterbatch; F | 9%",
+        chalk="Filler; G | 5.5%",
     )
 
     rows = {row["field"]: row for row in terminal_context(card_id)["recipe_rows"]}

@@ -64,7 +64,7 @@ from .db import (
 )
 from .importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
 from .printing import build_print_readiness
-from .recipe_parser import APPROVED_RECIPE_CATEGORIES, RECIPE_SOURCE_FIELDS
+from .recipe_parser import RECIPE_SOURCE_FIELDS
 from .recipe_parser import parse_recipe_source_fields
 from .rules import RECIPE_RELEASE_FIELD_LABELS, RuleResult, target_gross_weight_from_card
 
@@ -198,6 +198,7 @@ def admin_card_detail_context(card_id: int, **extra: Any) -> dict[str, Any] | No
     card["total_production_duration"] = format_duration(
         card["total_production_seconds"],
     )
+    recipe_rows = build_recipe_rows(card)
     context: dict[str, Any] = {
         "admin_section": "cards",
         "card": card,
@@ -205,9 +206,8 @@ def admin_card_detail_context(card_id: int, **extra: Any) -> dict[str, Any] | No
         "import_field_labels": IMPORT_FIELD_LABELS,
         "status_labels": STATUS_LABELS,
         "timing_reason_labels": TIMING_REASON_LABELS,
-        "recipe_categories": APPROVED_RECIPE_CATEGORIES,
         "quantity_lines": build_quantity_lines(card),
-        "recipe_rows": build_recipe_rows(card),
+        "recipe_rows": recipe_rows,
     }
     context.update(extra)
     return context
@@ -501,6 +501,22 @@ def material_ledger_from_form(
     return planned_materials, actual_entries
 
 
+def validate_recipe_structured_delimiters(form: Any) -> RuleResult:
+    for label, field in RECIPE_FIELD_ROWS:
+        category = str(form.get(f"material_category__{field}") or "")
+        planned_material = str(form.get(f"planned_material__{field}") or "")
+        if ";" in category or ";" in planned_material:
+            return RuleResult(
+                False,
+                (
+                    "Рецептата не може да бъде записана: "
+                    f"Суровина {label}: категорията и материалът не могат да съдържат ;. "
+                    "Коригирайте рецептата и опитайте отново.",
+                ),
+            )
+    return RuleResult(True)
+
+
 def normalize_recipe_percent_input(recipe_percent: str) -> str:
     percent = recipe_percent.strip()
     if not percent:
@@ -519,7 +535,10 @@ def compose_recipe_source_text(
     category = category.strip()
     planned_material = planned_material.strip()
     recipe_percent = normalize_recipe_percent_input(recipe_percent)
-    identity = " ".join(part for part in (category, planned_material) if part)
+    if category and planned_material:
+        identity = f"{category}; {planned_material}"
+    else:
+        identity = " ".join(part for part in (category, planned_material) if part)
     if not identity and not recipe_percent:
         return ""
     if recipe_percent:
@@ -528,7 +547,11 @@ def compose_recipe_source_text(
 
 
 def validate_admin_recipe_source_fields(source_fields: dict[str, str]) -> RuleResult:
-    result = parse_recipe_source_fields(source_fields)
+    result = parse_recipe_source_fields(
+        source_fields,
+        require_semicolon_delimiter=True,
+        reject_embedded_semicolon=True,
+    )
     messages: list[str] = []
     for error in result.errors:
         if error.component_key == "__total__":
@@ -761,11 +784,15 @@ async def save_admin_imported_fields(request: Request, card_id: int):
     if parsed_version is not None:
         preserved_fields, imported_field_result = imported_fields_from_form(card_id, form)
         if preserved_fields is not None:
-            imported_field_result = update_admin_imported_fields(
-                card_id=card_id,
-                loaded_version=parsed_version,
-                fields=preserved_fields,
+            imported_field_result = validate_admin_recipe_source_fields(
+                {field: preserved_fields.get(field, "") for field in RECIPE_SOURCE_FIELDS}
             )
+            if imported_field_result.ok:
+                imported_field_result = update_admin_imported_fields(
+                    card_id=card_id,
+                    loaded_version=parsed_version,
+                    fields=preserved_fields,
+                )
 
     return admin_card_post_response(
         request,
@@ -797,6 +824,10 @@ def imported_fields_from_form(
     card_id: int,
     form: Any,
 ) -> tuple[dict[str, str] | None, RuleResult]:
+    delimiter_result = validate_recipe_structured_delimiters(form)
+    if not delimiter_result.ok:
+        return None, delimiter_result
+
     submitted_fields = {key: str(value) for key, value in form.multi_items()}
     current_card = fetch_admin_card_detail(card_id)
     if current_card is None:
@@ -1155,8 +1186,10 @@ async def save_admin_materials_ledger(request: Request, card_id: int):
         str(form.get("loaded_version") or "")
     )
     if parsed_version is not None:
-        planned_materials, actual_entries = material_ledger_from_form(form)
-        material_result = validate_admin_recipe_source_fields(planned_materials)
+        material_result = validate_recipe_structured_delimiters(form)
+        if material_result.ok:
+            planned_materials, actual_entries = material_ledger_from_form(form)
+            material_result = validate_admin_recipe_source_fields(planned_materials)
         if material_result.ok:
             material_result = update_admin_material_ledger(
                 card_id=card_id,

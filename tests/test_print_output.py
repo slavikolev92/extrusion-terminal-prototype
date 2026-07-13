@@ -61,13 +61,13 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "extrusion_folding": "C",
         "extrusion_next_operation": "cutting",
         "extrusion_treatment": "corona",
-        "raw_material_a": "LDPE A | 50%",
-        "raw_material_b": "LLDPE B | 30%",
-        "raw_material_c": "Masterbatch MB C | 5%",
-        "linear_pe": "LLDPE Linear PE | 10%",
-        "antistatic": "Antistatic Agent | 1%",
-        "masterbatch": "Masterbatch Additive | 2%",
-        "chalk": "Filler Chalk | 2%",
+        "raw_material_a": "LDPE; A | 50%",
+        "raw_material_b": "LLDPE; B | 30%",
+        "raw_material_c": "Masterbatch; MB C | 5%",
+        "linear_pe": "LLDPE; Linear PE | 10%",
+        "antistatic": "Antistatic; Agent | 1%",
+        "masterbatch": "Masterbatch; Additive | 2%",
+        "chalk": "Filler; Chalk | 2%",
         "packaging_method": "rolls",
     }
     row.update(overrides)
@@ -622,15 +622,15 @@ def test_print_route_front_page_preserves_planned_material_abc_grid(connection):
 
     assert response.status_code == 200
     expected_values = {
-        ("raw_material_a", "A"): "LDPE A | 50%",
-        ("raw_material_b", "B"): "LLDPE B | 30%",
-        ("raw_material_c", "C"): "Masterbatch MB C | 5%",
-        ("linear_pe", "A"): "LLDPE Linear PE | 10%",
+        ("raw_material_a", "A"): "A 50%",
+        ("raw_material_b", "B"): "B 30%",
+        ("raw_material_c", "C"): "MB C 5%",
+        ("linear_pe", "A"): "Linear PE 10%",
         ("linear_pe", "B"): "",
         ("linear_pe", "C"): "",
-        ("antistatic", "A"): "Antistatic Agent | 1%",
-        ("masterbatch", "A"): "Masterbatch Additive | 2%",
-        ("chalk", "A"): "Filler Chalk | 2%",
+        ("antistatic", "A"): "Agent 1%",
+        ("masterbatch", "A"): "Additive 2%",
+        ("chalk", "A"): "Chalk 2%",
     }
     for (component_key, column_name), expected_value in expected_values.items():
         cell = data_block(
@@ -712,26 +712,26 @@ def test_print_route_front_page_renders_planned_recipe_values(connection):
 
     assert response.status_code == 200
     expected_values = {
-        "raw_material_a": "LDPE A | 50%",
-        "raw_material_b": "LLDPE B | 30%",
-        "raw_material_c": "Masterbatch MB C | 5%",
-        "linear_pe": "LLDPE Linear PE | 10%",
-        "antistatic": "Antistatic Agent | 1%",
-        "masterbatch": "Masterbatch Additive | 2%",
-        "chalk": "Filler Chalk | 2%",
+        "raw_material_a": "A 50%",
+        "raw_material_b": "B 30%",
+        "raw_material_c": "MB C 5%",
+        "linear_pe": "Linear PE 10%",
+        "antistatic": "Agent 1%",
+        "masterbatch": "Additive 2%",
+        "chalk": "Chalk 2%",
     }
     for component_key, expected_value in expected_values.items():
         planned_cell = data_block(response.text, "data-front-recipe-planned", component_key)
         assert rendered_text(planned_cell) == expected_value
 
 
-def test_print_route_preserves_category_only_recipe_source_text(connection):
+def test_print_route_compacts_recipe_source_text(connection):
     card_id = make_completed_printable_card(
         "27061",
-        raw_material_a="reLDPE | 80%",
+        raw_material_a="reLDPE; Recycled LDPE | 80%",
         raw_material_b="",
         raw_material_c="",
-        linear_pe="LLDPE SABIC 119ZJ | 20%",
+        linear_pe="LLDPE; SABIC 119ZJ | 20%",
         antistatic="",
         masterbatch="",
         chalk="",
@@ -742,9 +742,32 @@ def test_print_route_preserves_category_only_recipe_source_text(connection):
     assert response.status_code == 200
     planned_a = data_block(response.text, "data-front-recipe-planned", "raw_material_a")
     planned_linear = data_block(response.text, "data-front-recipe-planned", "linear_pe")
-    assert rendered_text(planned_a) == "reLDPE | 80%"
-    assert rendered_text(planned_linear) == "LLDPE SABIC 119ZJ | 20%"
+    assert rendered_text(planned_a) == "Recycled LDPE 80%"
+    assert rendered_text(planned_linear) == "SABIC 119ZJ 20%"
     assert "N/A" not in response.text
+
+
+def test_print_recipe_rows_show_material_and_percent_without_category_or_delimiters(
+    connection,
+):
+    card_id = make_completed_printable_card(
+        "27062",
+        raw_material_a="UV Protection; Additech UV Shield XZ-204 | 2%",
+        raw_material_b="",
+        raw_material_c="",
+        linear_pe="LLDPE; HIP Petrohemija TR-130 | 98%",
+        antistatic="",
+        masterbatch="",
+        chalk="",
+    )
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    assert "Additech UV Shield XZ-204 2%" in response.text
+    assert "HIP Petrohemija TR-130 98%" in response.text
+    assert "UV Protection;" not in response.text
+    assert " | 2%" not in response.text
 
 
 def test_print_route_front_page_renders_actual_material_and_batch_values(

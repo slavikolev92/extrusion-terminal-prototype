@@ -274,12 +274,7 @@
         {% for row in recipe_rows %}
           <div class="admin-ledger-row material-ledger-row">
             <div>
-              <select name="material_category__{{ row.field }}" aria-label="{{ row.source_label }} категория">
-                <option value=""></option>
-                {% for category in recipe_categories %}
-                  <option value="{{ category }}"{% if row.material_category == category %} selected{% endif %}>{{ category }}</option>
-                {% endfor %}
-              </select>
+              <input name="material_category__{{ row.field }}" value="{{ row.material_category or '' }}" aria-label="{{ row.source_label }} категория">
             </div>
             <div>
               <input name="planned_material__{{ row.field }}" value="{{ row.planned_material_edit or '' }}" aria-label="{{ row.source_label }} планиран материал">

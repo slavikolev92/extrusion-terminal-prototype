@@ -43,8 +43,8 @@ def structured_release_row(order_number: str, **overrides: str) -> dict[str, str
         "extrusion_folding": "single",
         "extrusion_next_operation": "rewind",
         "extrusion_treatment": "corona",
-        "raw_material_a": "LDPE Rompetrol B20/03 | 80%",
-        "linear_pe": "LLDPE SABIC 119ZJ | 20%",
+        "raw_material_a": "LDPE; Rompetrol B20/03 | 80%",
+        "linear_pe": "LLDPE; SABIC 119ZJ | 20%",
         "packaging_method": "rolls",
     }
     row.update(overrides)
@@ -65,6 +65,39 @@ def import_structured_card(order_number: str, **overrides: str) -> int:
                 (order_number,),
             ).fetchone()["id"]
         )
+
+
+def current_import_fields(card_id: int) -> dict[str, str]:
+    with db.connect() as connection:
+        row = connection.execute(
+            f"""
+            SELECT {", ".join(IMPORT_FIELDS)}
+            FROM cards
+            WHERE id = ?
+            """,
+            (card_id,),
+        ).fetchone()
+    assert row is not None
+    return {field: str(row[field] or "") for field in IMPORT_FIELDS}
+
+
+def import_structured_card_with_admin_correction(order_number: str, **overrides: str) -> int:
+    card_id = import_structured_card(order_number)
+    fields = current_import_fields(card_id)
+    fields.update(structured_release_row(order_number, **overrides))
+    assignments = ", ".join(f"{field} = ?" for field in IMPORT_FIELDS)
+    with db.connect() as connection:
+        connection.execute(
+            f"""
+            UPDATE cards
+            SET {assignments},
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (*(fields[field] for field in IMPORT_FIELDS), card_id),
+        )
+    return card_id
 
 
 def assert_card_still_imported(card_id: int) -> None:
@@ -112,13 +145,13 @@ def test_release_allows_valid_structured_recipe_and_target_gross(connection):
         ),
         (
             "RS-REL-003",
-            {"raw_material_a": "mLLDPE Marlex 1018 | 80%"},
-            "Суровина A: непозната категория",
+            {"raw_material_a": "reLDPE | 80%"},
+            "Суровина A: липсва материал след категория",
         ),
         (
             "RS-REL-004",
             {"raw_material_a": " | 80%"},
-            "Суровина A: липсва материал след категория",
+            "Суровина A: липсва категория",
         ),
         (
             "RS-REL-005",
@@ -141,7 +174,7 @@ def test_release_blocks_recipe_row_contract_failures(
     overrides,
     expected_reason,
 ):
-    card_id = import_structured_card(order_number, **overrides)
+    card_id = import_structured_card_with_admin_correction(order_number, **overrides)
 
     result = db.release_card(card_id, machine_id=1, machine_sequence=1)
 
@@ -153,7 +186,7 @@ def test_release_blocks_recipe_row_contract_failures(
 
 
 def test_release_blocks_recipe_total_that_is_not_exactly_100(connection):
-    card_id = import_structured_card(
+    card_id = import_structured_card_with_admin_correction(
         "RS-REL-007",
         raw_material_a="LDPE Rompetrol B20/03 | 80%",
         linear_pe="LLDPE SABIC 119ZJ | 19%",
@@ -207,8 +240,8 @@ def test_release_accepts_positive_quantity_1_without_unit_1_kg_check(connection)
         unit_1="бр",
         quantity_2="not target gross",
         unit_2="nonsense",
-        raw_material_a="LDPE Rompetrol B20/03 | 97,5%",
-        linear_pe="LLDPE SABIC 119ZJ | 2,5%",
+        raw_material_a="LDPE; Rompetrol B20/03 | 97,5%",
+        linear_pe="LLDPE; SABIC 119ZJ | 2,5%",
     )
 
     result = db.release_card(card_id, machine_id=2, machine_sequence=3)
@@ -227,8 +260,8 @@ def test_release_blocks_invalid_quantity_1_even_when_quantity_2_is_kg_like(conne
         unit_1="",
         quantity_2="1250,5",
         unit_2="кг",
-        raw_material_a="LDPE Rompetrol B20/03 | 97,5%",
-        linear_pe="LLDPE SABIC 119ZJ | 2,5%",
+        raw_material_a="LDPE; Rompetrol B20/03 | 97,5%",
+        linear_pe="LLDPE; SABIC 119ZJ | 2,5%",
     )
 
     result = db.release_card(card_id, machine_id=1, machine_sequence=1)
@@ -241,11 +274,11 @@ def test_release_blocks_invalid_quantity_1_even_when_quantity_2_is_kg_like(conne
     assert_card_still_imported(card_id)
 
 
-def test_release_allows_category_only_recipe_rows_from_excel_builder_na_omissions(connection):
+def test_release_allows_semicolon_multi_word_category(connection):
     card_id = import_structured_card(
         "RS-REL-022",
-        raw_material_a="reLDPE | 80%",
-        linear_pe="LLDPE SABIC 119ZJ | 20%",
+        raw_material_a="UV Protection; Additech UV Shield XZ-204 | 2%",
+        linear_pe="LLDPE; SABIC 119ZJ | 98%",
     )
 
     result = db.release_card(card_id, machine_id=1, machine_sequence=1)
@@ -253,32 +286,17 @@ def test_release_allows_category_only_recipe_rows_from_excel_builder_na_omission
 
     assert result.ok
     assert card["status"] == STATUS_PENDING
-    assert card["raw_material_a"] == "reLDPE | 80%"
+    assert card["raw_material_a"] == "UV Protection; Additech UV Shield XZ-204 | 2%"
 
 
-def test_release_allows_category_only_rows_for_all_approved_categories_without_catalog_lookup(
-    connection,
-):
-    card_id = import_structured_card(
-        "RS-REL-023",
-        raw_material_a="LDPE | 95%",
-        masterbatch="Masterbatch | 5%",
-        linear_pe="",
-    )
-
-    result = db.release_card(card_id, machine_id=1, machine_sequence=1)
-
-    assert result.ok
-
-
-def test_import_still_allows_invalid_recipe_for_admin_correction_before_release(connection):
+def test_import_blocks_invalid_recipe_before_admin_correction(connection):
     result = import_cards_from_csv(
         "invalid-draft.csv",
         csv_bytes(
             structured_release_row(
                 "RS-REL-014",
-                raw_material_a="LDPE Draft Bad Total | 80%",
-                linear_pe="LLDPE Draft Bad Total | 19%",
+                raw_material_a="LDPE; Draft Bad Total | 80%",
+                linear_pe="LLDPE; Draft Bad Total | 19%",
             )
         ),
         overwrite_existing=False,
@@ -288,13 +306,16 @@ def test_import_still_allows_invalid_recipe_for_admin_correction_before_release(
             "SELECT status FROM cards WHERE order_number = 'RS-REL-014'"
         ).fetchone()
 
-    assert result.rows_imported == 1
-    assert result.created == 1
-    assert imported["status"] == STATUS_IMPORTED
+    assert result.rows_imported == 0
+    assert result.created == 0
+    assert result.skipped == 1
+    assert result.row_results[0].action == "blocked"
+    assert "Рецептата не може да бъде импортирана" in result.row_results[0].message
+    assert imported is None
 
 
 def test_admin_release_route_renders_recipe_gate_errors_inline(connection):
-    card_id = import_structured_card(
+    card_id = import_structured_card_with_admin_correction(
         "RS-REL-016",
         raw_material_a="LDPE Route Bad Total | 80%",
         linear_pe="LLDPE Route Bad Total | 19%",

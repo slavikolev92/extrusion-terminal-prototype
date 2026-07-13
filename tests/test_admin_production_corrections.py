@@ -53,7 +53,7 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "material": "LDPE",
         "size_thickness": "600/0.050",
         "extrusion_flag": "da",
-        "raw_material_a": "LDPE A | 100%",
+        "raw_material_a": "LDPE; A | 100%",
         "packaging_method": "rolls",
     }
     row.update(overrides)
@@ -260,8 +260,8 @@ def test_admin_material_correction_updates_terminal_fields_and_blocks_stale_vers
 def test_admin_material_correction_route_updates_recipe_actual_entries(connection):
     card_id = import_ready_card(
         "26015",
-        raw_material_a="LDPE A | 60%",
-        raw_material_b="LDPE B | 40%",
+        raw_material_a="LDPE; A | 60%",
+        raw_material_b="LDPE; B | 40%",
     )
     assert db.release_card(
         card_id,
@@ -319,8 +319,8 @@ def test_admin_material_correction_route_updates_recipe_actual_entries(connectio
 def test_admin_material_correction_route_preserves_legacy_brand_when_omitted(connection):
     card_id = import_ready_card(
         "26016",
-        raw_material_a="LDPE A | 60%",
-        raw_material_b="LDPE B | 40%",
+        raw_material_a="LDPE; A | 60%",
+        raw_material_b="LDPE; B | 40%",
     )
     assert db.release_card(
         card_id,

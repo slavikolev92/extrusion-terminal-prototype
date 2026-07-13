@@ -3,7 +3,6 @@ from __future__ import annotations
 from decimal import Decimal
 
 from app.recipe_parser import (
-    APPROVED_RECIPE_CATEGORIES,
     ParsedRecipeComponent,
     parse_recipe_cell,
     parse_recipe_source_fields,
@@ -14,27 +13,13 @@ def error_messages(result):
     return tuple(error.message for error in result.errors)
 
 
-def test_approved_recipe_categories_match_locked_contract():
-    assert APPROVED_RECIPE_CATEGORIES == (
-        "LDPE",
-        "LLDPE",
-        "MDPE",
-        "reLDPE",
-        "Antistatic",
-        "Masterbatch",
-        "Filler",
-        "UV",
-        "Antislip",
-    )
-
-
 def test_parse_structured_recipe_fields_returns_components_and_exact_total():
     result = parse_recipe_source_fields(
         {
-            "raw_material_a": "LDPE Rompetrol Midilena B20/03 | 77%",
-            "linear_pe": "LLDPE SABIC 119ZJ | 18%",
-            "antistatic": "Antistatic Novachem AT 04673 LD | 2%",
-            "masterbatch": "Masterbatch Polibach White 8000 ET | 3%",
+            "raw_material_a": "LDPE; Rompetrol Midilena B20/03 | 77%",
+            "linear_pe": "LLDPE; SABIC 119ZJ | 18%",
+            "antistatic": "Antistatic Additive; Novachem AT 04673 LD | 2%",
+            "masterbatch": "White Masterbatch; Polibach White 8000 ET | 3%",
         }
     )
 
@@ -44,29 +29,29 @@ def test_parse_structured_recipe_fields_returns_components_and_exact_total():
     assert result.components == (
         ParsedRecipeComponent(
             component_key="raw_material_a",
-            source_text="LDPE Rompetrol Midilena B20/03 | 77%",
+            source_text="LDPE; Rompetrol Midilena B20/03 | 77%",
             material_category="LDPE",
             planned_material="Rompetrol Midilena B20/03",
             recipe_percent=Decimal("77"),
         ),
         ParsedRecipeComponent(
             component_key="linear_pe",
-            source_text="LLDPE SABIC 119ZJ | 18%",
+            source_text="LLDPE; SABIC 119ZJ | 18%",
             material_category="LLDPE",
             planned_material="SABIC 119ZJ",
             recipe_percent=Decimal("18"),
         ),
         ParsedRecipeComponent(
             component_key="antistatic",
-            source_text="Antistatic Novachem AT 04673 LD | 2%",
-            material_category="Antistatic",
+            source_text="Antistatic Additive; Novachem AT 04673 LD | 2%",
+            material_category="Antistatic Additive",
             planned_material="Novachem AT 04673 LD",
             recipe_percent=Decimal("2"),
         ),
         ParsedRecipeComponent(
             component_key="masterbatch",
-            source_text="Masterbatch Polibach White 8000 ET | 3%",
-            material_category="Masterbatch",
+            source_text="White Masterbatch; Polibach White 8000 ET | 3%",
+            material_category="White Masterbatch",
             planned_material="Polibach White 8000 ET",
             recipe_percent=Decimal("3"),
         ),
@@ -76,10 +61,10 @@ def test_parse_structured_recipe_fields_returns_components_and_exact_total():
 def test_parse_ignores_empty_cells_when_non_empty_rows_total_100():
     result = parse_recipe_source_fields(
         {
-            "raw_material_a": "LDPE Rompetrol B20/03 | 80%",
+            "raw_material_a": "LDPE; Rompetrol B20/03 | 80%",
             "raw_material_b": "",
             "raw_material_c": None,
-            "linear_pe": "LLDPE SABIC 119ZJ | 20%",
+            "linear_pe": "LLDPE; SABIC 119ZJ | 20%",
             "antistatic": "",
             "masterbatch": "",
             "chalk": "",
@@ -97,24 +82,40 @@ def test_parse_ignores_empty_cells_when_non_empty_rows_total_100():
 def test_parse_cell_splits_on_final_pipe():
     component, errors = parse_recipe_cell(
         "raw_material_a",
-        "LDPE Producer | Internal grade note B20/03 | 100%",
+        "LDPE; Producer | Internal grade note B20/03 | 100%",
     )
 
     assert errors == ()
     assert component == ParsedRecipeComponent(
         component_key="raw_material_a",
-        source_text="LDPE Producer | Internal grade note B20/03 | 100%",
+        source_text="LDPE; Producer | Internal grade note B20/03 | 100%",
         material_category="LDPE",
         planned_material="Producer | Internal grade note B20/03",
         recipe_percent=Decimal("100"),
     )
 
 
-def test_parse_normalizes_category_case_decimal_comma_and_extra_spaces():
+def test_parse_semicolon_cell_with_multi_word_category():
+    component, errors = parse_recipe_cell(
+        "masterbatch",
+        "UV Protection; Additech UV Shield XZ-204 | 2%",
+    )
+
+    assert errors == ()
+    assert component == ParsedRecipeComponent(
+        component_key="masterbatch",
+        source_text="UV Protection; Additech UV Shield XZ-204 | 2%",
+        material_category="UV Protection",
+        planned_material="Additech UV Shield XZ-204",
+        recipe_percent=Decimal("2"),
+    )
+
+
+def test_parse_normalizes_spacing_decimal_comma_and_preserves_category_case():
     result = parse_recipe_source_fields(
         {
-            "raw_material_a": "  ldpe   Rompetrol   B20/03  |  97,5 %  ",
-            "masterbatch": "uv Stabilizer 123 | 2.5%",
+            "raw_material_a": "  ldpe  ;  Rompetrol   B20/03  |  97,5 %  ",
+            "masterbatch": "uv; Stabilizer 123 | 2.5%",
         }
     )
 
@@ -122,21 +123,37 @@ def test_parse_normalizes_category_case_decimal_comma_and_extra_spaces():
     assert result.total_percent == Decimal("100.0")
     assert result.components[0] == ParsedRecipeComponent(
         component_key="raw_material_a",
-        source_text="  ldpe   Rompetrol   B20/03  |  97,5 %  ",
-        material_category="LDPE",
+        source_text="  ldpe  ;  Rompetrol   B20/03  |  97,5 %  ",
+        material_category="ldpe",
         planned_material="Rompetrol B20/03",
         recipe_percent=Decimal("97.5"),
     )
     assert result.components[1] == ParsedRecipeComponent(
         component_key="masterbatch",
-        source_text="uv Stabilizer 123 | 2.5%",
-        material_category="UV",
+        source_text="uv; Stabilizer 123 | 2.5%",
+        material_category="uv",
         planned_material="Stabilizer 123",
         recipe_percent=Decimal("2.5"),
     )
 
 
-def test_parse_normalizes_reldpe_to_canonical_spelling():
+def test_parse_legacy_fallback_splits_first_token_as_category():
+    component, errors = parse_recipe_cell(
+        "raw_material_a",
+        "LDPE Rompetrol Midilena B20/03 | 38%",
+    )
+
+    assert errors == ()
+    assert component == ParsedRecipeComponent(
+        component_key="raw_material_a",
+        source_text="LDPE Rompetrol Midilena B20/03 | 38%",
+        material_category="LDPE",
+        planned_material="Rompetrol Midilena B20/03",
+        recipe_percent=Decimal("38"),
+    )
+
+
+def test_parse_legacy_fallback_preserves_category_spelling():
     result = parse_recipe_source_fields(
         {
             "raw_material_a": "reldpe Natural Regranulate | 100%",
@@ -144,50 +161,20 @@ def test_parse_normalizes_reldpe_to_canonical_spelling():
     )
 
     assert result.ok
-    assert result.components[0].material_category == "reLDPE"
+    assert result.components[0].material_category == "reldpe"
 
 
-def test_parse_allows_excel_builder_na_omissions():
+def test_parse_requires_material_for_legacy_fallback():
     result = parse_recipe_source_fields(
         {
             "raw_material_a": "reLDPE | 80%",
-            "linear_pe": "LLDPE 119ZJ | 20%",
+            "linear_pe": "LLDPE; 119ZJ | 20%",
         }
     )
 
-    assert result.ok
-    assert result.total_percent == Decimal("100")
-    assert result.components == (
-        ParsedRecipeComponent(
-            component_key="raw_material_a",
-            source_text="reLDPE | 80%",
-            material_category="reLDPE",
-            planned_material="",
-            recipe_percent=Decimal("80"),
-        ),
-        ParsedRecipeComponent(
-            component_key="linear_pe",
-            source_text="LLDPE 119ZJ | 20%",
-            material_category="LLDPE",
-            planned_material="119ZJ",
-            recipe_percent=Decimal("20"),
-        ),
-    )
-
-
-def test_parse_category_only_is_allowed_for_any_approved_category():
-    result = parse_recipe_source_fields(
-        {
-            "raw_material_a": "LDPE | 95%",
-            "masterbatch": "Masterbatch | 5%",
-        }
-    )
-
-    assert result.ok
-    assert [
-        (component.material_category, component.planned_material)
-        for component in result.components
-    ] == [("LDPE", ""), ("Masterbatch", "")]
+    assert not result.ok
+    assert result.total_percent == Decimal("20")
+    assert error_messages(result) == ("липсва материал след категория",)
 
 
 def test_parse_reports_missing_final_pipe():
@@ -212,14 +199,24 @@ def test_parse_requires_percent_symbol():
     assert errors[0].message == "липсва процент"
 
 
-def test_parse_rejects_unknown_category():
+def test_parse_reports_missing_category():
     component, errors = parse_recipe_cell(
         "raw_material_a",
-        "mLLDPE Marlex 1018 | 100%",
+        "; Rompetrol B20/03 | 38%",
     )
 
     assert component is None
-    assert errors[0].message == "непозната категория"
+    assert errors[0].message == "липсва категория"
+
+
+def test_parse_reports_missing_material_after_semicolon_category():
+    component, errors = parse_recipe_cell(
+        "raw_material_a",
+        "LDPE; | 38%",
+    )
+
+    assert component is None
+    assert errors[0].message == "липсва материал след категория"
 
 
 def test_parse_rejects_missing_identity_before_percent_delimiter():
@@ -229,7 +226,7 @@ def test_parse_rejects_missing_identity_before_percent_delimiter():
     )
 
     assert component is None
-    assert errors[0].message == "липсва материал след категория"
+    assert errors[0].message == "липсва категория"
 
 
 def test_parse_rejects_invalid_percent_text():

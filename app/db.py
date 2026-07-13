@@ -22,13 +22,12 @@ from .constants import (
     TERMINAL_VISIBLE_STATUSES,
 )
 from .recipe_parser import (
-    APPROVED_RECIPE_CATEGORIES,
     RECIPE_SOURCE_FIELDS,
     ParsedRecipeComponent,
     RecipeParseResult,
     parse_recipe_source_fields,
 )
-from .rules import RuleResult, validate_structured_recipe_release
+from .rules import RECIPE_RELEASE_FIELD_LABELS, RuleResult, validate_structured_recipe_release
 
 STALE_CARD_MESSAGE = "Картата е променена след зареждането на страницата. Презаредете и опитайте отново."
 TIMING_END_REASONS = ("pause", "finish", "correction")
@@ -46,7 +45,6 @@ def _sql_list(values: tuple[str, ...]) -> str:
 
 
 RECIPE_COMPONENT_KEY_PLACEHOLDERS = _sql_list(RECIPE_SOURCE_FIELDS)
-RECIPE_CATEGORY_PLACEHOLDERS = _sql_list(APPROVED_RECIPE_CATEGORIES)
 RECIPE_COMPONENT_ORDER_SQL = " ".join(
     f"WHEN '{component_key}' THEN {index}"
     for index, component_key in enumerate(RECIPE_SOURCE_FIELDS, start=1)
@@ -216,7 +214,7 @@ CREATE TABLE IF NOT EXISTS recipe_components (
     card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
     component_key TEXT NOT NULL CHECK (component_key IN ({RECIPE_COMPONENT_KEY_PLACEHOLDERS})),
     source_text TEXT NOT NULL,
-    material_category TEXT NOT NULL CHECK (material_category IN ({RECIPE_CATEGORY_PLACEHOLDERS})),
+    material_category TEXT NOT NULL,
     planned_material TEXT NOT NULL,
     recipe_percent NUMERIC NOT NULL CHECK (recipe_percent > 0),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -319,6 +317,7 @@ def init_db() -> None:
                 connection,
                 "cards status migration failed foreign key check",
             )
+        ensure_recipe_components_material_category_constraint(connection)
         connection.executescript(SCHEMA_SQL)
         # Existing pilot databases may still have legacy cards.validation_status;
         # current code ignores it and validates current card fields directly.
@@ -488,6 +487,73 @@ def ensure_cards_status_constraint(
             connection,
             "cards status migration failed foreign key check",
         )
+    return True
+
+
+def ensure_recipe_components_material_category_constraint(
+    connection: sqlite3.Connection,
+) -> bool:
+    schema_row = connection.execute(
+        """
+        SELECT sql
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name = 'recipe_components'
+        """
+    ).fetchone()
+    if not schema_row:
+        return False
+
+    schema_sql = str(schema_row["sql"] or "")
+    if "material_category" not in schema_sql or "material_category IN" not in schema_sql:
+        return False
+
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        connection.execute("DROP TABLE IF EXISTS recipe_components_migration")
+        connection.execute(
+            """
+            CREATE TABLE recipe_components_migration (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                component_key TEXT NOT NULL CHECK (component_key IN ({component_keys})),
+                source_text TEXT NOT NULL,
+                material_category TEXT NOT NULL,
+                planned_material TEXT NOT NULL,
+                recipe_percent NUMERIC NOT NULL CHECK (recipe_percent > 0),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (card_id, component_key)
+            )
+            """.format(component_keys=RECIPE_COMPONENT_KEY_PLACEHOLDERS)
+        )
+        copy_columns = [
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(recipe_components_migration)"
+            ).fetchall()
+        ]
+        column_sql = ", ".join(_quote_identifier(column) for column in copy_columns)
+        connection.execute(
+            f"""
+            INSERT INTO recipe_components_migration ({column_sql})
+            SELECT {column_sql}
+            FROM recipe_components
+            """
+        )
+        connection.execute("DROP TABLE recipe_components")
+        connection.execute(
+            "ALTER TABLE recipe_components_migration RENAME TO recipe_components"
+        )
+        connection.commit()
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON")
+
+    ensure_foreign_keys_valid(
+        connection,
+        "recipe_components category migration failed foreign key check",
+    )
     return True
 
 
@@ -3072,6 +3138,26 @@ def validate_card_allows_roll_entry(card: sqlite3.Row | None) -> RuleResult:
     return RuleResult(True)
 
 
+def validate_recipe_source_write_fields(source_fields: dict[str, str]) -> RuleResult:
+    result = parse_recipe_source_fields(
+        source_fields,
+        require_semicolon_delimiter=True,
+        reject_embedded_semicolon=True,
+    )
+    messages: list[str] = []
+    for error in result.errors:
+        if error.component_key == "__total__":
+            reason = error.message
+        else:
+            label = RECIPE_RELEASE_FIELD_LABELS.get(error.component_key, error.component_key)
+            reason = f"{label}: {error.message}"
+        messages.append(
+            f"Рецептата не може да бъде записана: {reason}. "
+            "Коригирайте рецептата и опитайте отново."
+        )
+    return RuleResult(not messages, tuple(messages))
+
+
 def update_admin_imported_fields(
     card_id: int,
     loaded_version: int,
@@ -3106,6 +3192,12 @@ def _update_admin_imported_fields(
             False,
             ("Импортираните полета трябва да запазят валидна стъпка за екструдиране преди запис.",),
         )
+
+    recipe_result = validate_recipe_source_write_fields(
+        {field: cleaned_fields.get(field, "") for field in RECIPE_SOURCE_FIELDS}
+    )
+    if not recipe_result.ok:
+        return recipe_result
 
     card = connection.execute(
         """
@@ -3443,6 +3535,10 @@ def _update_admin_material_ledger(
         field: str(planned_materials.get(field) or "").strip()
         for field in ADMIN_MATERIAL_FIELDS
     }
+    recipe_result = validate_recipe_source_write_fields(cleaned_planned)
+    if not recipe_result.ok:
+        return recipe_result
+
     raw_material_entry = actual_entries.get("raw_material_a", {})
     raw_material_used = str(
         raw_material_entry.get("actual_material_used") or ""

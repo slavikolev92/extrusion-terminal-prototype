@@ -8,7 +8,8 @@ from typing import Any
 
 from .constants import STATUS_IMPORTED
 from .db import connect, insert_import_batch_row, sync_recipe_components_for_card
-from .rules import RuleResult, validate_structured_recipe_release
+from .recipe_parser import RECIPE_SOURCE_FIELDS, parse_recipe_source_fields
+from .rules import RECIPE_RELEASE_FIELD_LABELS, RuleResult, validate_structured_recipe_release
 
 
 IMPORT_FIELDS = (
@@ -164,7 +165,7 @@ def csv_template() -> str:
         "material": "LDPE",
         "size_thickness": "600/0.050",
         "extrusion_flag": "да",
-        "raw_material_a": "reLDPE | 100%",
+        "raw_material_a": "reLDPE; recycled LDPE | 100%",
         "packaging_method": "ролки",
     }
     output = io.StringIO()
@@ -296,11 +297,31 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
                         connection,
                     )
                     continue
+                import_recipe_validity = validate_import_recipe_fields(card)
+                if not import_recipe_validity.ok:
+                    block_import_row(
+                        result,
+                        row_number,
+                        order_number,
+                        " ".join(import_recipe_validity.messages),
+                        connection,
+                    )
+                    continue
                 update_imported_card_fields(connection, int(existing["id"]), int(result.batch_id), card)
                 result.updated += 1
                 action = "updated"
                 message = import_success_message(updated=True)
             else:
+                import_recipe_validity = validate_import_recipe_fields(card)
+                if not import_recipe_validity.ok:
+                    block_import_row(
+                        result,
+                        row_number,
+                        order_number,
+                        " ".join(import_recipe_validity.messages),
+                        connection,
+                    )
+                    continue
                 insert_imported_card(connection, int(result.batch_id), card)
                 result.created += 1
                 action = "created"
@@ -355,6 +376,30 @@ def validate_active_overwrite_release_fields(
     if existing["status"] == STATUS_IMPORTED:
         return RuleResult(True)
     return validate_structured_recipe_release(incoming_card)
+
+
+def validate_import_recipe_fields(card: dict[str, str]) -> RuleResult:
+    source_fields = {field: card.get(field) for field in RECIPE_SOURCE_FIELDS}
+    parse_result = parse_recipe_source_fields(
+        source_fields,
+        require_semicolon_delimiter=True,
+        reject_embedded_semicolon=True,
+    )
+    messages: list[str] = []
+
+    for error in parse_result.errors:
+        if error.component_key == "__total__":
+            reason = error.message
+        else:
+            label = RECIPE_RELEASE_FIELD_LABELS.get(error.component_key, error.component_key)
+            reason = f"{label}: {error.message}"
+        messages.append(import_recipe_message(reason))
+
+    return RuleResult(ok=not messages, messages=tuple(messages))
+
+
+def import_recipe_message(reason: str) -> str:
+    return f"Рецептата не може да бъде импортирана: {reason}. Коригирайте рецептата и опитайте отново."
 
 
 def decode_csv(content: bytes) -> str:

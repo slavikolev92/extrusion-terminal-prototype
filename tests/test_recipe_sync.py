@@ -36,8 +36,8 @@ def structured_row(order_number: str, **overrides: str) -> dict[str, str]:
         "extrusion_folding": "single",
         "extrusion_next_operation": "rewind",
         "extrusion_treatment": "corona",
-        "raw_material_a": "LDPE Rompetrol B20/03 | 80%",
-        "linear_pe": "LLDPE SABIC 119ZJ | 20%",
+        "raw_material_a": "LDPE; Rompetrol B20/03 | 80%",
+        "linear_pe": "LLDPE; SABIC 119ZJ | 20%",
         "packaging_method": "rolls",
     }
     row.update(overrides)
@@ -113,10 +113,10 @@ def test_csv_import_creates_normalized_recipe_components(connection):
         csv_bytes(
             structured_row(
                 "RS-SYNC-001",
-                raw_material_a="LDPE Rompetrol Midilena B20/03 | 77%",
-                linear_pe="LLDPE SABIC 119ZJ | 18%",
-                antistatic="Antistatic Novachem AT 04673 LD | 2%",
-                masterbatch="Masterbatch Polibach White 8000 ET | 3%",
+                raw_material_a="LDPE; Rompetrol Midilena B20/03 | 77%",
+                linear_pe="LLDPE; SABIC 119ZJ | 18%",
+                antistatic="Antistatic; Novachem AT 04673 LD | 2%",
+                masterbatch="Masterbatch; Polibach White 8000 ET | 3%",
             )
         ),
         overwrite_existing=False,
@@ -130,40 +130,50 @@ def test_csv_import_creates_normalized_recipe_components(connection):
     ).fetchone()
 
     assert result.created == 1
-    assert card["raw_material_a"] == "LDPE Rompetrol Midilena B20/03 | 77%"
+    assert card["raw_material_a"] == "LDPE; Rompetrol Midilena B20/03 | 77%"
     assert component_summary(connection, int(card["id"])) == [
         (
             "raw_material_a",
-            "LDPE Rompetrol Midilena B20/03 | 77%",
+            "LDPE; Rompetrol Midilena B20/03 | 77%",
             "LDPE",
             "Rompetrol Midilena B20/03",
         ),
-        ("linear_pe", "LLDPE SABIC 119ZJ | 18%", "LLDPE", "SABIC 119ZJ"),
+        ("linear_pe", "LLDPE; SABIC 119ZJ | 18%", "LLDPE", "SABIC 119ZJ"),
         (
             "antistatic",
-            "Antistatic Novachem AT 04673 LD | 2%",
+            "Antistatic; Novachem AT 04673 LD | 2%",
             "Antistatic",
             "Novachem AT 04673 LD",
         ),
         (
             "masterbatch",
-            "Masterbatch Polibach White 8000 ET | 3%",
+            "Masterbatch; Polibach White 8000 ET | 3%",
             "Masterbatch",
             "Polibach White 8000 ET",
         ),
     ]
 
 
-def test_import_sync_stores_category_only_rows_with_empty_planned_material(connection):
+def test_import_sync_stores_semicolon_rows_with_multi_word_category(connection):
     card_id = import_card(
         "RS-SYNC-012",
-        raw_material_a="reLDPE | 80%",
-        linear_pe="LLDPE SABIC 119ZJ | 20%",
+        raw_material_a="Recycled LDPE; post industrial clear | 80%",
+        linear_pe="UV Protection; Additech UV Shield XZ-204 | 20%",
     )
 
     assert component_summary(connection, card_id) == [
-        ("raw_material_a", "reLDPE | 80%", "reLDPE", ""),
-        ("linear_pe", "LLDPE SABIC 119ZJ | 20%", "LLDPE", "SABIC 119ZJ"),
+        (
+            "raw_material_a",
+            "Recycled LDPE; post industrial clear | 80%",
+            "Recycled LDPE",
+            "post industrial clear",
+        ),
+        (
+            "linear_pe",
+            "UV Protection; Additech UV Shield XZ-204 | 20%",
+            "UV Protection",
+            "Additech UV Shield XZ-204",
+        ),
     ]
 
 
@@ -191,8 +201,8 @@ def test_overwrite_reimport_refreshes_components_and_preserves_actual_entries(co
         csv_bytes(
             structured_row(
                 "RS-SYNC-002",
-                raw_material_a="LDPE New Source | 70%",
-                raw_material_b="LLDPE Added Source | 30%",
+                raw_material_a="LDPE; New Source | 70%",
+                raw_material_b="LLDPE; Added Source | 30%",
                 linear_pe="",
             )
         ),
@@ -201,20 +211,20 @@ def test_overwrite_reimport_refreshes_components_and_preserves_actual_entries(co
 
     card = db.fetch_admin_card_detail(card_id)
     assert result.updated == 1
-    assert card["raw_material_a"] == "LDPE New Source | 70%"
-    assert card["raw_material_b"] == "LLDPE Added Source | 30%"
+    assert card["raw_material_a"] == "LDPE; New Source | 70%"
+    assert card["raw_material_b"] == "LLDPE; Added Source | 30%"
     assert card["linear_pe"] == ""
     assert component_summary(connection, card_id) == [
-        ("raw_material_a", "LDPE New Source | 70%", "LDPE", "New Source"),
-        ("raw_material_b", "LLDPE Added Source | 30%", "LLDPE", "Added Source"),
+        ("raw_material_a", "LDPE; New Source | 70%", "LDPE", "New Source"),
+        ("raw_material_b", "LLDPE; Added Source | 30%", "LLDPE", "Added Source"),
     ]
     assert dict(actual_entry(connection, card_id, "raw_material_a")) == {
-        "planned_material": "LDPE Rompetrol B20/03 | 80%",
+        "planned_material": "LDPE; Rompetrol B20/03 | 80%",
         "actual_material_used": "Actual LDPE",
         "batch_lot": "Batch A",
     }
     assert dict(actual_entry(connection, card_id, "linear_pe")) == {
-        "planned_material": "LLDPE SABIC 119ZJ | 20%",
+        "planned_material": "LLDPE; SABIC 119ZJ | 20%",
         "actual_material_used": "Actual LLDPE",
         "batch_lot": "Batch L",
     }
@@ -228,7 +238,7 @@ def test_duplicate_skip_does_not_refresh_recipe_components(connection):
         csv_bytes(
             structured_row(
                 "RS-SYNC-003",
-                raw_material_a="LDPE Should Not Apply | 100%",
+                raw_material_a="LDPE; Should Not Apply | 100%",
                 linear_pe="",
             )
         ),
@@ -238,55 +248,54 @@ def test_duplicate_skip_does_not_refresh_recipe_components(connection):
     assert result.rows_imported == 0
     assert result.skipped == 1
     assert component_summary(connection, card_id) == [
-        ("raw_material_a", "LDPE Rompetrol B20/03 | 80%", "LDPE", "Rompetrol B20/03"),
-        ("linear_pe", "LLDPE SABIC 119ZJ | 20%", "LLDPE", "SABIC 119ZJ"),
+        ("raw_material_a", "LDPE; Rompetrol B20/03 | 80%", "LDPE", "Rompetrol B20/03"),
+        ("linear_pe", "LLDPE; SABIC 119ZJ | 20%", "LLDPE", "SABIC 119ZJ"),
     ]
 
 
-def test_import_sync_does_not_block_parser_errors_before_release(connection):
+def test_import_sync_blocks_parser_errors_before_insert(connection):
     result = import_cards_from_csv(
         "structured-invalid-total.csv",
         csv_bytes(
             structured_row(
                 "RS-SYNC-004",
-                raw_material_a="LDPE Rompetrol B20/03 | 80%",
-                linear_pe="LLDPE SABIC 119ZJ | 19%",
+                raw_material_a="LDPE; Rompetrol B20/03 | 80%",
+                linear_pe="LLDPE; SABIC 119ZJ | 19%",
             )
         ),
         overwrite_existing=False,
     )
-    card_id = int(
-        connection.execute(
-            "SELECT id FROM cards WHERE order_number = 'RS-SYNC-004'"
-        ).fetchone()["id"]
-    )
+    card = connection.execute(
+        "SELECT id FROM cards WHERE order_number = 'RS-SYNC-004'"
+    ).fetchone()
 
-    assert result.created == 1
-    assert component_summary(connection, card_id) == [
-        ("raw_material_a", "LDPE Rompetrol B20/03 | 80%", "LDPE", "Rompetrol B20/03"),
-        ("linear_pe", "LLDPE SABIC 119ZJ | 19%", "LLDPE", "SABIC 119ZJ"),
-    ]
+    assert result.created == 0
+    assert result.rows_imported == 0
+    assert result.skipped == 1
+    assert result.row_results[0].action == "blocked"
+    assert "Рецептата не може да бъде импортирана" in result.row_results[0].message
+    assert card is None
 
 
 def test_admin_imported_field_correction_refreshes_recipe_components(connection):
     card_id = import_card("RS-SYNC-005")
     card = db.fetch_admin_card_detail(card_id)
     fields = current_import_fields(card_id)
-    fields["raw_material_a"] = "LDPE Admin Corrected | 100%"
+    fields["raw_material_a"] = "LDPE; Admin Corrected | 100%"
     fields["linear_pe"] = ""
 
     result = db.update_admin_imported_fields(card_id, card["version"], fields)
 
     assert result.ok
     updated = db.fetch_admin_card_detail(card_id)
-    assert updated["raw_material_a"] == "LDPE Admin Corrected | 100%"
+    assert updated["raw_material_a"] == "LDPE; Admin Corrected | 100%"
     assert updated["linear_pe"] == ""
     assert component_summary(connection, card_id) == [
-        ("raw_material_a", "LDPE Admin Corrected | 100%", "LDPE", "Admin Corrected"),
+        ("raw_material_a", "LDPE; Admin Corrected | 100%", "LDPE", "Admin Corrected"),
     ]
 
 
-def test_admin_source_correction_syncs_category_only_rows(connection):
+def test_admin_source_correction_rejects_old_recipe_format(connection):
     card_id = import_card("RS-SYNC-013")
     card = db.fetch_admin_card_detail(card_id)
     fields = current_import_fields(card_id)
@@ -294,29 +303,37 @@ def test_admin_source_correction_syncs_category_only_rows(connection):
     fields["linear_pe"] = ""
 
     result = db.update_admin_imported_fields(card_id, card["version"], fields)
+    updated = db.fetch_admin_card_detail(card_id)
 
-    assert result.ok
+    assert not result.ok
+    assert "липсва разделител ;" in result.messages[0]
+    assert updated["raw_material_a"] == "LDPE; Rompetrol B20/03 | 80%"
+    assert updated["linear_pe"] == "LLDPE; SABIC 119ZJ | 20%"
+    assert updated["version"] == card["version"]
     assert component_summary(connection, card_id) == [
-        ("raw_material_a", "reLDPE | 100%", "reLDPE", ""),
+        ("raw_material_a", "LDPE; Rompetrol B20/03 | 80%", "LDPE", "Rompetrol B20/03"),
+        ("linear_pe", "LLDPE; SABIC 119ZJ | 20%", "LLDPE", "SABIC 119ZJ"),
     ]
 
 
-def test_admin_imported_field_correction_does_not_block_parser_errors(connection):
+def test_admin_imported_field_correction_rejects_invalid_recipe_total(connection):
     card_id = import_card("RS-SYNC-006")
     card = db.fetch_admin_card_detail(card_id)
     fields = current_import_fields(card_id)
-    fields["raw_material_a"] = "LDPE Admin Invalid Total | 80%"
-    fields["linear_pe"] = "LLDPE Admin Invalid Total | 19%"
+    fields["raw_material_a"] = "LDPE; Admin Invalid Total | 80%"
+    fields["linear_pe"] = "LLDPE; Admin Invalid Total | 19%"
 
     result = db.update_admin_imported_fields(card_id, card["version"], fields)
-
-    assert result.ok
     updated = db.fetch_admin_card_detail(card_id)
-    assert updated["raw_material_a"] == "LDPE Admin Invalid Total | 80%"
-    assert updated["linear_pe"] == "LLDPE Admin Invalid Total | 19%"
+
+    assert not result.ok
+    assert "сборът на процентите трябва да е точно 100%" in result.messages[0]
+    assert updated["raw_material_a"] == "LDPE; Rompetrol B20/03 | 80%"
+    assert updated["linear_pe"] == "LLDPE; SABIC 119ZJ | 20%"
+    assert updated["version"] == card["version"]
     assert component_summary(connection, card_id) == [
-        ("raw_material_a", "LDPE Admin Invalid Total | 80%", "LDPE", "Admin Invalid Total"),
-        ("linear_pe", "LLDPE Admin Invalid Total | 19%", "LLDPE", "Admin Invalid Total"),
+        ("raw_material_a", "LDPE; Rompetrol B20/03 | 80%", "LDPE", "Rompetrol B20/03"),
+        ("linear_pe", "LLDPE; SABIC 119ZJ | 20%", "LLDPE", "SABIC 119ZJ"),
     ]
 
 
@@ -330,7 +347,7 @@ def test_stale_admin_imported_field_correction_does_not_refresh_components(conne
     post_save_version = post_save["version"]
 
     stale_fields = current_import_fields(card_id)
-    stale_fields["raw_material_a"] = "LDPE Stale Source | 100%"
+    stale_fields["raw_material_a"] = "LDPE; Stale Source | 100%"
     stale_fields["linear_pe"] = ""
     stale_result = db.update_admin_imported_fields(
         card_id,
@@ -342,12 +359,12 @@ def test_stale_admin_imported_field_correction_does_not_refresh_components(conne
     assert stale_result.messages == (db.STALE_CARD_MESSAGE,)
     post_stale = db.fetch_admin_card_detail(card_id)
     assert post_stale["customer"] == "First admin save"
-    assert post_stale["raw_material_a"] == "LDPE Rompetrol B20/03 | 80%"
-    assert post_stale["linear_pe"] == "LLDPE SABIC 119ZJ | 20%"
+    assert post_stale["raw_material_a"] == "LDPE; Rompetrol B20/03 | 80%"
+    assert post_stale["linear_pe"] == "LLDPE; SABIC 119ZJ | 20%"
     assert post_stale["version"] == post_save_version
     assert component_summary(connection, card_id) == [
-        ("raw_material_a", "LDPE Rompetrol B20/03 | 80%", "LDPE", "Rompetrol B20/03"),
-        ("linear_pe", "LLDPE SABIC 119ZJ | 20%", "LLDPE", "SABIC 119ZJ"),
+        ("raw_material_a", "LDPE; Rompetrol B20/03 | 80%", "LDPE", "Rompetrol B20/03"),
+        ("linear_pe", "LLDPE; SABIC 119ZJ | 20%", "LLDPE", "SABIC 119ZJ"),
     ]
 
 
@@ -374,8 +391,8 @@ def test_admin_material_ledger_refreshes_components_without_touching_actual_valu
         card_id=card_id,
         loaded_version=db.fetch_admin_card_detail(card_id)["version"],
         planned_materials={
-            "raw_material_a": "LDPE Ledger Corrected | 60%",
-            "raw_material_b": "LLDPE Ledger Added | 40%",
+            "raw_material_a": "LDPE; Ledger Corrected | 60%",
+            "raw_material_b": "LLDPE; Ledger Added | 40%",
             "raw_material_c": "",
             "linear_pe": "",
             "antistatic": "",
@@ -396,7 +413,7 @@ def test_admin_material_ledger_refreshes_components_without_touching_actual_valu
 
     assert result.ok
     assert dict(actual_entry(connection, card_id, "raw_material_a")) == {
-        "planned_material": "LDPE Ledger Corrected | 60%",
+        "planned_material": "LDPE; Ledger Corrected | 60%",
         "actual_material_used": "Existing Actual A",
         "batch_lot": "Existing Batch A",
     }
@@ -406,12 +423,12 @@ def test_admin_material_ledger_refreshes_components_without_touching_actual_valu
         "batch_lot": "Existing Batch Linear",
     }
     assert component_summary(connection, card_id) == [
-        ("raw_material_a", "LDPE Ledger Corrected | 60%", "LDPE", "Ledger Corrected"),
-        ("raw_material_b", "LLDPE Ledger Added | 40%", "LLDPE", "Ledger Added"),
+        ("raw_material_a", "LDPE; Ledger Corrected | 60%", "LDPE", "Ledger Corrected"),
+        ("raw_material_b", "LLDPE; Ledger Added | 40%", "LLDPE", "Ledger Added"),
     ]
 
 
-def test_admin_material_ledger_does_not_block_parser_errors(connection):
+def test_admin_material_ledger_rejects_invalid_recipe_total(connection):
     card_id = import_card("RS-SYNC-009")
     assert db.release_card(card_id, machine_id=1, machine_sequence=1).ok
     loaded_version = db.fetch_admin_card_detail(card_id)["version"]
@@ -434,8 +451,8 @@ def test_admin_material_ledger_does_not_block_parser_errors(connection):
         card_id=card_id,
         loaded_version=db.fetch_admin_card_detail(card_id)["version"],
         planned_materials={
-            "raw_material_a": "LDPE Ledger Invalid Total | 80%",
-            "linear_pe": "LLDPE Ledger Invalid Total | 19%",
+            "raw_material_a": "LDPE; Ledger Invalid Total | 80%",
+            "linear_pe": "LLDPE; Ledger Invalid Total | 19%",
         },
         actual_entries={
             "raw_material_a": {
@@ -449,23 +466,25 @@ def test_admin_material_ledger_does_not_block_parser_errors(connection):
         },
     )
 
-    assert result.ok
     updated = db.fetch_admin_card_detail(card_id)
-    assert updated["raw_material_a"] == "LDPE Ledger Invalid Total | 80%"
-    assert updated["linear_pe"] == "LLDPE Ledger Invalid Total | 19%"
+
+    assert not result.ok
+    assert "сборът на процентите трябва да е точно 100%" in result.messages[0]
+    assert updated["raw_material_a"] == "LDPE; Rompetrol B20/03 | 80%"
+    assert updated["linear_pe"] == "LLDPE; SABIC 119ZJ | 20%"
     assert dict(actual_entry(connection, card_id, "raw_material_a")) == {
-        "planned_material": "LDPE Ledger Invalid Total | 80%",
+        "planned_material": "LDPE; Rompetrol B20/03 | 80%",
         "actual_material_used": "Parser Error Existing Actual A",
         "batch_lot": "Parser Error Existing Batch A",
     }
     assert dict(actual_entry(connection, card_id, "linear_pe")) == {
-        "planned_material": "LLDPE Ledger Invalid Total | 19%",
+        "planned_material": "LLDPE; SABIC 119ZJ | 20%",
         "actual_material_used": "Parser Error Existing Actual Linear",
         "batch_lot": "Parser Error Existing Batch Linear",
     }
     assert component_summary(connection, card_id) == [
-        ("raw_material_a", "LDPE Ledger Invalid Total | 80%", "LDPE", "Ledger Invalid Total"),
-        ("linear_pe", "LLDPE Ledger Invalid Total | 19%", "LLDPE", "Ledger Invalid Total"),
+        ("raw_material_a", "LDPE; Rompetrol B20/03 | 80%", "LDPE", "Rompetrol B20/03"),
+        ("linear_pe", "LLDPE; SABIC 119ZJ | 20%", "LLDPE", "SABIC 119ZJ"),
     ]
 
 
@@ -474,8 +493,8 @@ def test_step_6_admin_and_terminal_display_use_normalized_recipe_rows(connection
         "RS-SYNC-008",
         quantity_1="1000",
         unit_1="kg",
-        raw_material_a="LDPE Display Source | 80%",
-        linear_pe="LLDPE Display Source | 20%",
+        raw_material_a="LDPE; Display Source | 80%",
+        linear_pe="LLDPE; Display Source | 20%",
     )
     assert db.release_card(card_id, machine_id=1, machine_sequence=1).ok
     assert db.update_terminal_recipe_actual_entries(
@@ -499,7 +518,7 @@ def test_step_6_admin_and_terminal_display_use_normalized_recipe_rows(connection
     admin_rows = {row["field"]: row for row in admin_context["recipe_rows"]}
     terminal_rows = {row["field"]: row for row in terminal["recipe_rows"]}
 
-    assert admin_rows["raw_material_a"]["source_text"] == "LDPE Display Source | 80%"
+    assert admin_rows["raw_material_a"]["source_text"] == "LDPE; Display Source | 80%"
     assert admin_rows["raw_material_a"]["material_category"] == "LDPE"
     assert admin_rows["raw_material_a"]["planned_material"] == "Display Source"
     assert admin_rows["raw_material_a"]["recipe_percent"] == "80%"
@@ -507,7 +526,7 @@ def test_step_6_admin_and_terminal_display_use_normalized_recipe_rows(connection
     assert admin_rows["raw_material_a"]["actual_material"] == "Actual Display A"
     assert admin_rows["raw_material_a"]["batch"] == "Batch Display A"
 
-    assert terminal_rows["raw_material_a"]["source_text"] == "LDPE Display Source | 80%"
+    assert terminal_rows["raw_material_a"]["source_text"] == "LDPE; Display Source | 80%"
     assert terminal_rows["raw_material_a"]["material_category"] == "LDPE"
     assert terminal_rows["raw_material_a"]["planned_material"] == "Display Source"
     assert terminal_rows["raw_material_a"]["recipe_percent"] == "80%"
@@ -524,8 +543,8 @@ def test_admin_and_terminal_planned_kg_use_quantity_1_only(connection):
         unit_1="rolls",
         quantity_2="9999",
         unit_2="kg",
-        raw_material_a="LDPE Display Source | 80%",
-        linear_pe="LLDPE Display Source | 20%",
+        raw_material_a="LDPE; Display Source | 80%",
+        linear_pe="LLDPE; Display Source | 20%",
     )
     assert db.release_card(card_id, machine_id=1, machine_sequence=1).ok
 
@@ -540,13 +559,13 @@ def test_admin_and_terminal_planned_kg_use_quantity_1_only(connection):
     assert terminal_rows["linear_pe"]["planned_kg"] == "200"
 
 
-def test_admin_and_terminal_display_use_category_fallback_for_category_only_rows(connection):
+def test_admin_and_terminal_display_use_semicolon_rows_with_multi_word_category(connection):
     card_id = import_card(
         "RS-SYNC-014",
         quantity_1="1000",
         unit_1="kg",
-        raw_material_a="reLDPE | 80%",
-        linear_pe="LLDPE SABIC 119ZJ | 20%",
+        raw_material_a="Recycled LDPE; post industrial clear | 80%",
+        linear_pe="LLDPE; SABIC 119ZJ | 20%",
     )
     assert db.release_card(card_id, machine_id=1, machine_sequence=1).ok
 
@@ -555,16 +574,16 @@ def test_admin_and_terminal_display_use_category_fallback_for_category_only_rows
     admin_rows = {row["field"]: row for row in admin_context["recipe_rows"]}
     terminal_rows = {row["field"]: row for row in terminal["recipe_rows"]}
 
-    assert admin_rows["raw_material_a"]["material_category"] == "reLDPE"
-    assert admin_rows["raw_material_a"]["planned_material"] == "reLDPE"
-    assert admin_rows["raw_material_a"]["source_text"] == "reLDPE | 80%"
+    assert admin_rows["raw_material_a"]["material_category"] == "Recycled LDPE"
+    assert admin_rows["raw_material_a"]["planned_material"] == "post industrial clear"
+    assert admin_rows["raw_material_a"]["source_text"] == "Recycled LDPE; post industrial clear | 80%"
     assert admin_rows["raw_material_a"]["recipe_percent"] == "80%"
     assert admin_rows["raw_material_a"]["planned_kg"] == "800.00"
     assert admin_rows["raw_material_a"]["is_structured"] is True
 
-    assert terminal_rows["raw_material_a"]["material_category"] == "reLDPE"
-    assert terminal_rows["raw_material_a"]["planned_material"] == "reLDPE"
-    assert terminal_rows["raw_material_a"]["source_text"] == "reLDPE | 80%"
+    assert terminal_rows["raw_material_a"]["material_category"] == "Recycled LDPE"
+    assert terminal_rows["raw_material_a"]["planned_material"] == "post industrial clear"
+    assert terminal_rows["raw_material_a"]["source_text"] == "Recycled LDPE; post industrial clear | 80%"
     assert terminal_rows["raw_material_a"]["recipe_percent"] == "80%"
     assert terminal_rows["raw_material_a"]["planned_kg"] == "800"
     assert terminal_rows["raw_material_a"]["is_structured"] is True
@@ -572,11 +591,31 @@ def test_admin_and_terminal_display_use_category_fallback_for_category_only_rows
 
 
 def test_admin_recipe_display_keeps_source_text_when_row_has_no_normalized_component(connection):
-    card_id = import_card(
-        "RS-SYNC-010",
-        raw_material_a="LDPE Missing Delimiter 80%",
-        linear_pe="LLDPE Valid Row | 20%",
+    card_id = import_card("RS-SYNC-010")
+    connection.execute(
+        """
+        UPDATE cards
+        SET raw_material_a = ?,
+            linear_pe = ?,
+            version = version + 1
+        WHERE id = ?
+        """,
+        ("LDPE Missing Delimiter 80%", "LLDPE; Valid Row | 100%", card_id),
     )
+    db.replace_recipe_components_for_card(
+        connection,
+        card_id,
+        (
+            ParsedRecipeComponent(
+                component_key="linear_pe",
+                source_text="LLDPE; Valid Row | 100%",
+                material_category="LLDPE",
+                planned_material="Valid Row",
+                recipe_percent=Decimal("100"),
+            ),
+        ),
+    )
+    connection.commit()
 
     context = admin_card_detail_context(card_id)
     rows = {row["field"]: row for row in context["recipe_rows"]}
@@ -591,11 +630,11 @@ def test_admin_recipe_display_keeps_source_text_when_row_has_no_normalized_compo
     assert rows["linear_pe"]["planned_material"] == "Valid Row"
 
 
-def test_step_4_keeps_print_recipe_rows_on_original_source_text(connection):
+def test_print_recipe_rows_use_compact_card_source_text_not_poisoned_components(connection):
     card_id = import_card(
         "RS-SYNC-011",
-        raw_material_a="LDPE Print Source | 80%",
-        linear_pe="LLDPE Print Source | 20%",
+        raw_material_a="LDPE; Print Source | 80%",
+        linear_pe="LLDPE; Print Source | 20%",
     )
     poison_raw_material_a_component(connection, card_id)
     card = db.fetch_admin_card_detail(card_id)
@@ -603,8 +642,11 @@ def test_step_4_keeps_print_recipe_rows_on_original_source_text(connection):
     rows = build_print_recipe_rows(card, card["recipe_actual_entries"])
     by_key = {row["component_key"]: row for row in rows}
 
-    assert by_key["raw_material_a"]["planned_material"] == "LDPE Print Source | 80%"
+    assert by_key["raw_material_a"]["planned_material"] == "Print Source 80%"
+    assert by_key["raw_material_a"]["planned_material"] != (
+        "Derived Should Not Display 100%"
+    )
     assert by_key["raw_material_a"]["planned_material"] != (
         "LDPE Derived Should Not Display | 100%"
     )
-    assert by_key["linear_pe"]["planned_material"] == "LLDPE Print Source | 20%"
+    assert by_key["linear_pe"]["planned_material"] == "Print Source 20%"
