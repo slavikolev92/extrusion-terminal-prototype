@@ -319,10 +319,23 @@ echo "expected_cmd=$expected_cmd"
 [ "$process_cmd" = "$expected_cmd" ] || die "Process command does not match expected uvicorn command."
 
 log "verify port owner"
-port_output="$(ss -ltnp "sport = :$PORT" || true)"
+port_output=""
+for _ in $(seq 1 30); do
+    port_output="$(ss -ltnp "sport = :$PORT" || true)"
+    if printf '%s\n' "$port_output" | grep -F "pid=$new_pid," >/dev/null; then
+        break
+    fi
+    active_state="$(systemctl show "$SERVICE" -p ActiveState --value || true)"
+    current_pid="$(systemctl show "$SERVICE" -p MainPID --value || true)"
+    if [ "$active_state" != "active" ] || [ "$current_pid" != "$new_pid" ]; then
+        systemctl_read --full status "$SERVICE" || true
+        die "$SERVICE changed state before port $PORT was owned by PID $new_pid."
+    fi
+    sleep 1
+done
 printf '%s\n' "$port_output"
 printf '%s\n' "$port_output" | grep -F "pid=$new_pid," >/dev/null \
-    || die "Port $PORT is not owned by service PID $new_pid."
+    || die "Port $PORT was not owned by service PID $new_pid within 30 seconds."
 
 log "verify health"
 health_json=""
