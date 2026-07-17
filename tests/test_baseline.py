@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import asyncio
 import shutil
 import sqlite3
 from pathlib import Path
@@ -16,7 +17,9 @@ from app.constants import (
     STATUS_LABELS,
     STATUS_PENDING,
 )
+from app.deployment import deployment_metadata
 from app.importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
+from app.main import health
 
 
 def csv_bytes(*rows: dict[str, str]) -> bytes:
@@ -89,6 +92,27 @@ def test_database_initialization_seeds_machines_1_through_4(temp_db_path):
 
     assert [machine["id"] for machine in machines] == [1, 2, 3, 4]
     assert [machine["display_order"] for machine in machines] == [1, 2, 3, 4]
+
+
+def test_deployment_metadata_reads_current_revision(tmp_path):
+    revision_file = tmp_path / "current_revision"
+    revision_file.write_text("  abc123def456\n", encoding="utf-8")
+
+    assert deployment_metadata(revision_file) == {"app_revision": "abc123def456"}
+
+
+def test_deployment_metadata_allows_missing_revision_file(tmp_path):
+    assert deployment_metadata(tmp_path / "missing_revision") == {"app_revision": None}
+
+
+def test_health_includes_deployment_revision(temp_db_path, monkeypatch):
+    monkeypatch.setattr("app.main.deployment_metadata", lambda: {"app_revision": "abc123"})
+
+    response = asyncio.run(health())
+
+    assert response["status"] == "ok"
+    assert response["app_revision"] == "abc123"
+    assert response["database_path"] == str(temp_db_path)
 
 
 def test_status_constants_label_completed_as_produced_and_archived_as_finished():

@@ -62,6 +62,7 @@ from .db import (
     update_terminal_roll_corrections,
     unrelease_pending_card,
 )
+from .deployment import deployment_metadata
 from .importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
 from .printing import build_print_readiness
 from .recipe_parser import RECIPE_SOURCE_FIELDS
@@ -641,6 +642,7 @@ async def health() -> dict:
     summary = database_summary()
     return {
         "status": "ok",
+        **deployment_metadata(),
         **summary,
     }
 

@@ -864,6 +864,12 @@ Health check:
 Invoke-WebRequest -Uri http://127.0.0.1:8000/health -UseBasicParsing -TimeoutSec 5
 ```
 
+Production deployment:
+
+- Use `docs/production-deployment.md` for the production VM update procedure.
+- The reusable command is `bash scripts/deploy_production.sh` from `/opt/extrusion-terminal/app`.
+- A successful deploy backs up SQLite, fetches the latest GitHub `main`, restarts `extrusion-terminal.service`, and verifies `/health` reports the deployed Git revision.
+
 Shutdown and restart:
 
 1. In the server terminal window, press `Ctrl+C`.

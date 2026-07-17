@@ -9,6 +9,7 @@ source-files/*
 data/
 backups/
 extracts/
+.deploy/
 
 # Python/runtime noise.
 __pycache__/
