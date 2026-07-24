@@ -2346,7 +2346,14 @@
                     <input type="hidden" name="tare_weight" value="{{ selected_card.tare_weight if selected_card.tare_weight is not none else '' }}" data-new-roll-tare-copy="true">
                     <label>
                       <span class="field-label">Нова ролка, кг</span>
-                      <input type="number" name="gross_weight" min="0" step="0.01" {% if not can_edit_rolls %}disabled{% endif %}>
+                      <input
+                        type="number"
+                        name="gross_weight"
+                        min="0"
+                        step="0.01"
+                        {% if selected_card.status == "running" %}data-new-roll-autofocus="true"{% endif %}
+                        {% if not can_edit_rolls %}disabled{% endif %}
+                      >
                     </label>
                     <div class="field-error-slot" data-feedback-target="new_roll">
                       {% if terminal_feedback.errors.new_roll %}
@@ -2600,6 +2607,35 @@
           closeFinishConfirm();
         }
       });
+    })();
+
+    (() => {
+      const focusNewRollInput = () => {
+        const newRollInput = document.querySelector("input[data-new-roll-autofocus='true']");
+        if (!newRollInput || newRollInput.disabled) {
+          return;
+        }
+        if (document.getElementById("terminal-refresh-alert")) {
+          return;
+        }
+        if (document.querySelector("[data-roll-correction-root][data-correction-open='true']")) {
+          return;
+        }
+        window.requestAnimationFrame(() => {
+          if (newRollInput.disabled) {
+            return;
+          }
+          if (document.getElementById("terminal-refresh-alert")) {
+            return;
+          }
+          if (document.querySelector("[data-roll-correction-root][data-correction-open='true']")) {
+            return;
+          }
+          newRollInput.focus();
+        });
+      };
+
+      focusNewRollInput();
     })();
 
     (() => {

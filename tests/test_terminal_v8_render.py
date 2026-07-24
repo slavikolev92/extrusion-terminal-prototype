@@ -180,6 +180,16 @@ def roll_entry_block(html: str) -> str:
     return html[start:end]
 
 
+def new_roll_input_tag(html: str) -> str:
+    match = re.search(
+        r'<input[^>]+name="gross_weight"[^>]*>',
+        roll_entry_block(html),
+        flags=re.S,
+    )
+    assert match is not None
+    return match.group(0)
+
+
 def css_rules(html: str, selector_pattern: str) -> str:
     match = re.search(rf"{selector_pattern}\s*\{{(?P<rules>.*?)\}}", html, flags=re.S)
     assert match is not None
@@ -1442,6 +1452,80 @@ def test_terminal_roll_entry_controls_follow_roll_table_weight_order(connection)
     assert entry_html.find('class="add-roll-form"') < entry_html.find('class="tare-form')
     assert entry_html.find("Нова ролка, кг") < entry_html.find("Шпула, кг")
     assert entry_html.find("Шпула, кг") < entry_html.find('class="roll-add-button"')
+
+
+def test_terminal_new_roll_autofocus_marker_renders_only_for_running_card(connection):
+    running_id = release_ready_card("26301", machine_id=1, sequence=1)
+    assert db.start_production_timing(running_id, card_version(running_id)).ok
+
+    running_html = render_terminal(running_id)
+    running_input = new_roll_input_tag(running_html)
+    assert 'data-new-roll-autofocus="true"' in running_input
+    assert "disabled" not in running_input
+
+    pending_id = release_ready_card("26302", machine_id=2, sequence=1)
+    pending_input = new_roll_input_tag(render_terminal(pending_id))
+    assert 'data-new-roll-autofocus="true"' not in pending_input
+    assert "disabled" in pending_input
+
+    paused_id = release_ready_card("26303", machine_id=3, sequence=1)
+    assert db.start_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.pause_production_timing(paused_id, card_version(paused_id)).ok
+    paused_input = new_roll_input_tag(render_terminal(paused_id))
+    assert 'data-new-roll-autofocus="true"' not in paused_input
+    assert "disabled" in paused_input
+
+    completed_id = release_ready_card("26304", machine_id=4, sequence=1)
+    complete_card(completed_id)
+    completed_input = new_roll_input_tag(render_terminal(completed_id))
+    assert 'data-new-roll-autofocus="true"' not in completed_input
+    assert "disabled" not in completed_input
+
+
+def test_terminal_new_roll_autofocus_marker_is_absent_without_selected_card(connection):
+    html = render_terminal(machine_id=4)
+
+    assert 'data-new-roll-autofocus="true"' not in html
+    assert "Няма активна поръчка за Машина 4." in html
+
+
+def test_terminal_new_roll_autofocus_validation_error_keeps_marker(connection):
+    card_id = release_ready_card("26305", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+
+    html = render_terminal(
+        card_id,
+        roll_result=RuleResult(False, ("new roll failure",)),
+        roll_result_target="new_roll",
+    )
+
+    new_roll_block = data_block(html, "data-feedback-target", "new_roll")
+    assert "new roll failure" in new_roll_block
+    assert 'id="terminal-refresh-alert"' not in html
+    assert 'data-new-roll-autofocus="true"' in new_roll_input_tag(html)
+
+
+def test_terminal_new_roll_autofocus_script_guards_reload_and_roll_correction_mode(connection):
+    card_id = release_ready_card("26306", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "2.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "50.00").ok
+
+    html = render_terminal(card_id)
+
+    assert "focusNewRollInput" in html
+    assert "input[data-new-roll-autofocus='true']" in html
+    assert 'document.getElementById("terminal-refresh-alert")' in html
+    assert "[data-roll-correction-root][data-correction-open='true']" in html
+    assert "newRollInput.focus();" in html
+
+    correction_html = render_terminal(
+        card_id,
+        roll_result=RuleResult(False, ("correction failure",)),
+        roll_result_target="roll_corrections",
+    )
+    assert 'data-correction-open="true"' in correction_html
+    assert 'data-new-roll-autofocus="true"' in new_roll_input_tag(correction_html)
 
 
 def test_terminal_tare_and_correction_forms_use_dirty_autosave_without_new_roll_autosave(connection):
