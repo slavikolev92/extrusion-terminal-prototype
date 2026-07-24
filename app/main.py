@@ -1960,7 +1960,9 @@ def terminal_context(
     ]
     archive_cards = [
         enrich_terminal_list_card(card, selected_card)
-        for card in fetch_cards_by_status(TERMINAL_ARCHIVE_STATUSES)
+        for card in sorted_terminal_archive_cards(
+            fetch_cards_by_status(TERMINAL_ARCHIVE_STATUSES),
+        )
     ]
 
     context: dict[str, Any] = {
@@ -2093,6 +2095,16 @@ def enrich_terminal_card_display(card: dict[str, Any]) -> dict[str, Any]:
     card["max_roll_weight_display"] = rounded_optional_weight_display(card.get("max_roll_weight"))
     card["target_gross_weight"] = target_gross_display(card)
     card["remaining_gross_weight"] = remaining_gross_display(card)
+    card["total_gross_weight_display"] = one_decimal_weight_display(
+        card.get("total_gross_weight"),
+        blank="0.0",
+    )
+    card["remaining_gross_weight_display"] = one_decimal_weight_display(
+        card.get("remaining_gross_weight"),
+    )
+    card["total_net_weight_display"] = one_decimal_weight_display(
+        card.get("total_net_weight"),
+    )
     return card
 
 
@@ -2136,6 +2148,32 @@ def remaining_gross_display(card: dict[str, Any]) -> str | None:
     return decimal_weight_display(max(target - produced, Decimal("0")))
 
 
+def sorted_terminal_archive_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    dated_cards = []
+    missing_finished_cards = []
+    for card in cards:
+        if str(card.get("finished_at") or "").strip():
+            dated_cards.append(card)
+        else:
+            missing_finished_cards.append(card)
+
+    return sorted(
+        dated_cards,
+        key=lambda card: (
+            str(card.get("finished_at") or ""),
+            str(card.get("order_number") or "").casefold(),
+            int(card.get("id") or 0),
+        ),
+        reverse=True,
+    ) + sorted(
+        missing_finished_cards,
+        key=lambda card: (
+            str(card.get("order_number") or "").casefold(),
+            int(card.get("id") or 0),
+        ),
+    )
+
+
 def progress_percent(card: dict[str, Any]) -> int:
     target = target_gross_decimal(card)
     produced = decimal_from_display(card.get("total_gross_weight")) or Decimal("0")
@@ -2161,6 +2199,13 @@ def decimal_weight_display(value: Decimal | None) -> str:
     if value is None:
         return "-"
     return f"{value.quantize(Decimal('0.01'))}"
+
+
+def one_decimal_weight_display(value: Any, blank: str = "-") -> str:
+    decimal_value = decimal_from_display(value)
+    if decimal_value is None:
+        return blank
+    return format(decimal_value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP), "f")
 
 
 def rounded_weight_display(value: Any) -> str:

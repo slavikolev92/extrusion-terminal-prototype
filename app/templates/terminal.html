@@ -2503,16 +2503,16 @@
                   <div class="gross-metrics">
                     <div class="metric">
                       <span class="field-label">Бруто</span>
-                      <div class="big">{{ whole_kg(selected_card.total_gross_weight, "0") }}</div>
+                      <div class="big">{{ selected_card.total_gross_weight_display|default(whole_kg(selected_card.total_gross_weight, "0"), true) }}</div>
                     </div>
                     <div class="metric remain">
                       <span class="field-label">Оставащи</span>
-                      <div class="big">{{ whole_kg(selected_card.remaining_gross_weight) }}</div>
+                      <div class="big">{{ selected_card.remaining_gross_weight_display|default(whole_kg(selected_card.remaining_gross_weight), true) }}</div>
                     </div>
                   </div>
                   <div class="metric">
                     <span class="field-label">Нето</span>
-                    <div class="big">{{ whole_kg(selected_card.total_net_weight) }}</div>
+                    <div class="big">{{ selected_card.total_net_weight_display|default(whole_kg(selected_card.total_net_weight), true) }}</div>
                   </div>
                 </div>
               </div>

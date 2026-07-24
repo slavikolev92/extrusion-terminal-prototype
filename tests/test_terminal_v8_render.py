@@ -952,6 +952,36 @@ def test_terminal_v8_labels_completed_lookup_as_produced_orders(connection):
     assert "Няма намерени произведени поръчки." in html
 
 
+def test_terminal_v8_sorts_produced_lookup_by_finished_at_descending(connection):
+    older_id = release_ready_card(
+        "26185",
+        machine_id=1,
+        sequence=1,
+        customer="Older Produced",
+    )
+    newer_id = release_ready_card(
+        "26186",
+        machine_id=4,
+        sequence=1,
+        customer="Newer Produced",
+    )
+    complete_card(older_id)
+    complete_card(newer_id)
+    connection.execute(
+        "UPDATE cards SET finished_at = ? WHERE id = ?",
+        ("2026-07-24 09:00:00", older_id),
+    )
+    connection.execute(
+        "UPDATE cards SET finished_at = ? WHERE id = ?",
+        ("2026-07-24 15:00:00", newer_id),
+    )
+    connection.commit()
+
+    html = render_terminal(newer_id)
+
+    assert html.index("Newer Produced") < html.index("Older Produced")
+
+
 def test_terminal_v8_recipe_inputs_are_named_for_all_rows(connection):
     card_id = release_ready_card("26140", machine_id=1, sequence=1)
     entries = {
@@ -1065,7 +1095,7 @@ def test_target_gross_uses_quantity_1_and_ignores_quantity_units_and_secondary_q
     assert card["remaining_gross_weight"] == "0.00"
 
 
-def test_terminal_v8_rounds_machine_progress_and_totals_but_preserves_roll_decimals(
+def test_terminal_v8_rounds_machine_progress_but_shows_bottom_totals_with_one_decimal(
     connection,
 ):
     card_id = release_ready_card(
@@ -1076,25 +1106,25 @@ def test_terminal_v8_rounds_machine_progress_and_totals_but_preserves_roll_decim
     )
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "0.25").ok
-    assert db.add_roll_gross_weight(card_id, card_version(card_id), "100.50").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "100.55").ok
 
     html = render_terminal(card_id)
 
     assert '<span class="machine-tab-qty">101 / 1000 кг</span>' in html
     assert re.search(
-        r'<span class="field-label">Бруто</span>\s*<div class="big">101</div>',
+        r'<span class="field-label">Бруто</span>\s*<div class="big">100\.6</div>',
         html,
     )
     assert re.search(
-        r'<span class="field-label">Оставащи</span>\s*<div class="big">900</div>',
+        r'<span class="field-label">Оставащи</span>\s*<div class="big">899\.5</div>',
         html,
     )
     assert re.search(
-        r'<span class="field-label">Нето</span>\s*<div class="big">100</div>',
+        r'<span class="field-label">Нето</span>\s*<div class="big">100\.3</div>',
         html,
     )
-    assert re.search(r'value="100\.50?"', html)
-    assert "<div>100.25</div>" in html
+    assert re.search(r'value="100\.55"', html)
+    assert "<div>100.3</div>" in html
     assert "100.50 / 1000.00 кг" not in html
 
 
