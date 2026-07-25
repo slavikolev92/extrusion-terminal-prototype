@@ -2505,7 +2505,14 @@ def test_active_window_uses_current_number_as_the_only_correction_dropdown(conne
 
     assert shift_window.count("<select") == 1
     assert 'name="shift_number" data-shift-number-select' in shift_window
-    assert re.search(r'<option value="4" selected>4</option>', shift_window)
+    assert re.search(r'<option value="4" selected disabled>4</option>', shift_window)
+    for valid_shift_number in (1, 2, 3):
+        valid_option = re.search(
+            rf'<option value="{valid_shift_number}"([^>]*)>{valid_shift_number}</option>',
+            shift_window,
+        )
+        assert valid_option is not None
+        assert "disabled" not in valid_option.group(1)
     assert 'addEventListener("change"' in html
     assert "shiftNumberForm.requestSubmit()" in html
 

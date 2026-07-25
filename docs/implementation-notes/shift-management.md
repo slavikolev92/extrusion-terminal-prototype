@@ -81,8 +81,8 @@ migration. Deployment is still blocked by both of these gates:
 
 Development verification used only
 `artifacts/ui-checks/shift-management/shift-ui.sqlite3`; the runtime database
-was not opened or mutated. Focused suites passed 12, 18, 66, and 113 tests (209
-total), and the full suite passed 542 tests. `compileall`, SQLite
+was not opened or mutated. Focused suites passed 12, 18, 66, and 115 tests (211
+total), and the full suite passed 547 tests. `compileall`, SQLite
 `integrity_check`, SQLite `foreign_key_check`, and `git diff --check` passed.
 
 The reusable browser workflow is `scripts/verify_shift_management_ui.mjs`.

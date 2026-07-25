@@ -6,6 +6,7 @@ import io
 from urllib.parse import urlencode
 
 from app import db
+import app.main as main_module
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 from app.main import app, terminal_context
 
@@ -93,6 +94,51 @@ async def post_form(path: str, data: dict[str, str]) -> tuple[int, dict[str, str
         if message["type"] == "http.response.body"
     ).decode("utf-8")
     return int(response_start["status"]), headers, response_body
+
+
+async def get_page(path: str, query_string: str = "") -> tuple[int, str]:
+    messages: list[dict[str, object]] = []
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, object]) -> None:
+        messages.append(message)
+
+    await app(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": path,
+            "headers": [],
+            "query_string": query_string.encode("ascii"),
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 50000),
+            "app": app,
+        },
+        receive,
+        send,
+    )
+    response_start = next(
+        message for message in messages if message["type"] == "http.response.start"
+    )
+    response_body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    ).decode("utf-8")
+    return int(response_start["status"]), response_body
+
+
+def assert_blocking_shift_reload(body: str) -> None:
+    assert 'data-shift-state="reload"' in body
+    assert 'data-shift-blocking="true"' in body
+    assert 'data-shift-pane="reload"' in body
+    assert 'data-shift-pane="reload" hidden' not in body
+    assert 'data-shift-reload' in body
+    assert 'action="/terminal/shifts/' not in body
+    assert '<div class="app" inert aria-hidden="true">' in body
 
 
 def terminal_shift_routes() -> dict[str, object]:
@@ -199,6 +245,43 @@ def test_number_change_updates_same_occurrence_and_preserves_selected_card(conne
     assert card_after["version"] == card_before["version"]
 
 
+def test_rendered_shift_state_and_initial_signature_share_one_snapshot(
+    connection,
+    monkeypatch,
+):
+    configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("1", int(configuration["version"])).ok
+    rendered_shift = db.fetch_active_shift()
+    assert rendered_shift is not None
+    expected_signature = (
+        f"configuration:{configuration['version']}:{configuration['shift_count']}"
+        f"||active:{rendered_shift['id']}:1:1:{rendered_shift['started_at']}"
+    )
+    original_snapshot = db.terminal_snapshot
+    writer_ran = False
+
+    def interleaving_snapshot(selected_card_id=None, **kwargs):
+        nonlocal writer_ran
+        assert writer_ran is False
+        writer_ran = True
+        changed = db.update_active_shift_number(
+            int(rendered_shift["id"]),
+            int(rendered_shift["version"]),
+            "2",
+        )
+        assert changed.ok
+        return original_snapshot(selected_card_id, **kwargs)
+
+    monkeypatch.setattr(main_module, "fetch_terminal_snapshot", interleaving_snapshot)
+
+    context = main_module.terminal_context(shift_view="overview")
+
+    assert writer_ran is True
+    assert context["active_shift"]["shift_number"] == 1
+    assert context["terminal_snapshot"]["shift_signature"] == expected_signature
+    assert db.fetch_active_shift()["shift_number"] == 2
+
+
 def test_end_redirects_to_just_completed_blocking_summary(connection):
     card_id = release_ready_card("SR-003")
     configuration = db.fetch_terminal_configuration()
@@ -300,6 +383,90 @@ def test_history_summary_and_back_use_the_same_window_state(connection):
     assert closed["shift_blocking"] is False
     assert normalized_invalid_request["shift_window_state"] == "closed"
     assert normalized_invalid_request["selected_shift_summary"] is None
+
+
+def test_stale_shift_lifecycle_posts_block_controls_until_canonical_get(connection):
+    initial_configuration = db.fetch_terminal_configuration()
+    assert db.update_shift_count(int(initial_configuration["version"]), "3").ok
+
+    stale_start_status, _, stale_start_body = asyncio.run(
+        post_form(
+            "/terminal/shifts/start",
+            {
+                "shift_number": "1",
+                "configuration_version": str(initial_configuration["version"]),
+            },
+        )
+    )
+
+    assert stale_start_status == 200
+    assert_blocking_shift_reload(stale_start_body)
+    assert db.fetch_active_shift() is None
+    gate_status, gate_body = asyncio.run(get_page("/terminal"))
+    assert gate_status == 200
+    assert 'data-shift-state="gate"' in gate_body
+    assert 'action="/terminal/shifts/start"' in gate_body
+
+    current_configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("1", int(current_configuration["version"])).ok
+    first_version = db.fetch_active_shift()
+    assert first_version is not None
+    assert db.update_active_shift_number(
+        int(first_version["id"]),
+        int(first_version["version"]),
+        "2",
+    ).ok
+
+    stale_change_status, _, stale_change_body = asyncio.run(
+        post_form(
+            "/terminal/shifts/current/number",
+            {
+                "shift_occurrence_id": str(first_version["id"]),
+                "loaded_version": str(first_version["version"]),
+                "shift_number": "3",
+            },
+        )
+    )
+
+    assert stale_change_status == 200
+    assert_blocking_shift_reload(stale_change_body)
+    current_shift = db.fetch_active_shift()
+    assert current_shift is not None
+    assert current_shift["shift_number"] == 2
+    overview_status, overview_body = asyncio.run(
+        get_page("/terminal", "shift_view=overview")
+    )
+    assert overview_status == 200
+    assert 'data-shift-state="overview"' in overview_body
+    assert 'action="/terminal/shifts/current/number"' in overview_body
+    assert 'action="/terminal/shifts/current/end"' in overview_body
+
+    assert db.update_active_shift_number(
+        int(current_shift["id"]),
+        int(current_shift["version"]),
+        "3",
+    ).ok
+    stale_end_status, _, stale_end_body = asyncio.run(
+        post_form(
+            "/terminal/shifts/current/end",
+            {
+                "shift_occurrence_id": str(current_shift["id"]),
+                "loaded_version": str(current_shift["version"]),
+            },
+        )
+    )
+
+    assert stale_end_status == 200
+    assert_blocking_shift_reload(stale_end_body)
+    latest_shift = db.fetch_active_shift()
+    assert latest_shift is not None
+    assert latest_shift["shift_number"] == 3
+    canonical_status, canonical_body = asyncio.run(
+        get_page("/terminal", "shift_view=overview")
+    )
+    assert canonical_status == 200
+    assert 'data-shift-state="overview"' in canonical_body
+    assert 'action="/terminal/shifts/current/end"' in canonical_body
 
 
 def test_terminal_normal_posts_are_blocked_without_active_shift(connection):

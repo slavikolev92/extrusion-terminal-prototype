@@ -24,6 +24,8 @@
       <h2 id="shift-window-title" data-shift-title>
         {% if shift_window_state == "gate" %}
           Няма активна смяна
+        {% elif shift_window_state == "reload" %}
+          Смяната е променена
         {% elif shift_window_state == "summary" and selected_shift_summary %}
           Смяна {{ selected_shift_summary.shift_number }}
         {% else %}
@@ -107,7 +109,7 @@
             {% endif %}
           </div>
         </div>
-      {% else %}
+      {% elif shift_window_state != "reload" and active_shift %}
         <div class="shift-window-pane shift-overview-pane" data-shift-pane="overview">
           <div class="shift-overview-current">
             <form action="/terminal/shifts/current/number" method="post" data-shift-number-form>
@@ -118,7 +120,7 @@
                 <span>Shift</span>
                 <select name="shift_number" data-shift-number-select>
                   {% for shift_number in shift_options %}
-                    <option value="{{ shift_number }}"{% if shift_number == active_shift.shift_number %} selected{% endif %}>{{ shift_number }}</option>
+                    <option value="{{ shift_number }}"{% if shift_number == active_shift.shift_number %} selected{% if shift_number > shift_configuration.shift_count %} disabled{% endif %}{% endif %}>{{ shift_number }}</option>
                   {% endfor %}
                 </select>
               </label>
@@ -182,7 +184,7 @@
         </div>
       {% endif %}
 
-      <div class="shift-window-pane shift-reload-pane" data-shift-pane="reload" hidden>
+      <div class="shift-window-pane shift-reload-pane" data-shift-pane="reload"{% if shift_window_state != "reload" %} hidden{% endif %}>
         <p class="shift-reload-title">Смяната е променена</p>
         <p>Презаредете терминала, преди да продължите. Въведените стойности остават на екрана до презареждането.</p>
         <a class="shift-primary-action shift-action-link" href="{{ shift_terminal_url }}" data-shift-reload>Презареди</a>

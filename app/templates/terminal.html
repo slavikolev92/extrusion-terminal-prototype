@@ -3351,7 +3351,10 @@
         return url;
       };
 
-      document.addEventListener("submit", () => {
+      document.addEventListener("submit", (event) => {
+        if (event.defaultPrevented) {
+          return;
+        }
         formSubmitting = true;
       });
 

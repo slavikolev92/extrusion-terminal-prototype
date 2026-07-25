@@ -26,6 +26,7 @@ from .db import (
     NO_ACTIVE_SHIFT_MESSAGE,
     STALE_CARD_MESSAGE,
     STALE_CONFIGURATION_MESSAGE,
+    STALE_SHIFT_MESSAGE,
     add_timing_segment,
     add_roll_gross_weight,
     archive_completed_card,
@@ -1618,6 +1619,7 @@ async def start_terminal_shift(
         selected_card_id=validated_card_id,
         shift_result=shift_result,
         shift_view="overview" if fetch_active_shift() is not None else None,
+        shift_reload_required=shift_lifecycle_reload_required(shift_result),
     )
 
 
@@ -1661,6 +1663,7 @@ async def change_terminal_shift_number(
         selected_card_id=validated_card_id,
         shift_result=shift_result,
         shift_view="overview",
+        shift_reload_required=shift_lifecycle_reload_required(shift_result),
     )
 
 
@@ -1700,6 +1703,7 @@ async def end_terminal_shift(
         selected_card_id=validated_card_id,
         shift_result=shift_result,
         shift_view="overview",
+        shift_reload_required=shift_lifecycle_reload_required(shift_result),
     )
 
 
@@ -2027,6 +2031,13 @@ def parse_shift_form_integer(
     return parsed, RuleResult(True)
 
 
+def shift_lifecycle_reload_required(result: RuleResult) -> bool:
+    stale_messages = {STALE_CONFIGURATION_MESSAGE, STALE_SHIFT_MESSAGE}
+    return not result.ok and any(
+        message in stale_messages for message in result.messages
+    )
+
+
 def validate_terminal_card_available_for_post(card_id: int) -> RuleResult:
     if fetch_active_shift() is None:
         return RuleResult(False, (NO_ACTIVE_SHIFT_MESSAGE,))
@@ -2146,6 +2157,7 @@ def terminal_context(
     shift_view: str | None = None,
     shift_id: str | int | None = None,
     handoff: str | None = None,
+    shift_reload_required: bool = False,
     **extra: Any,
 ) -> dict[str, Any]:
     machine_queues = fetch_machine_queues()
@@ -2195,7 +2207,18 @@ def terminal_context(
             fetch_cards_by_status(TERMINAL_ARCHIVE_STATUSES),
         )
     ]
-    shift_context = build_terminal_shift_context(shift_view, shift_id, handoff)
+    shift_state = fetch_shift_window_state()
+    shift_context = build_terminal_shift_context(
+        shift_view,
+        shift_id,
+        handoff,
+        state=shift_state,
+        reload_required=shift_reload_required,
+    )
+    terminal_snapshot = fetch_terminal_snapshot(
+        selected_card_id,
+        known_shift_signature=str(shift_state["shift_signature"]),
+    )
 
     context: dict[str, Any] = {
         "machines": fetch_machines(),
@@ -2204,7 +2227,7 @@ def terminal_context(
         "archive_cards": archive_cards,
         "selected_card": selected_card,
         "selected_machine_id": selected_machine_id,
-        "terminal_snapshot": fetch_terminal_snapshot(selected_card_id),
+        "terminal_snapshot": terminal_snapshot,
         "status_labels": STATUS_LABELS,
         "recipe_rows": build_terminal_recipe_rows(selected_card) if selected_card else [],
         **shift_context,
@@ -2218,8 +2241,12 @@ def build_terminal_shift_context(
     shift_view: str | None,
     shift_id: str | int | None,
     handoff: str | None,
+    *,
+    state: dict[str, Any] | None = None,
+    reload_required: bool = False,
 ) -> dict[str, Any]:
-    state = fetch_shift_window_state()
+    if state is None:
+        state = fetch_shift_window_state()
     configuration = state["configuration"]
     active_shift = state["active_shift"]
     completed_shifts = state["completed_shifts"]
@@ -2240,7 +2267,10 @@ def build_terminal_shift_context(
         selected_shift_summary = fetch_shift_summary(parsed_shift_id)
 
     just_ended_handoff = selected_shift_summary is not None and handoff == "1"
-    if just_ended_handoff:
+    if reload_required:
+        shift_window_state = "reload"
+        shift_blocking = True
+    elif just_ended_handoff:
         shift_window_state = "summary"
         shift_blocking = True
     elif active_shift is None:

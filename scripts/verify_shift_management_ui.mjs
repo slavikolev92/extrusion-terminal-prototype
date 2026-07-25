@@ -716,6 +716,22 @@ async function verifySecondPageStaleGate(context, firstPage, cardId, before) {
     }
   });
 
+  await openCard(firstPage, cardId);
+  const finishForm = firstPage.locator(
+    `form[action="/terminal/cards/${cardId}/finish"][data-finish-confirm-form="true"]`,
+  );
+  const finishButton = finishForm.getByRole("button", { name: "Приключи" });
+  const finishModal = firstPage.locator('[data-finish-confirm-modal]');
+  await finishButton.click();
+  await finishModal.waitFor({ state: "visible" });
+  await firstPage.keyboard.press("Escape");
+  await finishModal.waitFor({ state: "hidden" });
+  await finishButton.click();
+  await finishModal.waitFor({ state: "visible" });
+  await finishModal.locator('[data-finish-confirm-cancel]').click();
+  await finishModal.waitFor({ state: "hidden" });
+  assertEqual(postedFromFirstPage, [], "POST requests after cancelled Finish confirmations");
+
   const secondPage = await context.newPage();
   await openCard(secondPage, cardId);
   await secondPage.locator("#shift-open").click();
@@ -758,6 +774,114 @@ async function verifySecondPageStaleGate(context, firstPage, cardId, before) {
   assertEqual(after.active_shift.id, before.active_shift.id, "active occurrence after second-page change");
   assertEqual(after.active_shift.shift_number, 1, "second-page corrected shift number");
   await secondPage.close();
+}
+
+async function verifyConfirmedFinishSuspendsPolling(page, cardId) {
+  const staleWindow = page.locator('[data-shift-window="true"]');
+  await Promise.all([
+    page.waitForURL((url) => url.pathname === `/terminal/cards/${cardId}` && !url.search, {
+      waitUntil: "networkidle",
+    }),
+    staleWindow.locator('[data-shift-reload]').click(),
+  ]);
+
+  let snapshotRequestCount = 0;
+  const countSnapshotRequest = (request) => {
+    if (new URL(request.url()).pathname === "/terminal/snapshot") {
+      snapshotRequestCount += 1;
+    }
+  };
+  page.on("request", countSnapshotRequest);
+
+  let finishRequestReleased = false;
+  let resolveFinishRequestRelease;
+  const finishRequestRelease = new Promise((resolve) => {
+    resolveFinishRequestRelease = resolve;
+  });
+  const releaseFinishRequest = () => {
+    if (finishRequestReleased) {
+      return;
+    }
+    finishRequestReleased = true;
+    resolveFinishRequestRelease();
+  };
+  let markFinishRouteEntered;
+  const finishRouteEntered = new Promise((resolve) => {
+    markFinishRouteEntered = resolve;
+  });
+  const waitForFinishRouteEntry = async () => {
+    let timeoutId;
+    try {
+      await Promise.race([
+        finishRouteEntered,
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error("Finish request interception timed out")),
+            15000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+  const finishRoute = `**/terminal/cards/${cardId}/finish`;
+  const holdFinishRequest = async (route) => {
+    markFinishRouteEntered();
+    await finishRequestRelease;
+    await route.continue();
+  };
+  await page.route(finishRoute, holdFinishRequest);
+
+  let confirmClick;
+  let finishNavigation;
+  let finishResponse;
+  try {
+    const finishForm = page.locator(
+      `form[action="/terminal/cards/${cardId}/finish"][data-finish-confirm-form="true"]`,
+    );
+    await finishForm.getByRole("button", { name: "Приключи" }).click();
+    const finishModal = page.locator('[data-finish-confirm-modal]');
+    await finishModal.waitFor({ state: "visible" });
+    confirmClick = finishModal.locator('[data-finish-confirm-submit]').click();
+    await waitForFinishRouteEntry();
+    const requestsBeforeHold = snapshotRequestCount;
+    await page.waitForTimeout(11000);
+    assertEqual(
+      snapshotRequestCount,
+      requestsBeforeHold,
+      "snapshot polling during confirmed Finish navigation",
+    );
+    finishResponse = page.waitForResponse(
+      (response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/terminal/cards/${cardId}/finish`,
+      { timeout: 30000 },
+    );
+    finishNavigation = page.waitForURL(
+      (url) => url.pathname === `/terminal/cards/${cardId}`
+        && url.searchParams.get("notice") === "card_finished",
+      { waitUntil: "commit", timeout: 30000 },
+    );
+    releaseFinishRequest();
+    const [response] = await Promise.all([
+      finishResponse,
+      finishNavigation,
+      confirmClick,
+    ]);
+    assertEqual(response.status(), 303, "confirmed Finish response status");
+  } finally {
+    releaseFinishRequest();
+    await Promise.allSettled(
+      [confirmClick, finishNavigation, finishResponse].filter(
+        (pending) => pending !== undefined,
+      ),
+    );
+    await page.unroute(finishRoute, holdFinishRequest);
+    page.off("request", countSnapshotRequest);
+  }
+
+  const afterFinish = databaseSnapshot();
+  assertEqual(afterFinish.cards[orderTwo].status, "completed", "confirmed Finish status");
 }
 
 async function main() {
@@ -890,6 +1014,7 @@ async function main() {
       cardIds[orderTwo],
       beforeSecondPageChange,
     );
+    await verifyConfirmedFinishSuspendsPolling(page, cardIds[orderTwo]);
 
     assertEqual(browserErrors, [], "browser page errors");
     const finalSnapshot = databaseSnapshot();
