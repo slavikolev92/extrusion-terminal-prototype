@@ -75,7 +75,7 @@
                 {% endif %}
               </a>
             </th>
-            <th class="col-max-roll">Макс. кг/ролка</th>
+            <th class="col-gross">Поръчано бруто, кг</th>
             <th class="col-sequence">Ред</th>
             <th class="col-machine">Машина</th>
             <th class="col-action">Действие</th>
@@ -90,14 +90,12 @@
               <td class="col-delivery">{{ card.delivery_date or "-" }}</td>
               <td class="col-customer truncate-cell" title="{{ card.customer or '' }}">{{ card.customer or "-" }}</td>
               <td class="col-product truncate-cell" title="{{ card.product_type or '' }}">{{ card.product_type or "-" }}</td>
-              <td class="col-max-roll">
+              <td class="col-gross">{% if card.ordered_gross_kg %}{{ card.ordered_gross_kg }}{% else %}-{% endif %}</td>
+              <td class="col-sequence">
                 <form id="release-card-{{ card.id }}" action="/admin/cards/{{ card.id }}/release" method="post">
                   <input type="hidden" name="loaded_version" value="{{ card.version }}">
                   <input type="hidden" name="return_anchor" value="{{ return_anchor }}">
                 </form>
-                <input class="release-control release-control-max-roll" form="release-card-{{ card.id }}" name="max_roll_weight" inputmode="decimal" value="{{ card.max_roll_weight or '' }}" aria-label="Максимално тегло ролка за поръчка {{ card.order_number }}">
-              </td>
-              <td class="col-sequence">
                 <input class="release-control release-control-sequence" form="release-card-{{ card.id }}" name="machine_sequence" inputmode="numeric" pattern="[0-9]*" value="{{ card.machine_sequence or '' }}" aria-label="Ред за поръчка {{ card.order_number }}" required>
               </td>
               <td class="col-machine">
@@ -144,6 +142,7 @@
                 <div class="queue-card-main">
                   <span>{{ card.customer or "Без клиент" }}</span>
                   <small>{{ card.product_type or "Без изделие" }}</small>
+                  <small class="queue-card-gross">Поръчано бруто: {% if card.ordered_gross_kg %}{{ card.ordered_gross_kg }} кг{% else %}-{% endif %}</small>
                   <span class="pill status-{{ card.status }}">{{ status_labels.get(card.status, card.status) }}</span>
                 </div>
                 <form class="planning-form" action="/admin/cards/{{ card.id }}/planning" method="post">

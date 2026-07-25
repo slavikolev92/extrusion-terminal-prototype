@@ -28,7 +28,7 @@ RECIPE_RELEASE_FIELD_LABELS = {
 
 RECIPE_RELEASE_PREFIX = "Рецептата не може да бъде пусната"
 RECIPE_RELEASE_SUFFIX = "Коригирайте рецептата и опитайте отново."
-TARGET_GROSS_RELEASE_REASON = "липсват планирани кг/поръчано количество"
+TARGET_GROSS_RELEASE_REASON = "липсват поръчани бруто кг"
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ def decimal_from_quantity_text(value: Any) -> Decimal | None:
 
 
 def target_gross_weight_from_card(card: dict[str, Any]) -> Decimal | None:
-    quantity = decimal_from_quantity_text(card.get("quantity_1"))
+    quantity = decimal_from_quantity_text(card.get("ordered_gross_kg"))
     if quantity is not None and quantity > Decimal("0"):
         return quantity
     return None

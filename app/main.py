@@ -113,16 +113,19 @@ IMPORT_FIELD_LABELS = {
     "customer": "Клиент",
     "city": "Град",
     "product_type": "Вид изделие",
-    "quantity_1": "Количество",
-    "unit_1": "Мярка",
-    "quantity_2": "Допълнително количество",
-    "unit_2": "Мярка",
+    "ordered_gross_kg": "Поръчано бруто, кг",
+    "ordered_rolls": "Поръчани ролки",
+    "ordered_meters": "Поръчани метри",
+    "ordered_units": "Поръчани бройки",
     "product_form": "Вид заготовка",
     "material": "Материал",
     "size_thickness": "Размер/дебелина",
     "notes": "Забележки",
-    "extrusion_flag": "Екструзия",
-    "extrusion_folding": "Фалцоване",
+    "printing_sequence": "Печат - ред",
+    "extrusion_sequence": "Екструзия - ред",
+    "rewinding_slitting_sequence": "Пренавиване/рязане - ред",
+    "confection_sequence": "Конфекция - ред",
+    "extrusion_folding": "Фалдиране",
     "extrusion_next_operation": "Следваща операция",
     "extrusion_treatment": "Третиране",
     "raw_material_a": "A",
@@ -143,6 +146,13 @@ RECIPE_FIELD_ROWS = (
     ("Антистатик", "antistatic"),
     ("Мастербач", "masterbatch"),
     ("Креда", "chalk"),
+)
+
+ORDERED_AMOUNT_FIELDS = (
+    ("ordered_gross_kg", "Поръчано бруто", "кг"),
+    ("ordered_rolls", "Поръчани ролки", "ролки"),
+    ("ordered_meters", "Поръчани метри", "м"),
+    ("ordered_units", "Поръчани бройки", "бр."),
 )
 
 @asynccontextmanager
@@ -207,7 +217,7 @@ def admin_card_detail_context(card_id: int, **extra: Any) -> dict[str, Any] | No
         "import_field_labels": IMPORT_FIELD_LABELS,
         "status_labels": STATUS_LABELS,
         "timing_reason_labels": TIMING_REASON_LABELS,
-        "quantity_lines": build_quantity_lines(card),
+        "quantity_lines": build_ordered_amount_lines(card),
         "recipe_rows": recipe_rows,
     }
     context.update(extra)
@@ -313,19 +323,18 @@ def build_draft_sort_links(active_sort: str, active_dir: str) -> dict[str, dict[
     return links
 
 
-def build_quantity_lines(card: dict[str, Any]) -> list[dict[str, str]]:
+def build_ordered_amount_lines(card: dict[str, Any]) -> list[dict[str, str]]:
     lines: list[dict[str, str]] = []
-    for index in (1, 2):
-        quantity = str(card.get(f"quantity_{index}") or "").strip()
-        unit = str(card.get(f"unit_{index}") or "").strip()
-        if quantity or unit:
+    for field, label, unit in ORDERED_AMOUNT_FIELDS:
+        value = str(card.get(field) or "").strip()
+        if value:
             lines.append(
                 {
-                    "quantity_field": f"quantity_{index}",
-                    "unit_field": f"unit_{index}",
-                    "quantity": quantity,
+                    "field": field,
+                    "label": label,
+                    "value": value,
                     "unit": unit,
-                    "display": " ".join(part for part in (quantity, unit) if part),
+                    "display": f"{label}: {value} {unit}",
                 }
             )
     return lines
@@ -858,8 +867,6 @@ def imported_fields_from_form(
                 planned_material=submitted_fields.get(f"planned_material__{field}", ""),
                 recipe_percent=submitted_fields.get(f"recipe_percent__{field}", ""),
             )
-    if "max_roll_weight" in submitted_fields:
-        preserved_fields["max_roll_weight"] = submitted_fields["max_roll_weight"]
     return preserved_fields, RuleResult(True)
 
 
@@ -1011,7 +1018,6 @@ async def release_card_to_terminal(
     request: Request,
     card_id: int,
     loaded_version: str = Form(...),
-    max_roll_weight: str = Form(""),
     machine_id: str = Form(...),
     machine_sequence: str = Form(...),
     return_anchor: str = Form(DEFAULT_PLANNING_ANCHOR),
@@ -1025,7 +1031,6 @@ async def release_card_to_terminal(
                 parsed_planning["machine_id"],
                 parsed_planning["machine_sequence"],
                 loaded_version=parsed_version,
-                max_roll_weight=max_roll_weight,
             )
 
     if release_result.ok:
@@ -2092,7 +2097,6 @@ def enrich_terminal_card_display(card: dict[str, Any]) -> dict[str, Any]:
     enrich_terminal_list_card(card, card)
     card["quantity_display"] = build_quantity_display(card)
     card["recipe_rows"] = build_terminal_recipe_rows(card)
-    card["max_roll_weight_display"] = rounded_optional_weight_display(card.get("max_roll_weight"))
     card["target_gross_weight"] = target_gross_display(card)
     card["remaining_gross_weight"] = remaining_gross_display(card)
     card["total_gross_weight_display"] = one_decimal_weight_display(
@@ -2117,7 +2121,6 @@ def enrich_terminal_list_card(
         "idle" if card.get("status") == STATUS_PENDING else str(card.get("status") or "")
     )
     card["quantity_display"] = build_quantity_display(card)
-    card["max_roll_weight_display"] = rounded_optional_weight_display(card.get("max_roll_weight"))
     card["target_gross_weight"] = target_gross_display(card)
     card["produced_gross_weight"] = rounded_weight_display(card.get("total_gross_weight"))
     card["remaining_gross_weight"] = remaining_gross_display(card)
@@ -2127,7 +2130,7 @@ def enrich_terminal_list_card(
 
 
 def build_quantity_display(card: dict[str, Any]) -> str:
-    lines = [line["display"] for line in build_quantity_lines(card)]
+    lines = [line["display"] for line in build_ordered_amount_lines(card)]
     return " / ".join(lines) if lines else "-"
 
 
@@ -2212,13 +2215,6 @@ def rounded_weight_display(value: Any) -> str:
     decimal_value = decimal_from_display(value)
     if decimal_value is None:
         return "0"
-    return whole_decimal_text(decimal_value)
-
-
-def rounded_optional_weight_display(value: Any) -> str:
-    decimal_value = decimal_from_display(value)
-    if decimal_value is None:
-        return "-"
     return whole_decimal_text(decimal_value)
 
 

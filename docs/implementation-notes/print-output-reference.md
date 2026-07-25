@@ -8,13 +8,17 @@ This document preserves the accepted print-output requirements, field mapping, v
 
 **Tech Stack:** FastAPI, Jinja2 templates, direct `sqlite3`, app-local CSS, browser print, pytest, Playwright/browser visual checks.
 
-**Current status:** Implemented and accepted for the app. Browser/PDF verification and physical printer rehearsal passed. The generated operational card is near-perfect. A remaining case where one specific computer prints across two physical sheets is a local workstation/browser/printer-driver/settings issue, not an application print-output defect.
+**Current status:** The accepted two-page layout is implemented. The front
+quantity row uses the four final Shift Manager ordered amounts. The established
+browser/PDF and physical-printer layout remains the reference for verification.
 
 ---
 
 ## Scope And Source Of Truth
 
-Printing belongs to Milestone 10 after the remaining V8 workstation bug/edge-case slice is fixed.
+The former sequencing note that placed printing after a V8 workstation
+bug/edge-case slice is historical. Printing is implemented and its accepted
+two-page output is the current maintenance reference.
 
 The app must not fill, mutate, print from, or otherwise use `source-files/print-template.xlsx` as a runtime template. The workbook is a visual/content reference only.
 
@@ -29,7 +33,8 @@ The printed output must be generated from completed app data stored in SQLite:
 
 The template fields are the boundary for printed content. If information is not present in `source-files/print-template.xlsx`, do not add it to the printout. App workflow fields such as status, machine number, machine sequence, queue position, and max roll weight must not be printed unless the user later updates the print template to include them.
 
-Cancelled cards are never printable. Printing is strictly for completed cards.
+Cancelled cards are never printable. Printing is strictly for completed or
+archived cards.
 
 ## Definite Functional Requirements
 
@@ -52,21 +57,16 @@ Legacy front-page sections such as `ШПУЛИ`, `БРАК`, and `ФОЛИО [kg
 
 ## Print Entry Points
 
-Printing must be reachable from both operator and admin workflows.
-
-Terminal/workstation:
-
-- Operators print/reprint completed cards from `/terminal`.
-- Clicking print should open the print route and automatically call browser print.
-- True silent printing is not a v1 requirement. Browser print dialog/pop-up is acceptable.
-- Kiosk/silent printing may be handled later as deployment/user-experience configuration once the physical terminal environment is known.
+Printing is an admin/shift-manager action. The terminal/workstation must not
+show print or reprint controls.
 
 Admin:
 
-- Admin can print/reprint completed cards after correcting mistakes.
-- Admin print access should exist from admin card detail and, where practical, from the cards list.
+- Admin can print/reprint completed or archived cards after correcting mistakes.
+- Admin print access exists from admin card detail.
 - Admin may use a print preview page so layout can be inspected during development and occasional correction workflows.
-- The admin preview should use the same rendered print output and backend eligibility rules as terminal printing.
+- The admin preview uses the same rendered print output and backend eligibility
+  rules as the print route.
 
 ## Print Eligibility And Blocking Rules
 
@@ -75,7 +75,7 @@ The print route must re-check readiness at print time. Do not rely only on compl
 Printing is allowed only when all of these are true:
 
 - card exists
-- card status is `completed`
+- card status is `completed` or `archived`
 - card is not cancelled
 - tare weight exists
 - at least one roll gross weight exists
@@ -127,19 +127,19 @@ Reference file:
 
 Observed sheets:
 
-- `Front Page Template`
-- `Back Page Template`
+- `ACTUAL TEMPLATE`
+- `DATA-FILLED TEMPLATE`
 
-Current front page:
+Both sheets contain the front and back references side by side in `A:V`, with
+the print area ending at row `54`:
 
-- range/dimension observed as `A1:K56`
-- extrusion front card only
-- no runtime Excel printing or workbook filling is planned
+- front page: columns `A:K`;
+- back page: columns `L:V`;
+- extrusion front card only;
+- no runtime Excel printing or workbook filling is planned.
 
 Current back page:
 
-- range/dimension observed as `A1:K52`
-- workbook print area observed as `'Back Page Template'!$A$1:$K$53`
 - 120-roll grid split into three groups:
   - left group: rolls `1-40`
   - middle group: rolls `41-80`
@@ -169,7 +169,14 @@ Front page order/header fields:
 | `ФИРМА` | `cards.customer` |
 | `ГРАД` | `cards.city` |
 | `ВИД ИЗДЕЛИЕ` | `cards.product_type` |
-| `КОЛИЧЕСТВО` | imported quantity fields, displayed as stored text |
+| first `КОЛИЧЕСТВО` cell | `cards.ordered_gross_kg`, stored text plus fixed `кг` |
+| second `КОЛИЧЕСТВО` cell | `cards.ordered_rolls`, stored text plus fixed `ролки` |
+| third `КОЛИЧЕСТВО` cell | `cards.ordered_meters`, stored text plus fixed `метра` |
+| fourth `КОЛИЧЕСТВО` cell | `cards.ordered_units`, stored text plus fixed `бр.` |
+
+The four cells have equal width. A blank source value leaves its entire cell
+blank, including the unit. These are ordered source amounts, never produced
+amounts.
 
 Front page extrusion product fields:
 
@@ -232,7 +239,8 @@ Back page summary:
 | `Произведено кол. бруто /кг/` | sum of roll gross weights, one decimal |
 | `Произведено кол. нето /кг/` | total net weight, one decimal |
 
-Do not print `cards.max_roll_weight`. It is app-only terminal information and is not part of the print template.
+Do not print `cards.max_roll_weight`. The legacy column is inert and is not part
+of the print template.
 
 ## Recommended HTML/CSS Implementation Direction
 
@@ -301,13 +309,10 @@ Likely files to modify:
 - `app/main.py`
   - add print routes
   - pass assembled print view model into template
-  - wire terminal/admin print behavior
-
-- `app/templates/terminal.html`
-  - add/enable completed-card print/reprint action in the existing overflow path
+  - wire admin print behavior
 
 - `app/templates/admin_card_detail.html`
-  - add print/reprint action for completed cards
+  - add print/reprint action for completed and archived cards
 
 - `app/templates/admin_cards.html`
   - optionally add completed-card print link from card list rows
@@ -413,7 +418,7 @@ Likely files to modify:
   - includes two `.print-page` containers
   - includes front and back page landmarks/classes
   - includes a screen-only print button/fallback control
-  - calls `window.print()` only when requested by terminal/auto-print mode
+  - calls `window.print()` only when auto-print mode is requested
 
 - [ ] Run focused route tests.
 
@@ -432,7 +437,7 @@ Likely files to modify:
 - Create/Modify: `app/static/css/print.css`
 - Test: `tests/test_print_output.py`
 
-- [ ] Build the front page layout from `Front Page Template`.
+- [ ] Build the front page layout from columns `A:K` of the accepted reference.
 
   Required sections:
 
@@ -471,7 +476,7 @@ Likely files to modify:
 - Modify: `app/static/css/print.css`
 - Test: `tests/test_print_output.py`
 
-- [ ] Build the back page layout from `Back Page Template`.
+- [ ] Build the back page layout from columns `L:V` of the accepted reference.
 
   Required structure:
 
@@ -506,39 +511,28 @@ Likely files to modify:
   - total gross/net/tare use one decimal
   - date/shift cells are blank
 
-### Task 5: Wire Terminal And Admin Entry Points
+### Task 5: Keep The Admin Print Entry Point
 
 **Files:**
 
-- Modify: `app/templates/terminal.html`
 - Modify: `app/templates/admin_card_detail.html`
 - Modify: `app/templates/admin_cards.html`
 - Test: existing terminal/admin render tests plus `tests/test_print_output.py`
 
-- [ ] Add terminal print/reprint action for completed cards.
+- [x] Keep terminal print/reprint controls absent.
 
-  It should open the print route in auto-print mode.
-
-- [ ] Ensure terminal print action is unavailable for non-completed selected cards.
-
-  Keep the terminal workflow simple: operators should not choose layout or inspect configuration.
-
-- [ ] Add admin print/reprint action on admin card detail for completed cards.
+- [x] Keep admin print/reprint available on admin card detail for completed and
+  archived cards.
 
   It should open the preview/print route.
 
-- [ ] Add admin card-list print link for completed cards if it fits the existing card list cleanly.
+- [x] Keep the cards list free of print shortcuts; use card detail.
 
-  Do not clutter the list if detail-page access is clearer.
+- [x] Keep render tests proving:
 
-- [ ] Add/update render tests.
-
-  Verify:
-
-  - terminal completed-card view has print access
-  - terminal non-completed card does not expose print access
-  - admin completed card exposes print access
-  - cancelled cards do not expose print access
+  - terminal cards do not expose print access;
+  - admin completed and archived cards expose print access;
+  - cancelled cards do not expose print access.
 
 ### Task 6: Browser And Print Verification
 
@@ -621,7 +615,7 @@ Likely files to modify:
 
 Before saying print work is complete:
 
-- [x] non-completed cards are blocked from print
+- [x] statuses outside completed/archived are blocked from print
 - [x] cancelled cards are blocked from print
 - [x] missing print-critical data is blocked with actionable messages
 - [x] more than 120 rolls is blocked
@@ -641,6 +635,7 @@ Before saying print work is complete:
 These are intentionally not part of v1:
 
 - silent/kiosk direct printing
+- terminal print/reprint controls
 - per-roll date/shift capture
 - per-roll net display
 - overflow page for more than 120 rolls

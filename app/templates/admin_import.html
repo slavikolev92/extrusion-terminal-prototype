@@ -59,7 +59,13 @@
             {% for row in import_result.row_results %}
               <tr>
                 <td>{{ row.row_number or "Файл" }}</td>
-                <td>{{ row.order_number or "-" }}</td>
+                <td>
+                  {% if row.card_id %}
+                    <a href="/admin/cards/{{ row.card_id }}">{{ row.order_number }}</a>
+                  {% else %}
+                    {{ row.order_number or "-" }}
+                  {% endif %}
+                </td>
                 <td><span class="pill action-{{ row.action }}">{{ import_action_labels.get(row.action, row.action) }}</span></td>
                 <td>{{ row.message }}</td>
               </tr>

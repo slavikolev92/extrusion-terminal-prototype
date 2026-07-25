@@ -75,6 +75,10 @@ def test_print_template_fixture_creates_completed_printable_temp_card(
     assert readiness.ok
     assert readiness.data is not None
     assert readiness.data["front"]["order_number"] == "PRINT-FIXTURE-TEST"
+    assert readiness.data["front"]["ordered_gross_display"] == "500 кг"
+    assert readiness.data["front"]["ordered_rolls_display"] == "20 ролки"
+    assert readiness.data["front"]["ordered_meters_display"] == "15000 метра"
+    assert readiness.data["front"]["ordered_units_display"] == "40000 бр."
     assert len(readiness.data["roll_slots"]) == 120
     for row in readiness.data["front"]["recipe_rows"]:
         assert row["planned_material"]

@@ -2,7 +2,7 @@
 
 This repository is for a pilot app that helps move the extrusion terminal from paper production cards to an app-driven workflow. This README is written for future agents. It should preserve the confirmed project facts, the inspected Excel workbook structure, and the current open decisions without turning discussion ideas into requirements.
 
-Source inspection date: 2026-06-10.
+Latest Shift Manager contract verification date: 2026-07-25.
 
 This is not V1 of a product roadmap. This is the complete standalone pilot/prototype scope. After this pilot, the direction is to build the actual ERP on ERPNext, not to keep expanding this app.
 
@@ -188,9 +188,6 @@ Confirmed workstation screen structure:
 - `Шпула, кг` is the current/default tare field for future rolls and should not dominate the repeated roll-entry workflow.
 - `Шпула, кг` should save inline on `Enter` and on blur, using the same conflict/version checks as other terminal edits.
 - Do not use a separate `Save` button for `Шпула, кг` unless inline save proves unreliable in testing.
-- Show `Макс. тегло ролка, кг` in the `Детайли` pane after `Материал`, using the same plain label/value treatment as the other details fields.
-- `Макс. тегло ролка, кг` is entered by the shift manager, read-only for machine operators, and informational only.
-- `Макс. тегло ролка, кг` should not enforce roll-weight validation in this pilot.
 
 Top machine navigation content:
 
@@ -233,22 +230,21 @@ Workstation visual system rules:
 
 - Use a tight, consistent type scale for the workstation prototype: `12px` for small metadata, `14px` for labels/table headers, `17px` for normal values and table text, `21px` for titles/actions, `28px` for compact roll-pane totals, and `30px` only for larger major totals.
 - Use a tight, consistent font-weight scale: `400` for normal notes/body copy, `700` for labels and secondary table text, `800` for values and primary table text, and `900` only for major titles, machine names, and totals.
-- Use neutral white containers with simple borders for detail blocks, tare/max-roll controls, new-roll entry, roll tables, and totals.
+- Use neutral white containers with simple borders for detail blocks, tare controls, new-roll entry, roll tables, and totals.
 - Do not tint ordinary data-entry containers green, blue-gray, or warning colors unless the color communicates a real state.
 - Editable input fields should use a white background. Non-editable value boxes should use a light gray background.
 - Use one consistent primary action color for the current primary operator action, such as `Старт`, `Продължи`, `Приключи`, and add roll.
 - Do not color `Пауза` as a primary action while production is running; use neutral/outline styling.
 - Reserve red only for destructive actions and disabled gray only for unavailable actions.
 
-Requested product/order fields:
+Requested product/order fields use two aligned five-column rows:
 
-- `Вид изделие`
-- `Фирма`
-- `Количество`
-- `Размер / дебелина`
-- `Вид заготовка`
-- `Материал`
-- `Макс. тегло ролка, кг`
+- Row 1: `Фирма`, `Поръчано бруто, кг`, `Вид изделие`,
+  `Размер / дебелина`, `Фалдиране`.
+- Row 2: `Вид заготовка`, `Следваща операция`, `Третиране`, `Опаковка`;
+  the fifth grid position remains empty.
+- Do not show ordered rolls, ordered meters, ordered units, delivery date,
+  material, or maximum roll weight in the terminal details block.
 
 Notes display:
 
@@ -295,7 +291,9 @@ Admin page behavior:
 - Duplicate and overwrite outcomes should be shown through import actions/messages.
 - Release should validate the current card fields directly before sending the card to the terminal.
 - Rows with `no extrusion step` should be reported in the import result and skipped. They should not create cards because they cannot be used by the extrusion workstation.
-- The shift manager can edit any field on an imported card/order from the admin page.
+- The shift manager can edit the visible imported order fields from the admin
+  card detail page. The four imported route-sequence values remain stored and
+  preserved but are not exposed as editable detail inputs.
 - Admin editing is broader than terminal editing; terminal editing is intentionally limited.
 - The shift manager can cancel and restore terminal-visible cards from the admin card detail page.
 - The shift manager can return a `pending` card to the unreleased planning pool. This clears machine assignment and queue position, removes the card from the terminal queue, and is only allowed before production has started. `running`, `paused`, `completed`, and `cancelled` cards cannot be returned to the pool.
@@ -321,132 +319,76 @@ Admin page behavior:
 - Persistent data or workflow features outside the confirmed app data model.
 - Future-product roadmap features for this app. After this pilot, the expected direction is ERPNext-based ERP work.
 
-## Source Workbook
+## Shift Manager V14.04 Import Contract
 
-Canonical file:
+Current verified source files:
 
-- `source-files/shift-manager-main-file.xlsm`
+- workbook: `source-files/Production Orders (Marco) V14.04.xlsm`;
+- export: `source-files/extrusion_orders_20260725_110012.csv`.
 
-Observed companion file:
+`Database` remains the authoritative order-data sheet. The latest verified
+workbook maps its structured order values as follows:
 
-- `source-files/~$shift-manager-main-file.xlsm`
-- This is an Excel lock/temp file, not a source workbook.
+| Column | Meaning | App field |
+| --- | --- | --- |
+| `A` | Order number | `order_number` |
+| `B` | Order date | `order_date` |
+| `C` | Delivery date | `delivery_date` |
+| `D` | Company/customer | `customer` |
+| `E` | City | `city` |
+| `F` | Product type | `product_type` |
+| `G` | Ordered gross kilograms | `ordered_gross_kg` |
+| `H` | Ordered rolls | `ordered_rolls` |
+| `I` | Ordered meters | `ordered_meters` |
+| `J` | Ordered units | `ordered_units` |
+| `K:N` | Product form, material, size/thickness, notes | corresponding final fields |
+| `Q:T` | Numeric operation route positions | four route-sequence fields |
+| `AE` | Folding | `extrusion_folding` |
+| route calculation | Next operation after extrusion | `extrusion_next_operation` |
+| `AF` | Treatment | `extrusion_treatment` |
+| `AH:AN` | Extrusion recipe fields | corresponding recipe fields |
+| `AO` | Packaging method | `packaging_method` |
 
-Workbook properties observed:
+The app accepts only this exact 29-column header in this exact order:
 
-- Macro-enabled Excel workbook (`.xlsm`).
-- Readable with `openpyxl`.
-- `Get-FileHash` could not read it during inspection because another process had the workbook locked.
-- Sheets:
-  - `Database`
-  - `Technology Cards`
-  - `Page Back`
+```csv
+order_number,order_date,delivery_date,customer,city,product_type,ordered_gross_kg,ordered_rolls,ordered_meters,ordered_units,product_form,material,size_thickness,notes,printing_sequence,extrusion_sequence,rewinding_slitting_sequence,confection_sequence,extrusion_next_operation,extrusion_folding,extrusion_treatment,raw_material_a,raw_material_b,raw_material_c,linear_pe,antistatic,masterbatch,chalk,packaging_method
+```
 
-## Workbook Model
+Contract rules:
 
-The workbook has one source-data worksheet and two print/layout worksheets.
+- Do not accept the old generic quantity/unit CSV or a second compatibility
+  format.
+- `ordered_gross_kg` is the only target-gross source.
+- `extrusion_sequence == "1"` is the only extrusion import-eligibility signal.
+- A sequence-1 row may import when extrusion detail and recipe fields are blank.
+  Positive ordered gross and recipe completeness remain independent release
+  validations.
+- The four route-sequence fields are imported, stored, and preserved. They are
+  not shown as admin card-detail inputs and are not shown on the terminal.
+- Do not add `micro_perforation`.
+- Maximum roll weight is not part of active import, admin, release, or terminal
+  behavior. The legacy `cards.max_roll_weight` column remains inert so a future
+  confirmed feature can reuse it without destroying stored data.
 
-| Worksheet | Role |
-| --- | --- |
-| `Database` | Durable source data. Each production order is one row. |
-| `Technology Cards` | Front-side print layout. It contains four side-by-side operational card blocks. |
-| `Page Back` | Back-side print layout. It contains the roll/weight grid. |
+Migration behavior:
 
-The layout sheets are derived from `Database`. They should not be treated as source data.
+- The ordered migration runner records applied versions in `schema_migrations`.
+- Schema-only M001 adds the four structured ordered-amount columns and four
+  route-sequence columns to `cards` and `card_import_sources`.
+- M001 does not infer final values from legacy quantity/unit pairs or an old
+  extrusion flag.
+- Existing production values remain unchanged. Any production-data conversion
+  decision is deferred until an immutable production backup is profiled and the
+  complete migration chain is rehearsed on a copy.
 
-## `Database` Sheet
+## Historical Print-Layout Inspection
 
-Observed metadata:
+The detailed formula and print-layout notes below describe the earlier workbook
+inspected on 2026-06-10. They are retained only as historical print-reference
+context and do not define the current V14.04 import contract.
 
-- Dimensions: `A1:BT12206`
-- Meaningful source columns observed through `AY`
-- Columns `AZ:BT` are within the worksheet dimension but appeared blank in inspected headers and data counts
-- Freeze panes: `B5`
-- Auto filter range: `A4:AX12206`
-- Hidden row: `1`
-- Actual production-order data rows: `5:12206`
-- Non-empty order numbers in `A5:A12206`: `12200`
-
-Important row roles:
-
-| Row | Role |
-| --- | --- |
-| `1` | Numeric lookup indexes used by formulas. `A1` is `1`; `B1:AY1` continue with formulas like `=A1+1`. |
-| `2` | Blank in the inspected range. |
-| `3` | Main column labels and merged operation group labels. |
-| `4` | Mixed selector/subheader row. `A4` is the currently selected order number; operation subheaders start at `V4`. |
-| `5+` | Actual production-order records. |
-
-The selected order during inspection was `Database!A4 = 25278`. The matching full data row was row `12205`.
-
-Duplicate order numbers exist in historical data, for example `3004` and `3012`. If the app reads by order number from the workbook, duplicate handling must be designed explicitly. A full-row copy/paste import avoids that ambiguity.
-
-## Database Column Groups
-
-The user described these stable column groups:
-
-| Columns | Group |
-| --- | --- |
-| `A:P` | General production-order fields |
-| `Q:T` | Operation flags |
-| `U:AD` | Printing-specific fields |
-| `AE:AO` | Extrusion-specific fields |
-| `AP:AQ` | Rewinding/slitting-specific fields |
-| `AR:AT` | Confection-specific fields |
-
-The pilot needs the general fields plus the extrusion group.
-
-## Pilot-Relevant Database Fields
-
-These fields are the observed minimum needed to render the extrusion operational card front.
-
-| Column | Meaning |
-| --- | --- |
-| `A` | Order number |
-| `B` | Date |
-| `C` | Delivery date |
-| `D` | Company/customer |
-| `E` | City |
-| `F` | Product type |
-| `G` | Quantity 1 |
-| `H` | Unit 1 |
-| `I` | Quantity 2 |
-| `J` | Unit 2 |
-| `K` | Blank/product form |
-| `L` | Material |
-| `M` | Size/thickness |
-| `N` | Notes |
-| `R` | Extrusion operation flag |
-| `AE` | Extrusion folding |
-| `AF` | Extrusion next operation |
-| `AG` | Extrusion treatment |
-| `AH` | Extrusion raw material A |
-| `AI` | Extrusion raw material B |
-| `AJ` | Extrusion raw material C |
-| `AK` | Extrusion linear PE |
-| `AL` | Extrusion antistatic |
-| `AM` | Extrusion masterbatch |
-| `AN` | Extrusion chalk |
-| `AO` | Extrusion packaging method |
-
-The app should preserve raw workbook values as much as possible. The workbook contains mixed human-entered content: dates, numbers, quantities embedded in text, units, notes, Bulgarian labels, and inconsistent text casing.
-
-## Operation Flags
-
-The workbook has four operation flag columns:
-
-| Operation | Flag column |
-| --- | --- |
-| Printing / flexo | `Q` |
-| Extrusion | `R` |
-| Rewinding/slitting | `S` |
-| Confection | `T` |
-
-The Excel formulas compare operation flags against `Да`. Inspected data also contained lowercase `да`, and Excel still displayed the matching cards. Treat operation flags case-insensitively.
-
-For the pilot app, only the extrusion flag in `R` matters.
-
-## Excel Formula Mechanism
+### Excel Formula Mechanism
 
 The print/layout sheets use the selected order number in `Database!A4`.
 
@@ -464,7 +406,7 @@ Implications:
 - The formulas reference a broad source range, but meaningful cleaned source
   data stops at `AT`.
 
-## `Technology Cards` Sheet
+### `Technology Cards` Sheet
 
 Observed metadata:
 
@@ -493,7 +435,7 @@ Extrusion front block uses:
 
 For selected order `25278`, cached values showed that the printing and extrusion blocks displayed, while rewinding/slitting and confection did not. That matches the inspected operation flags for that row.
 
-## `Page Back` Sheet
+### `Page Back` Sheet
 
 Observed metadata:
 
@@ -582,8 +524,8 @@ Confirmed storage behavior:
 - Total net weight formula: `total_net_weight = sum(roll_net_weight)`.
 - The order/card tare weight is the current/default tare copied into newly added rolls.
 - Changing the order/card tare weight does not mutate existing roll tare or net weights.
-- Maximum roll weight is stored on the order/card when provided by the shift manager.
-- Maximum roll weight is informational for operators and must not block or validate roll entry in this pilot.
+- The legacy `cards.max_roll_weight` column remains present but is not used by
+  import, admin forms, release, terminal display, or roll validation.
 - Roll entries do not need notes for the pilot.
 - Keep only latest values; no change history is required for the pilot.
 - Every operator action that changes production data must persist immediately. There should not be a separate "save all" button for roll entries or timing actions.
@@ -683,7 +625,9 @@ Confirmed CSV scope:
 - Avoid carrying fields that the app will not read or use.
 - The CSV may contain multiple selected orders, one row per order.
 - Duplicate detection in the app should use order number alone.
-- CSV headers may use stable internal field names chosen by the implementation, for example `order_number` or `raw_material_a`.
+- CSV headers must match the exact final 29-column V14.04 contract in the order
+  documented above. Aliases, extra columns, missing columns, and reordered
+  columns are rejected.
 - The workbook structure is stable, so internal CSV headers can be mapped by fixed source columns.
 - User-facing labels in the app and print output must use the Bulgarian field names/operators expect from the operational card, not internal CSV names.
 - App-only fields that are not source Excel fields should start blank after import, including `Използван материал`, `Партида`, and tare weight.
@@ -698,7 +642,9 @@ Confirmed export location convention:
 Validation direction:
 
 - The export may export selected rows, but the app import must validate whether each imported row is usable for the extrusion pilot.
-- If a row has no extrusion flag or empty/missing extrusion data, the app should notify the shift manager with a message such as `no extrusion step` and skip that row without saving a card.
+- If `extrusion_sequence` is not exactly `1`, the app reports that the row has
+  no extrusion step and skips it without saving a card. Blank extrusion detail
+  fields alone do not make a sequence-1 row ineligible for import.
 - This validation belongs to CSV import review so unusable rows do not enter planning or the terminal queue.
 - If an imported order number already exists, the app should warn and allow the shift manager to overwrite/re-import.
 - Overwrite/re-import should update only imported/front-card/order information when those fields have not been admin-corrected since the last import source baseline.
@@ -783,14 +729,13 @@ Confirmed print requirements:
   - total gross weight
   - total net weight
 
-The current Excel `Technology Cards` extrusion block and `Page Back` sheet are the visual source of truth for print layout. The final printed output should be effectively indistinguishable from the old paper operational card, except for the confirmed additions above. Place the additions on the page while preserving the familiar two-page/120-roll structure as much as possible. The exact placement of those additions is not decided.
-
-Print-layout follow-up:
-
-- Create/agree a printable card template before final print implementation.
-- The template should show where the added fields go, especially on the back page.
-- The added fields currently expected are start time, stop/finish time, tare weight, total gross weight, and total net weight.
-- This layout decision can happen after the captured data fields are final.
+The accepted runtime print reference is `source-files/print-template.xlsx`,
+using its `ACTUAL TEMPLATE` and `DATA-FILLED TEMPLATE` sheets. The app
+implements exactly two A4 pages: the extrusion front and the 120-roll back.
+The production summary belongs in the accepted bottom back-page summary area.
+The four ordered-amount cells are, in order, gross kilograms, rolls, meters,
+and units; a blank source value leaves its complete cell blank, including its
+unit.
 
 ## Deferred Functionality
 
@@ -918,7 +863,12 @@ Do not restore over `data/extrusion_terminal.sqlite3` while the app is running. 
 
 Troubleshooting:
 
-- Failed imports: confirm the uploaded file is CSV, uses the current Shift Manager export headers including `order_number`, `ordered_gross_kg`, and `extrusion_sequence`, and includes extrusion detail data. Rows where `extrusion_sequence` is not `1` are reported in the import result and skipped.
+- Failed imports: confirm the uploaded file is CSV with the exact current
+  29-column Shift Manager header. Import eligibility requires that header and
+  `extrusion_sequence == "1"` only; blank extrusion-detail or recipe fields do
+  not block import. Rows where `extrusion_sequence` is not `1` are reported in
+  the import result and skipped. Positive ordered gross and recipe validity are
+  separate release checks.
 - Planning sequence looks wrong: release, reassignment, and resequencing should normalize each active machine queue to `1..N`; refresh `/admin/planning` and report the affected order if a gap or duplicate remains.
 - Server restart: stop with `Ctrl+C`, start with the documented startup command, run `/health`, then refresh the terminal browser. Data should persist because it is stored in SQLite, not browser memory.
 
@@ -953,8 +903,11 @@ Conflict handling:
 - Use the approved simple stack unless there is a concrete blocker: Python/FastAPI, SQLite, simple HTML/JS, HTML/CSS print views.
 - Implement SQLite-safe backups.
 - Use simple optimistic conflict detection with `updated_at` or a version number.
-- Handle operation flags case-insensitively.
-- Do not assume every quantity is numeric.
+- Treat `extrusion_sequence == "1"` as the exact route eligibility rule; do not
+  accept legacy yes/no operation flags.
+- Preserve imported ordered values as source text. Release validation parses
+  `ordered_gross_kg` as a finite positive value and does not derive target gross
+  from the other ordered fields.
 - Date/shift columns on the printed back page are retained visually but are not used as app inputs.
 - Do not assume terminal results must be synchronized back to Excel.
 - Keep confirmed facts separate from open decisions in future edits.

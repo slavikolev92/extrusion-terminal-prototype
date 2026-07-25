@@ -33,13 +33,11 @@ def structured_release_row(order_number: str, **overrides: str) -> dict[str, str
         "customer": "Structured Release Customer",
         "city": "Sofia",
         "product_type": "PE film",
-        "quantity_1": "1000",
-        "unit_1": "kg",
-        "quantity_2": "",
-        "unit_2": "",
+        "ordered_gross_kg": "1000",
+        "ordered_rolls": "",
         "material": "LDPE / LLDPE",
         "size_thickness": "600/0.050",
-        "extrusion_flag": "da",
+        "extrusion_sequence": "1",
         "extrusion_folding": "single",
         "extrusion_next_operation": "rewind",
         "extrusion_treatment": "corona",
@@ -205,15 +203,15 @@ def test_release_blocks_recipe_total_that_is_not_exactly_100(connection):
 @pytest.mark.parametrize(
     ("order_number", "overrides"),
     [
-        ("RS-REL-008", {"quantity_1": "", "unit_1": ""}),
-        ("RS-REL-009", {"quantity_1": "0", "unit_1": "kg"}),
-        ("RS-REL-010", {"quantity_1": "-10", "unit_1": "kg"}),
-        ("RS-REL-011", {"quantity_1": "not a number", "unit_1": "kg"}),
-        ("RS-REL-017", {"quantity_1": "-10 kg", "unit_1": "kg"}),
-        ("RS-REL-018", {"quantity_1": "abc10", "unit_1": "kg"}),
-        ("RS-REL-019", {"quantity_1": "10 kg", "unit_1": "kg"}),
-        ("RS-REL-020", {"quantity_1": "Infinity", "unit_1": "kg"}),
-        ("RS-REL-021", {"quantity_1": "NaN", "unit_1": "kg"}),
+        ("RS-REL-008", {"ordered_gross_kg": ""}),
+        ("RS-REL-009", {"ordered_gross_kg": "0"}),
+        ("RS-REL-010", {"ordered_gross_kg": "-10"}),
+        ("RS-REL-011", {"ordered_gross_kg": "not a number"}),
+        ("RS-REL-017", {"ordered_gross_kg": "-10 kg"}),
+        ("RS-REL-018", {"ordered_gross_kg": "abc10"}),
+        ("RS-REL-019", {"ordered_gross_kg": "10 kg"}),
+        ("RS-REL-020", {"ordered_gross_kg": "Infinity"}),
+        ("RS-REL-021", {"ordered_gross_kg": "NaN"}),
     ],
 )
 def test_release_blocks_missing_zero_or_invalid_target_gross(
@@ -227,19 +225,17 @@ def test_release_blocks_missing_zero_or_invalid_target_gross(
 
     assert not result.ok
     assert result.messages == (
-        f"{RECIPE_RELEASE_PREFIX}: липсват планирани кг/поръчано количество. "
+        f"{RECIPE_RELEASE_PREFIX}: липсват поръчани бруто кг. "
         "Коригирайте рецептата и опитайте отново.",
     )
     assert_card_still_imported(card_id)
 
 
-def test_release_accepts_positive_quantity_1_without_unit_1_kg_check(connection):
+def test_release_accepts_positive_ordered_gross_kg(connection):
     card_id = import_structured_card(
         "RS-REL-012",
-        quantity_1="1250,5",
-        unit_1="бр",
-        quantity_2="not target gross",
-        unit_2="nonsense",
+        ordered_gross_kg="1250,5",
+        ordered_rolls="not target gross",
         raw_material_a="LDPE; Rompetrol B20/03 | 97,5%",
         linear_pe="LLDPE; SABIC 119ZJ | 2,5%",
     )
@@ -253,13 +249,12 @@ def test_release_accepts_positive_quantity_1_without_unit_1_kg_check(connection)
     assert card["machine_sequence"] == 1
 
 
-def test_release_blocks_invalid_quantity_1_even_when_quantity_2_is_kg_like(connection):
+def test_release_blocks_invalid_ordered_gross_kg_even_when_other_amounts_exist(connection):
     card_id = import_structured_card(
         "RS-REL-024",
-        quantity_1="",
-        unit_1="",
-        quantity_2="1250,5",
-        unit_2="кг",
+        ordered_gross_kg="",
+        ordered_rolls="1250,5",
+        ordered_meters="кг",
         raw_material_a="LDPE; Rompetrol B20/03 | 97,5%",
         linear_pe="LLDPE; SABIC 119ZJ | 2,5%",
     )
@@ -268,7 +263,7 @@ def test_release_blocks_invalid_quantity_1_even_when_quantity_2_is_kg_like(conne
 
     assert not result.ok
     assert result.messages == (
-        f"{RECIPE_RELEASE_PREFIX}: липсват планирани кг/поръчано количество. "
+        f"{RECIPE_RELEASE_PREFIX}: липсват поръчани бруто кг. "
         "Коригирайте рецептата и опитайте отново.",
     )
     assert_card_still_imported(card_id)
@@ -327,7 +322,6 @@ def test_admin_release_route_renders_recipe_gate_errors_inline(connection):
             make_request(f"/admin/cards/{card_id}/release"),
             card_id=card_id,
             loaded_version=str(loaded_version),
-            max_roll_weight="60.0",
             machine_id="1",
             machine_sequence="1",
             return_anchor="unreleased-queue",

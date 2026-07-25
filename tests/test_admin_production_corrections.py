@@ -48,11 +48,10 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "order_number": order_number,
         "customer": "Admin Correction Customer",
         "product_type": "PE film",
-        "quantity_1": "500",
-        "unit_1": "kg",
+        "ordered_gross_kg": "500",
         "material": "LDPE",
         "size_thickness": "600/0.050",
-        "extrusion_flag": "da",
+        "extrusion_sequence": "1",
         "raw_material_a": "LDPE; A | 100%",
         "packaging_method": "rolls",
     }
@@ -83,7 +82,6 @@ def release_ready_card(order_number: str, machine_id: int = 1, sequence: int = 1
         machine_id,
         sequence,
         card_version(card_id),
-        max_roll_weight="60.0",
     ).ok
     return card_id
 
@@ -267,7 +265,6 @@ def test_admin_material_correction_route_updates_recipe_actual_entries(connectio
         card_id,
         machine_id=1,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
     assert db.update_terminal_recipe_actual_entries(
         card_id,
@@ -326,7 +323,6 @@ def test_admin_material_correction_route_preserves_legacy_brand_when_omitted(con
         card_id,
         machine_id=1,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
     assert db.update_terminal_recipe_actual_entries(
         card_id,

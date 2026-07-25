@@ -22,11 +22,10 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "order_number": order_number,
         "customer": "Terminal Customer",
         "product_type": "PE film",
-        "quantity_1": "500",
-        "unit_1": "kg",
+        "ordered_gross_kg": "500",
         "material": "LDPE",
         "size_thickness": "600/0.050",
-        "extrusion_flag": "da",
+        "extrusion_sequence": "1",
         "extrusion_folding": "single",
         "extrusion_next_operation": "rewind",
         "extrusion_treatment": "corona",
@@ -59,7 +58,6 @@ def test_terminal_card_detail_fetches_released_card_fields(connection):
         card_id,
         machine_id=1,
         machine_sequence=1,
-        max_roll_weight="62.5",
     ).ok
 
     card = db.fetch_terminal_card_detail(card_id)
@@ -68,7 +66,6 @@ def test_terminal_card_detail_fetches_released_card_fields(connection):
     assert card["id"] == card_id
     assert card["order_number"] == "25300"
     assert card["customer"] == "Terminal Customer"
-    assert card["max_roll_weight"] == "62.5"
     assert card["extrusion_folding"] == "single"
     assert card["raw_material_a"] == "LDPE; A | 100%"
     assert card["actual_raw_material_used"] is None
@@ -82,13 +79,11 @@ def test_machine_queue_focus_prefers_occupied_card_over_next_pending(connection)
         pending_card_id,
         machine_id=2,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
     assert db.release_card(
         paused_card_id,
         machine_id=2,
         machine_sequence=5,
-        max_roll_weight="60.0",
     ).ok
     connection.execute(
         "UPDATE cards SET status = ? WHERE id = ?",
@@ -111,19 +106,16 @@ def test_machine_queue_focus_prefers_running_over_earlier_paused(connection):
         paused_card_id,
         machine_id=2,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
     assert db.release_card(
         pending_card_id,
         machine_id=2,
         machine_sequence=2,
-        max_roll_weight="60.0",
     ).ok
     assert db.release_card(
         running_card_id,
         machine_id=2,
         machine_sequence=3,
-        max_roll_weight="60.0",
     ).ok
     connection.execute(
         "UPDATE cards SET status = ? WHERE id = ?",
@@ -152,7 +144,6 @@ def test_terminal_material_field_update_checks_loaded_version(connection):
         card_id,
         machine_id=3,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
     loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
 
@@ -179,7 +170,6 @@ def test_terminal_material_field_update_blocks_stale_version(connection):
         card_id,
         machine_id=4,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
     loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
     assert db.update_terminal_material_fields(
@@ -256,7 +246,6 @@ def test_terminal_recipe_actual_entries_persist_all_rows_and_survive_finish(conn
         card_id,
         machine_id=1,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
     loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
 
@@ -299,7 +288,6 @@ def test_terminal_recipe_actual_entries_block_stale_version(connection):
         card_id,
         machine_id=2,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
     loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
     assert db.update_terminal_recipe_actual_entries(
@@ -333,7 +321,6 @@ def test_terminal_recipe_actual_entries_survive_reimport(connection):
         card_id,
         machine_id=3,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
     assert db.update_terminal_recipe_actual_entries(
         card_id,
@@ -360,7 +347,6 @@ def test_terminal_recipe_actual_entries_reject_unknown_component(connection):
         card_id,
         machine_id=4,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
 
     result = db.update_terminal_recipe_actual_entries(
@@ -388,7 +374,6 @@ def test_terminal_recipe_actual_update_preserves_omitted_component_entries(conne
         card_id,
         machine_id=1,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
     loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
     assert db.update_terminal_recipe_actual_entries(
@@ -437,7 +422,6 @@ def test_terminal_card_detail_hides_cancelled_cards(connection):
         card_id,
         machine_id=1,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
     loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
 

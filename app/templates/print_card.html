@@ -60,20 +60,18 @@
           <table class="front-template-table front-quantity-table" aria-label="Количество">
             <colgroup>
               <col class="front-quantity-label-col">
-              <col class="front-quantity-value-col">
-              <col class="front-quantity-unit-col">
-              <col class="front-quantity-value-col">
-              <col class="front-quantity-unit-col">
-              <col>
+              <col class="front-quantity-ordered-col">
+              <col class="front-quantity-ordered-col">
+              <col class="front-quantity-ordered-col">
+              <col class="front-quantity-ordered-col">
             </colgroup>
             <tbody>
               <tr>
                 <th>КОЛИЧЕСТВО</th>
-                <td data-front-template-cell="quantity-1">{{ print_data.front.quantity_1 }}</td>
-                <td data-front-template-cell="unit-1">{{ print_data.front.unit_1 }}</td>
-                <td data-front-template-cell="quantity-2">{{ print_data.front.quantity_2 }}</td>
-                <td data-front-template-cell="unit-2">{{ print_data.front.unit_2 }}</td>
-                <td data-front-template-cell="quantity-empty"></td>
+                <td data-front-template-cell="ordered-gross">{{ print_data.front.ordered_gross_display }}</td>
+                <td data-front-template-cell="ordered-rolls">{{ print_data.front.ordered_rolls_display }}</td>
+                <td data-front-template-cell="ordered-meters">{{ print_data.front.ordered_meters_display }}</td>
+                <td data-front-template-cell="ordered-units">{{ print_data.front.ordered_units_display }}</td>
               </tr>
             </tbody>
           </table>

@@ -9,13 +9,15 @@ When a workstream starts, explore it with the user and create a temporary task
 tracker only if needed. Delete that temporary tracker after the workstream is
 complete. Persist the completed status and any remaining work here.
 
-Current priority: finish the Shift Manager downstream cleanup caused by the
-V14.04 export/import contract change. The strict import/storage correction and
-schema-only M001 are complete; admin, terminal, documentation, print, final
-verification, and production migration preparation remain.
+The Shift Manager downstream application cleanup caused by the V14.04
+export/import contract change is complete, including Task 6 verification.
+The remaining production legacy-data profile and release-candidate rehearsal
+are deployment gates only; both require an immutable SQLite-safe backup.
 
-Next recommended task: make the admin import results, planning queues, cards
-list, and card detail consistently show the final imported fields.
+Next feature workstream: explore the current app and database for the
+already-approved shift-management specification in
+`v2-files/TASK-01-SHIFT-MANAGEMENT.md`, then brainstorm and write its
+implementation plan. Do not modify that specification during exploration.
 
 The original production-tracking workstreams are:
 
@@ -47,18 +49,11 @@ Persist shift sessions and attach newly entered rolls to the active shift so the
 
 ### Current Planning Stage
 
-Shift management is still being defined. Do not treat the implementation sequence as final until the shift workflow, validation rules, reporting expectations, and migration rules are confirmed.
-
-The next work is discussion/design, not coding:
-
-- define the full terminal shift workflow.
-- define what is blocked when no shift is open.
-- define how shift start/end reminders should behave.
-- define what shift summary/reporting should show.
-- define what admin correction should allow.
-- define how existing roll data should be represented after the feature exists.
-
-Only after that should implementation be split into slices. Migration is not a standalone business project and should not run before the shift-management feature is designed. It is a safety part of the eventual implementation because the database must be upgraded without damaging existing rolls.
+The shift-management functionality is approved in
+`v2-files/TASK-01-SHIFT-MANAGEMENT.md`. The next work is to explore the
+current app and database against that specification, then brainstorm and write
+its implementation plan; do not modify the approved specification. Migration
+is a safety part of that eventual implementation, not a standalone project.
 
 ### Initial Data Shape
 
@@ -194,9 +189,9 @@ This list combines the two existing production-tracking workstreams with the new
 2. **Fix technology-card quantity fields to match the new Shift Manager export**
    - Surface: CSV/export import, database fields, admin technology-card edit screen, terminal details.
    - Complexity: medium.
-   - Status: strict V14.04 import/storage correction and schema-only M001 are
-     complete; downstream admin, terminal, documentation, and print cleanup
-     remain in progress.
+   - Status: complete. The strict V14.04 import/storage correction, schema-only
+     M001, admin/terminal cleanup, documentation, print contract, and Task 6
+     verification are complete.
    - Goal: remove the old ambiguous unit/unit-of-measure display model from the app screens and align the imported/displayed fields one-to-one with the current structured export.
    - Final structured quantity fields: `ordered_gross_kg`, `ordered_rolls`, `ordered_meters`, and `ordered_units`.
    - First visible behavior: show the gross amount clearly as gross kilograms instead of a generic `amount` field.
@@ -206,10 +201,15 @@ This list combines the two existing production-tracking workstreams with the new
 3. **Import and display missing Shift Manager production-detail fields**
    - Surface: Shift Manager export file, import parser, database, admin technology-card edit screen, terminal details.
    - Complexity: medium.
-   - Status: final V14.04 import/storage fields are implemented; downstream
-     display cleanup remains in progress.
-   - Goal: make the app carry and show all important production-card information from the Shift Manager file, not only the fields currently visible.
-   - Current fields include delivery, four route sequence values, next operation, folding/gusseting, treatment, recipe materials, and packaging method.
+   - Status: complete. The final V14.04 import/storage fields, accepted
+     admin/terminal displays, documentation, print contract, and Task 6
+     verification are complete.
+   - Goal: make the app carry all important production-card information from
+     the Shift Manager file while showing only the approved fields on each
+     admin/terminal surface.
+   - Current stored fields include delivery, four route sequence values, next
+     operation, folding/gusseting, treatment, recipe materials, and packaging
+     method. Route sequences remain stored but are not actionable display inputs.
    - Fixed rule: do not add `micro_perforation`; it is not part of the final contract.
    - Display behavior: these fields should appear in the relevant details section of the main app and technology-card editing screen.
 
@@ -269,9 +269,18 @@ This list combines the two existing production-tracking workstreams with the new
    - Display direction: countdown status should be visible on the machine KPI/navigation cards so workers can see which machine needs attention.
    - Needs design: whether the timer is per card, machine, roll track, or multiple tracks; how many simultaneous tracks are supported; what happens on pause/resume/finish; how reminders appear; whether missed changes are recorded; and how this interacts with actual roll gross-weight entry.
 
+11. **Track cards awaiting ripped rolls returned from rewinding/setting**
+   - Surface: `/terminal`, `/admin`, database, production timing, and finalization/print eligibility.
+   - Complexity: medium to large.
+   - Status: newly identified; discussion/design pending.
+   - Current process: ripped rolls are sent to an additional rewinding/setting operation and are not entered on the extrusion terminal until they return. Extrusion has already ended, so operators record the stop time, note the number of outstanding rolls on the paper operational card, and keep the card visible near the machine until those rolls return.
+   - Goal: make cards waiting for returned rolls easy to identify without treating extrusion as still running, then allow operators to enter the returned roll weights and finalize the card.
+   - Desired direction: introduce an explicit waiting-for-rewound-rolls workflow/status, preserve the actual extrusion stop time, record the number of outstanding rolls, and make these cards easy to find from the produced-card area or another focused terminal view.
+   - Needs design: the exact status and Bulgarian label; whether the card immediately releases its machine; how outstanding and returned roll counts are stored and corrected; where waiting cards appear; which roll edits are allowed while waiting; the transition to produced/completed; admin correction and visibility; print eligibility; and safe migration behavior.
+
 ### Packaging / Pallets
 
-11. **Roll packaging / pallet tracking with label printing**
+12. **Roll packaging / pallet tracking with label printing**
    - Surface: `/terminal` and/or `/admin`, database, print route.
    - Complexity: large.
    - Goal: group produced rolls into packages/pallets and generate printable transport labels.
@@ -280,9 +289,10 @@ This list combines the two existing production-tracking workstreams with the new
 
 ## Suggested Implementation Order
 
-1. Complete the active Shift Manager downstream cleanup and release-safety work.
-2. Re-evaluate this backlog after the V2 cleanup and production migration are
-   accepted.
+1. Explore the approved shift-management specification against the current app
+   and database, then brainstorm and write its implementation plan.
+2. Before deployment, complete the production legacy-data profile and
+   release-candidate rehearsal after an immutable backup is supplied.
 3. Design admin workflow changes before implementing import and planning
    redesigns.
 4. Design terminal workflow additions before calculator or roll-change timing

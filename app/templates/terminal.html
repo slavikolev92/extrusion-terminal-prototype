@@ -756,9 +756,20 @@
 
     .info-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      row-gap: 26px;
+    }
+
+    .info-row {
+      display: grid;
       column-gap: 28px;
-      row-gap: 22px;
+    }
+
+    .info-row-primary {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    .info-row-secondary {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
     }
 
     .order-section {
@@ -766,9 +777,9 @@
       border: 1px solid #d9dee5;
       border-radius: 9px;
       background: #fff;
-      padding: 14px 18px;
+      padding: 18px 18px;
       display: grid;
-      gap: 20px;
+      gap: 26px;
       align-content: start;
     }
 
@@ -1634,10 +1645,6 @@
         gap: 20px;
       }
 
-      .info-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
       .recipe-head,
       .recipe-row {
         grid-template-columns: 96px minmax(124px, 1fr) 76px 76px minmax(118px, .62fr) minmax(92px, .48fr);
@@ -1685,8 +1692,8 @@
       }
 
       .order-section {
-        padding: 9px 14px;
-        gap: 7px;
+        padding: 12px 14px;
+        gap: 16px;
       }
 
       .order-section .field-label,
@@ -1705,7 +1712,7 @@
       }
 
       .info-grid {
-        row-gap: 8px;
+        row-gap: 18px;
       }
 
       .notes {
@@ -1806,8 +1813,8 @@
       }
 
       .order-section {
-        padding: 8px 12px;
-        gap: 6px;
+        padding: 11px 12px;
+        gap: 14px;
       }
 
       .order-section .field-label,
@@ -1827,6 +1834,10 @@
 
       .details-body {
         gap: 6px;
+      }
+
+      .info-grid {
+        row-gap: 16px;
       }
 
       .panel-body {
@@ -2119,7 +2130,7 @@
                       <a class="queue-card {{ card.status_display_class }} {% if card.is_selected %}selected{% endif %}" href="/terminal/cards/{{ card.id }}">
                         <span class="queue-card-top"><span class="queue-card-title"><span class="queue-sequence">{{ card.machine_sequence or "-" }}</span>{{ card.customer or "-" }} (№{{ card.order_number }})</span><span class="status {{ card.status_display_class }}">{{ card.status_label }}</span></span>
                         <span class="queue-card-sub">{{ card.product_type or "-" }}</span>
-                        <span class="queue-card-details"><span>{{ card.size_thickness or "-" }}</span><span>{{ card.material or "-" }}</span><span>{{ card.quantity_display }}</span></span>
+                        <span class="queue-card-details"><span>{{ card.size_thickness or "-" }}</span><span>{{ card.material or "-" }}</span><span>{% if card.target_gross_weight %}{{ card.target_gross_weight }} кг{% else %}-{% endif %}</span></span>
                       </a>
                     {% endfor %}
                   {% else %}
@@ -2161,7 +2172,7 @@
               <a class="history-row {% if card.is_selected %}selected{% endif %}" href="/terminal/cards/{{ card.id }}" data-customer="{{ (card.customer or '')|lower }}" data-product="{{ (card.product_type or '')|lower }}" data-size="{{ (card.size_thickness or '')|lower }}" data-material="{{ (card.material or '')|lower }}">
                 <span class="history-row-top"><span class="history-row-title">{{ card.customer or "-" }} (№{{ card.order_number }})</span><span class="status completed">{{ card.status_label }}</span></span>
                 <span class="history-row-product">{{ card.product_type or "-" }}</span>
-                <span class="history-row-details"><span>{{ card.size_thickness or "-" }}</span><span>{{ card.material or "-" }}</span><span>{{ card.quantity_display }}</span><span>{{ card.finished_at or "-" }}</span></span>
+                <span class="history-row-details"><span>{{ card.size_thickness or "-" }}</span><span>{{ card.material or "-" }}</span><span>{% if card.produced_gross_weight %}{{ card.produced_gross_weight }} кг{% else %}-{% endif %}</span><span>{{ card.finished_at or "-" }}</span></span>
               </a>
             {% endfor %}
             <div class="history-empty" id="history-empty" {% if archive_cards %}hidden{% endif %}>Няма намерени произведени поръчки.</div>
@@ -2260,33 +2271,45 @@
               <div class="panel-body details-body">
                 <section class="order-section">
                   <div class="info-grid">
-                    <div class="field">
-                      <span class="field-label">Вид изделие</span>
-                      <div class="value">{{ selected_card.product_type or "-" }}</div>
+                    <div class="info-row info-row-primary">
+                      <div class="field">
+                        <span class="field-label">Фирма</span>
+                        <div class="value">{{ selected_card.customer or "-" }}</div>
+                      </div>
+                      <div class="field">
+                        <span class="field-label">Поръчано бруто, кг</span>
+                        <div class="value">{{ selected_card.ordered_gross_kg or "-" }}</div>
+                      </div>
+                      <div class="field">
+                        <span class="field-label">Вид изделие</span>
+                        <div class="value">{{ selected_card.product_type or "-" }}</div>
+                      </div>
+                      <div class="field">
+                        <span class="field-label">Размер / дебелина</span>
+                        <div class="value">{{ selected_card.size_thickness or "-" }}</div>
+                      </div>
+                      <div class="field">
+                        <span class="field-label">Фалдиране</span>
+                        <div class="value">{{ selected_card.extrusion_folding or "-" }}</div>
+                      </div>
                     </div>
-                    <div class="field">
-                      <span class="field-label">Фирма</span>
-                      <div class="value">{{ selected_card.customer or "-" }}</div>
-                    </div>
-                    <div class="field">
-                      <span class="field-label">Количество</span>
-                      <div class="value">{{ selected_card.quantity_display }}</div>
-                    </div>
-                    <div class="field">
-                      <span class="field-label">Размер / дебелина</span>
-                      <div class="value">{{ selected_card.size_thickness or "-" }}</div>
-                    </div>
-                    <div class="field">
-                      <span class="field-label">Вид заготовка</span>
-                      <div class="value">{{ selected_card.product_form or "-" }}</div>
-                    </div>
-                    <div class="field">
-                      <span class="field-label">Материал</span>
-                      <div class="value">{{ selected_card.material or "-" }}</div>
-                    </div>
-                    <div class="field">
-                      <span class="field-label">Макс. тегло ролка, кг</span>
-                      <div class="value">{{ selected_card.max_roll_weight_display or "-" }}</div>
+                    <div class="info-row info-row-secondary">
+                      <div class="field">
+                        <span class="field-label">Вид заготовка</span>
+                        <div class="value">{{ selected_card.product_form or "-" }}</div>
+                      </div>
+                      <div class="field">
+                        <span class="field-label">Следваща операция</span>
+                        <div class="value">{{ selected_card.extrusion_next_operation or "-" }}</div>
+                      </div>
+                      <div class="field">
+                        <span class="field-label">Третиране</span>
+                        <div class="value">{{ selected_card.extrusion_treatment or "-" }}</div>
+                      </div>
+                      <div class="field">
+                        <span class="field-label">Опаковка</span>
+                        <div class="value">{{ selected_card.packaging_method or "-" }}</div>
+                      </div>
                     </div>
                   </div>
 

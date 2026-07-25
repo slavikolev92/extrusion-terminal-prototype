@@ -99,7 +99,6 @@ async function releaseDraftSampleCardIfNeeded(page, cardId) {
 
   await planningRow.locator('select[name="machine_id"]').selectOption("1");
   await planningRow.locator('input[name="machine_sequence"]').fill("1");
-  await planningRow.locator('input[name="max_roll_weight"]').fill("64.50");
   await clickFirstMatching(planningRow, [/Изпрати/i]);
   await page.waitForLoadState("networkidle");
   return true;

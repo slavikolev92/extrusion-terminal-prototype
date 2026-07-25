@@ -28,11 +28,10 @@ def structured_row(order_number: str, **overrides: str) -> dict[str, str]:
         "customer": "Structured Recipe Sync Customer",
         "city": "Sofia",
         "product_type": "PE film",
-        "quantity_1": "1000",
-        "unit_1": "kg",
+        "ordered_gross_kg": "1000",
         "material": "LDPE / LLDPE",
         "size_thickness": "600/0.050",
-        "extrusion_flag": "da",
+        "extrusion_sequence": "1",
         "extrusion_folding": "single",
         "extrusion_next_operation": "rewind",
         "extrusion_treatment": "corona",
@@ -491,8 +490,7 @@ def test_admin_material_ledger_rejects_invalid_recipe_total(connection):
 def test_step_6_admin_and_terminal_display_use_normalized_recipe_rows(connection):
     card_id = import_card(
         "RS-SYNC-008",
-        quantity_1="1000",
-        unit_1="kg",
+        ordered_gross_kg="1000",
         raw_material_a="LDPE; Display Source | 80%",
         linear_pe="LLDPE; Display Source | 20%",
     )
@@ -536,13 +534,11 @@ def test_step_6_admin_and_terminal_display_use_normalized_recipe_rows(connection
     assert "chalk" not in terminal_rows
 
 
-def test_admin_and_terminal_planned_kg_use_quantity_1_only(connection):
+def test_admin_and_terminal_planned_kg_use_ordered_gross_kg_only(connection):
     card_id = import_card(
         "RS-SYNC-015",
-        quantity_1="1000",
-        unit_1="rolls",
-        quantity_2="9999",
-        unit_2="kg",
+        ordered_gross_kg="1000",
+        ordered_rolls="9999",
         raw_material_a="LDPE; Display Source | 80%",
         linear_pe="LLDPE; Display Source | 20%",
     )
@@ -562,8 +558,7 @@ def test_admin_and_terminal_planned_kg_use_quantity_1_only(connection):
 def test_admin_and_terminal_display_use_semicolon_rows_with_multi_word_category(connection):
     card_id = import_card(
         "RS-SYNC-014",
-        quantity_1="1000",
-        unit_1="kg",
+        ordered_gross_kg="1000",
         raw_material_a="Recycled LDPE; post industrial clear | 80%",
         linear_pe="LLDPE; SABIC 119ZJ | 20%",
     )

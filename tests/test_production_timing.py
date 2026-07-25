@@ -22,11 +22,10 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "order_number": order_number,
         "customer": "Timing Customer",
         "product_type": "PE film",
-        "quantity_1": "500",
-        "unit_1": "kg",
+        "ordered_gross_kg": "500",
         "material": "LDPE",
         "size_thickness": "600/0.050",
-        "extrusion_flag": "da",
+        "extrusion_sequence": "1",
         "raw_material_a": "LDPE; A | 100%",
         "packaging_method": "rolls",
     }
@@ -56,7 +55,6 @@ def import_and_release_card(
         card_id,
         machine_id,
         machine_sequence,
-        max_roll_weight="60.0",
     ).ok
     return card_id
 

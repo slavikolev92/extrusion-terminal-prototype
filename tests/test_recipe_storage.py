@@ -19,10 +19,10 @@ def insert_card(
         INSERT INTO cards (
             order_number,
             status,
-            extrusion_flag,
+            extrusion_sequence,
             raw_material_a
         )
-        VALUES (?, 'imported', 'да', ?)
+        VALUES (?, 'imported', '1', ?)
         """,
         (order_number, raw_material_a),
     )
@@ -67,11 +67,10 @@ def csv_bytes(rows: list[dict[str, str]]) -> bytes:
         "order_number",
         "customer",
         "product_type",
-        "quantity_1",
-        "unit_1",
+        "ordered_gross_kg",
         "material",
         "size_thickness",
-        "extrusion_flag",
+        "extrusion_sequence",
         "raw_material_a",
         "packaging_method",
     ]
@@ -88,11 +87,10 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "order_number": order_number,
         "customer": "Recipe Storage Customer",
         "product_type": "PE film",
-        "quantity_1": "500",
-        "unit_1": "kg",
+        "ordered_gross_kg": "500",
         "material": "LDPE",
         "size_thickness": "600/0.050",
-        "extrusion_flag": "да",
+        "extrusion_sequence": "1",
         "raw_material_a": "LDPE Rompetrol B20/03 | 100%",
         "packaging_method": "rolls",
     }

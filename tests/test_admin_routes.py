@@ -99,10 +99,10 @@ def upload_file(filename: str, content: bytes) -> UploadFile:
     return UploadFile(file=file, filename=filename)
 
 
-def import_route_card(order_number: str) -> int:
+def import_route_card(order_number: str, **overrides: str) -> int:
     result = import_cards_from_csv(
         f"{order_number}.csv",
-        csv_bytes(extrusion_row(order_number)),
+        csv_bytes(extrusion_row(order_number, **overrides)),
         overwrite_existing=False,
     )
     assert result.rows_imported == 1
@@ -189,7 +189,7 @@ def test_successful_admin_import_redirects_to_batch_result_get(connection):
         extrusion_row("25901"),
         extrusion_row(
             "31999",
-            extrusion_flag="не",
+            extrusion_sequence="2",
             raw_material_a="",
             packaging_method="",
         ),
@@ -209,6 +209,22 @@ def test_successful_admin_import_redirects_to_batch_result_get(connection):
     location = response.headers.get("location", "")
     batch_id = int(location.rsplit("=", 1)[1])
     persisted_result = db.fetch_import_batch_result(batch_id)
+    created_card_id = int(
+        connection.execute(
+            "SELECT id FROM cards WHERE order_number = ?",
+            ("25901",),
+        ).fetchone()["id"]
+    )
+    created_row = next(
+        row
+        for row in persisted_result["row_results"]
+        if row["order_number"] == "25901"
+    )
+    skipped_row = next(
+        row
+        for row in persisted_result["row_results"]
+        if row["order_number"] == "31999"
+    )
 
     get_response = asyncio.run(
         admin_import(
@@ -240,6 +256,77 @@ def test_successful_admin_import_redirects_to_batch_result_get(connection):
     assert "25901" in html
     assert "31999" in html
     assert "Пропуснат ред: няма екструдиране." in html
+    assert created_row["card_id"] == created_card_id
+    assert skipped_row["card_id"] is None
+    assert f'<a href="/admin/cards/{created_card_id}">25901</a>' in html
+    skipped_cell = html.split(">31999<", 1)[0].rsplit("<td", 1)[-1]
+    assert "/admin/cards/" not in skipped_cell
+
+
+def test_admin_import_result_keeps_deleted_successful_card_as_plain_text(connection):
+    result = import_cards_from_csv(
+        "deleted-result-card.csv",
+        csv_bytes(extrusion_row("25904")),
+        overwrite_existing=False,
+    )
+    assert result.batch_id is not None
+    card_id = int(
+        connection.execute(
+            "SELECT id FROM cards WHERE order_number = ?",
+            ("25904",),
+        ).fetchone()["id"]
+    )
+    connection.execute("DELETE FROM cards WHERE id = ?", (card_id,))
+    connection.commit()
+
+    persisted = db.fetch_import_batch_result(int(result.batch_id))
+    response = asyncio.run(
+        admin_import(
+            make_request("/admin/import", method="GET"),
+            batch_id=int(result.batch_id),
+        )
+    )
+    html = response.body.decode("utf-8")
+
+    assert persisted is not None
+    assert persisted["row_results"][0]["card_id"] is None
+    assert "25904" in html
+    assert f'href="/admin/cards/{card_id}"' not in html
+
+
+def test_admin_import_result_links_updated_row_to_existing_card(connection):
+    first = import_cards_from_csv(
+        "updated-row-first.csv",
+        csv_bytes(extrusion_row("25905", customer="Before Update")),
+        overwrite_existing=False,
+    )
+    assert first.rows_imported == 1
+    card_id = int(
+        connection.execute(
+            "SELECT id FROM cards WHERE order_number = ?",
+            ("25905",),
+        ).fetchone()["id"]
+    )
+
+    updated = import_cards_from_csv(
+        "updated-row-second.csv",
+        csv_bytes(extrusion_row("25905", customer="After Update")),
+        overwrite_existing=True,
+    )
+    assert updated.batch_id is not None
+    persisted = db.fetch_import_batch_result(int(updated.batch_id))
+    response = asyncio.run(
+        admin_import(
+            make_request("/admin/import", method="GET"),
+            batch_id=int(updated.batch_id),
+        )
+    )
+    html = response.body.decode("utf-8")
+
+    assert persisted is not None
+    assert persisted["row_results"][0]["action"] == "updated"
+    assert persisted["row_results"][0]["card_id"] == card_id
+    assert f'<a href="/admin/cards/{card_id}">25905</a>' in html
 
 
 def test_admin_import_without_persisted_batch_still_renders_inline(connection):
@@ -299,12 +386,14 @@ def test_admin_planning_renders_compact_unreleased_release_table(connection):
                 delivery_date="2026-06-25",
                 customer="Compact Customer",
                 product_type="Long product type that should stay in the product column",
+                ordered_gross_kg="725.50",
             ),
             extrusion_row(
                 "25903",
                 delivery_date="2026-06-26",
                 customer="Second Compact Customer",
                 product_type="Second product",
+                ordered_gross_kg="",
             ),
         ),
         overwrite_existing=False,
@@ -325,7 +414,7 @@ def test_admin_planning_renders_compact_unreleased_release_table(connection):
     assert ">Доставка" in html
     assert ">Клиент" in html
     assert ">Изделие" in html
-    assert '<th class="col-max-roll">Макс. кг/ролка</th>' in html
+    assert '<th class="col-gross">Поръчано бруто, кг</th>' in html
     assert '<th class="col-sequence">Ред</th>' in html
     assert '<th class="col-machine">Машина</th>' in html
     assert '<th class="col-action">Действие</th>' in html
@@ -333,15 +422,21 @@ def test_admin_planning_renders_compact_unreleased_release_table(connection):
     assert "2026-06-26" in html
     assert 'id="draft-card-' in html
     assert 'class="unreleased-table compact-table"' in html
-    assert 'class="release-control release-control-max-roll"' in html
     assert 'class="release-control release-control-sequence"' in html
     assert 'class="release-control release-control-machine"' in html
     assert 'class="release-submit-button"' in html
+    assert '<td class="col-gross">725.50</td>' in html
+    assert '<td class="col-gross">725.50 кг</td>' not in html
+    assert '<td class="col-gross">-</td>' in html
     assert 'name="return_anchor" value="draft-card-' in html
     assert 'name="return_anchor" value="unreleased-queue"' in html
     assert '<span>Макс. тегло ролка, кг</span>' not in html
     assert '<span>Ред <span class="required-marker">*</span></span>' not in html
     assert '<span>Машина <span class="required-marker">*</span></span>' not in html
+    css = Path("app/static/css/app.css").read_text(encoding="utf-8")
+    assert ".unreleased-table .col-gross {" in css
+    assert "width: 168px;" in css
+    assert "min-width: 1080px;" in css
 
 
 def test_admin_planning_sorts_unreleased_cards_with_header_links(connection):
@@ -463,7 +558,6 @@ def test_successful_release_redirects_to_planning_anchor_and_refresh_does_not_re
             make_request(f"/admin/cards/{card_id}/release"),
             card_id=card_id,
             loaded_version=str(loaded_version),
-            max_roll_weight="60.0",
             machine_id="1",
             machine_sequence="1",
             return_anchor="draft-card-999",
@@ -493,7 +587,6 @@ def test_successful_release_ignores_unsafe_return_anchor(connection):
             make_request(f"/admin/cards/{card_id}/release"),
             card_id=card_id,
             loaded_version=str(loaded_version),
-            max_roll_weight="60.0",
             machine_id="1",
             machine_sequence="1",
             return_anchor='draft-card-1" onclick="alert(1)',
@@ -511,7 +604,6 @@ def test_successful_replanning_redirects_to_planning_get_and_refresh_does_not_re
         machine_id=1,
         machine_sequence=1,
         loaded_version=card_version(card_id),
-        max_roll_weight="60.0",
     ).ok
     loaded_version = card_version(card_id)
 
@@ -553,7 +645,6 @@ def test_failed_release_and_planning_still_render_inline_without_redirect(connec
             make_request(f"/admin/cards/{card_id}/release"),
             card_id=card_id,
             loaded_version=str(stale_version),
-            max_roll_weight="60.0",
             machine_id="1",
             machine_sequence="1",
         )
@@ -563,7 +654,6 @@ def test_failed_release_and_planning_still_render_inline_without_redirect(connec
         machine_id=1,
         machine_sequence=1,
         loaded_version=card_version(card_id),
-        max_roll_weight="60.0",
     ).ok
     invalid_planning = asyncio.run(
         update_admin_card_planning(
@@ -594,7 +684,6 @@ def test_successful_unrelease_from_planning_redirects_to_planning_get_and_refres
         machine_id=1,
         machine_sequence=1,
         loaded_version=card_version(card_id),
-        max_roll_weight="60.0",
     ).ok
     loaded_version = card_version(card_id)
 
@@ -627,7 +716,6 @@ def test_successful_unrelease_from_detail_redirects_to_card_detail(connection):
         machine_id=2,
         machine_sequence=1,
         loaded_version=card_version(card_id),
-        max_roll_weight="60.0",
     ).ok
     loaded_version = card_version(card_id)
 
@@ -655,7 +743,6 @@ def test_failed_unrelease_from_planning_renders_planning_inline(connection):
         machine_id=3,
         machine_sequence=1,
         loaded_version=card_version(card_id),
-        max_roll_weight="60.0",
     ).ok
     loaded_version = card_version(card_id)
     assert db.update_tare_weight(card_id, loaded_version, "1.25").ok
@@ -686,7 +773,6 @@ def test_failed_unrelease_from_detail_renders_detail_inline(connection):
         machine_id=4,
         machine_sequence=1,
         loaded_version=card_version(card_id),
-        max_roll_weight="60.0",
     ).ok
     loaded_version = card_version(card_id)
     assert db.start_production_timing(card_id, loaded_version).ok
@@ -713,23 +799,32 @@ def test_failed_unrelease_from_detail_renders_detail_inline(connection):
 
 
 def test_admin_planning_renders_unrelease_form_for_pending_queue_cards_only(connection):
-    pending_id = import_route_card("25924")
-    running_id = import_route_card("25925")
+    pending_id = import_route_card("25924", ordered_gross_kg="640.25")
+    running_id = import_route_card("25925", ordered_gross_kg="")
+    release_import = import_cards_from_csv(
+        "25925-release.csv",
+        csv_bytes(extrusion_row("25925", ordered_gross_kg="1")),
+        overwrite_existing=True,
+    )
+    assert release_import.updated == 1
     assert db.release_card(
         pending_id,
         machine_id=1,
         machine_sequence=1,
         loaded_version=card_version(pending_id),
-        max_roll_weight="60.0",
     ).ok
     assert db.release_card(
         running_id,
         machine_id=1,
         machine_sequence=2,
         loaded_version=card_version(running_id),
-        max_roll_weight="60.0",
     ).ok
     assert db.start_production_timing(running_id, card_version(running_id)).ok
+    connection.execute(
+        "UPDATE cards SET ordered_gross_kg = '' WHERE id = ?",
+        (running_id,),
+    )
+    connection.commit()
 
     response = asyncio.run(admin_planning(make_request("/admin/planning", method="GET")))
     html = response.body.decode("utf-8")
@@ -747,6 +842,9 @@ def test_admin_planning_renders_unrelease_form_for_pending_queue_cards_only(conn
     assert "4 машини в системата" not in html
     assert '<span class="planning-field-label">Машина</span>' in html
     assert '<span class="planning-field-label">Ред</span>' in html
+    assert '<small class="queue-card-gross">Поръчано бруто: 640.25 кг</small>' in html
+    assert '<small class="queue-card-gross">Поръчано бруто: -</small>' in html
+    assert "Поръчано бруто: - кг" not in html
 
 
 def test_admin_detail_renders_unrelease_form_for_pending_card_only(connection):
@@ -758,14 +856,12 @@ def test_admin_detail_renders_unrelease_form_for_pending_card_only(connection):
         machine_id=2,
         machine_sequence=1,
         loaded_version=card_version(pending_id),
-        max_roll_weight="60.0",
     ).ok
     assert db.release_card(
         running_id,
         machine_id=2,
         machine_sequence=2,
         loaded_version=card_version(running_id),
-        max_roll_weight="60.0",
     ).ok
     assert db.start_production_timing(running_id, card_version(running_id)).ok
 

@@ -160,6 +160,10 @@
               <span>Дата доставка</span>
               <input name="delivery_date" value="{{ card.delivery_date or '' }}">
             </label>
+            <label class="field-medium">
+              <span>Опаковка</span>
+              <input name="packaging_method" value="{{ card.packaging_method or '' }}">
+            </label>
           </div>
         </fieldset>
 
@@ -185,20 +189,20 @@
               <input name="product_type" value="{{ card.product_type or '' }}">
             </label>
             <label class="field-short">
-              <span>Количество</span>
-              <input name="quantity_1" value="{{ card.quantity_1 or '' }}">
+              <span>Поръчано бруто, кг</span>
+              <input name="ordered_gross_kg" value="{{ card.ordered_gross_kg or '' }}">
             </label>
             <label class="field-short">
-              <span>Мярка</span>
-              <input name="unit_1" value="{{ card.unit_1 or '' }}">
+              <span>Поръчани ролки</span>
+              <input name="ordered_rolls" value="{{ card.ordered_rolls or '' }}">
             </label>
             <label class="field-short">
-              <span>Допълнително</span>
-              <input name="quantity_2" value="{{ card.quantity_2 or '' }}">
+              <span>Поръчани метри</span>
+              <input name="ordered_meters" value="{{ card.ordered_meters or '' }}">
             </label>
             <label class="field-short">
-              <span>Мярка</span>
-              <input name="unit_2" value="{{ card.unit_2 or '' }}">
+              <span>Поръчани бройки</span>
+              <input name="ordered_units" value="{{ card.ordered_units or '' }}">
             </label>
             <label class="field-medium">
               <span>Размер/дебелина</span>
@@ -212,22 +216,14 @@
               <span>Материал</span>
               <input name="material" value="{{ card.material or '' }}">
             </label>
-            <label class="field-short">
-              <span>Макс. тегло ролка, кг</span>
-              <input name="max_roll_weight" value="{{ card.max_roll_weight or '' }}">
-            </label>
           </div>
         </fieldset>
 
         <fieldset class="admin-order-group">
-          <legend>Операции</legend>
+          <legend>Екструзия</legend>
           <div class="admin-compact-grid">
-            <label class="field-short">
-              <span>Екструзия</span>
-              <input name="extrusion_flag" value="{{ card.extrusion_flag or '' }}">
-            </label>
             <label class="field-medium">
-              <span>Фалцоване</span>
+              <span>Фалдиране</span>
               <input name="extrusion_folding" value="{{ card.extrusion_folding or '' }}">
             </label>
             <label class="field-medium">
@@ -237,10 +233,6 @@
             <label class="field-medium">
               <span>Третиране</span>
               <input name="extrusion_treatment" value="{{ card.extrusion_treatment or '' }}">
-            </label>
-            <label class="field-medium">
-              <span>Опаковка</span>
-              <input name="packaging_method" value="{{ card.packaging_method or '' }}">
             </label>
           </div>
         </fieldset>

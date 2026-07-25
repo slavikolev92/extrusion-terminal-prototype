@@ -1,11 +1,12 @@
 # Shift Manager Downstream Cleanup
 
-This is a temporary task tracker for the current Shift Manager downstream
-cleanup. Delete it after the project is completed and its lasting results have
-been recorded. It is not the master weekend plan.
+This retained completion record documents the finished Shift Manager downstream
+cleanup. Keep this file: the explicit instruction to retain it overrides its
+former self-delete wording. It is not the master weekend plan.
 
-**Goal:** Complete the July 25-26 extrusion-terminal update while preserving
-production data and producing a rehearsed migration/deployment path.
+**Goal:** Complete the July 25-26 application cleanup while preserving
+production data. Production migration profiling and deployment rehearsal remain
+separate later gates that require an immutable backup.
 
 **Architecture:** Keep the strict final Shift Manager CSV contract, direct
 SQLite/FastAPI architecture, and server-rendered UI. Implement each admin,
@@ -35,13 +36,81 @@ databases, repo-local Playwright, HTML/CSS print output.
 
 ## Current Checkpoint
 
-- Completed: Task 1, migration runner and schema-only M001.
-- Next action: Task 2, admin visibility.
-- No production snapshot has been requested or modified.
-- The disposable development database has not been reset.
-- Printing remains intentionally stale until Task 5.
+- Completed: Tasks 1-6 and the entire Shift Manager downstream application
+  cleanup: M001, admin and terminal cleanup, documentation, print contract,
+  and full verification.
+- Task 6 commands and results:
+
+  ```bash
+  .venv/bin/python -m compileall app scripts tests
+  .venv/bin/python -m pytest -q
+  git diff --check
+  ```
+
+  `compileall` and `git diff --check` passed; the full suite reported **485
+  passed**.
+- Live verification used only the fresh temporary database
+  `.test-runtime/v2-final.roRhVV/extrusion_terminal.sqlite3`. The V14.04 CSV
+  imported 3/3/3/0 (three rows seen, imported, and created; zero skipped), and
+  orders 25450-25452 released to machine 1 in sequence positions 1-3.
+- The live browser workflow covered admin import/planning/cards/detail, terminal
+  production through completion, and an admin production correction. Admin
+  print generated exactly two A4 pages. Screenshots and PDF evidence are under
+  `artifacts/ui-checks/v2/final/`.
+- No production database was opened or modified. M001 remains the only
+  migration; no additional migration was introduced.
+- Final adversarial review found no code issues. The resulting corrections were
+  documentation-only.
+- Tasks 7 and 8 remain later production-release gates once an immutable
+  SQLite-safe backup is supplied; they are not incomplete application cleanup.
+- Next feature workstream: explore the current app and database for the
+  already-approved shift-management specification in
+  `v2-files/TASK-01-SHIFT-MANAGEMENT.md`, then brainstorm and write its
+  implementation plan. Do not modify that specification.
+- Printing uses the four final ordered amounts in equal-width front cells and
+  preserves the accepted two-page A4 output.
 - Current Task 1 verification: 9 migration tests passed; 57 combined
   migration/baseline tests passed; compileall and `git diff --check` passed.
+- Current Task 2 verification: 99 focused admin tests and 48 baseline tests
+  passed; temporary SQLite database
+  `.test-runtime/v2-admin.IInXK2/extrusion_terminal.sqlite3` was used; no new
+  migration was introduced. Original evidence:
+  `artifacts/ui-checks/v2/admin/import-result.png`,
+  `artifacts/ui-checks/v2/admin/planning.png`,
+  `artifacts/ui-checks/v2/admin/cards.png`, and
+  `artifacts/ui-checks/v2/admin/card-detail.png`. Fully populated order-26000
+  evidence: `artifacts/ui-checks/v2/admin/order-26000-import.png`,
+  `artifacts/ui-checks/v2/admin/order-26000-planning.png`,
+  `artifacts/ui-checks/v2/admin/order-26000-cards.png`, and
+  `artifacts/ui-checks/v2/admin/order-26000-detail.png`; import was 1/1/1/0
+  and all 29 values populated and matched. Human acceptance: the current
+  planning table dimensions and gross/sequence/machine columns are acceptable.
+- Current Task 3 verification: 102 focused terminal tests and 430 comprehensive
+  non-print tests passed; `compileall` and `git diff --check` passed; the real
+  runtime database was unchanged. Accepted 1280x720 evidence:
+  `artifacts/ui-checks/v2/accepted/terminal-selected-card-1280x720.png`,
+  `artifacts/ui-checks/v2/accepted/admin-card-detail-1280x720.png`,
+  `artifacts/ui-checks/v2/accepted/admin-planning-1280x720.png`,
+  `artifacts/ui-checks/v2/accepted/terminal-queue-drawer-1280x720.png`, and
+  `artifacts/ui-checks/v2/accepted/terminal-produced-history-drawer-1280x720.png`.
+  Final adversarial review: one Important terminal drawer-semantics finding was
+  corrected; scoped re-review approved with 1 addressed, 0 open, and 0 new
+  findings.
+- Current Task 4 verification: 430 comprehensive non-print tests passed;
+  `compileall`, the structured-sample UI script syntax check, and
+  `git diff --check` passed. No application behavior or schema changed, no new
+  migration was introduced, printing remained untouched, and the real runtime
+  database was not opened or modified.
+- Current Task 5 verification: 61 focused print/fixture/structured-sample tests
+  passed; `compileall` and `git diff --check` passed. Order 25450 was verified
+  through the real admin print link on the temporary database
+  `.test-runtime/v2-admin.IInXK2/extrusion_terminal.sqlite3`: `500 кг`,
+  `24 ролки`, `500 метра`, and `25000 бр.` rendered in four equal-width cells.
+  The PDF contained exactly two A4 pages. Evidence:
+  `artifacts/ui-checks/v2/print/order-25450/current-print-output.pdf`,
+  `artifacts/ui-checks/v2/print/order-25450/current-print-output-1.png`, and
+  `artifacts/ui-checks/v2/print/order-25450/current-print-output-2.png`. No new
+  migration was introduced and the real runtime database was not used.
 - Do not deploy the current chain by itself. Existing production cards retain
   legacy quantity/unit pairs until the required production profile determines
   whether a separate data migration is safe.
@@ -77,8 +146,9 @@ Admin:
 - Import results stay compact and link successful rows to the current card.
 - Planning shows ordered gross kilograms for drafts and active queues.
 - Cards index shows delivery date and ordered gross kilograms.
-- Card detail remains the full editor for all four ordered amounts and four
-  route sequence values.
+- Card detail edits all four ordered amounts. The four route-sequence values
+  remain imported, stored, and preserved but are intentionally hidden because
+  they are not actionable there.
 - Use the workbook label `Фалдиране`.
 
 Terminal:
@@ -86,8 +156,11 @@ Terminal:
 - Machine tiles show actual produced gross against `ordered_gross_kg`.
 - Active queue rows show compact ordered gross kilograms only.
 - Produced rows show actual produced gross, never requested quantities.
-- Selected detail always shows ordered gross and conditionally shows other
-  populated imported details.
+- Selected detail uses the accepted five-plus-four layout: company, ordered
+  gross, product type, size/thickness, and folding on row one; product form,
+  next operation, treatment, and packaging on row two.
+- Selected detail does not show ordered rolls, ordered meters, ordered units,
+  delivery date, material, or maximum roll weight.
 - At 1280x720, the recipe through `Креда` must remain visible.
 - Do not add terminal print, cancel, or restore controls.
 
@@ -107,11 +180,11 @@ Print:
 | Task | State | Next gate |
 | --- | --- | --- |
 | 1. Migration runner and M001 | Complete | Production profile remains required |
-| 2. Admin visibility | Next | Focused admin tests and review |
-| 3. Terminal semantics/layout | Not started | Tests plus 1280x720 screenshots |
-| 4. Current docs/non-print tests | Not started | Non-print suite |
-| 5. Print contract | Not started | Print tests and two-page evidence |
-| 6. Full verification/dev reset | Not started | Full suite and live workflow |
+| 2. Admin visibility | Complete | Task 3 terminal semantics/layout |
+| 3. Terminal semantics/layout | Complete | Task 4 current docs/non-print tests |
+| 4. Current docs/non-print tests | Complete | Task 5 print contract |
+| 5. Print contract | Complete | Task 6 full verification/dev reset |
+| 6. Full verification/dev reset | Complete | Later production-release gates only |
 | 7. Production legacy-data profile | Waiting | Immutable production backup |
 | 8. Release-candidate rehearsal | Waiting | Complete approved migration chain |
 
@@ -157,7 +230,7 @@ data conversion is intentionally deferred pending the Task 7 production profile.
 
 ### Task 2: Admin Visibility
 
-**Status:** Next.
+**Status:** Complete.
 
 **Files:** `app/db.py`, `app/main.py`, `app/templates/admin_import.html`,
 `app/templates/admin_planning.html`, `app/templates/admin_cards.html`,
@@ -167,8 +240,10 @@ data conversion is intentionally deferred pending the Task 7 production profile.
 
 - [ ] Add failing tests proving successful import rows link to the current card,
   planning shows `Поръчано бруто, кг`, cards index shows delivery and gross, and
-  detail renders/saves all four ordered values and four route sequences.
-- [ ] Assert `Фалдиране` and absence of old import-field input names.
+  detail renders/saves all four ordered values while preserving hidden route
+  sequences.
+- [ ] Assert `Фалдиране` and absence of old import-field, route-sequence, and
+  maximum-roll input names.
 - [ ] Extend only required query/view models; do not copy all 29 fields into list
   tables or duplicate imported snapshots in `import_batch_rows`.
 - [ ] Update the four admin templates with compact overview values.
@@ -186,17 +261,19 @@ data conversion is intentionally deferred pending the Task 7 production profile.
 
 ### Task 3: Terminal Semantics And 1280x720 Layout
 
-**Status:** Not started.
+**Status:** Complete.
 
 **Files:** `app/main.py`, `app/templates/terminal.html`,
 `tests/test_terminal_v8_render.py`, `tests/test_terminal_detail.py`, and
 untracked `artifacts/ui-checks/v2/terminal/`.
 
 - [ ] Add failing tests for target gross on machine tiles, compact requested
-  gross in queue rows, actual gross in produced rows, conditional optional
-  details, `Фалдиране`, and absence of terminal cancel/restore/print controls.
+  gross in queue rows, actual gross in produced rows, the accepted selected-card
+  detail fields, `Фалдиране`, and absence of terminal cancel/restore/print
+  controls.
 - [ ] Split requested-gross and produced-gross display helpers by meaning.
-- [ ] Compact selected details without hiding populated imported data.
+- [ ] Compact selected details to the accepted five-plus-four field set while
+  keeping all other imported values stored and available to admin/backend use.
 - [ ] Run:
 
   ```bash
@@ -212,7 +289,7 @@ untracked `artifacts/ui-checks/v2/terminal/`.
 
 ### Task 4: Current Documentation And Non-Print Tests
 
-**Status:** Not started.
+**Status:** Complete.
 
 **Files:** `README.md`, current implementation notes, and affected non-print
 tests.
@@ -243,7 +320,7 @@ tests.
 
 ### Task 5: Print Contract
 
-**Status:** Not started.
+**Status:** Complete.
 
 **Files:** `app/printing.py`, `app/templates/print_card.html`, optional
 `app/static/css/print.css`, `scripts/create_print_template_fixture.py`,
@@ -251,51 +328,55 @@ tests.
 `docs/implementation-notes/print-output-reference.md`, and untracked
 `artifacts/ui-checks/v2/print/`.
 
-- [ ] Convert fixtures to the final contract with
+- [x] Convert fixtures to the final contract with
   `extrusion_sequence="1"` and the four ordered values.
-- [ ] Add failing tests for the four fixed-meaning cells, blank optional cells,
+- [x] Add tests for the four fixed-meaning cells, blank optional cells,
   absence of old keys/unit cells, and absence of route sequences.
-- [ ] Map final stored text to four print view-model values without parsing or
+- [x] Map final stored text to four print view-model values without parsing or
   recalculating source amounts.
-- [ ] Preserve print readiness, 120 roll slots, summaries, and two-page output.
-- [ ] Run focused print tests.
-- [ ] Render two-page A4 PDF and page images; inspect quantity cells, front/back
+- [x] Preserve print readiness, 120 roll slots, summaries, and two-page output.
+- [x] Run focused print tests.
+- [x] Render two-page A4 PDF and page images; inspect quantity cells, front/back
   landmarks, roll positions, totals, and exact page count.
-- [ ] Run `git diff --check`, update this checkpoint, and stop. Run the database
+- [x] Run `git diff --check`, update this checkpoint, and stop. Run the database
   migration system workflow when the user invokes its trigger.
 
 ---
 
 ### Task 6: Full Verification And Disposable Development Reset
 
-**Status:** Not started.
+**Status:** Complete.
 
-- [ ] Run the complete static and automated checks:
+- [x] Run the complete static and automated checks:
 
   ```bash
-  .venv/bin/python -m compileall app tests
+  .venv/bin/python -m compileall app scripts tests
   .venv/bin/python -m pytest -q
   git diff --check
   ```
 
-- [ ] Stop the local app and reset only
-  `data/extrusion_terminal.sqlite3`. Never touch a production snapshot or backup.
-- [ ] Initialize a fresh database and confirm machines 1-4 and recorded
-  migrations.
-- [ ] Import `source-files/extrusion_orders_20260725_110012.csv`; require 3
-  created rows and 0 skips, then release orders 25450-25452.
-- [ ] Smoke-test admin import/planning/cards/detail, terminal tiles/queue/detail,
-  production entry/history, and two-page admin print.
-- [ ] Save evidence under `artifacts/ui-checks/v2/final/`.
-- [ ] Update this checkpoint and stop for explicit database-migration,
-  commit, and release direction.
+  Result: `compileall` and `git diff --check` passed; `pytest -q` reported 485
+  passed.
+
+- [x] Initialize and use only the fresh temporary database
+  `.test-runtime/v2-final.roRhVV/extrusion_terminal.sqlite3`; confirm machines
+  1-4 and M001. No production database was opened or reset.
+- [x] Import `source-files/extrusion_orders_20260725_110012.csv`: 3 rows seen,
+  3 imported, 3 created, 0 skipped; release orders 25450-25452 to machine 1 in
+  positions 1-3.
+- [x] Smoke-test admin import/planning/cards/detail, terminal
+  tiles/queue/detail, production entry/history, and admin correction.
+- [x] Verify admin print as exactly two A4 pages. Evidence, including
+  screenshots and PDF, is under `artifacts/ui-checks/v2/final/`.
+- [x] Complete adversarial review: no code findings; documentation corrections
+  only.
 
 ---
 
 ### Task 7: Production Legacy-Data Profile
 
-**Status:** Waiting until application changes are stable and the user provides a
-SQLite-safe production backup.
+**Status:** Later production-release gate. Waiting for an immutable SQLite-safe
+production backup.
 
 - [ ] Fingerprint the immutable backup: timestamp, deployed revision, size,
   SHA-256, integrity result, migration versions, and high-level counts.
@@ -314,8 +395,8 @@ SQLite-safe production backup.
 
 ### Task 8: Release-Candidate Rehearsal And Runbook
 
-**Status:** Waiting for the complete approved migration chain and a fresh
-production backup.
+**Status:** Later production-release gate. Waiting for the complete approved
+migration chain and a fresh immutable production backup.
 
 - [ ] Fingerprint the fresh immutable backup and clone it for rehearsal.
 - [ ] Capture pre-migration status, queue, roll, gross/net, tare, timing, material,

@@ -26,11 +26,10 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "customer": "Admin Customer",
         "city": "Sofia",
         "product_type": "PE film",
-        "quantity_1": "500",
-        "unit_1": "kg",
+        "ordered_gross_kg": "500",
         "material": "LDPE",
         "size_thickness": "600/0.050",
-        "extrusion_flag": "da",
+        "extrusion_sequence": "1",
         "extrusion_folding": "single",
         "extrusion_next_operation": "rewind",
         "extrusion_treatment": "corona",
@@ -72,6 +71,23 @@ def test_admin_card_index_filters_by_order_number(connection):
     assert [card["order_number"] for card in cards] == ["25700"]
 
 
+def test_admin_card_index_includes_delivery_and_ordered_gross(connection):
+    import_ready_card(
+        "25715",
+        delivery_date="2026-06-29",
+        ordered_gross_kg="875.50",
+    )
+
+    card = next(
+        card
+        for card in db.fetch_admin_cards({"order_number": "25715"})
+        if card["order_number"] == "25715"
+    )
+
+    assert card["delivery_date"] == "2026-06-29"
+    assert card["ordered_gross_kg"] == "875.50"
+
+
 def test_admin_card_index_filters_by_customer_or_product(connection):
     import_ready_card("25702", customer="North Plast", product_type="PE sheet")
     import_ready_card("25703", customer="South Films", product_type="Stretch film")
@@ -99,7 +115,6 @@ def test_admin_card_detail_includes_full_review_data(connection):
         card_id,
         machine_id=2,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
     assert db.update_terminal_material_fields(
         card_id,
@@ -120,7 +135,6 @@ def test_admin_card_detail_includes_full_review_data(connection):
     assert card["machine_id"] == 2
     assert card["machine_sequence"] == 1
     assert card["customer"] == "Admin Customer"
-    assert card["max_roll_weight"] == "60.0"
     assert card["actual_raw_material_used"] == "Actual LDPE"
     assert card["raw_material_brand_grade"] == "Grade A"
     assert card["raw_material_batch_lot"] == "Batch 42"
@@ -136,10 +150,10 @@ def test_admin_card_detail_includes_full_review_data(connection):
 def test_admin_card_detail_context_groups_quantities_and_recipe_rows(connection):
     card_id = import_ready_card(
         "25714",
-        quantity_1="500",
-        unit_1="kg",
-        quantity_2="1200",
-        unit_2="m",
+        ordered_gross_kg="500",
+        ordered_rolls="1200",
+        ordered_meters="15000",
+        ordered_units="40000",
         raw_material_a="LDPE; A | 60%",
         raw_material_b="LDPE; B | 30%",
         linear_pe="LLDPE; Linear PE | 10%",
@@ -148,7 +162,6 @@ def test_admin_card_detail_context_groups_quantities_and_recipe_rows(connection)
         card_id,
         machine_id=1,
         machine_sequence=2,
-        max_roll_weight="60.0",
     ).ok
     assert db.update_terminal_material_fields(
         card_id,
@@ -163,7 +176,12 @@ def test_admin_card_detail_context_groups_quantities_and_recipe_rows(connection)
     assert context is not None
     rows = {row["field"]: row for row in context["recipe_rows"]}
 
-    assert [line["display"] for line in context["quantity_lines"]] == ["500 kg", "1200 m"]
+    assert [line["display"] for line in context["quantity_lines"]] == [
+        "Поръчано бруто: 500 кг",
+        "Поръчани ролки: 1200 ролки",
+        "Поръчани метри: 15000 м",
+        "Поръчани бройки: 40000 бр.",
+    ]
     assert rows["raw_material_a"]["source_label"] == "A"
     assert rows["raw_material_a"]["material_category"] == "LDPE"
     assert rows["raw_material_a"]["planned_material"] == "A"
@@ -188,7 +206,6 @@ def test_admin_imported_field_edit_succeeds_and_increments_version(connection):
     card = db.fetch_admin_card_detail(card_id)
     fields = current_imported_fields(card_id)
     fields["customer"] = "Corrected Customer"
-    fields["max_roll_weight"] = "72.5"
     fields["notes"] = "Corrected notes"
 
     result = db.update_admin_imported_fields(card_id, card["version"], fields)
@@ -196,7 +213,6 @@ def test_admin_imported_field_edit_succeeds_and_increments_version(connection):
 
     assert result.ok
     assert updated["customer"] == "Corrected Customer"
-    assert updated["max_roll_weight"] == "72.5"
     assert updated["notes"] == "Corrected notes"
     assert updated["version"] == card["version"] + 1
 
@@ -225,7 +241,6 @@ def test_admin_imported_field_edit_preserves_production_data(connection):
         card_id,
         machine_id=3,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
     assert db.update_terminal_material_fields(
         card_id,
@@ -243,7 +258,6 @@ def test_admin_imported_field_edit_preserves_production_data(connection):
     fields = current_imported_fields(card_id)
     fields["order_number"] = "25770"
     fields["customer"] = "Preserved Customer"
-    fields["max_roll_weight"] = "80"
     result = db.update_admin_imported_fields(card_id, before["version"], fields)
     after = db.fetch_admin_card_detail(card_id)
     roll_order_numbers = connection.execute(
@@ -254,7 +268,6 @@ def test_admin_imported_field_edit_preserves_production_data(connection):
     assert result.ok
     assert after["order_number"] == "25770"
     assert after["customer"] == "Preserved Customer"
-    assert after["max_roll_weight"] == "80"
     assert after["status"] == STATUS_PAUSED
     assert after["machine_id"] == 3
     assert after["machine_sequence"] == 1
@@ -286,7 +299,7 @@ def test_admin_imported_field_edit_blocks_no_extrusion_result(connection):
     card_id = import_ready_card("25710")
     card = db.fetch_admin_card_detail(card_id)
     fields = current_imported_fields(card_id)
-    fields["extrusion_flag"] = ""
+    fields["extrusion_sequence"] = ""
     fields["raw_material_a"] = ""
     fields["packaging_method"] = ""
     fields["extrusion_folding"] = ""
@@ -298,7 +311,7 @@ def test_admin_imported_field_edit_blocks_no_extrusion_result(connection):
 
     assert not result.ok
     assert result.messages == ("Импортираните полета трябва да запазят валидна стъпка за екструдиране преди запис.",)
-    assert unchanged["extrusion_flag"] == "da"
+    assert unchanged["extrusion_sequence"] == "1"
     assert unchanged["raw_material_a"] == "LDPE; A | 100%"
 
 
@@ -332,7 +345,6 @@ def test_admin_delete_blocks_released_card(connection):
         card_id,
         machine_id=4,
         machine_sequence=9,
-        max_roll_weight="60.0",
     ).ok
     card = db.fetch_admin_card_detail(card_id)
 

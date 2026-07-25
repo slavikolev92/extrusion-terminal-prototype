@@ -440,8 +440,8 @@ select {
   width: auto;
 }
 
-.unreleased-table .col-max-roll {
-  width: 112px;
+.unreleased-table .col-gross {
+  width: 168px;
 }
 
 .unreleased-table .col-sequence {
@@ -802,7 +802,7 @@ select {
 
 .admin-order-groups {
   display: grid;
-  gap: 12px;
+  gap: 24px;
 }
 
 .admin-order-group {
@@ -1766,7 +1766,7 @@ thead th {
   }
 
   .unreleased-table {
-    min-width: 880px;
+    min-width: 1080px;
   }
 
   #unreleased-queue {

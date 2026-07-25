@@ -19,17 +19,20 @@ IMPORT_FIELDS = (
     "customer",
     "city",
     "product_type",
-    "quantity_1",
-    "unit_1",
-    "quantity_2",
-    "unit_2",
+    "ordered_gross_kg",
+    "ordered_rolls",
+    "ordered_meters",
+    "ordered_units",
     "product_form",
     "material",
     "size_thickness",
     "notes",
-    "extrusion_flag",
-    "extrusion_folding",
+    "printing_sequence",
+    "extrusion_sequence",
+    "rewinding_slitting_sequence",
+    "confection_sequence",
     "extrusion_next_operation",
+    "extrusion_folding",
     "extrusion_treatment",
     "raw_material_a",
     "raw_material_b",
@@ -40,61 +43,6 @@ IMPORT_FIELDS = (
     "chalk",
     "packaging_method",
 )
-
-EXTRUSION_DETAIL_FIELDS = (
-    "extrusion_folding",
-    "extrusion_next_operation",
-    "extrusion_treatment",
-    "raw_material_a",
-    "raw_material_b",
-    "raw_material_c",
-    "linear_pe",
-    "antistatic",
-    "masterbatch",
-    "chalk",
-    "packaging_method",
-)
-
-FIELD_ALIASES = {
-    "order_no": "order_number",
-    "order": "order_number",
-    "date": "order_date",
-    "company": "customer",
-    "firm": "customer",
-    "quantity1": "quantity_1",
-    "qty1": "quantity_1",
-    "unit1": "unit_1",
-    "quantity2": "quantity_2",
-    "qty2": "quantity_2",
-    "unit2": "unit_2",
-    "blank_type": "product_form",
-    "form": "product_form",
-    "size": "size_thickness",
-    "thickness": "size_thickness",
-    "extrusion": "extrusion_flag",
-    "folding": "extrusion_folding",
-    "next_operation": "extrusion_next_operation",
-    "treatment": "extrusion_treatment",
-    "material_a": "raw_material_a",
-    "material_b": "raw_material_b",
-    "material_c": "raw_material_c",
-    "linear": "linear_pe",
-    "linear_pe_percent": "linear_pe",
-    "packaging": "packaging_method",
-}
-
-TRUE_EXTRUSION_FLAGS = {
-    "1",
-    "true",
-    "yes",
-    "y",
-    "x",
-    "da",
-    "да",
-    "дa",
-    "ð´ð°",
-}
-
 
 STALE_IMPORT_MESSAGE = (
     "Блокиран ред: картата има коригирани от администратор данни след последния импорт. "
@@ -160,11 +108,17 @@ def csv_template() -> str:
         "order_number": "25278",
         "customer": "Примерен клиент",
         "product_type": "PE фолио",
-        "quantity_1": "500",
-        "unit_1": "kg",
+        "ordered_gross_kg": "500",
+        "ordered_rolls": "20",
+        "ordered_meters": "15000",
+        "ordered_units": "40000",
         "material": "LDPE",
         "size_thickness": "600/0.050",
-        "extrusion_flag": "да",
+        "printing_sequence": "2",
+        "extrusion_sequence": "1",
+        "rewinding_slitting_sequence": "3",
+        "confection_sequence": "4",
+        "extrusion_next_operation": "Printing",
         "raw_material_a": "reLDPE; recycled LDPE | 100%",
         "packaging_method": "ролки",
     }
@@ -186,13 +140,13 @@ def import_cards_from_csv(filename: str, content: bytes, overwrite_existing: boo
         record_import_row_result(result, None, "", "blocked", message)
         return result
 
-    header_map = build_header_map(reader.fieldnames)
-    missing_required = [field for field in ("order_number", "extrusion_flag") if field not in header_map.values()]
-    if missing_required:
-        message = f"Липсват задължителни CSV колони: {', '.join(missing_required)}."
+    header_result = validate_import_headers(reader.fieldnames)
+    if not header_result.ok:
+        message = " ".join(header_result.messages)
         result.row_errors.append(message)
         record_import_row_result(result, None, "", "blocked", message)
         return result
+    header_map = build_header_map(reader.fieldnames)
 
     with connect() as connection:
         cursor = connection.execute(
@@ -380,6 +334,9 @@ def validate_active_overwrite_release_fields(
 
 def validate_import_recipe_fields(card: dict[str, str]) -> RuleResult:
     source_fields = {field: card.get(field) for field in RECIPE_SOURCE_FIELDS}
+    if not any(str(value or "").strip() for value in source_fields.values()):
+        return RuleResult(True)
+
     parse_result = parse_recipe_source_fields(
         source_fields,
         require_semicolon_delimiter=True,
@@ -412,13 +369,25 @@ def decode_csv(content: bytes) -> str:
 
 
 def build_header_map(headers: list[str]) -> dict[str, str]:
-    header_map: dict[str, str] = {}
-    for header in headers:
-        normalized = normalize_header(header)
-        canonical = FIELD_ALIASES.get(normalized, normalized)
-        if canonical in IMPORT_FIELDS:
-            header_map[header] = canonical
-    return header_map
+    return dict(zip(headers, IMPORT_FIELDS, strict=True))
+
+
+def validate_import_headers(headers: list[str]) -> RuleResult:
+    expected_headers = list(IMPORT_FIELDS)
+    if headers == expected_headers:
+        return RuleResult(True)
+
+    missing = [field for field in expected_headers if field not in headers]
+    unexpected = [header for header in headers if header not in expected_headers]
+    wrong_order = not missing and not unexpected
+    messages: list[str] = []
+    if missing:
+        messages.append(f"Липсват задължителни CSV колони: {', '.join(missing)}.")
+    if unexpected:
+        messages.append(f"Непозволени CSV колони: {', '.join(unexpected)}.")
+    if wrong_order:
+        messages.append("CSV колоните не са в очаквания ред от Shift Manager export.")
+    return RuleResult(False, tuple(messages))
 
 
 def normalize_header(value: str | None) -> str:
@@ -446,14 +415,7 @@ def clean_cell(value: Any) -> str:
 
 
 def card_has_usable_extrusion_step(card: dict[str, str]) -> bool:
-    extrusion_flag = normalize_flag(card["extrusion_flag"])
-    has_extrusion_details = any(card[field] for field in EXTRUSION_DETAIL_FIELDS)
-
-    return extrusion_flag in TRUE_EXTRUSION_FLAGS and has_extrusion_details
-
-
-def normalize_flag(value: str) -> str:
-    return value.strip().casefold()
+    return card.get("extrusion_sequence", "").strip() == "1"
 
 
 def insert_imported_card(connection, batch_id: int, card: dict[str, str]) -> None:

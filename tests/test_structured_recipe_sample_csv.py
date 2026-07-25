@@ -68,7 +68,6 @@ def release_card(card_id: int, machine_id: int = 1, sequence: int = 1):
         machine_id=machine_id,
         machine_sequence=sequence,
         loaded_version=card_version(card_id),
-        max_roll_weight="64.50",
     )
 
 
@@ -276,6 +275,10 @@ def test_structured_sample_print_output_uses_compact_material_and_percent(connec
 
     assert readiness.ok
     assert readiness.data is not None
+    assert readiness.data["front"]["ordered_gross_display"] == "1000 кг"
+    assert readiness.data["front"]["ordered_rolls_display"] == "24 ролки"
+    assert readiness.data["front"]["ordered_meters_display"] == "18000 метра"
+    assert readiness.data["front"]["ordered_units_display"] == "48000 бр."
     rows = {
         row["component_key"]: row
         for row in readiness.data["front"]["recipe_rows"]

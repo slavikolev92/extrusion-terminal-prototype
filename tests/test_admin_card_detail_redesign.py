@@ -35,15 +35,18 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "customer": "Admin Detail Redesign Customer",
         "city": "Plovdiv",
         "product_type": "TSF 890/0.082",
-        "quantity_1": "3250.50",
-        "unit_1": "kg",
-        "quantity_2": "60",
-        "unit_2": "rolls",
+        "ordered_gross_kg": "3250.50",
+        "ordered_rolls": "60",
+        "ordered_meters": "15000",
+        "ordered_units": "40000",
         "product_form": "flat film",
         "material": "LDPE / LLDPE",
         "size_thickness": "890 / 0.082",
         "notes": "Dense admin detail redesign fixture.",
-        "extrusion_flag": "da",
+        "printing_sequence": "2",
+        "extrusion_sequence": "1",
+        "rewinding_slitting_sequence": "3",
+        "confection_sequence": "4",
         "extrusion_folding": "single fold",
         "extrusion_next_operation": "rewind",
         "extrusion_treatment": "corona",
@@ -107,7 +110,6 @@ def prepare_dense_completed_card(order_number: str = "27000", roll_count: int = 
         machine_id=1,
         machine_sequence=1,
         loaded_version=card_version(card_id),
-        max_roll_weight="62.50",
     ).ok
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_terminal_recipe_actual_entries(
@@ -296,7 +298,6 @@ def test_admin_detail_print_link_is_available_only_for_completed_cards(connectio
         machine_id=1,
         machine_sequence=1,
         loaded_version=card_version(cancelled_id),
-        max_roll_weight="62.50",
     ).ok
     assert db.cancel_card(cancelled_id, card_version(cancelled_id)).ok
 
@@ -428,7 +429,6 @@ def test_admin_cards_list_does_not_show_print_shortcuts(connection):
         machine_id=1,
         machine_sequence=1,
         loaded_version=card_version(pending_id),
-        max_roll_weight="62.50",
     ).ok
     cancelled_id = import_ready_card("27044")
     assert db.release_card(
@@ -436,7 +436,6 @@ def test_admin_cards_list_does_not_show_print_shortcuts(connection):
         machine_id=2,
         machine_sequence=1,
         loaded_version=card_version(cancelled_id),
-        max_roll_weight="62.50",
     ).ok
     assert db.cancel_card(cancelled_id, card_version(cancelled_id)).ok
 
@@ -447,6 +446,28 @@ def test_admin_cards_list_does_not_show_print_shortcuts(connection):
     assert f'<a href="/admin/cards/{cancelled_id}">Отвори</a>' in html
     assert "/print" not in html
     assert ">Печат<" not in html
+
+
+def test_admin_cards_list_shows_delivery_and_ordered_gross(connection):
+    import_ready_card(
+        "27049",
+        delivery_date="2026-06-29",
+        ordered_gross_kg="875.50",
+    )
+
+    html = render_admin_cards_list()
+
+    assert "<th>Доставка</th>" in html
+    assert "<th>Поръчано бруто, кг</th>" in html
+    assert "2026-06-29" in html
+    assert "875.50" in html
+    assert "875.50 кг" not in html
+
+    import_ready_card("27050", delivery_date="", ordered_gross_kg="")
+    html = render_admin_cards_list()
+    blank_row = html.split("<td>27050</td>", 1)[1].split("</tr>", 1)[0]
+    assert blank_row.count("<td>-</td>") >= 2
+    assert "- кг" not in html
 
 
 def test_admin_detail_uses_single_roll_ledger_without_repeated_save_buttons(connection):
@@ -462,6 +483,37 @@ def test_admin_detail_uses_single_roll_ledger_without_repeated_save_buttons(conn
     assert html.count(">Изтрий<") < 10
     assert "Произведено количество" not in html
     assert "Общо произведено" in html
+
+
+def test_admin_detail_renders_accepted_order_groups_without_route_inputs(connection):
+    card_id = import_ready_card("27122")
+    html = render_admin_detail(card_id)
+
+    expected_inputs = {
+        "ordered_gross_kg": "3250.50",
+        "ordered_rolls": "60",
+        "ordered_meters": "15000",
+        "ordered_units": "40000",
+    }
+    for name, value in expected_inputs.items():
+        assert f'name="{name}" value="{value}"' in html
+
+    for old_name in (
+        "quantity_1",
+        "unit_1",
+        "quantity_2",
+        "unit_2",
+        "extrusion_flag",
+        "max_roll_weight",
+        "printing_sequence",
+        "extrusion_sequence",
+        "rewinding_slitting_sequence",
+        "confection_sequence",
+    ):
+        assert f'name="{old_name}"' not in html
+
+    assert "Фалдиране" in html
+    assert "Фалцоване" not in html
 
 
 def test_admin_roll_ledger_renders_editable_per_roll_tare(connection):
@@ -511,10 +563,18 @@ def test_admin_order_details_are_grouped_into_logical_sections(connection):
     assert "Поръчка" in html
     assert "Клиент" in html
     assert "Изделие" in html
-    assert "Операции" in html
+    assert "Екструзия" in html
     assert "Забележки" in html
     assert html.find("Поръчка") < html.find("Клиент") < html.find("Изделие")
-    assert html.find("Изделие") < html.find("Операции") < html.find("Забележки")
+    assert html.find("Изделие") < html.find("Екструзия") < html.find("Забележки")
+    extrusion_group = html.split("<legend>Екструзия</legend>", 1)[1].split("</fieldset>", 1)[0]
+    assert extrusion_group.count('<input name="') == 3
+    assert "Фалдиране" in extrusion_group
+    assert "Следваща операция" in extrusion_group
+    assert "Третиране" in extrusion_group
+    order_group = html.split("<legend>Поръчка</legend>", 1)[1].split("</fieldset>", 1)[0]
+    assert 'name="packaging_method"' in order_group
+    assert 'class="admin-order-groups"' in html
 
 
 def test_admin_materials_ledger_omits_brand_class_field(connection):
@@ -611,6 +671,11 @@ def test_admin_card_post_response_without_anchor_keeps_existing_redirect(connect
 def test_admin_order_form_save_preserves_omitted_recipe_fields(connection):
     card_id = import_ready_card("27106")
     card = db.fetch_admin_card_detail(card_id)
+    connection.execute(
+        "UPDATE cards SET max_roll_weight = ? WHERE id = ?",
+        ("70.5", card_id),
+    )
+    connection.commit()
 
     response = asyncio.run(
         save_admin_imported_fields(
@@ -624,15 +689,13 @@ def test_admin_order_form_save_preserves_omitted_recipe_fields(connection):
                         ("customer", "Grouped Order Customer"),
                         ("city", "Varna"),
                         ("product_type", "Updated film"),
-                        ("quantity_1", "4250"),
-                        ("unit_1", "kg"),
-                        ("quantity_2", "80"),
-                        ("unit_2", "rolls"),
+                        ("ordered_gross_kg", "4250"),
+                        ("ordered_rolls", "80"),
+                        ("ordered_meters", "21000"),
+                        ("ordered_units", "51000"),
                         ("size_thickness", "900 / 0.090"),
                         ("product_form", "sleeve"),
                         ("material", "LDPE"),
-                        ("max_roll_weight", "70.5"),
-                        ("extrusion_flag", "da"),
                         ("extrusion_folding", "double fold"),
                         ("extrusion_next_operation", "print"),
                         ("extrusion_treatment", "corona"),
@@ -648,7 +711,19 @@ def test_admin_order_form_save_preserves_omitted_recipe_fields(connection):
 
     assert response.status_code == 303
     assert updated["customer"] == "Grouped Order Customer"
-    assert updated["max_roll_weight"] == "70.5"
+    assert updated["ordered_gross_kg"] == "4250"
+    assert updated["ordered_rolls"] == "80"
+    assert updated["ordered_meters"] == "21000"
+    assert updated["ordered_units"] == "51000"
+    assert updated["printing_sequence"] == "2"
+    assert updated["extrusion_sequence"] == "1"
+    assert updated["rewinding_slitting_sequence"] == "3"
+    assert updated["confection_sequence"] == "4"
+    legacy_max_roll_weight = connection.execute(
+        "SELECT max_roll_weight FROM cards WHERE id = ?",
+        (card_id,),
+    ).fetchone()["max_roll_weight"]
+    assert legacy_max_roll_weight == "70.5"
     assert updated["raw_material_a"] == "LDPE; Planned A | 50%"
     assert updated["raw_material_b"] == "LLDPE; Planned B | 30%"
     assert updated["raw_material_c"] == "MDPE; Planned C | 5%"
@@ -1267,7 +1342,6 @@ def test_admin_roll_ledger_allows_tare_only_save_on_paused_card(connection):
         machine_id=1,
         machine_sequence=1,
         loaded_version=card_version(card_id),
-        max_roll_weight="62.50",
     ).ok
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.pause_production_timing(card_id, card_version(card_id)).ok
@@ -1295,7 +1369,6 @@ def test_admin_roll_ledger_blocks_roll_add_on_paused_card(connection):
         machine_id=1,
         machine_sequence=1,
         loaded_version=card_version(card_id),
-        max_roll_weight="62.50",
     ).ok
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.pause_production_timing(card_id, card_version(card_id)).ok
@@ -1440,7 +1513,6 @@ def test_admin_timing_ledger_blocks_open_segment_on_paused_card(connection):
         machine_id=1,
         machine_sequence=1,
         loaded_version=card_version(card_id),
-        max_roll_weight="62.50",
     ).ok
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.pause_production_timing(card_id, card_version(card_id)).ok
@@ -1475,7 +1547,6 @@ def test_admin_timing_ledger_allows_swapping_open_segment_order_independently(co
         machine_id=1,
         machine_sequence=1,
         loaded_version=card_version(card_id),
-        max_roll_weight="62.50",
     ).ok
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.add_timing_segment(

@@ -22,11 +22,10 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "order_number": order_number,
         "customer": "Planning Customer",
         "product_type": "PE film",
-        "quantity_1": "500",
-        "unit_1": "kg",
+        "ordered_gross_kg": "500",
         "material": "LDPE",
         "size_thickness": "600/0.050",
-        "extrusion_flag": "da",
+        "extrusion_sequence": "1",
         "raw_material_a": "LDPE; A | 100%",
         "packaging_method": "rolls",
     }
@@ -58,7 +57,6 @@ def release_ready_card(order_number: str, machine_id: int, machine_sequence: int
         machine_id,
         machine_sequence,
         version,
-        max_roll_weight="60.0",
     ).ok
     return card_id
 
@@ -76,7 +74,6 @@ def test_release_accepts_loaded_version_and_clamps_empty_machine_to_first_positi
         1,
         3,
         loaded_version,
-        max_roll_weight="60.0",
     )
     card = db.fetch_admin_card_detail(card_id)
 
@@ -99,7 +96,6 @@ def test_release_blocks_stale_loaded_version(connection):
         1,
         1,
         loaded_version,
-        max_roll_weight="60.0",
     )
     card = db.fetch_admin_card_detail(card_id)
 
@@ -268,7 +264,6 @@ def test_unrelease_pending_card_returns_it_to_unreleased_pool_and_preserves_data
     assert before["status"] == STATUS_PENDING
     assert before["machine_id"] == 2
     assert before["machine_sequence"] == 1
-    assert before["max_roll_weight"] == "60.0"
 
     result = db.unrelease_pending_card(card_id, card_version(card_id))
     after = db.fetch_admin_card_detail(card_id)
@@ -280,7 +275,6 @@ def test_unrelease_pending_card_returns_it_to_unreleased_pool_and_preserves_data
     assert after["status"] == STATUS_IMPORTED
     assert after["machine_id"] is None
     assert after["machine_sequence"] is None
-    assert after["max_roll_weight"] == "60.0"
     assert after["customer"] == before["customer"]
     assert after["raw_material_a"] == before["raw_material_a"]
     assert after["version"] == before["version"] + 1

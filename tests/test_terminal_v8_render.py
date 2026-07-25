@@ -43,15 +43,13 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "order_number": order_number,
         "customer": f"V8 Customer {order_number}",
         "product_type": "ТСФ 890/0.082",
-        "quantity_1": "500",
-        "unit_1": "kg",
-        "quantity_2": "5",
-        "unit_2": "ролки",
+        "ordered_gross_kg": "500",
+        "ordered_rolls": "5",
         "product_form": "плоско",
         "material": "LDPE",
         "size_thickness": "890 / 0.082",
         "notes": "Важна бележка за оператор.",
-        "extrusion_flag": "da",
+        "extrusion_sequence": "1",
         "extrusion_folding": "single",
         "extrusion_next_operation": "rewind",
         "extrusion_treatment": "corona",
@@ -96,7 +94,6 @@ def release_ready_card(
         machine_id,
         sequence,
         db.fetch_admin_card_detail(card_id)["version"],
-        max_roll_weight="62.5",
     ).ok
     return card_id
 
@@ -434,12 +431,14 @@ def test_terminal_v8_recipe_table_uses_secondary_text_color(connection):
         assert "color: var(--secondary-text);" in css_rules(html, rf"(?m)^    {selector}")
 
 
-def test_terminal_v8_details_grid_wraps_by_available_panel_width(connection):
+def test_terminal_v8_details_grid_uses_fixed_five_column_rows(connection):
     release_ready_card("26104", machine_id=1, sequence=1)
 
     html = render_terminal()
 
-    assert "grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));" in html
+    assert ".info-row-primary" in html
+    assert ".info-row-secondary" in html
+    assert html.count("grid-template-columns: repeat(5, minmax(0, 1fr));") >= 2
 
 
 def test_terminal_v8_selects_requested_machine_focus_card(connection):
@@ -483,24 +482,47 @@ def test_terminal_v8_machine_card_and_machine_default_prefer_running_over_paused
     assert "V8 Customer 26147" in machine_tab
 
 
-def test_terminal_v8_renders_selected_card_details_and_max_roll_weight(connection):
+def test_terminal_v8_renders_only_accepted_selected_card_details(connection):
     card_id = release_ready_card("26101", machine_id=1, sequence=1)
 
     html = render_terminal(card_id)
-    card = terminal_context(card_id)["selected_card"]
 
     assert "Машина 1: №26101" in html
     assert "ТСФ 890/0.082" in html
     assert "V8 Customer 26101" in html
-    assert "500 kg / 5 ролки" in html
+    assert "Поръчано бруто, кг" in html
+    assert "500" in html
     assert "890 / 0.082" in html
     assert "плоско" in html
-    assert "LDPE" in html
-    assert "Макс. тегло ролка, кг" in html
-    assert card["max_roll_weight_display"] == "63"
-    assert "62.5" not in html
-    assert re.search(r"Макс\. тегло ролка, кг\s*</span>\s*<div class=\"value\">63</div>", html)
     assert "Важна бележка за оператор." in html
+    details_html = html.split('<section class="panel details-panel">', 1)[1].split(
+        '<div class="recipe-section">', 1
+    )[0]
+    assert "Поръчани ролки" not in details_html
+    assert "Поръчани метри" not in details_html
+    assert "Поръчани бройки" not in details_html
+    assert "Дата доставка" not in details_html
+    assert "Материал" not in details_html
+    assert "Макс. тегло ролка, кг" not in details_html
+    first_row = details_html.split(
+        '<div class="info-row info-row-primary">', 1
+    )[1].split('<div class="info-row info-row-secondary">', 1)[0]
+    assert [
+        "Фирма",
+        "Поръчано бруто, кг",
+        "Вид изделие",
+        "Размер / дебелина",
+        "Фалдиране",
+    ] == re.findall(r'<span class="field-label">([^<]+)</span>', first_row)
+    second_row = details_html.split(
+        '<div class="info-row info-row-secondary">', 1
+    )[1].split('<section class="notes-section">', 1)[0]
+    assert [
+        "Вид заготовка",
+        "Следваща операция",
+        "Третиране",
+        "Опаковка",
+    ] == re.findall(r'<span class="field-label">([^<]+)</span>', second_row)
 
 
 def test_terminal_v8_details_panel_labels_and_values_are_deemphasized(connection):
@@ -531,8 +553,9 @@ def test_terminal_v8_details_panel_labels_and_values_are_deemphasized(connection
     assert "color: var(--primary-text);" in value_rules
     assert "font-weight: 600;" in value_rules
 
-    assert "row-gap: 22px;" in html
-    assert "gap: 20px;" in html
+    assert "row-gap: 26px;" in html
+    assert "padding: 18px 18px;" in html
+    assert "gap: 26px;" in html
 
 
 def test_terminal_v8_details_values_and_notes_share_value_rhythm(connection):
@@ -833,7 +856,7 @@ def test_terminal_v8_recipe_display_rounds_operator_percent_and_kg_values(connec
         "26242",
         machine_id=1,
         sequence=1,
-        quantity_1="1250",
+        ordered_gross_kg="1250",
         raw_material_a="LDPE; A | 37.5%",
         raw_material_b="LLDPE; B | 23.5%",
         raw_material_c="MDPE; C | 12%",
@@ -853,6 +876,36 @@ def test_terminal_v8_recipe_display_rounds_operator_percent_and_kg_values(connec
     assert rows["antistatic"]["planned_kg"] == "31"
     assert rows["chalk"]["recipe_percent"] == "6%"
     assert rows["chalk"]["planned_kg"] == "69"
+
+
+def test_terminal_v8_shows_accepted_extrusion_details_only(connection):
+    card_id = release_ready_card(
+        "26244",
+        machine_id=1,
+        sequence=1,
+        delivery_date="01/08/2026",
+        ordered_gross_kg="500",
+        ordered_rolls="20",
+        ordered_meters="15000",
+        ordered_units="40000",
+        extrusion_folding="folding detail",
+        extrusion_next_operation="Printing",
+        extrusion_treatment="corona",
+        packaging_method="1 big pallet",
+    )
+
+    html = render_terminal(card_id)
+
+    assert "Поръчано бруто, кг" in html
+    assert "500" in html
+    assert "Фалдиране" in html
+    assert "folding detail" in html
+    assert "Следваща операция" in html
+    assert "Printing" in html
+    assert "Третиране" in html
+    assert "corona" in html
+    assert "Опаковка" in html
+    assert "1 big pallet" in html
 
 
 def test_terminal_v8_recipe_body_values_use_homogeneous_regular_style(connection):
@@ -932,6 +985,75 @@ def test_terminal_v8_renders_recipe_queue_and_completed_lookup(connection):
     assert "№26104" in html
     assert "Hidden Customer" not in html
     assert "№26105" not in html
+
+
+def test_terminal_drawers_show_only_semantic_gross_weights(connection):
+    queued_id = release_ready_card(
+        "26160",
+        machine_id=1,
+        sequence=1,
+        ordered_gross_kg="500",
+        ordered_rolls="20",
+        ordered_meters="15000",
+        ordered_units="40000",
+    )
+    blank_target_id = release_ready_card(
+        "26161",
+        machine_id=2,
+        sequence=1,
+        ordered_rolls="21",
+        ordered_meters="16000",
+        ordered_units="41000",
+    )
+    blank_target_card = db.fetch_admin_card_detail(blank_target_id)
+    blank_target_fields = {
+        field: str(blank_target_card[field] or "") for field in IMPORT_FIELDS
+    }
+    blank_target_fields["ordered_gross_kg"] = ""
+    assert db.update_admin_imported_fields(
+        blank_target_id,
+        card_version(blank_target_id),
+        blank_target_fields,
+    ).ok
+    completed_id = release_ready_card(
+        "26162",
+        machine_id=3,
+        sequence=1,
+        ordered_gross_kg="700",
+        ordered_rolls="22",
+        ordered_meters="17000",
+        ordered_units="42000",
+    )
+    complete_card(completed_id)
+
+    html = render_terminal(queued_id)
+    queued_row = re.search(
+        rf'<a class="queue-card[^>]+href="/terminal/cards/{queued_id}">.*?</a>',
+        html,
+        flags=re.S,
+    ).group(0)
+    blank_target_row = re.search(
+        rf'<a class="queue-card[^>]+href="/terminal/cards/{blank_target_id}">.*?</a>',
+        html,
+        flags=re.S,
+    ).group(0)
+    produced_row = re.search(
+        rf'<a class="history-row[^>]+href="/terminal/cards/{completed_id}".*?</a>',
+        html,
+        flags=re.S,
+    ).group(0)
+
+    assert "500.00 кг" in queued_row
+    assert "20 ролки" not in queued_row
+    assert "15000 м" not in queued_row
+    assert "40000 бр." not in queued_row
+    assert '<span>-</span>' in blank_target_row
+    assert "- кг" not in blank_target_row
+    assert "21 ролки" not in blank_target_row
+    assert "60 кг" in produced_row
+    assert "22 ролки" not in produced_row
+    assert "17000 м" not in produced_row
+    assert "42000 бр." not in produced_row
 
 
 def test_terminal_v8_labels_completed_lookup_as_produced_orders(connection):
@@ -1070,17 +1192,15 @@ def test_terminal_v8_recipe_autosave_script_tracks_dirty_exit_and_beforeunload(
     assert 'window.addEventListener("beforeunload"' in html
 
 
-def test_target_gross_uses_quantity_1_and_ignores_quantity_units_and_secondary_quantity(
+def test_target_gross_uses_ordered_gross_kg_and_ignores_other_ordered_amounts(
     connection,
 ):
     card_id = release_ready_card(
         "26141",
         machine_id=1,
         sequence=1,
-        quantity_1="100",
-        unit_1="ролки",
-        quantity_2="9999",
-        unit_2="kg",
+        ordered_gross_kg="100",
+        ordered_rolls="9999",
     )
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
@@ -1102,7 +1222,7 @@ def test_terminal_v8_rounds_machine_progress_but_shows_bottom_totals_with_one_de
         "26145",
         machine_id=1,
         sequence=1,
-        quantity_1="1000",
+        ordered_gross_kg="1000",
     )
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "0.25").ok
@@ -1135,7 +1255,7 @@ def test_terminal_v8_keeps_totals_visible_if_server_context_lacks_new_display_fi
         "26146",
         machine_id=1,
         sequence=1,
-        quantity_1="1000",
+        ordered_gross_kg="1000",
     )
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "0.25").ok
@@ -1172,7 +1292,7 @@ def test_terminal_v8_keeps_totals_visible_if_server_context_lacks_new_display_fi
     )
 
 
-def test_terminal_v8_does_not_show_fake_zero_target_when_quantity_1_is_invalid(
+def test_terminal_v8_does_not_show_fake_zero_target_when_ordered_gross_kg_is_invalid(
     connection,
 ):
     card_id = release_ready_card(
@@ -1182,10 +1302,9 @@ def test_terminal_v8_does_not_show_fake_zero_target_when_quantity_1_is_invalid(
     )
     card = db.fetch_admin_card_detail(card_id)
     fields = {field: str(card[field] or "") for field in IMPORT_FIELDS}
-    fields["quantity_1"] = ""
-    fields["unit_1"] = "kg"
-    fields["quantity_2"] = "20"
-    fields["unit_2"] = "kg"
+    fields["ordered_gross_kg"] = ""
+    fields["ordered_rolls"] = "20"
+    fields["ordered_meters"] = "20"
     assert db.update_admin_imported_fields(card_id, card_version(card_id), fields).ok
 
     html = render_terminal(card_id)

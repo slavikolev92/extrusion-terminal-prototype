@@ -21,6 +21,7 @@ from .constants import (
     STATUS_RUNNING,
     TERMINAL_VISIBLE_STATUSES,
 )
+from .migrations import apply_pending_migrations
 from .recipe_parser import (
     RECIPE_SOURCE_FIELDS,
     ParsedRecipeComponent,
@@ -58,17 +59,20 @@ CARD_IMPORT_SOURCE_FIELDS = (
     "customer",
     "city",
     "product_type",
-    "quantity_1",
-    "unit_1",
-    "quantity_2",
-    "unit_2",
+    "ordered_gross_kg",
+    "ordered_rolls",
+    "ordered_meters",
+    "ordered_units",
     "product_form",
     "material",
     "size_thickness",
     "notes",
-    "extrusion_flag",
-    "extrusion_folding",
+    "printing_sequence",
+    "extrusion_sequence",
+    "rewinding_slitting_sequence",
+    "confection_sequence",
     "extrusion_next_operation",
+    "extrusion_folding",
     "extrusion_treatment",
     "raw_material_a",
     "raw_material_b",
@@ -101,17 +105,20 @@ def cards_table_sql(table_name: str = "cards", if_not_exists: bool = True) -> st
     customer TEXT,
     city TEXT,
     product_type TEXT,
-    quantity_1 TEXT,
-    unit_1 TEXT,
-    quantity_2 TEXT,
-    unit_2 TEXT,
+    ordered_gross_kg TEXT,
+    ordered_rolls TEXT,
+    ordered_meters TEXT,
+    ordered_units TEXT,
     product_form TEXT,
     material TEXT,
     max_roll_weight TEXT,
     size_thickness TEXT,
     notes TEXT,
 
-    extrusion_flag TEXT,
+    printing_sequence TEXT,
+    extrusion_sequence TEXT,
+    rewinding_slitting_sequence TEXT,
+    confection_sequence TEXT,
     extrusion_folding TEXT,
     extrusion_next_operation TEXT,
     extrusion_treatment TEXT,
@@ -322,6 +329,9 @@ def init_db() -> None:
         # Existing pilot databases may still have legacy cards.validation_status;
         # current code ignores it and validates current card fields directly.
         ensure_column(connection, "cards", "max_roll_weight", "TEXT")
+        if not connection.in_transaction:
+            connection.execute("BEGIN")
+        apply_pending_migrations(connection)
         ensure_roll_entry_tare_weight(connection)
         backfill_card_import_sources(connection)
         ensure_column(
@@ -619,8 +629,9 @@ def fetch_cards_by_status(statuses: tuple[str, ...]) -> list[dict[str, Any]]:
         rows = connection.execute(
             f"""
             SELECT id, order_number, delivery_date, status, machine_id, machine_sequence,
-                   customer, product_type, quantity_1, unit_1, quantity_2, unit_2,
-                   product_form, material, size_thickness, max_roll_weight,
+                   customer, product_type, ordered_gross_kg, ordered_rolls,
+                   ordered_meters, ordered_units,
+                   product_form, material, size_thickness,
                    tare_weight, finished_at, version, updated_at,
                    COALESCE((
                        SELECT SUM(CAST(gross_weight AS NUMERIC))
@@ -757,8 +768,8 @@ def fetch_admin_cards(filters: dict[str, str] | None = None, limit: int = 100) -
     with connect() as connection:
         rows = connection.execute(
             f"""
-            SELECT id, order_number, status, customer, product_type,
-                   machine_id, machine_sequence, updated_at
+            SELECT id, order_number, delivery_date, status, customer, product_type,
+                   ordered_gross_kg, machine_id, machine_sequence, updated_at
             FROM cards
             {where_sql}
             ORDER BY updated_at DESC, id DESC
@@ -775,9 +786,11 @@ def fetch_admin_card_detail(card_id: int) -> dict[str, Any] | None:
             """
             SELECT id, order_number, status, import_batch_id, machine_id,
                    machine_sequence, order_date, delivery_date,
-                   customer, city, product_type, quantity_1, unit_1,
-                   quantity_2, unit_2, product_form, material,
-                   max_roll_weight, size_thickness, notes, extrusion_flag, extrusion_folding,
+                   customer, city, product_type, ordered_gross_kg,
+                   ordered_rolls, ordered_meters, ordered_units,
+                   product_form, material, size_thickness,
+                   notes, printing_sequence, extrusion_sequence,
+                   rewinding_slitting_sequence, confection_sequence, extrusion_folding,
                    extrusion_next_operation, extrusion_treatment,
                    raw_material_a, raw_material_b, raw_material_c,
                    linear_pe, antistatic, masterbatch, chalk,
@@ -821,8 +834,9 @@ def fetch_terminal_card_detail(card_id: int) -> dict[str, Any] | None:
             f"""
             SELECT id, order_number, status, machine_id, machine_sequence,
                    order_date, delivery_date, customer, city,
-                   product_type, quantity_1, unit_1, quantity_2, unit_2,
-                   product_form, material, max_roll_weight, size_thickness, notes,
+                   product_type, ordered_gross_kg, ordered_rolls,
+                   ordered_meters, ordered_units,
+                   product_form, material, size_thickness, notes,
                    extrusion_folding, extrusion_next_operation,
                    extrusion_treatment, raw_material_a, raw_material_b,
                    raw_material_c, linear_pe, antistatic, masterbatch, chalk,
@@ -3181,9 +3195,6 @@ def _update_admin_imported_fields(
     from .importer import IMPORT_FIELDS, card_has_usable_extrusion_step
 
     cleaned_fields = {field: str(fields.get(field, "")).strip() for field in IMPORT_FIELDS}
-    submitted_max_roll_weight = (
-        str(fields["max_roll_weight"]).strip() if "max_roll_weight" in fields else None
-    )
     if not cleaned_fields["order_number"]:
         return RuleResult(False, ("Номерът на поръчката е задължителен.",))
 
@@ -3201,7 +3212,7 @@ def _update_admin_imported_fields(
 
     card = connection.execute(
         """
-        SELECT id, order_number, max_roll_weight, version
+        SELECT id, order_number, version
         FROM cards
         WHERE id = ?
         """,
@@ -3225,18 +3236,11 @@ def _update_admin_imported_fields(
 
     assignments = [
         *(f"{field} = ?" for field in IMPORT_FIELDS),
-        "max_roll_weight = ?",
         "version = version + 1",
         "updated_at = CURRENT_TIMESTAMP",
     ]
-    max_roll_weight = (
-        submitted_max_roll_weight
-        if submitted_max_roll_weight is not None
-        else str(card["max_roll_weight"] or "").strip()
-    )
     values: list[Any] = [
         *(cleaned_fields[field] for field in IMPORT_FIELDS),
-        max_roll_weight,
         card_id,
     ]
 
@@ -3615,7 +3619,6 @@ def release_card(
     machine_id: int,
     machine_sequence: int,
     loaded_version: int | None = None,
-    max_roll_weight: str | None = None,
 ) -> RuleResult:
     from .importer import IMPORT_FIELDS, card_has_usable_extrusion_step
 
@@ -3625,7 +3628,7 @@ def release_card(
     with connect() as connection:
         card = connection.execute(
             f"""
-            SELECT id, order_number, status, version, max_roll_weight, {import_columns}
+            SELECT id, order_number, status, version, {import_columns}
             FROM cards
             WHERE id = ?
             """,
@@ -3649,12 +3652,6 @@ def release_card(
         recipe_release_result = validate_structured_recipe_release(card_fields)
         messages.extend(recipe_release_result.messages)
 
-        release_max_roll_weight = (
-            str(max_roll_weight).strip()
-            if max_roll_weight is not None
-            else str(card["max_roll_weight"] or "").strip()
-        )
-
         machine_exists = connection.execute(
             "SELECT 1 FROM machines WHERE id = ?",
             (machine_id,),
@@ -3675,15 +3672,13 @@ def release_card(
                 UPDATE cards
                 SET status = ?,
                     machine_id = ?,
-                    machine_sequence = ?,
-                    max_roll_weight = ?
+                    machine_sequence = ?
                 WHERE id = ?
                 """,
                 (
                     STATUS_PENDING,
                     machine_id,
                     temporary_sequence,
-                    release_max_roll_weight,
                     card_id,
                 ),
             )
@@ -3975,15 +3970,18 @@ def fetch_import_batch_result(batch_id: int | None) -> dict[str, Any] | None:
             connection.execute(
                 """
                 SELECT
-                    row_number,
-                    order_number,
-                    action,
-                    message,
-                    is_duplicate_row,
-                    row_error
+                    import_batch_rows.row_number,
+                    import_batch_rows.order_number,
+                    import_batch_rows.action,
+                    import_batch_rows.message,
+                    import_batch_rows.is_duplicate_row,
+                    import_batch_rows.row_error,
+                    cards.id AS current_card_id
                 FROM import_batch_rows
-                WHERE import_batch_id = ?
-                ORDER BY display_order, id
+                LEFT JOIN cards
+                  ON cards.order_number = import_batch_rows.order_number
+                WHERE import_batch_rows.import_batch_id = ?
+                ORDER BY import_batch_rows.display_order, import_batch_rows.id
                 """,
                 (batch_id,),
             ).fetchall()
@@ -4004,6 +4002,12 @@ def fetch_import_batch_result(batch_id: int | None) -> dict[str, Any] | None:
             "order_number": row["order_number"],
             "action": row["action"],
             "message": row["message"],
+            "card_id": (
+                int(row["current_card_id"])
+                if row["action"] in ("created", "updated")
+                and row["current_card_id"] is not None
+                else None
+            ),
         }
         for row in rows
     ]

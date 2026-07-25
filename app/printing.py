@@ -113,10 +113,22 @@ def assemble_print_data(card: dict[str, Any]) -> dict[str, Any]:
         "customer": text_value(card.get("customer")),
         "city": text_value(card.get("city")),
         "product_type": text_value(card.get("product_type")),
-        "quantity_1": text_value(card.get("quantity_1")),
-        "unit_1": text_value(card.get("unit_1")),
-        "quantity_2": text_value(card.get("quantity_2")),
-        "unit_2": text_value(card.get("unit_2")),
+        "ordered_gross_display": format_ordered_amount(
+            card.get("ordered_gross_kg"),
+            "кг",
+        ),
+        "ordered_rolls_display": format_ordered_amount(
+            card.get("ordered_rolls"),
+            "ролки",
+        ),
+        "ordered_meters_display": format_ordered_amount(
+            card.get("ordered_meters"),
+            "метра",
+        ),
+        "ordered_units_display": format_ordered_amount(
+            card.get("ordered_units"),
+            "бр.",
+        ),
         "product_form": text_value(card.get("product_form")),
         "material": text_value(card.get("material")),
         "size_thickness": text_value(card.get("size_thickness")),
@@ -282,6 +294,13 @@ def format_weight(value: Any) -> str:
         return ""
     rounded = decimal_value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
     return format(rounded, "f")
+
+
+def format_ordered_amount(value: Any, unit: str) -> str:
+    amount = text_value(value)
+    if not amount.strip():
+        return ""
+    return f"{amount} {unit}"
 
 
 def decimal_from_value(value: Any) -> Decimal | None:

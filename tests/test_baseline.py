@@ -22,6 +22,39 @@ from app.importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
 from app.main import health
 
 
+FINAL_SHIFT_MANAGER_FIELDS = (
+    "order_number",
+    "order_date",
+    "delivery_date",
+    "customer",
+    "city",
+    "product_type",
+    "ordered_gross_kg",
+    "ordered_rolls",
+    "ordered_meters",
+    "ordered_units",
+    "product_form",
+    "material",
+    "size_thickness",
+    "notes",
+    "printing_sequence",
+    "extrusion_sequence",
+    "rewinding_slitting_sequence",
+    "confection_sequence",
+    "extrusion_next_operation",
+    "extrusion_folding",
+    "extrusion_treatment",
+    "raw_material_a",
+    "raw_material_b",
+    "raw_material_c",
+    "linear_pe",
+    "antistatic",
+    "masterbatch",
+    "chalk",
+    "packaging_method",
+)
+
+
 def csv_bytes(*rows: dict[str, str]) -> bytes:
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=IMPORT_FIELDS, lineterminator="\n")
@@ -31,16 +64,31 @@ def csv_bytes(*rows: dict[str, str]) -> bytes:
     return output.getvalue().encode("utf-8")
 
 
+def final_shift_manager_csv_bytes(*rows: dict[str, str]) -> bytes:
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=FINAL_SHIFT_MANAGER_FIELDS, lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({field: row.get(field, "") for field in FINAL_SHIFT_MANAGER_FIELDS})
+    return output.getvalue().encode("utf-8")
+
+
 def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
     row = {
         "order_number": order_number,
         "customer": "Test Customer",
         "product_type": "PE film",
-        "quantity_1": "500",
-        "unit_1": "kg",
+        "ordered_gross_kg": "500",
+        "ordered_rolls": "20",
+        "ordered_meters": "15000",
+        "ordered_units": "40000",
         "material": "LDPE",
         "size_thickness": "600/0.050",
-        "extrusion_flag": "da",
+        "printing_sequence": "2",
+        "extrusion_sequence": "1",
+        "rewinding_slitting_sequence": "3",
+        "confection_sequence": "4",
+        "extrusion_next_operation": "Printing",
         "raw_material_a": "LDPE; A | 100%",
         "packaging_method": "rolls",
     }
@@ -83,6 +131,183 @@ def test_csv_template_uses_valid_structured_recipe_sample():
     assert "raw_material_a" in content
     assert "reLDPE; recycled LDPE | 100%" in content
     assert "N/A" not in content
+
+
+def test_csv_template_uses_final_shift_manager_header():
+    header = csv_template().splitlines()[0]
+
+    assert header == ",".join(IMPORT_FIELDS)
+    assert header == ",".join(FINAL_SHIFT_MANAGER_FIELDS)
+    assert "ordered_gross_kg" in header
+    assert "ordered_rolls" in header
+    assert "ordered_meters" in header
+    assert "ordered_units" in header
+    assert "extrusion_sequence" in header
+    assert "quantity_1" not in header
+    assert "unit_1" not in header
+    assert "quantity_2" not in header
+    assert "unit_2" not in header
+    assert "extrusion_flag" not in header
+
+
+def test_import_rejects_old_quantity_and_extrusion_flag_contract():
+    old_header = (
+        "order_number,order_date,delivery_date,customer,city,product_type,"
+        "quantity_1,unit_1,quantity_2,unit_2,product_form,material,"
+        "size_thickness,notes,extrusion_flag,raw_material_a,packaging_method\n"
+    )
+    old_row = (
+        "OLD-1,,,,Old Customer,Film,500,kg,20,rolls,,LDPE,"
+        "600/0.050,,da,LDPE; A | 100%,rolls\n"
+    )
+
+    result = import_cards_from_csv(
+        "old-contract.csv",
+        (old_header + old_row).encode("utf-8"),
+        overwrite_existing=False,
+    )
+
+    assert result.rows_imported == 0
+    assert result.row_results[0].action == "blocked"
+    assert "ordered_gross_kg" in result.row_results[0].message
+    assert "extrusion_sequence" in result.row_results[0].message
+
+
+def test_import_rejects_final_columns_in_wrong_order():
+    fieldnames = list(IMPORT_FIELDS)
+    gross_index = fieldnames.index("ordered_gross_kg")
+    rolls_index = fieldnames.index("ordered_rolls")
+    fieldnames[gross_index], fieldnames[rolls_index] = (
+        fieldnames[rolls_index],
+        fieldnames[gross_index],
+    )
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames, lineterminator="\n")
+    writer.writeheader()
+    writer.writerow(extrusion_row("WRONG-ORDER-1"))
+
+    result = import_cards_from_csv(
+        "wrong-order.csv",
+        output.getvalue().encode("utf-8"),
+        overwrite_existing=False,
+    )
+
+    assert result.rows_imported == 0
+    assert result.row_results[0].action == "blocked"
+    assert "очаквания ред" in result.row_results[0].message
+
+
+def test_import_rejects_case_or_spacing_header_variants():
+    fieldnames = list(IMPORT_FIELDS)
+    fieldnames[0] = "Order Number"
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames, lineterminator="\n")
+    writer.writeheader()
+    row = extrusion_row("HEADER-VARIANT-1")
+    row["Order Number"] = row.pop("order_number")
+    writer.writerow(row)
+
+    result = import_cards_from_csv(
+        "header-variant.csv",
+        output.getvalue().encode("utf-8"),
+        overwrite_existing=False,
+    )
+
+    assert result.rows_imported == 0
+    assert result.row_results[0].action == "blocked"
+    assert "order_number" in result.row_results[0].message
+    assert "Order Number" in result.row_results[0].message
+
+
+def test_import_persists_structured_ordered_amounts_and_route_sequences(temp_db_path):
+    result = import_cards_from_csv(
+        "final-contract.csv",
+        final_shift_manager_csv_bytes(
+            extrusion_row(
+                "NEW-STRUCT-1",
+                ordered_gross_kg="750.5",
+                ordered_rolls="33",
+                ordered_meters="18000",
+                ordered_units="42000",
+                printing_sequence="",
+                extrusion_sequence="1",
+                rewinding_slitting_sequence="2",
+                confection_sequence="3",
+            )
+        ),
+        overwrite_existing=False,
+    )
+
+    assert result.rows_imported == 1
+    with db.connect() as connection:
+        row = connection.execute(
+            """
+            SELECT ordered_gross_kg, ordered_rolls, ordered_meters, ordered_units,
+                   printing_sequence, extrusion_sequence,
+                   rewinding_slitting_sequence, confection_sequence
+            FROM cards
+            WHERE order_number = ?
+            """,
+            ("NEW-STRUCT-1",),
+        ).fetchone()
+
+    assert dict(row) == {
+        "ordered_gross_kg": "750.5",
+        "ordered_rolls": "33",
+        "ordered_meters": "18000",
+        "ordered_units": "42000",
+        "printing_sequence": "",
+        "extrusion_sequence": "1",
+        "rewinding_slitting_sequence": "2",
+        "confection_sequence": "3",
+    }
+
+
+def test_import_accepts_extrusion_sequence_one_with_blank_extrusion_details(
+    connection,
+):
+    row = extrusion_row("EXTRUSION-SEQUENCE-ONLY")
+    for field in (
+        "extrusion_folding",
+        "extrusion_next_operation",
+        "extrusion_treatment",
+        "raw_material_a",
+        "raw_material_b",
+        "raw_material_c",
+        "linear_pe",
+        "antistatic",
+        "masterbatch",
+        "chalk",
+        "packaging_method",
+    ):
+        row[field] = ""
+
+    result = import_cards_from_csv(
+        "sequence-only.csv",
+        csv_bytes(row),
+        overwrite_existing=False,
+    )
+    card = connection.execute(
+        "SELECT extrusion_sequence FROM cards WHERE order_number = ?",
+        ("EXTRUSION-SEQUENCE-ONLY",),
+    ).fetchone()
+
+    assert result.rows_imported == 1
+    assert result.skipped == 0
+    assert card["extrusion_sequence"] == "1"
+
+
+def test_import_skips_rows_where_extrusion_sequence_is_not_first(temp_db_path):
+    result = import_cards_from_csv(
+        "not-first.csv",
+        final_shift_manager_csv_bytes(extrusion_row("NOT-FIRST-1", extrusion_sequence="2")),
+        overwrite_existing=False,
+    )
+
+    assert result.rows_imported == 0
+    assert result.skipped == 1
+    assert result.row_results[0].action == "skipped"
+    assert "няма екструдиране" in result.row_results[0].message
 
 
 def test_database_initialization_seeds_machines_1_through_4(temp_db_path):
@@ -697,53 +922,31 @@ def test_database_initialization_seeds_machines_before_status_check_fk_validatio
     assert violations == []
 
 
-def test_csv_import_ignores_max_roll_weight_alias(connection):
+def test_csv_import_rejects_extra_out_of_contract_columns(connection):
     output = io.StringIO()
     writer = csv.DictWriter(
         output,
-        fieldnames=[
-            "order_number",
-            "customer",
-            "product_type",
-            "quantity_1",
-            "unit_1",
-            "material",
-            "max_roll_weight_kg",
-            "size_thickness",
-            "extrusion_flag",
-            "raw_material_a",
-            "packaging_method",
-        ],
+        fieldnames=[*IMPORT_FIELDS, "micro_perforation"],
         lineterminator="\n",
     )
     writer.writeheader()
-    writer.writerow(
-        {
-            "order_number": "25290",
-            "customer": "Alias Customer",
-            "product_type": "PE film",
-            "quantity_1": "500",
-            "unit_1": "kg",
-            "material": "LDPE",
-            "max_roll_weight_kg": "75",
-            "size_thickness": "600/0.050",
-            "extrusion_flag": "da",
-            "raw_material_a": "LDPE; A | 100%",
-            "packaging_method": "rolls",
-        }
-    )
+    row = extrusion_row("25290")
+    row["micro_perforation"] = "yes"
+    writer.writerow(row)
 
     result = import_cards_from_csv(
-        "alias.csv",
+        "extra-column.csv",
         output.getvalue().encode("utf-8"),
         overwrite_existing=False,
     )
     card = connection.execute(
-        "SELECT max_roll_weight FROM cards WHERE order_number = '25290'"
+        "SELECT id FROM cards WHERE order_number = '25290'"
     ).fetchone()
 
-    assert result.rows_imported == 1
-    assert card["max_roll_weight"] is None
+    assert result.rows_imported == 0
+    assert result.row_results[0].action == "blocked"
+    assert "micro_perforation" in result.row_results[0].message
+    assert card is None
 
 
 def test_csv_import_skips_rows_without_extrusion_step(connection):
@@ -752,7 +955,7 @@ def test_csv_import_skips_rows_without_extrusion_step(connection):
         csv_bytes(
             extrusion_row(
                 "25279",
-                extrusion_flag="",
+                extrusion_sequence="",
                 raw_material_a="",
                 packaging_method="",
             )
@@ -943,7 +1146,6 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
         card_id,
         machine_id=2,
         machine_sequence=1,
-        max_roll_weight="60.0",
     )
 
     connection.execute(
@@ -1013,7 +1215,7 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
     assert card["machine_id"] == 2
     assert card["machine_sequence"] == 1
     assert card["customer"] == "Updated Customer"
-    assert card["max_roll_weight"] == "60.0"
+    assert card["max_roll_weight"] is None
     assert card["raw_material_a"] == "LDPE; Updated | 100%"
     assert card["tare_weight"] == 1.25
     assert card["actual_raw_material_used"] == "Actual LDPE"
@@ -1030,7 +1232,6 @@ def test_overwrite_import_blocks_invalid_recipe_for_released_card(connection):
         card_id,
         machine_id=2,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
     before = db.fetch_admin_card_detail(card_id)
 
@@ -1231,7 +1432,7 @@ def test_import_batch_result_reconstructs_processed_rows_after_redirect(connecti
             extrusion_row("25296"),
             extrusion_row(
                 "32999",
-                extrusion_flag="не",
+                extrusion_sequence="2",
                 raw_material_a="",
                 packaging_method="",
             ),
@@ -1300,7 +1501,7 @@ def test_import_batch_result_preserves_duplicate_and_error_summaries(connection)
             extrusion_row("25311"),
             extrusion_row(
                 "33010",
-                extrusion_flag="не",
+                extrusion_sequence="2",
                 raw_material_a="",
                 packaging_method="",
             ),
@@ -1334,7 +1535,6 @@ def test_release_succeeds_for_ready_cards(connection):
         card_id,
         machine_id=1,
         machine_sequence=1,
-        max_roll_weight="60.0",
     )
 
     card = connection.execute(
@@ -1346,11 +1546,16 @@ def test_release_succeeds_for_ready_cards(connection):
     assert card["status"] == STATUS_PENDING
     assert card["machine_id"] == 1
     assert card["machine_sequence"] == 1
-    assert card["max_roll_weight"] == "60.0"
+    assert card["max_roll_weight"] is None
 
 
-def test_release_allows_blank_shift_manager_max_roll_weight(connection):
+def test_release_preserves_inert_legacy_max_roll_weight(connection):
     card_id = import_one_ready_card("25291")
+    connection.execute(
+        "UPDATE cards SET max_roll_weight = ? WHERE id = ?",
+        ("60", card_id),
+    )
+    connection.commit()
 
     result = db.release_card(card_id, machine_id=1, machine_sequence=1)
     card = connection.execute(
@@ -1362,7 +1567,7 @@ def test_release_allows_blank_shift_manager_max_roll_weight(connection):
     assert card["status"] == STATUS_PENDING
     assert card["machine_id"] == 1
     assert card["machine_sequence"] == 1
-    assert card["max_roll_weight"] in (None, "")
+    assert card["max_roll_weight"] == "60"
 
 
 def test_release_blocks_cards_without_usable_extrusion_fields(connection):
@@ -1407,14 +1612,12 @@ def test_release_inserts_at_existing_position_and_normalizes_machine_sequence(co
         first_card_id,
         machine_id=3,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
 
     insert_result = db.release_card(
         second_card_id,
         machine_id=3,
         machine_sequence=1,
-        max_roll_weight="60.0",
     )
 
     cards = connection.execute(
@@ -1441,13 +1644,11 @@ def test_released_cards_appear_in_machine_queues(connection):
         first_card_id,
         machine_id=4,
         machine_sequence=2,
-        max_roll_weight="60.0",
     ).ok
     assert db.release_card(
         second_card_id,
         machine_id=4,
         machine_sequence=1,
-        max_roll_weight="60.0",
     ).ok
 
     queues = db.fetch_machine_queues()

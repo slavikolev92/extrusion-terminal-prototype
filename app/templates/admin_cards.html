@@ -49,6 +49,8 @@
         <thead>
           <tr>
             <th>Поръчка</th>
+            <th>Доставка</th>
+            <th>Поръчано бруто, кг</th>
             <th>Статус</th>
             <th>Клиент</th>
             <th>Изделие</th>
@@ -61,6 +63,8 @@
           {% for card in cards %}
             <tr>
               <td>{{ card.order_number }}</td>
+              <td>{{ card.delivery_date or "-" }}</td>
+              <td>{% if card.ordered_gross_kg %}{{ card.ordered_gross_kg }}{% else %}-{% endif %}</td>
               <td><span class="pill status-{{ card.status }}">{{ status_labels.get(card.status, card.status) }}</span></td>
               <td>{{ card.customer or "-" }}</td>
               <td>{{ card.product_type or "-" }}</td>

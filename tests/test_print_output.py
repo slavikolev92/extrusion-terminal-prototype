@@ -49,15 +49,18 @@ def extrusion_row(order_number: str, **overrides: str) -> dict[str, str]:
         "customer": "Print Customer",
         "city": "Sofia",
         "product_type": "PE film",
-        "quantity_1": "500.555",
-        "unit_1": "kg",
-        "quantity_2": "12 rolls",
-        "unit_2": "",
+        "ordered_gross_kg": "500",
+        "ordered_rolls": "20",
+        "ordered_meters": "15000",
+        "ordered_units": "40000",
         "product_form": "sleeve",
         "material": "LDPE",
         "size_thickness": "600/0.050",
         "notes": "Print notes",
-        "extrusion_flag": "da",
+        "printing_sequence": "2",
+        "extrusion_sequence": "1",
+        "rewinding_slitting_sequence": "3",
+        "confection_sequence": "4",
         "extrusion_folding": "C",
         "extrusion_next_operation": "cutting",
         "extrusion_treatment": "corona",
@@ -211,8 +214,21 @@ def test_completed_card_with_required_production_data_is_printable(connection):
     assert result.messages == []
     assert result.data is not None
     assert result.data["front"]["order_number"] == "27000"
-    assert result.data["front"]["quantity_1"] == "500.555"
-    assert result.data["front"]["quantity_2"] == "12 rolls"
+    assert result.data["front"]["ordered_gross_display"] == "500 кг"
+    assert result.data["front"]["ordered_rolls_display"] == "20 ролки"
+    assert result.data["front"]["ordered_meters_display"] == "15000 метра"
+    assert result.data["front"]["ordered_units_display"] == "40000 бр."
+    assert "quantity_1" not in result.data["front"]
+    assert "unit_1" not in result.data["front"]
+    assert "quantity_2" not in result.data["front"]
+    assert "unit_2" not in result.data["front"]
+    for route_field in (
+        "printing_sequence",
+        "extrusion_sequence",
+        "rewinding_slitting_sequence",
+        "confection_sequence",
+    ):
+        assert route_field not in result.data["front"]
     assert result.data["back"]["start_display"] == "18.06.2026 08:05"
     assert result.data["back"]["stop_display"] == "18.06.2026 10:45"
     assert result.data["back"]["duration_display"] == "2 ч 25 мин"
@@ -585,15 +601,38 @@ def test_print_route_front_page_preserves_fixed_header_and_quantity_cells(
         "customer": "Print Customer",
         "city": "Sofia",
         "product-type": "PE film",
-        "quantity-1": "500.555",
-        "unit-1": "kg",
-        "quantity-2": "12 rolls",
-        "unit-2": "",
-        "quantity-empty": "",
+        "ordered-gross": "500 кг",
+        "ordered-rolls": "20 ролки",
+        "ordered-meters": "15000 метра",
+        "ordered-units": "40000 бр.",
     }
     for cell_name, expected_value in expected_cells.items():
         cell = data_block(response.text, "data-front-template-cell", cell_name)
         assert rendered_text(cell) == expected_value
+
+
+def test_print_route_front_page_leaves_blank_ordered_amount_cells_blank(connection):
+    card_id = make_completed_printable_card(
+        "27064",
+        ordered_rolls="",
+        ordered_units="",
+    )
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    assert rendered_text(
+        data_block(response.text, "data-front-template-cell", "ordered-gross")
+    ) == "500 кг"
+    assert rendered_text(
+        data_block(response.text, "data-front-template-cell", "ordered-rolls")
+    ) == ""
+    assert rendered_text(
+        data_block(response.text, "data-front-template-cell", "ordered-meters")
+    ) == "15000 метра"
+    assert rendered_text(
+        data_block(response.text, "data-front-template-cell", "ordered-units")
+    ) == ""
 
 
 def test_print_route_front_page_preserves_requested_product_grid_cells(connection):
