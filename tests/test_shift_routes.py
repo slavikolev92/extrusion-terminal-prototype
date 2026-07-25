@@ -1,0 +1,384 @@
+from __future__ import annotations
+
+import asyncio
+import csv
+import io
+from urllib.parse import urlencode
+
+from app import db
+from app.importer import IMPORT_FIELDS, import_cards_from_csv
+from app.main import app, terminal_context
+
+
+def csv_bytes(*rows: dict[str, str]) -> bytes:
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=IMPORT_FIELDS, lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({field: row.get(field, "") for field in IMPORT_FIELDS})
+    return output.getvalue().encode("utf-8")
+
+
+def extrusion_row(order_number: str) -> dict[str, str]:
+    return {
+        "order_number": order_number,
+        "customer": "Shift Route Customer",
+        "product_type": "PE film",
+        "ordered_gross_kg": "500",
+        "material": "LDPE",
+        "size_thickness": "600/0.050",
+        "extrusion_sequence": "1",
+        "raw_material_a": "LDPE; A | 100%",
+        "packaging_method": "rolls",
+    }
+
+
+def release_ready_card(order_number: str) -> int:
+    imported = import_cards_from_csv(
+        f"{order_number}.csv",
+        csv_bytes(extrusion_row(order_number)),
+        overwrite_existing=False,
+    )
+    assert imported.rows_imported == 1
+    with db.connect() as connection:
+        card_id = int(
+            connection.execute(
+                "SELECT id FROM cards WHERE order_number = ?",
+                (order_number,),
+            ).fetchone()["id"]
+        )
+    version = int(db.fetch_admin_card_detail(card_id)["version"])
+    assert db.release_card(card_id, 1, 1, version).ok
+    return card_id
+
+
+async def post_form(path: str, data: dict[str, str]) -> tuple[int, dict[str, str], str]:
+    body = urlencode(data).encode("utf-8")
+    messages: list[dict[str, object]] = []
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(message: dict[str, object]) -> None:
+        messages.append(message)
+
+    await app(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": path,
+            "headers": [
+                (b"content-type", b"application/x-www-form-urlencoded"),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 50000),
+            "app": app,
+        },
+        receive,
+        send,
+    )
+    response_start = next(
+        message for message in messages if message["type"] == "http.response.start"
+    )
+    headers = {
+        key.decode("latin-1").lower(): value.decode("latin-1")
+        for key, value in response_start["headers"]
+    }
+    response_body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    ).decode("utf-8")
+    return int(response_start["status"]), headers, response_body
+
+
+def terminal_shift_routes() -> dict[str, object]:
+    return {
+        route.path: route
+        for route in app.routes
+        if route.path.startswith("/terminal/shifts")
+    }
+
+
+def test_terminal_shift_routes_are_registered(connection):
+    routes = terminal_shift_routes()
+
+    assert set(routes) == {
+        "/terminal/shifts/start",
+        "/terminal/shifts/current/number",
+        "/terminal/shifts/current/end",
+    }
+    assert routes["/terminal/shifts/start"].endpoint.__name__ == "start_terminal_shift"
+    assert (
+        routes["/terminal/shifts/current/number"].endpoint.__name__
+        == "change_terminal_shift_number"
+    )
+    assert routes["/terminal/shifts/current/end"].endpoint.__name__ == "end_terminal_shift"
+    assert all(route.methods == {"POST"} for route in routes.values())
+
+
+def test_no_active_shift_context_is_blocking_gate(connection):
+    context = terminal_context()
+
+    assert context["shift_configuration"] == {"shift_count": 4, "version": 1}
+    assert context["active_shift"] is None
+    assert context["shift_options"] == [1, 2, 3, 4]
+    assert context["suggested_shift_number"] == 1
+    assert context["completed_shifts"] == []
+    assert context["selected_shift_summary"] is None
+    assert context["shift_window_state"] == "gate"
+    assert context["shift_blocking"] is True
+
+
+def test_start_uses_configured_choice_and_explicit_confirmation(connection):
+    configuration = db.fetch_terminal_configuration()
+    assert db.update_shift_count(int(configuration["version"]), "3").ok
+    context_before_confirmation = terminal_context()
+
+    assert context_before_confirmation["active_shift"] is None
+    assert context_before_confirmation["shift_options"] == [1, 2, 3]
+
+    status, headers, _ = asyncio.run(
+        post_form(
+            "/terminal/shifts/start",
+            {
+                "shift_number": "3",
+                "configuration_version": str(
+                    context_before_confirmation["shift_configuration"]["version"]
+                ),
+                "selected_card_id": "not-a-card-id",
+            },
+        )
+    )
+
+    assert status == 303
+    assert headers["location"] == "/terminal"
+    active_shift = db.fetch_active_shift()
+    assert active_shift is not None
+    assert active_shift["shift_number"] == 3
+
+
+def test_number_change_updates_same_occurrence_and_preserves_selected_card(connection):
+    card_id = release_ready_card("SR-002")
+    configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("4", int(configuration["version"])).ok
+    active_before = db.fetch_active_shift()
+    assert active_before is not None
+    assert db.update_shift_count(int(configuration["version"]), "3").ok
+
+    reduced_context = terminal_context(selected_card_id=card_id, shift_view="overview")
+    assert reduced_context["shift_options"] == [1, 2, 3, 4]
+    card_before = db.fetch_terminal_card_detail(card_id)
+
+    status, headers, _ = asyncio.run(
+        post_form(
+            "/terminal/shifts/current/number",
+            {
+                "shift_occurrence_id": str(active_before["id"]),
+                "loaded_version": str(active_before["version"]),
+                "shift_number": "2",
+                "selected_card_id": str(card_id),
+            },
+        )
+    )
+
+    active_after = db.fetch_active_shift()
+    card_after = db.fetch_terminal_card_detail(card_id)
+    assert status == 303
+    assert headers["location"] == (
+        f"/terminal/cards/{card_id}?shift_view=overview&notice=shift_changed"
+    )
+    assert active_after is not None
+    assert active_after["id"] == active_before["id"]
+    assert active_after["shift_number"] == 2
+    assert active_after["version"] == int(active_before["version"]) + 1
+    assert card_after["status"] == card_before["status"]
+    assert card_after["version"] == card_before["version"]
+
+
+def test_end_redirects_to_just_completed_blocking_summary(connection):
+    card_id = release_ready_card("SR-003")
+    configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("1", int(configuration["version"])).ok
+    active_shift = db.fetch_active_shift()
+    assert active_shift is not None
+    card_before = db.fetch_terminal_card_detail(card_id)
+
+    status, headers, _ = asyncio.run(
+        post_form(
+            "/terminal/shifts/current/end",
+            {
+                "shift_occurrence_id": str(active_shift["id"]),
+                "loaded_version": str(active_shift["version"]),
+                "selected_card_id": str(card_id),
+            },
+        )
+    )
+
+    assert status == 303
+    assert headers["location"] == (
+        f"/terminal/cards/{card_id}?shift_view=summary"
+        f"&shift_id={active_shift['id']}&handoff=1"
+    )
+    assert db.fetch_active_shift() is None
+    ended = db.fetch_shift_summary(int(active_shift["id"]))
+    assert ended is not None
+    assert ended["ended_at"] is not None
+    summary_context = terminal_context(
+        selected_card_id=card_id,
+        shift_view="summary",
+        shift_id=str(active_shift["id"]),
+        handoff="1",
+    )
+    assert summary_context["selected_shift_summary"]["id"] == active_shift["id"]
+    assert summary_context["shift_window_state"] == "summary"
+    assert summary_context["shift_blocking"] is True
+    card_after = db.fetch_terminal_card_detail(card_id)
+    assert card_after["status"] == card_before["status"]
+    assert card_after["version"] == card_before["version"]
+    assert card_after["timing_segments"] == card_before["timing_segments"]
+    assert card_after["roll_entries"] == card_before["roll_entries"]
+
+
+def test_summary_acknowledgment_returns_to_no_active_gate(connection):
+    configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("1", int(configuration["version"])).ok
+    active_shift = db.fetch_active_shift()
+    assert active_shift is not None
+    assert db.end_shift(int(active_shift["id"]), int(active_shift["version"])).ok
+
+    handoff = terminal_context(
+        shift_view="summary",
+        shift_id=str(active_shift["id"]),
+        handoff="1",
+    )
+    acknowledged = terminal_context()
+    summary_without_handoff = terminal_context(
+        shift_view="summary",
+        shift_id=str(active_shift["id"]),
+    )
+
+    assert handoff["shift_window_state"] == "summary"
+    assert handoff["shift_blocking"] is True
+    assert acknowledged["shift_window_state"] == "gate"
+    assert acknowledged["shift_blocking"] is True
+    assert summary_without_handoff["shift_window_state"] == "gate"
+    assert summary_without_handoff["shift_blocking"] is True
+
+
+def test_history_summary_and_back_use_the_same_window_state(connection):
+    configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("1", int(configuration["version"])).ok
+    completed = db.fetch_active_shift()
+    assert completed is not None
+    assert db.end_shift(int(completed["id"]), int(completed["version"])).ok
+    current_configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("2", int(current_configuration["version"])).ok
+
+    overview = terminal_context(shift_view="overview")
+    summary = terminal_context(shift_view="summary", shift_id=str(completed["id"]))
+    back = terminal_context(shift_view="overview")
+    closed = terminal_context()
+    normalized_invalid_request = terminal_context(
+        shift_view="not-a-window",
+        shift_id="not-a-shift-id",
+        handoff="1",
+    )
+
+    assert overview["shift_window_state"] == "overview"
+    assert overview["shift_blocking"] is False
+    assert summary["shift_window_state"] == "summary"
+    assert summary["shift_blocking"] is False
+    assert summary["selected_shift_summary"]["id"] == completed["id"]
+    assert back["shift_window_state"] == "overview"
+    assert back["active_shift"]["id"] == overview["active_shift"]["id"]
+    assert back["completed_shifts"] == overview["completed_shifts"]
+    assert closed["shift_window_state"] == "closed"
+    assert closed["shift_blocking"] is False
+    assert normalized_invalid_request["shift_window_state"] == "closed"
+    assert normalized_invalid_request["selected_shift_summary"] is None
+
+
+def test_terminal_normal_posts_are_blocked_without_active_shift(connection):
+    card_id = release_ready_card("SR-004")
+    version = int(db.fetch_terminal_card_detail(card_id)["version"])
+    mutations = [
+        (f"/terminal/cards/{card_id}/materials", {"loaded_version": str(version)}),
+        (
+            f"/terminal/cards/{card_id}/tare",
+            {"loaded_version": str(version), "tare_weight": "1.25"},
+        ),
+        (
+            f"/terminal/cards/{card_id}/rolls",
+            {"loaded_version": str(version), "gross_weight": "50"},
+        ),
+        (
+            f"/terminal/cards/{card_id}/rolls/corrections",
+            {"loaded_version": str(version)},
+        ),
+        (
+            f"/terminal/cards/{card_id}/rolls/999",
+            {"loaded_version": str(version), "gross_weight": "50"},
+        ),
+        (
+            f"/terminal/cards/{card_id}/rolls/999/delete",
+            {"loaded_version": str(version), "confirm_roll_number": "1"},
+        ),
+        (
+            f"/terminal/cards/{card_id}/rolls/actions/delete-selected",
+            {
+                "loaded_version": str(version),
+                "roll_id": "999",
+                "confirm_roll_number": "1",
+            },
+        ),
+        (f"/terminal/cards/{card_id}/timing/start", {"loaded_version": str(version)}),
+        (f"/terminal/cards/{card_id}/timing/pause", {"loaded_version": str(version)}),
+        (f"/terminal/cards/{card_id}/timing/resume", {"loaded_version": str(version)}),
+        (f"/terminal/cards/{card_id}/finish", {"loaded_version": str(version)}),
+    ]
+    before = db.fetch_terminal_card_detail(card_id)
+
+    responses = [asyncio.run(post_form(path, data)) for path, data in mutations]
+
+    assert all(status == 200 for status, _, _ in responses)
+    responses_missing_gate_message = [
+        path
+        for (path, _), (_, _, body) in zip(mutations, responses, strict=True)
+        if db.NO_ACTIVE_SHIFT_MESSAGE not in body
+    ]
+    assert responses_missing_gate_message == []
+    after = db.fetch_terminal_card_detail(card_id)
+    assert after["status"] == before["status"]
+    assert after["version"] == before["version"]
+    assert after["tare_weight"] == before["tare_weight"]
+    assert after["timing_segments"] == before["timing_segments"]
+    assert after["roll_entries"] == before["roll_entries"]
+
+
+def test_shift_routes_do_not_expose_time_edit_cancel_admin_review_or_report_actions(
+    connection,
+):
+    routes = terminal_shift_routes()
+    forbidden_action_words = (
+        "time",
+        "edit",
+        "cancel",
+        "admin",
+        "review",
+        "report",
+    )
+
+    assert set(routes) == {
+        "/terminal/shifts/start",
+        "/terminal/shifts/current/number",
+        "/terminal/shifts/current/end",
+    }
+    assert all(
+        forbidden not in route_path
+        for route_path in routes
+        for forbidden in forbidden_action_words
+    )

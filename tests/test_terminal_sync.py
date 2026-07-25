@@ -171,3 +171,50 @@ def test_terminal_snapshot_marks_unreleased_selected_card_missing(connection):
     assert after["selected_card_missing"] is True
     assert card_id not in {card["id"] for card in after["active_cards"]}
     assert f"missing:{card_id}" in after["signature"]
+
+
+def test_terminal_snapshot_shift_signature_changes_on_start_change_end_and_count_update(
+    connection,
+):
+    initial = db.terminal_snapshot()
+    initial_configuration = db.fetch_terminal_configuration()
+
+    assert db.update_shift_count(int(initial_configuration["version"]), "3").ok
+    after_count_update = db.terminal_snapshot()
+    updated_configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("2", int(updated_configuration["version"])).ok
+    after_start = db.terminal_snapshot()
+    active_shift = db.fetch_active_shift()
+    assert active_shift is not None
+    assert db.update_active_shift_number(
+        int(active_shift["id"]),
+        int(active_shift["version"]),
+        "3",
+    ).ok
+    after_change = db.terminal_snapshot()
+    changed_shift = db.fetch_active_shift()
+    assert changed_shift is not None
+    assert db.end_shift(int(changed_shift["id"]), int(changed_shift["version"])).ok
+    after_end = db.terminal_snapshot()
+
+    snapshots = [initial, after_count_update, after_start, after_change, after_end]
+    for before, after in zip(snapshots, snapshots[1:]):
+        assert before["shift_signature"] != after["shift_signature"]
+        assert before["signature"] != after["signature"]
+
+
+def test_terminal_snapshot_exposes_only_current_shift_state_needed_for_reload(connection):
+    configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("2", int(configuration["version"])).ok
+    active_shift = db.fetch_active_shift()
+    assert active_shift is not None
+    snapshot = db.terminal_snapshot()
+
+    assert snapshot["shift_signature"] == (
+        f"configuration:{configuration['version']}:{configuration['shift_count']}"
+        f"||active:{active_shift['id']}:{active_shift['shift_number']}:"
+        f"{active_shift['version']}:{active_shift['started_at']}"
+    )
+    assert "completed_shifts" not in snapshot
+    assert "selected_shift_summary" not in snapshot
+    assert "shift_history" not in snapshot

@@ -967,6 +967,13 @@ def terminal_snapshot(selected_card_id: int | None = None) -> dict[str, Any]:
     visible_placeholders = ", ".join("?" for _ in TERMINAL_VISIBLE_STATUSES)
 
     with connect() as connection:
+        connection.execute("BEGIN")
+        configuration = connection.execute(
+            "SELECT shift_count, version FROM terminal_configuration WHERE id = 1"
+        ).fetchone()
+        if configuration is None:
+            raise RuntimeError("terminal configuration is not initialized")
+        active_shift = fetch_active_shift_row(connection)
         active_rows = connection.execute(
             f"""
             SELECT id, order_number, status, machine_id, machine_sequence,
@@ -1029,9 +1036,21 @@ def terminal_snapshot(selected_card_id: int | None = None) -> dict[str, Any]:
     elif selected_card_missing:
         selected_signature = f"missing:{selected_card_id}"
 
+    shift_signature = (
+        f"configuration:{configuration['version']}:{configuration['shift_count']}"
+        "||active:none"
+    )
+    if active_shift is not None:
+        shift_signature = (
+            f"configuration:{configuration['version']}:{configuration['shift_count']}"
+            f"||active:{active_shift['id']}:{active_shift['shift_number']}:"
+            f"{active_shift['version']}:{active_shift['started_at']}"
+        )
+
     return {
         "active_signature": active_signature,
-        "signature": f"{active_signature}||{selected_signature}",
+        "shift_signature": shift_signature,
+        "signature": f"{active_signature}||{selected_signature}||{shift_signature}",
         "selected_card": selected_card,
         "selected_card_missing": selected_card_missing,
         "active_cards": active_cards,

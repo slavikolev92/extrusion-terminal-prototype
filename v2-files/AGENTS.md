@@ -271,6 +271,7 @@ rehearsal.
 | 2026-07-25 | Shift management M002 schema foundation | Schema-only | Added configuration, occurrences, nullable roll FK, and indexes; no existing values changed and legacy rolls remain `NULL`; M001 production profile and release-candidate rehearsal remain deployment gates |
 | 2026-07-25 | New-roll shift occurrence attribution and correction preservation | No migration | M002 already provides the nullable roll FK; only new roll writes resolve attribution, while historical `NULL` values and existing linked rolls remain unchanged |
 | 2026-07-25 | Admin terminal-configuration page | No migration | Routes, templates, navigation, and CSS now expose the existing M002 singleton configuration row; no schema, stored values, or data meaning changed |
+| 2026-07-25 | Terminal shift routes, state gate, and polling signature | No migration | Routes and read context use the existing M002 configuration/occurrence data; the mutation gate and polling signature change runtime behavior only, with no schema or stored-value transformation |
 
 Append one row after every use of the trigger command, including when no
 migration is required.

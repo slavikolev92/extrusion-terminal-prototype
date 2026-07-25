@@ -23,6 +23,7 @@ from .constants import (
     TIMING_REASON_LABELS,
 )
 from .db import (
+    NO_ACTIVE_SHIFT_MESSAGE,
     STALE_CARD_MESSAGE,
     STALE_CONFIGURATION_MESSAGE,
     add_timing_segment,
@@ -34,6 +35,8 @@ from .db import (
     delete_timing_segment,
     delete_roll_entry,
     delete_admin_imported_card,
+    end_shift,
+    fetch_active_shift,
     fetch_cards_by_status,
     fetch_admin_card_detail,
     fetch_admin_cards,
@@ -43,12 +46,15 @@ from .db import (
     fetch_machine_queues,
     fetch_machines,
     fetch_recent_import_batches,
+    fetch_shift_summary,
+    fetch_shift_window_state,
     finish_card,
     init_db,
     pause_production_timing,
     release_card,
     resume_production_timing,
     restore_cancelled_card,
+    start_shift,
     start_production_timing,
     terminal_snapshot as fetch_terminal_snapshot,
     update_timing_segment,
@@ -63,6 +69,7 @@ from .db import (
     update_terminal_recipe_actual_entries,
     update_terminal_roll_corrections,
     update_shift_count,
+    update_active_shift_number,
     unrelease_pending_card,
 )
 from .deployment import deployment_metadata
@@ -100,6 +107,7 @@ TERMINAL_NOTICE_MESSAGES = {
     "timing_paused": ("Времето е паузирано.",),
     "timing_resumed": ("Времето е продължено.",),
     "card_finished": ("Картата е приключена.",),
+    "shift_changed": ("Номерът на смяната е коригиран.",),
 }
 
 ADMIN_SETTINGS_NOTICE_MESSAGES = {
@@ -1547,11 +1555,17 @@ async def terminal(
     request: Request,
     machine_id: int | None = None,
     notice: str | None = None,
+    shift_view: str | None = None,
+    shift_id: str | None = None,
+    handoff: str | None = None,
 ):
     return terminal_response(
         request,
         selected_machine_id=machine_id,
         terminal_notice=notice,
+        shift_view=shift_view,
+        shift_id=shift_id,
+        handoff=handoff,
     )
 
 
@@ -1565,11 +1579,127 @@ async def terminal_card(
     request: Request,
     card_id: int,
     notice: str | None = None,
+    shift_view: str | None = None,
+    shift_id: str | None = None,
+    handoff: str | None = None,
 ):
     return terminal_response(
         request,
         selected_card_id=card_id,
         terminal_notice=notice,
+        shift_view=shift_view,
+        shift_id=shift_id,
+        handoff=handoff,
+    )
+
+
+@app.post("/terminal/shifts/start")
+async def start_terminal_shift(
+    request: Request,
+    shift_number: str = Form(...),
+    configuration_version: str = Form(...),
+    selected_card_id: str | None = Form(None),
+):
+    parsed_version, shift_result = parse_shift_form_integer(
+        configuration_version,
+        "Версията на настройките е невалидна. Презаредете терминала.",
+    )
+    if parsed_version is not None:
+        shift_result = start_shift(shift_number, parsed_version)
+
+    validated_card_id = validated_terminal_selected_card_id(selected_card_id)
+    if shift_result.ok:
+        return RedirectResponse(
+            url=terminal_shift_redirect_url(validated_card_id),
+            status_code=303,
+        )
+    return terminal_response(
+        request,
+        selected_card_id=validated_card_id,
+        shift_result=shift_result,
+        shift_view="overview" if fetch_active_shift() is not None else None,
+    )
+
+
+@app.post("/terminal/shifts/current/number")
+async def change_terminal_shift_number(
+    request: Request,
+    shift_occurrence_id: str = Form(...),
+    loaded_version: str = Form(...),
+    shift_number: str = Form(...),
+    selected_card_id: str | None = Form(None),
+):
+    parsed_occurrence_id, shift_result = parse_shift_form_integer(
+        shift_occurrence_id,
+        "Активната смяна е невалидна. Презаредете терминала.",
+    )
+    parsed_version, version_result = parse_shift_form_integer(
+        loaded_version,
+        "Версията на смяната е невалидна. Презаредете терминала.",
+    )
+    if not version_result.ok:
+        shift_result = version_result
+    if parsed_occurrence_id is not None and parsed_version is not None:
+        shift_result = update_active_shift_number(
+            parsed_occurrence_id,
+            parsed_version,
+            shift_number,
+        )
+
+    validated_card_id = validated_terminal_selected_card_id(selected_card_id)
+    if shift_result.ok:
+        return RedirectResponse(
+            url=terminal_shift_redirect_url(
+                validated_card_id,
+                shift_view="overview",
+                notice="shift_changed",
+            ),
+            status_code=303,
+        )
+    return terminal_response(
+        request,
+        selected_card_id=validated_card_id,
+        shift_result=shift_result,
+        shift_view="overview",
+    )
+
+
+@app.post("/terminal/shifts/current/end")
+async def end_terminal_shift(
+    request: Request,
+    shift_occurrence_id: str = Form(...),
+    loaded_version: str = Form(...),
+    selected_card_id: str | None = Form(None),
+):
+    parsed_occurrence_id, shift_result = parse_shift_form_integer(
+        shift_occurrence_id,
+        "Активната смяна е невалидна. Презаредете терминала.",
+    )
+    parsed_version, version_result = parse_shift_form_integer(
+        loaded_version,
+        "Версията на смяната е невалидна. Презаредете терминала.",
+    )
+    if not version_result.ok:
+        shift_result = version_result
+    if parsed_occurrence_id is not None and parsed_version is not None:
+        shift_result = end_shift(parsed_occurrence_id, parsed_version)
+
+    validated_card_id = validated_terminal_selected_card_id(selected_card_id)
+    if shift_result.ok:
+        return RedirectResponse(
+            url=terminal_shift_redirect_url(
+                validated_card_id,
+                shift_view="summary",
+                shift_id=parsed_occurrence_id,
+                handoff="1",
+            ),
+            status_code=303,
+        )
+    return terminal_response(
+        request,
+        selected_card_id=validated_card_id,
+        shift_result=shift_result,
+        shift_view="overview",
     )
 
 
@@ -1884,7 +2014,22 @@ def parse_loaded_version(loaded_version: str) -> tuple[int | None, RuleResult]:
         return None, RuleResult(False, (INVALID_LOADED_VERSION_MESSAGE,))
 
 
+def parse_shift_form_integer(
+    value: str,
+    invalid_message: str,
+) -> tuple[int | None, RuleResult]:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None, RuleResult(False, (invalid_message,))
+    if parsed < 1:
+        return None, RuleResult(False, (invalid_message,))
+    return parsed, RuleResult(True)
+
+
 def validate_terminal_card_available_for_post(card_id: int) -> RuleResult:
+    if fetch_active_shift() is None:
+        return RuleResult(False, (NO_ACTIVE_SHIFT_MESSAGE,))
     if fetch_terminal_card_detail(card_id) is None:
         return RuleResult(False, (TERMINAL_CARD_UNAVAILABLE_MESSAGE,))
     return RuleResult(True)
@@ -1959,6 +2104,35 @@ def terminal_redirect_url(card_id: int, notice_code: str | None = None) -> str:
     return f"{base_url}?{urlencode({'notice': notice_code})}"
 
 
+def validated_terminal_selected_card_id(value: str | int | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        card_id = int(value)
+    except (TypeError, ValueError):
+        return None
+    if card_id < 1 or fetch_terminal_card_detail(card_id) is None:
+        return None
+    return card_id
+
+
+def terminal_shift_redirect_url(
+    selected_card_id: int | None,
+    **query: str | int | None,
+) -> str:
+    base_url = (
+        f"/terminal/cards/{selected_card_id}"
+        if selected_card_id is not None
+        else "/terminal"
+    )
+    normalized_query = {
+        key: value for key, value in query.items() if value is not None
+    }
+    if not normalized_query:
+        return base_url
+    return f"{base_url}?{urlencode(normalized_query)}"
+
+
 def terminal_notice_result(notice_code: str | None) -> RuleResult | None:
     messages = TERMINAL_NOTICE_MESSAGES.get(str(notice_code or ""))
     if not messages:
@@ -1969,6 +2143,9 @@ def terminal_notice_result(notice_code: str | None) -> RuleResult | None:
 def terminal_context(
     selected_card_id: int | None = None,
     selected_machine_id: int | None = None,
+    shift_view: str | None = None,
+    shift_id: str | int | None = None,
+    handoff: str | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     machine_queues = fetch_machine_queues()
@@ -2018,6 +2195,7 @@ def terminal_context(
             fetch_cards_by_status(TERMINAL_ARCHIVE_STATUSES),
         )
     ]
+    shift_context = build_terminal_shift_context(shift_view, shift_id, handoff)
 
     context: dict[str, Any] = {
         "machines": fetch_machines(),
@@ -2029,10 +2207,75 @@ def terminal_context(
         "terminal_snapshot": fetch_terminal_snapshot(selected_card_id),
         "status_labels": STATUS_LABELS,
         "recipe_rows": build_terminal_recipe_rows(selected_card) if selected_card else [],
+        **shift_context,
         **extra,
         "terminal_feedback": build_terminal_feedback(extra),
     }
     return context
+
+
+def build_terminal_shift_context(
+    shift_view: str | None,
+    shift_id: str | int | None,
+    handoff: str | None,
+) -> dict[str, Any]:
+    state = fetch_shift_window_state()
+    configuration = state["configuration"]
+    active_shift = state["active_shift"]
+    completed_shifts = state["completed_shifts"]
+    normalized_view = shift_view if shift_view in {"overview", "summary"} else None
+
+    parsed_shift_id: int | None = None
+    if shift_id is not None:
+        try:
+            candidate_shift_id = int(shift_id)
+        except (TypeError, ValueError):
+            candidate_shift_id = 0
+        if candidate_shift_id > 0:
+            parsed_shift_id = candidate_shift_id
+
+    completed_ids = {int(shift["id"]) for shift in completed_shifts}
+    selected_shift_summary = None
+    if normalized_view == "summary" and parsed_shift_id in completed_ids:
+        selected_shift_summary = fetch_shift_summary(parsed_shift_id)
+
+    just_ended_handoff = selected_shift_summary is not None and handoff == "1"
+    if just_ended_handoff:
+        shift_window_state = "summary"
+        shift_blocking = True
+    elif active_shift is None:
+        shift_window_state = "gate"
+        shift_blocking = True
+    elif normalized_view == "summary" and selected_shift_summary is not None:
+        shift_window_state = "summary"
+        shift_blocking = False
+    elif normalized_view in {"overview", "summary"}:
+        shift_window_state = "overview"
+        shift_blocking = False
+    else:
+        shift_window_state = "closed"
+        shift_blocking = False
+
+    shift_count = int(configuration["shift_count"])
+    shift_options = list(range(1, shift_count + 1))
+    if active_shift is not None:
+        active_shift_number = int(active_shift["shift_number"])
+        if active_shift_number not in shift_options:
+            shift_options.append(active_shift_number)
+
+    return {
+        "shift_configuration": {
+            "shift_count": shift_count,
+            "version": int(configuration["version"]),
+        },
+        "active_shift": active_shift,
+        "shift_options": shift_options,
+        "suggested_shift_number": int(state["suggested_shift_number"]),
+        "completed_shifts": completed_shifts,
+        "selected_shift_summary": selected_shift_summary,
+        "shift_window_state": shift_window_state,
+        "shift_blocking": shift_blocking,
+    }
 
 
 def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
@@ -2081,6 +2324,10 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
 
         if is_terminal_card_state_error(messages):
             feedback["refresh_required"] = True
+            continue
+
+        if NO_ACTIVE_SHIFT_MESSAGE in messages:
+            feedback["errors"]["topbar"] = messages
             continue
 
         if target == "roll_corrections":
