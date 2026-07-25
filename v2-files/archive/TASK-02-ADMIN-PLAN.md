@@ -1,4 +1,7 @@
-# Admin Visibility Implementation Plan
+# Task 02 — Admin Visibility Implementation Plan
+
+This is the archived implementation plan for the admin-visibility slice of
+completed Task 02. Do not execute it as current work.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -10,7 +13,8 @@
 
 ## Global Constraints
 
-- Read repository-root `AGENTS.md` and `v2-files/ADMIN_DESIGN.md` before starting.
+- Read repository-root `AGENTS.md` and
+  `v2-files/archive/TASK-02-ADMIN-DESIGN.md` before starting.
 - Accept only the exact final 29-column Shift Manager CSV header in exact order.
 - Do not restore legacy CSV aliases or old-field compatibility.
 - Do not add `micro_perforation`.
@@ -40,7 +44,8 @@
 - `tests/test_admin_card_review.py`: admin list query and imported-field persistence.
 - `tests/test_admin_card_detail_redesign.py`: cards-list/detail rendering and save coverage.
 - `tests/test_baseline.py`: import/persistence regression suite; verification only.
-- `v2-files/SHIFT_MANAGER_CLEANUP.md`: result and next-task checkpoint after verification.
+- `v2-files/archive/TASK-02-STRUCTURE-CLEANUP.md`: result and next-task
+  checkpoint after verification.
 - `artifacts/ui-checks/v2/admin/`: untracked browser screenshots.
 
 No new production source file or database column is required.
@@ -740,7 +745,7 @@ commit. Stop for specification-compliance and code-quality review.
 
 **Files:**
 
-- Modify after verification: `v2-files/SHIFT_MANAGER_CLEANUP.md`
+- Modify after verification: `v2-files/archive/TASK-02-STRUCTURE-CLEANUP.md`
 - Create untracked evidence: `artifacts/ui-checks/v2/admin/*.png`
 - Do not modify: `v2-files/AGENTS.md` unless the user separately invokes the phrase `maintain the database migration system`.
 
@@ -916,7 +921,7 @@ as local evidence; do not copy it into tracked files.
 
 - [ ] **Step 11: Update the temporary cleanup tracker with observed evidence**
 
-In `v2-files/SHIFT_MANAGER_CLEANUP.md`:
+In `v2-files/archive/TASK-02-STRUCTURE-CLEANUP.md`:
 
 - mark Task 2 complete;
 - set Task 3, terminal semantics/layout, as the exact next action;
@@ -947,9 +952,9 @@ Confirm:
 - no commit was created;
 - the plan's complete scope is present and nothing from Tasks 3-5 was pulled in.
 
-Stop and report the evidence to the user. Keep `ADMIN_DESIGN.md` and
-`ADMIN_PLAN.md` until the user approves Task 2 completion; delete those two
-temporary files only after that approval.
+The historical completion gate required keeping `TASK-02-ADMIN-DESIGN.md` and
+`TASK-02-ADMIN-PLAN.md` until the user approved the admin slice. That approval
+was received, and both files are now retained in the Task 02 archive.
 
 ---
 

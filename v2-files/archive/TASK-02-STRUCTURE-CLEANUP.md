@@ -1,4 +1,4 @@
-# Shift Manager Downstream Cleanup
+# Task 02 — Shift Manager Structure Cleanup
 
 This retained completion record documents the finished Shift Manager downstream
 cleanup. Keep this file: the explicit instruction to retain it overrides its

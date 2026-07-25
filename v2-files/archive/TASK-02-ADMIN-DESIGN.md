@@ -1,8 +1,8 @@
-# Admin Visibility Design
+# Task 02 — Admin Visibility Design
 
-This is the temporary design specification for Task 2 of the Shift Manager
-downstream cleanup. Delete it after Task 2 is complete and its result is
-recorded in `SHIFT_MANAGER_CLEANUP.md`.
+This archived design specification supported the admin-visibility slice of
+completed Task 02. Its result is recorded in
+`TASK-02-STRUCTURE-CLEANUP.md`; retain this file as historical context.
 
 ## Goal
 
