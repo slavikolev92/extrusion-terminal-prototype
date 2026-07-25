@@ -27,6 +27,7 @@ artifacts/
 test-results/
 playwright-report/
 .playwright/
+.worktrees/
 
 # OS/editor files.
 .DS_Store
