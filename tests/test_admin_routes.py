@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
 
@@ -269,6 +270,43 @@ def test_admin_settings_invalid_or_stale_post_renders_error_without_write(connec
     assert db.STALE_CONFIGURATION_MESSAGE in stale_response.body.decode("utf-8")
     assert after_stale["shift_count"] == 3
     assert after_stale["version"] == int(initial["version"]) + 1
+
+
+def test_admin_settings_stale_response_requires_reload_before_another_write(connection):
+    initial = db.fetch_terminal_configuration()
+    assert db.update_shift_count(int(initial["version"]), "3").ok
+
+    stale_response = asyncio.run(
+        admin_route_endpoint("/admin/settings/shifts")(
+            make_request("/admin/settings/shifts"),
+            shift_count="2",
+            loaded_version=int(initial["version"]),
+        )
+    )
+    stale_html = stale_response.body.decode("utf-8")
+    rendered_version = re.search(
+        r'name="loaded_version" value="(\d+)"',
+        stale_html,
+    )
+
+    assert stale_response.status_code == 200
+    assert db.STALE_CONFIGURATION_MESSAGE in stale_html
+    assert rendered_version is not None
+    assert int(rendered_version.group(1)) == int(initial["version"])
+    assert '<button type="submit" disabled>Запази</button>' in stale_html
+    assert 'href="/admin/settings">Презареди</a>' in stale_html
+
+    repeated_response = asyncio.run(
+        admin_route_endpoint("/admin/settings/shifts")(
+            make_request("/admin/settings/shifts"),
+            shift_count="2",
+            loaded_version=int(rendered_version.group(1)),
+        )
+    )
+
+    assert repeated_response.status_code == 200
+    assert db.STALE_CONFIGURATION_MESSAGE in repeated_response.body.decode("utf-8")
+    assert db.fetch_terminal_configuration()["shift_count"] == 3
 
 
 def test_successful_admin_import_redirects_to_batch_result_get(connection):

@@ -24,6 +24,7 @@ from .constants import (
 )
 from .db import (
     STALE_CARD_MESSAGE,
+    STALE_CONFIGURATION_MESSAGE,
     add_timing_segment,
     add_roll_gross_weight,
     archive_completed_card,
@@ -744,6 +745,8 @@ async def save_admin_shift_settings(
         admin_settings_context(
             settings_result=result,
             submitted_shift_count=shift_count,
+            submitted_version=loaded_version,
+            reload_required=result.messages == (STALE_CONFIGURATION_MESSAGE,),
         ),
     )
 

@@ -29,12 +29,15 @@
     {% endif %}
 
     <form class="import-form" action="/admin/settings/shifts" method="post">
-      <input type="hidden" name="loaded_version" value="{{ configuration.version }}">
+      <input type="hidden" name="loaded_version" value="{{ submitted_version if reload_required else configuration.version }}">
       <label>
         Брой смени
-        <input name="shift_count" value="{{ submitted_shift_count if submitted_shift_count is defined else configuration.shift_count }}" inputmode="numeric" required>
+        <input name="shift_count" value="{{ submitted_shift_count if submitted_shift_count is defined else configuration.shift_count }}" inputmode="numeric" required {% if reload_required %}disabled{% endif %}>
       </label>
-      <button type="submit">Запази</button>
+      <button type="submit" {% if reload_required %}disabled{% endif %}>Запази</button>
+      {% if reload_required %}
+        <a class="nav-link" href="/admin/settings">Презареди</a>
+      {% endif %}
     </form>
   </section>
 </main>
