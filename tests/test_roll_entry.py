@@ -4,7 +4,7 @@ import csv
 import io
 
 from app import db
-from app.constants import STATUS_PAUSED, STATUS_PENDING, STATUS_RUNNING
+from app.constants import STATUS_COMPLETED, STATUS_PAUSED, STATUS_PENDING, STATUS_RUNNING
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 
 
@@ -73,6 +73,180 @@ def roll_values(card_id: int) -> list[tuple[float | None, float | None, float | 
     ]
 
 
+def insert_shift_occurrence(
+    connection,
+    shift_number: int,
+    started_at: str,
+    ended_at: str | None,
+) -> int:
+    occurrence_id = int(
+        connection.execute(
+            """
+            INSERT INTO shift_occurrences (shift_number, started_at, ended_at)
+            VALUES (?, ?, ?)
+            RETURNING id
+            """,
+            (shift_number, started_at, ended_at),
+        ).fetchone()["id"]
+    )
+    connection.commit()
+    return occurrence_id
+
+
+def test_running_roll_requires_active_shift_and_links_occurrence(
+    connection,
+    start_test_shift,
+):
+    card_id = import_and_release_card("25600")
+    start_card(card_id)
+    loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
+
+    blocked = db.add_roll_gross_weight(
+        card_id,
+        loaded_version,
+        "25.00",
+        tare_weight="1.00",
+    )
+
+    assert not blocked.ok
+    assert blocked.messages == ("Отворете смяна, преди да добавите ролка.",)
+    blocked_card = db.fetch_terminal_card_detail(card_id)
+    assert blocked_card["version"] == loaded_version
+    assert blocked_card["tare_weight"] is None
+    assert blocked_card["roll_entries"] == []
+
+    occurrence = start_test_shift("1")
+    added = db.add_roll_gross_weight(
+        card_id,
+        loaded_version,
+        "25.00",
+        tare_weight="1.00",
+    )
+    roll = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]
+
+    assert added.ok
+    assert roll["shift_occurrence_id"] == occurrence["id"]
+
+
+def test_active_shift_number_correction_does_not_rewrite_roll_link(
+    connection,
+    start_test_shift,
+):
+    occurrence = start_test_shift("1")
+    card_id = import_and_release_card("25601")
+    start_card(card_id)
+
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "25.00",
+        tare_weight="1.00",
+    ).ok
+    assert db.update_active_shift_number(
+        int(occurrence["id"]),
+        int(occurrence["version"]),
+        "3",
+    ).ok
+
+    roll = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]
+    assert roll["shift_occurrence_id"] == occurrence["id"]
+    assert db.fetch_active_shift()["shift_number"] == 3
+
+
+def test_roll_correction_preserves_shift_occurrence(connection, start_test_shift):
+    occurrence = start_test_shift("2")
+    card_id = import_and_release_card("25602")
+    start_card(card_id)
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "25.00",
+        tare_weight="1.00",
+    ).ok
+    card = db.fetch_terminal_card_detail(card_id)
+    roll_id = int(card["roll_entries"][0]["id"])
+
+    corrected = db.update_roll_weight(
+        card_id,
+        roll_id,
+        card["version"],
+        "27.00",
+        "1.50",
+    )
+    roll = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]
+
+    assert corrected.ok
+    assert roll["gross_weight"] == 27
+    assert roll["shift_occurrence_id"] == occurrence["id"]
+
+
+def test_completed_roll_inherits_latest_linked_occurrence_not_active_shift(connection):
+    card_id = import_and_release_card("25603")
+    older_id = insert_shift_occurrence(
+        connection,
+        1,
+        "2026-07-25 06:00:00",
+        "2026-07-25 14:00:00",
+    )
+    latest_id = insert_shift_occurrence(
+        connection,
+        2,
+        "2026-07-25 14:00:00",
+        "2026-07-25 22:00:00",
+    )
+    active_id = insert_shift_occurrence(connection, 3, "2026-07-25 22:00:00", None)
+    connection.execute(
+        "UPDATE cards SET status = ?, tare_weight = '1.00' WHERE id = ?",
+        (STATUS_COMPLETED, card_id),
+    )
+    connection.executemany(
+        """
+        INSERT INTO roll_entries (
+            card_id, order_number, roll_number, gross_weight, tare_weight,
+            net_weight, shift_occurrence_id
+        )
+        VALUES (?, '25603', ?, ?, '1.00', ?, ?)
+        """,
+        (
+            (card_id, 1, "20.00", "19.00", latest_id),
+            (card_id, 2, "21.00", "20.00", older_id),
+        ),
+    )
+    connection.commit()
+
+    result = db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "22.00",
+    )
+    rolls = db.fetch_terminal_card_detail(card_id)["roll_entries"]
+
+    assert result.ok
+    assert rolls[-1]["shift_occurrence_id"] == latest_id
+    assert rolls[-1]["shift_occurrence_id"] != active_id
+
+
+def test_late_roll_without_known_order_shift_remains_unattributed(connection):
+    card_id = import_and_release_card("25604")
+    active_id = insert_shift_occurrence(connection, 4, "2026-07-25 22:00:00", None)
+    connection.execute(
+        "UPDATE cards SET status = ?, tare_weight = '1.00' WHERE id = ?",
+        (STATUS_COMPLETED, card_id),
+    )
+    connection.commit()
+
+    result = db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "25.00",
+    )
+    roll = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]
+
+    assert result.ok
+    assert roll["shift_occurrence_id"] is None
+    assert db.fetch_active_shift()["id"] == active_id
+
+
 def test_tare_update_persists_and_checks_loaded_version(connection):
     card_id = import_and_release_card("25500")
     loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
@@ -90,7 +264,7 @@ def test_tare_update_persists_and_checks_loaded_version(connection):
     )
 
 
-def test_add_roll_while_running_assigns_roll_numbers(connection):
+def test_add_roll_while_running_assigns_roll_numbers(connection, active_test_shift):
     card_id = import_and_release_card("25501")
     start_card(card_id)
     assert db.update_tare_weight(
@@ -129,7 +303,7 @@ def test_add_roll_while_running_assigns_roll_numbers(connection):
     ]
 
 
-def test_add_roll_requires_default_tare(connection):
+def test_add_roll_requires_default_tare(connection, active_test_shift):
     card_id = import_and_release_card("25546")
     start_card(card_id)
     loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
@@ -143,7 +317,10 @@ def test_add_roll_requires_default_tare(connection):
     assert card["version"] == loaded_version
 
 
-def test_add_roll_allows_submitted_tare_without_existing_default(connection):
+def test_add_roll_allows_submitted_tare_without_existing_default(
+    connection,
+    active_test_shift,
+):
     card_id = import_and_release_card("25547")
     start_card(card_id)
 
@@ -221,7 +398,7 @@ def test_weight_inputs_reject_more_than_two_decimal_places(connection):
     assert roll_count == 0
 
 
-def test_gross_and_net_totals_calculate_with_tare(connection):
+def test_gross_and_net_totals_calculate_with_tare(connection, active_test_shift):
     card_id = import_and_release_card("25504")
     start_card(card_id)
     assert db.fetch_terminal_card_detail(card_id)["status"] == STATUS_RUNNING
@@ -338,7 +515,10 @@ def test_total_net_is_unknown_when_stored_net_does_not_match_gross_minus_tare(co
     assert card["total_net_weight"] is None
 
 
-def test_new_roll_copies_current_default_tare_without_mutating_existing_rolls(connection):
+def test_new_roll_copies_current_default_tare_without_mutating_existing_rolls(
+    connection,
+    active_test_shift,
+):
     card_id = import_and_release_card("25540")
     start_card(card_id)
     assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
@@ -357,7 +537,10 @@ def test_new_roll_copies_current_default_tare_without_mutating_existing_rolls(co
     assert card["total_net_weight"] == "105.50"
 
 
-def test_editing_roll_tare_recalculates_only_that_roll_and_not_default_tare(connection):
+def test_editing_roll_tare_recalculates_only_that_roll_and_not_default_tare(
+    connection,
+    active_test_shift,
+):
     card_id = import_and_release_card("25541")
     start_card(card_id)
     assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
@@ -384,7 +567,10 @@ def test_editing_roll_tare_recalculates_only_that_roll_and_not_default_tare(conn
     assert updated["total_net_weight"] == "105.00"
 
 
-def test_roll_tare_rejects_more_than_two_decimal_places_and_tare_above_gross(connection):
+def test_roll_tare_rejects_more_than_two_decimal_places_and_tare_above_gross(
+    connection,
+    active_test_shift,
+):
     card_id = import_and_release_card("25542")
     start_card(card_id)
     assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
@@ -408,7 +594,10 @@ def test_roll_tare_rejects_more_than_two_decimal_places_and_tare_above_gross(con
     ] == [(50, 2, 48)]
 
 
-def test_terminal_roll_corrections_update_multiple_rolls_in_one_version(connection):
+def test_terminal_roll_corrections_update_multiple_rolls_in_one_version(
+    connection,
+    active_test_shift,
+):
     card_id = import_and_release_card("25560")
     start_card(card_id)
     assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
@@ -436,7 +625,10 @@ def test_terminal_roll_corrections_update_multiple_rolls_in_one_version(connecti
     assert updated["total_net_weight"] == "107.50"
 
 
-def test_terminal_roll_corrections_only_touch_changed_roll_rows(connection):
+def test_terminal_roll_corrections_only_touch_changed_roll_rows(
+    connection,
+    active_test_shift,
+):
     card_id = import_and_release_card("25565")
     start_card(card_id)
     assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
@@ -468,7 +660,10 @@ def test_terminal_roll_corrections_only_touch_changed_roll_rows(connection):
     assert unchanged_row["updated_at"] == "2000-01-01 00:00:00"
 
 
-def test_terminal_roll_corrections_block_stale_version_without_partial_update(connection):
+def test_terminal_roll_corrections_block_stale_version_without_partial_update(
+    connection,
+    active_test_shift,
+):
     card_id = import_and_release_card("25561")
     start_card(card_id)
     assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
@@ -490,7 +685,10 @@ def test_terminal_roll_corrections_block_stale_version_without_partial_update(co
     assert roll_values(card_id) == [(50, 2, 48)]
 
 
-def test_terminal_roll_corrections_validate_all_rows_before_saving(connection):
+def test_terminal_roll_corrections_validate_all_rows_before_saving(
+    connection,
+    active_test_shift,
+):
     card_id = import_and_release_card("25562")
     start_card(card_id)
     assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
@@ -514,7 +712,10 @@ def test_terminal_roll_corrections_validate_all_rows_before_saving(connection):
     assert roll_values(card_id) == [(50, 2, 48), (60, 2, 58)]
 
 
-def test_terminal_roll_corrections_reject_unknown_roll_id(connection):
+def test_terminal_roll_corrections_reject_unknown_roll_id(
+    connection,
+    active_test_shift,
+):
     card_id = import_and_release_card("25563")
     start_card(card_id)
     assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
@@ -532,7 +733,10 @@ def test_terminal_roll_corrections_reject_unknown_roll_id(connection):
     assert roll_values(card_id) == [(50, 2, 48)]
 
 
-def test_terminal_roll_corrections_completed_card_keeps_final_gross_roll(connection):
+def test_terminal_roll_corrections_completed_card_keeps_final_gross_roll(
+    connection,
+    active_test_shift,
+):
     card_id = import_and_release_card("25564")
     start_card(card_id)
     assert db.update_tare_weight(card_id, db.fetch_terminal_card_detail(card_id)["version"], "2.00").ok
@@ -552,7 +756,7 @@ def test_terminal_roll_corrections_completed_card_keeps_final_gross_roll(connect
     assert roll_values(card_id) == [(50, 2, 48)]
 
 
-def test_stale_roll_add_and_update_are_blocked(connection):
+def test_stale_roll_add_and_update_are_blocked(connection, active_test_shift):
     card_id = import_and_release_card("25505")
     start_card(card_id)
     assert db.update_tare_weight(
@@ -580,7 +784,10 @@ def test_stale_roll_add_and_update_are_blocked(connection):
     assert card["roll_entries"][0]["gross_weight"] == 20
 
 
-def test_clearing_existing_gross_weight_removes_it_from_totals(connection):
+def test_clearing_existing_gross_weight_removes_it_from_totals(
+    connection,
+    active_test_shift,
+):
     card_id = import_and_release_card("25506")
     start_card(card_id)
     assert db.update_tare_weight(
@@ -613,7 +820,10 @@ def test_clearing_existing_gross_weight_removes_it_from_totals(connection):
     assert cleared_card["total_net_weight"] == "0.00"
 
 
-def test_delete_middle_roll_renumbers_remaining_rolls_and_recalculates_totals(connection):
+def test_delete_middle_roll_renumbers_remaining_rolls_and_recalculates_totals(
+    connection,
+    active_test_shift,
+):
     card_id = import_and_release_card("25508")
     start_card(card_id)
     assert db.update_tare_weight(
@@ -677,7 +887,7 @@ def test_delete_roll_is_blocked_when_card_is_not_running_or_completed(connection
     assert db.fetch_terminal_card_detail(card_id)["roll_count"] == 1
 
 
-def test_delete_roll_checks_loaded_version(connection):
+def test_delete_roll_checks_loaded_version(connection, active_test_shift):
     card_id = import_and_release_card("25510")
     start_card(card_id)
     assert db.update_tare_weight(
@@ -698,7 +908,10 @@ def test_delete_roll_checks_loaded_version(connection):
     assert db.fetch_terminal_card_detail(card_id)["roll_count"] == 1
 
 
-def test_completed_card_roll_delete_remains_editable_and_renumbers(connection):
+def test_completed_card_roll_delete_remains_editable_and_renumbers(
+    connection,
+    active_test_shift,
+):
     card_id = import_and_release_card("25511")
     start_card(card_id)
     assert db.update_tare_weight(
@@ -726,7 +939,7 @@ def test_completed_card_roll_delete_remains_editable_and_renumbers(connection):
     assert updated_card["roll_entries"][0]["gross_weight"] == 30
 
 
-def test_completed_card_cannot_delete_final_gross_roll(connection):
+def test_completed_card_cannot_delete_final_gross_roll(connection, active_test_shift):
     card_id = import_and_release_card("25512")
     start_card(card_id)
     assert db.update_tare_weight(
@@ -754,7 +967,7 @@ def test_completed_card_cannot_delete_final_gross_roll(connection):
     assert updated_card["roll_entries"][0]["gross_weight"] == 25
 
 
-def test_completed_card_cannot_clear_final_gross_roll(connection):
+def test_completed_card_cannot_clear_final_gross_roll(connection, active_test_shift):
     card_id = import_and_release_card("25513")
     start_card(card_id)
     assert db.update_tare_weight(

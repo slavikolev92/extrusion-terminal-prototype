@@ -96,7 +96,7 @@ def prepare_running_finishable_card(order_number: str, **release_kwargs: int) ->
     return card_id
 
 
-def test_finish_blocks_roll_added_without_row_tare(connection):
+def test_finish_blocks_roll_added_without_row_tare(connection, active_test_shift):
     card_id = import_and_release_card("25600")
     start_card(card_id)
     add_tare(card_id)
@@ -151,7 +151,7 @@ def test_finish_blocks_without_gross_roll(connection):
     assert db.fetch_terminal_card_detail(card_id)["status"] == STATUS_RUNNING
 
 
-def test_finish_blocks_empty_roll_gaps(connection):
+def test_finish_blocks_empty_roll_gaps(connection, active_test_shift):
     card_id = prepare_running_finishable_card("25603")
     add_roll(card_id, "30.00")
     card = db.fetch_terminal_card_detail(card_id)
@@ -224,7 +224,10 @@ def test_finish_blocks_gross_roll_with_invalid_stored_weight(connection):
     assert result.messages == ("Всяка ролка с бруто тегло трябва да има шпула преди приключване.",)
 
 
-def test_roll_entry_blocks_roll_added_before_default_tare_was_set(connection):
+def test_roll_entry_blocks_roll_added_before_default_tare_was_set(
+    connection,
+    active_test_shift,
+):
     card_id = import_and_release_card("25641")
     start_card(card_id)
 
@@ -239,7 +242,10 @@ def test_roll_entry_blocks_roll_added_before_default_tare_was_set(connection):
     assert db.fetch_terminal_card_detail(card_id)["roll_entries"] == []
 
 
-def test_finish_from_running_closes_active_segment_and_archives_card(connection):
+def test_finish_from_running_closes_active_segment_and_archives_card(
+    connection,
+    active_test_shift,
+):
     card_id = prepare_running_finishable_card("25604")
     loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
 
@@ -267,7 +273,10 @@ def test_finish_from_running_closes_active_segment_and_archives_card(connection)
     assert card_id in archive_ids
 
 
-def test_finish_normalizes_active_machine_queue_after_removed_card(connection):
+def test_finish_normalizes_active_machine_queue_after_removed_card(
+    connection,
+    active_test_shift,
+):
     first_id = prepare_running_finishable_card("25650", machine_id=1, machine_sequence=1)
     second_id = import_and_release_card("25651", machine_id=1, machine_sequence=2)
     third_id = import_and_release_card("25652", machine_id=1, machine_sequence=3)
@@ -289,7 +298,7 @@ def test_finish_normalizes_active_machine_queue_after_removed_card(connection):
     ]
 
 
-def test_finish_from_paused_succeeds_without_open_segment(connection):
+def test_finish_from_paused_succeeds_without_open_segment(connection, active_test_shift):
     card_id = prepare_running_finishable_card("25605")
     assert db.pause_production_timing(
         card_id,
@@ -316,7 +325,7 @@ def test_finish_from_paused_succeeds_without_open_segment(connection):
     assert open_segments == 0
 
 
-def test_admin_can_mark_completed_card_as_archived(connection):
+def test_admin_can_mark_completed_card_as_archived(connection, active_test_shift):
     card_id = prepare_running_finishable_card("25630")
     assert db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"]).ok
     loaded_version = db.fetch_admin_card_detail(card_id)["version"]
@@ -341,7 +350,7 @@ def test_archive_action_blocks_non_completed_cards(connection):
     assert db.fetch_admin_card_detail(card_id)["status"] == STATUS_PENDING
 
 
-def test_archive_action_blocks_stale_version(connection):
+def test_archive_action_blocks_stale_version(connection, active_test_shift):
     card_id = prepare_running_finishable_card("25632")
     assert db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"]).ok
     loaded_version = db.fetch_admin_card_detail(card_id)["version"]
@@ -354,7 +363,7 @@ def test_archive_action_blocks_stale_version(connection):
     assert db.fetch_admin_card_detail(card_id)["status"] == STATUS_COMPLETED
 
 
-def test_completed_card_roll_weights_remain_editable(connection):
+def test_completed_card_roll_weights_remain_editable(connection, active_test_shift):
     card_id = prepare_running_finishable_card("25614")
     assert db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"]).ok
 
@@ -491,7 +500,10 @@ def test_restore_inserts_at_original_sequence_and_shifts_active_queue(connection
     assert db.fetch_terminal_card_detail(cancelled_card_id)["status"] == STATUS_PENDING
 
 
-def test_stale_finish_cancel_and_restore_edits_are_blocked(connection):
+def test_stale_finish_cancel_and_restore_edits_are_blocked(
+    connection,
+    active_test_shift,
+):
     finish_card_id = prepare_running_finishable_card("25611", machine_id=3, machine_sequence=1)
     finish_version = db.fetch_terminal_card_detail(finish_card_id)["version"]
     add_roll(finish_card_id, "26.00")

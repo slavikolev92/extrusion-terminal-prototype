@@ -228,7 +228,7 @@ def test_planning_blocks_stale_loaded_version(connection):
     assert card["machine_sequence"] == 1
 
 
-def test_planning_preserves_production_data(connection):
+def test_planning_preserves_production_data(connection, active_test_shift):
     card_id = release_ready_card("25812", machine_id=3, machine_sequence=5)
     assert db.update_terminal_material_fields(
         card_id,
@@ -359,7 +359,10 @@ def test_unrelease_blocks_running_and_paused_cards(connection):
     assert paused["machine_sequence"] == 2
 
 
-def test_unrelease_blocks_imported_completed_and_cancelled_cards(connection):
+def test_unrelease_blocks_imported_completed_and_cancelled_cards(
+    connection,
+    active_test_shift,
+):
     imported_id = import_ready_card("25827")
     completed_id = release_ready_card("25828", machine_id=2, machine_sequence=1)
     cancelled_id = release_ready_card("25829", machine_id=2, machine_sequence=2)

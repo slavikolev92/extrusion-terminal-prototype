@@ -28,3 +28,21 @@ def temp_db_path(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 def connection(temp_db_path: Path) -> Iterator[sqlite3.Connection]:
     with db.connect() as conn:
         yield conn
+
+
+@pytest.fixture
+def start_test_shift(connection: sqlite3.Connection):
+    def start(shift_number: str = "1") -> dict[str, object]:
+        configuration = db.fetch_terminal_configuration()
+        result = db.start_shift(shift_number, int(configuration["version"]))
+        assert result.ok
+        active_shift = db.fetch_active_shift()
+        assert active_shift is not None
+        return active_shift
+
+    return start
+
+
+@pytest.fixture
+def active_test_shift(start_test_shift) -> dict[str, object]:
+    return start_test_shift()

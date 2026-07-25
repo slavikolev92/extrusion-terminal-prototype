@@ -109,7 +109,7 @@ def test_admin_card_index_text_filters_are_case_insensitive(connection):
     assert [card["order_number"] for card in product_cards] == ["25713"]
 
 
-def test_admin_card_detail_includes_full_review_data(connection):
+def test_admin_card_detail_includes_full_review_data(connection, active_test_shift):
     card_id = import_ready_card("25704")
     assert db.release_card(
         card_id,
@@ -235,7 +235,10 @@ def test_admin_imported_field_edit_blocks_stale_version(connection):
     assert card["customer"] == "First Save"
 
 
-def test_admin_imported_field_edit_preserves_production_data(connection):
+def test_admin_imported_field_edit_preserves_production_data(
+    connection,
+    active_test_shift,
+):
     card_id = import_ready_card("25707")
     assert db.release_card(
         card_id,

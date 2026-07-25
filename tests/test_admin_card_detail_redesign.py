@@ -18,6 +18,9 @@ from app.main import (
 )
 
 
+pytestmark = pytest.mark.usefixtures("active_test_shift")
+
+
 def csv_bytes(*rows: dict[str, str]) -> bytes:
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=IMPORT_FIELDS, lineterminator="\n")

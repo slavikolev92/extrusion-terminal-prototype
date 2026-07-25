@@ -231,7 +231,10 @@ def recipe_actual_entries() -> dict[str, dict[str, str]]:
     }
 
 
-def test_terminal_recipe_actual_entries_persist_all_rows_and_survive_finish(connection):
+def test_terminal_recipe_actual_entries_persist_all_rows_and_survive_finish(
+    connection,
+    active_test_shift,
+):
     card_id = import_ready_card(
         "25340",
         raw_material_a="LDPE; A | 50%",

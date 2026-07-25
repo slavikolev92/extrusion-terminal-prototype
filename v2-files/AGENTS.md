@@ -269,6 +269,7 @@ rehearsal.
 | 2026-07-25 | Shift Manager V14.04 import-field correction | Schema-only plus later production profile | M001 implemented; legacy values deliberately unchanged; 9 focused and 57 combined tests passed |
 | 2026-07-25 | V2 documentation consolidation and trigger command | No migration | Documentation and agent instructions only; no stored data or schema changed |
 | 2026-07-25 | Shift management M002 schema foundation | Schema-only | Added configuration, occurrences, nullable roll FK, and indexes; no existing values changed and legacy rolls remain `NULL`; M001 production profile and release-candidate rehearsal remain deployment gates |
+| 2026-07-25 | New-roll shift occurrence attribution and correction preservation | No migration | M002 already provides the nullable roll FK; only new roll writes resolve attribution, while historical `NULL` values and existing linked rolls remain unchanged |
 
 Append one row after every use of the trigger command, including when no
 migration is required.

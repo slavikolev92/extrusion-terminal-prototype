@@ -6,6 +6,7 @@ import io
 import re
 from urllib.parse import urlencode
 
+import pytest
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.requests import Request
 
@@ -27,6 +28,9 @@ from app.main import (
     terminal_context,
 )
 from app.rules import RuleResult
+
+
+pytestmark = pytest.mark.usefixtures("active_test_shift")
 
 
 def csv_bytes(*rows: dict[str, str]) -> bytes:

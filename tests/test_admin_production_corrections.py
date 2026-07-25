@@ -170,6 +170,192 @@ def prepare_completed_card(order_number: str) -> int:
     return card_id
 
 
+def insert_shift_occurrence(
+    connection,
+    shift_number: int,
+    started_at: str,
+    ended_at: str | None,
+) -> int:
+    occurrence_id = int(
+        connection.execute(
+            """
+            INSERT INTO shift_occurrences (shift_number, started_at, ended_at)
+            VALUES (?, ?, ?)
+            RETURNING id
+            """,
+            (shift_number, started_at, ended_at),
+        ).fetchone()["id"]
+    )
+    connection.commit()
+    return occurrence_id
+
+
+def prepare_archived_card_with_linked_roll(
+    connection,
+    order_number: str,
+    shift_occurrence_id: int | None,
+) -> tuple[int, int]:
+    card_id = release_ready_card(order_number)
+    connection.execute(
+        "UPDATE cards SET status = ?, tare_weight = '1.00' WHERE id = ?",
+        (STATUS_ARCHIVED, card_id),
+    )
+    roll_id = int(
+        connection.execute(
+            """
+            INSERT INTO roll_entries (
+                card_id, order_number, roll_number, gross_weight, tare_weight,
+                net_weight, shift_occurrence_id
+            )
+            VALUES (?, ?, 1, '25.00', '1.00', '24.00', ?)
+            RETURNING id
+            """,
+            (card_id, order_number, shift_occurrence_id),
+        ).fetchone()["id"]
+    )
+    connection.commit()
+    return card_id, roll_id
+
+
+def test_admin_archived_roll_inherits_latest_linked_occurrence(connection):
+    older_id = insert_shift_occurrence(
+        connection,
+        1,
+        "2026-07-25 06:00:00",
+        "2026-07-25 14:00:00",
+    )
+    latest_id = insert_shift_occurrence(
+        connection,
+        2,
+        "2026-07-25 14:00:00",
+        "2026-07-25 22:00:00",
+    )
+    card_id, _ = prepare_archived_card_with_linked_roll(
+        connection,
+        "26100",
+        older_id,
+    )
+    connection.execute(
+        """
+        INSERT INTO roll_entries (
+            card_id, order_number, roll_number, gross_weight, tare_weight,
+            net_weight, shift_occurrence_id
+        )
+        VALUES (?, '26100', 2, '26.00', '1.00', '25.00', ?)
+        """,
+        (card_id, latest_id),
+    )
+    connection.commit()
+
+    result = db.update_admin_roll_ledger(
+        card_id,
+        card_version(card_id),
+        tare_weight="1.00",
+        roll_updates={},
+        delete_roll_ids=set(),
+        new_gross_weights=["30.00", "31.00"],
+    )
+    rolls = db.fetch_admin_card_detail(card_id)["roll_entries"]
+
+    assert result.ok
+    assert [roll["shift_occurrence_id"] for roll in rolls[-2:]] == [latest_id, latest_id]
+
+
+def test_admin_legacy_archived_roll_remains_unattributed(connection):
+    active_id = insert_shift_occurrence(connection, 4, "2026-07-25 22:00:00", None)
+    card_id, _ = prepare_archived_card_with_linked_roll(connection, "26101", None)
+
+    result = db.update_admin_roll_ledger(
+        card_id,
+        card_version(card_id),
+        tare_weight="1.00",
+        roll_updates={},
+        delete_roll_ids=set(),
+        new_gross_weights=["30.00"],
+    )
+    rolls = db.fetch_admin_card_detail(card_id)["roll_entries"]
+
+    assert result.ok
+    assert rolls[-1]["shift_occurrence_id"] is None
+    assert db.fetch_active_shift()["id"] == active_id
+
+
+def test_admin_roll_ledger_resolves_shift_before_deleting_source_roll(connection):
+    occurrence_id = insert_shift_occurrence(
+        connection,
+        2,
+        "2026-07-25 14:00:00",
+        "2026-07-25 22:00:00",
+    )
+    card_id, source_roll_id = prepare_archived_card_with_linked_roll(
+        connection,
+        "26102",
+        occurrence_id,
+    )
+
+    result = db.update_admin_roll_ledger(
+        card_id,
+        card_version(card_id),
+        tare_weight="1.00",
+        roll_updates={},
+        delete_roll_ids={source_roll_id},
+        new_gross_weights=["30.00"],
+    )
+    rolls = db.fetch_admin_card_detail(card_id)["roll_entries"]
+
+    assert result.ok
+    assert len(rolls) == 1
+    assert rolls[0]["shift_occurrence_id"] == occurrence_id
+
+
+def test_admin_roll_correction_preserves_attribution_and_stale_save_is_atomic(connection):
+    occurrence_id = insert_shift_occurrence(
+        connection,
+        3,
+        "2026-07-25 22:00:00",
+        "2026-07-26 06:00:00",
+    )
+    card_id, roll_id = prepare_archived_card_with_linked_roll(
+        connection,
+        "26103",
+        occurrence_id,
+    )
+    loaded_version = card_version(card_id)
+
+    corrected = db.update_admin_roll_ledger(
+        card_id,
+        loaded_version,
+        tare_weight="1.10",
+        roll_updates={roll_id: {"gross_weight": "27.00", "tare_weight": "1.50"}},
+        delete_roll_ids=set(),
+        new_gross_weights=[],
+    )
+    corrected_card = db.fetch_admin_card_detail(card_id)
+    assert db.update_tare_weight(card_id, corrected_card["version"], "2.00").ok
+
+    stale = db.update_admin_roll_ledger(
+        card_id,
+        corrected_card["version"],
+        tare_weight="3.00",
+        roll_updates={roll_id: {"gross_weight": "40.00", "tare_weight": "4.00"}},
+        delete_roll_ids=set(),
+        new_gross_weights=["50.00"],
+    )
+    final_card = db.fetch_admin_card_detail(card_id)
+
+    assert corrected.ok
+    assert corrected_card["roll_entries"][0]["shift_occurrence_id"] == occurrence_id
+    assert not stale.ok
+    assert stale.messages == (
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
+    )
+    assert final_card["tare_weight"] == 2
+    assert len(final_card["roll_entries"]) == 1
+    assert final_card["roll_entries"][0]["gross_weight"] == 27
+    assert final_card["roll_entries"][0]["tare_weight"] == 1.5
+    assert final_card["roll_entries"][0]["shift_occurrence_id"] == occurrence_id
+
+
 def test_admin_cancel_closes_running_segment_and_blocks_stale_version(connection):
     card_id = release_ready_card("26000")
     start_card(card_id)
@@ -363,7 +549,10 @@ def test_admin_material_correction_route_preserves_legacy_brand_when_omitted(con
     assert card["raw_material_batch_lot"] == "Admin Batch A"
 
 
-def test_admin_successful_detail_correction_routes_redirect_to_canonical_get(connection):
+def test_admin_successful_detail_correction_routes_redirect_to_canonical_get(
+    connection,
+    active_test_shift,
+):
     card_id = prepare_completed_card("26021")
     card = db.fetch_admin_card_detail(card_id)
     fields = current_imported_fields(card_id)
@@ -420,7 +609,10 @@ def test_admin_successful_detail_correction_routes_redirect_to_canonical_get(con
     assert after["timing_segments"][0]["end_reason"] == "correction"
 
 
-def test_admin_successful_roll_add_redirects_and_get_refresh_does_not_repeat(connection):
+def test_admin_successful_roll_add_redirects_and_get_refresh_does_not_repeat(
+    connection,
+    active_test_shift,
+):
     card_id = prepare_completed_card("26016")
     loaded_version = card_version(card_id)
 
@@ -442,7 +634,10 @@ def test_admin_successful_roll_add_redirects_and_get_refresh_does_not_repeat(con
     assert [roll["gross_weight"] for roll in card["roll_entries"]] == [25, 30]
 
 
-def test_admin_roll_weight_route_preserves_row_tare_when_tare_field_omitted(connection):
+def test_admin_roll_weight_route_preserves_row_tare_when_tare_field_omitted(
+    connection,
+    active_test_shift,
+):
     card_id = prepare_completed_card("26033")
     card = db.fetch_admin_card_detail(card_id)
     roll = card["roll_entries"][0]
@@ -467,7 +662,10 @@ def test_admin_roll_weight_route_preserves_row_tare_when_tare_field_omitted(conn
     assert updated_roll["net_weight"] == 26
 
 
-def test_admin_successful_roll_delete_redirects_and_get_refresh_does_not_repeat(connection):
+def test_admin_successful_roll_delete_redirects_and_get_refresh_does_not_repeat(
+    connection,
+    active_test_shift,
+):
     card_id = prepare_completed_card("26017")
     assert db.add_roll_gross_weight(card_id, card_version(card_id), "30.00").ok
     card = db.fetch_admin_card_detail(card_id)
@@ -554,7 +752,10 @@ def test_admin_successful_cancel_restore_redirect_and_get_refresh_does_not_toggl
     assert restored["status"] == STATUS_PENDING
 
 
-def test_admin_stale_roll_add_still_renders_inline_without_redirect(connection):
+def test_admin_stale_roll_add_still_renders_inline_without_redirect(
+    connection,
+    active_test_shift,
+):
     card_id = prepare_completed_card("26020")
     loaded_version = card_version(card_id)
     assert db.update_tare_weight(card_id, loaded_version, "2.00").ok
@@ -576,7 +777,10 @@ def test_admin_stale_roll_add_still_renders_inline_without_redirect(connection):
     )
 
 
-def test_admin_tare_correction_updates_default_without_mutating_existing_rolls(connection):
+def test_admin_tare_correction_updates_default_without_mutating_existing_rolls(
+    connection,
+    active_test_shift,
+):
     card_id = release_ready_card("26004")
     start_card(card_id)
     add_tare(card_id, "1.00")
@@ -593,7 +797,10 @@ def test_admin_tare_correction_updates_default_without_mutating_existing_rolls(c
     assert card["total_net_weight"] == "9.00"
 
 
-def test_admin_roll_add_update_delete_preserves_numbering_and_completed_final_roll(connection):
+def test_admin_roll_add_update_delete_preserves_numbering_and_completed_final_roll(
+    connection,
+    active_test_shift,
+):
     card_id = prepare_completed_card("26005")
     add_result = db.add_roll_gross_weight(card_id, card_version(card_id), "30.00")
     card = db.fetch_admin_card_detail(card_id)
@@ -626,7 +833,7 @@ def test_admin_roll_add_update_delete_preserves_numbering_and_completed_final_ro
     assert blocked_delete.messages == ("Завършените карти трябва да запазят поне едно бруто тегло на ролка.",)
 
 
-def test_archived_card_roll_weights_remain_editable(connection):
+def test_archived_card_roll_weights_remain_editable(connection, active_test_shift):
     card_id = prepare_completed_card("26030")
     assert db.archive_completed_card(card_id, card_version(card_id)).ok
 
@@ -691,7 +898,10 @@ def test_admin_roll_ledger_preserves_existing_blank_row_tare(connection):
     assert card["total_net_weight"] is None
 
 
-def test_admin_roll_ledger_updates_per_roll_tare_without_changing_default_tare(connection):
+def test_admin_roll_ledger_updates_per_roll_tare_without_changing_default_tare(
+    connection,
+    active_test_shift,
+):
     card_id = release_ready_card("26040")
     start_card(card_id)
     add_tare(card_id, "2.00")
@@ -715,7 +925,7 @@ def test_admin_roll_ledger_updates_per_roll_tare_without_changing_default_tare(c
     assert updated["roll_entries"][0]["net_weight"] == 47
 
 
-def test_archived_card_materials_remain_editable(connection):
+def test_archived_card_materials_remain_editable(connection, active_test_shift):
     card_id = prepare_completed_card("26031")
     assert db.archive_completed_card(card_id, card_version(card_id)).ok
 
@@ -877,7 +1087,10 @@ def test_admin_timing_correction_allows_adjacent_closed_segments(connection):
     assert result.ok
 
 
-def test_admin_timing_correction_blocks_deleting_all_timing_from_completed_card(connection):
+def test_admin_timing_correction_blocks_deleting_all_timing_from_completed_card(
+    connection,
+    active_test_shift,
+):
     card_id = prepare_completed_card("26008")
     card = db.fetch_admin_card_detail(card_id)
     segment_id = card["timing_segments"][0]["id"]
@@ -964,7 +1177,10 @@ def test_admin_timing_correction_blocks_stale_loaded_version(connection):
     )
 
 
-def test_completed_admin_detail_uses_explicit_delete_controls(connection):
+def test_completed_admin_detail_uses_explicit_delete_controls(
+    connection,
+    active_test_shift,
+):
     card_id = prepare_completed_card("26011")
     card = db.fetch_admin_card_detail(card_id)
     roll_id = card["roll_entries"][0]["id"]

@@ -222,7 +222,10 @@ def test_structured_sample_admin_and_terminal_display_structured_rows(connection
     assert "masterbatch" not in terminal_rows
 
 
-def test_structured_sample_terminal_material_save_and_completion(connection):
+def test_structured_sample_terminal_material_save_and_completion(
+    connection,
+    active_test_shift,
+):
     import_sample_csv()
     card_id = card_id_for_order("SR-SAMPLE-001")
     assert release_card(card_id, machine_id=1, sequence=1).ok
@@ -265,7 +268,10 @@ def test_structured_sample_terminal_material_save_and_completion(connection):
     assert completed["total_net_weight"] is not None
 
 
-def test_structured_sample_print_output_uses_compact_material_and_percent(connection):
+def test_structured_sample_print_output_uses_compact_material_and_percent(
+    connection,
+    active_test_shift,
+):
     import_sample_csv()
     card_id = card_id_for_order("SR-SAMPLE-001")
     assert release_card(card_id, machine_id=1, sequence=1).ok

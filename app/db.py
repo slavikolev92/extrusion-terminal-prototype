@@ -1300,7 +1300,8 @@ def fetch_roll_entries_and_totals(
 ) -> dict[str, Any]:
     rows = connection.execute(
         """
-        SELECT id, roll_number, gross_weight, tare_weight, net_weight, updated_at
+        SELECT id, roll_number, gross_weight, tare_weight, net_weight,
+               shift_occurrence_id, updated_at
         FROM roll_entries
         WHERE card_id = ?
         ORDER BY roll_number
@@ -2729,6 +2730,7 @@ def add_roll_gross_weight(
             return RuleResult(False, (tare_parse_error,))
 
     with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
         card = fetch_roll_action_card(connection, card_id)
         version_result = validate_loaded_card_version(card, loaded_version)
         if not version_result.ok:
@@ -2737,6 +2739,13 @@ def add_roll_gross_weight(
         roll_entry_result = validate_card_allows_roll_entry(card)
         if not roll_entry_result.ok:
             return roll_entry_result
+
+        shift_occurrence_id, shift_result = resolve_new_roll_shift_occurrence_id(
+            connection,
+            card,
+        )
+        if not shift_result.ok:
+            return shift_result
 
         default_tare = (
             parsed_submitted_tare
@@ -2771,9 +2780,10 @@ def add_roll_gross_weight(
                 roll_number,
                 gross_weight,
                 tare_weight,
-                net_weight
+                net_weight,
+                shift_occurrence_id
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card_id,
@@ -2782,6 +2792,7 @@ def add_roll_gross_weight(
                 decimal_to_storage(parsed_gross),
                 decimal_to_storage(default_tare) if default_tare is not None else None,
                 decimal_to_storage(net) if net is not None else None,
+                shift_occurrence_id,
             ),
         )
         if tare_weight is not None:
@@ -3191,6 +3202,9 @@ def _update_admin_roll_ledger(
     delete_roll_ids: set[int],
     new_gross_weights: list[str],
 ) -> RuleResult:
+    if not connection.in_transaction:
+        connection.execute("BEGIN IMMEDIATE")
+
     parsed_tare, parse_error = parse_weight(tare_weight, "Шпула", allow_blank=True)
     if parse_error:
         return RuleResult(False, (parse_error,))
@@ -3293,6 +3307,14 @@ def _update_admin_roll_ledger(
         roll_entry_result = validate_card_allows_roll_entry(card)
         if not roll_entry_result.ok:
             return roll_entry_result
+
+    new_roll_shift_occurrence_id: int | None = None
+    if parsed_new:
+        new_roll_shift_occurrence_id, shift_result = (
+            resolve_new_roll_shift_occurrence_id(connection, card)
+        )
+        if not shift_result.ok:
+            return shift_result
 
     remaining_updates: dict[
         int,
@@ -3398,9 +3420,10 @@ def _update_admin_roll_ledger(
                 roll_number,
                 gross_weight,
                 tare_weight,
-                net_weight
+                net_weight,
+                shift_occurrence_id
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card_id,
@@ -3409,6 +3432,7 @@ def _update_admin_roll_ledger(
                 decimal_to_storage(gross),
                 decimal_to_storage(parsed_tare) if parsed_tare is not None else None,
                 decimal_to_storage(net) if net is not None else None,
+                new_roll_shift_occurrence_id,
             ),
         )
         next_roll_number += 1
@@ -3463,6 +3487,42 @@ def validate_card_allows_roll_entry(card: sqlite3.Row | None) -> RuleResult:
         )
 
     return RuleResult(True)
+
+
+def resolve_new_roll_shift_occurrence_id(
+    connection: sqlite3.Connection,
+    card: sqlite3.Row,
+) -> tuple[int | None, RuleResult]:
+    if card["status"] == STATUS_RUNNING:
+        active_shift = fetch_active_shift_row(connection)
+        if active_shift is None:
+            return None, RuleResult(
+                False,
+                ("Отворете смяна, преди да добавите ролка.",),
+            )
+        return int(active_shift["id"]), RuleResult(True)
+
+    if card["status"] in PRODUCTION_COMPLETE_STATUSES:
+        inherited = connection.execute(
+            """
+            SELECT shift_occurrences.id
+            FROM roll_entries
+            JOIN shift_occurrences
+              ON shift_occurrences.id = roll_entries.shift_occurrence_id
+            WHERE roll_entries.card_id = ?
+            ORDER BY shift_occurrences.started_at DESC,
+                     shift_occurrences.id DESC
+            LIMIT 1
+            """,
+            (int(card["id"]),),
+        ).fetchone()
+        inherited_id = int(inherited["id"]) if inherited is not None else None
+        return inherited_id, RuleResult(True)
+
+    return None, RuleResult(
+        False,
+        ("Картата не позволява добавяне на ролка.",),
+    )
 
 
 def validate_recipe_source_write_fields(source_fields: dict[str, str]) -> RuleResult:
