@@ -158,7 +158,7 @@ button:disabled {
   height: 100%;
   transform: translateX(-50%);
   display: grid;
-  grid-template-columns: repeat(3, 176px);
+  grid-template-columns: repeat(4, 176px);
   align-items: center;
   justify-content: center;
   gap: 0;
@@ -1643,7 +1643,7 @@ thead th {
   }
 
   .main-nav {
-    grid-template-columns: repeat(3, 148px);
+    grid-template-columns: repeat(4, 148px);
   }
 
   .admin-nav-link,
@@ -1690,7 +1690,7 @@ thead th {
     width: 100%;
     height: 42px;
     transform: none;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     justify-content: center;
     border-top: 1px solid var(--admin-nav-line);
   }

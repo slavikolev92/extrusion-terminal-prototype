@@ -37,6 +37,7 @@ from .db import (
     fetch_admin_card_detail,
     fetch_admin_cards,
     fetch_import_batch_result,
+    fetch_terminal_configuration,
     fetch_terminal_card_detail,
     fetch_machine_queues,
     fetch_machines,
@@ -60,6 +61,7 @@ from .db import (
     update_tare_weight,
     update_terminal_recipe_actual_entries,
     update_terminal_roll_corrections,
+    update_shift_count,
     unrelease_pending_card,
 )
 from .deployment import deployment_metadata
@@ -97,6 +99,10 @@ TERMINAL_NOTICE_MESSAGES = {
     "timing_paused": ("Времето е паузирано.",),
     "timing_resumed": ("Времето е продължено.",),
     "card_finished": ("Картата е приключена.",),
+}
+
+ADMIN_SETTINGS_NOTICE_MESSAGES = {
+    "shift_count_saved": ("Броят смени е записан.",),
 }
 
 IMPORT_ACTION_LABELS = {
@@ -170,6 +176,15 @@ def admin_import_context(**extra: Any) -> dict[str, Any]:
         "admin_section": "import",
         "recent_imports": fetch_recent_import_batches(),
         "summary": database_summary(),
+    }
+    context.update(extra)
+    return context
+
+
+def admin_settings_context(**extra: Any) -> dict[str, Any]:
+    context: dict[str, Any] = {
+        "admin_section": "settings",
+        "configuration": fetch_terminal_configuration(),
     }
     context.update(extra)
     return context
@@ -698,6 +713,37 @@ async def admin_import(request: Request, batch_id: int | None = None):
         admin_import_context(
             import_result=import_result,
             import_action_labels=IMPORT_ACTION_LABELS,
+        ),
+    )
+
+
+@app.get("/admin/settings")
+async def admin_settings(request: Request, notice: str | None = None):
+    return templates.TemplateResponse(
+        request,
+        "admin_settings.html",
+        admin_settings_context(notice_messages=ADMIN_SETTINGS_NOTICE_MESSAGES.get(notice, ())),
+    )
+
+
+@app.post("/admin/settings/shifts")
+async def save_admin_shift_settings(
+    request: Request,
+    shift_count: str = Form(...),
+    loaded_version: int = Form(...),
+):
+    result = update_shift_count(loaded_version, shift_count)
+    if result.ok:
+        return RedirectResponse(
+            url="/admin/settings?notice=shift_count_saved",
+            status_code=303,
+        )
+    return templates.TemplateResponse(
+        request,
+        "admin_settings.html",
+        admin_settings_context(
+            settings_result=result,
+            submitted_shift_count=shift_count,
         ),
     )
 

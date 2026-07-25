@@ -270,6 +270,7 @@ rehearsal.
 | 2026-07-25 | V2 documentation consolidation and trigger command | No migration | Documentation and agent instructions only; no stored data or schema changed |
 | 2026-07-25 | Shift management M002 schema foundation | Schema-only | Added configuration, occurrences, nullable roll FK, and indexes; no existing values changed and legacy rolls remain `NULL`; M001 production profile and release-candidate rehearsal remain deployment gates |
 | 2026-07-25 | New-roll shift occurrence attribution and correction preservation | No migration | M002 already provides the nullable roll FK; only new roll writes resolve attribution, while historical `NULL` values and existing linked rolls remain unchanged |
+| 2026-07-25 | Admin terminal-configuration page | No migration | Routes, templates, navigation, and CSS now expose the existing M002 singleton configuration row; no schema, stored values, or data meaning changed |
 
 Append one row after every use of the trigger command, including when no
 migration is required.

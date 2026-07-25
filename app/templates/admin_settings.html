@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Настройки - Терминал Екструдиране{% endblock %}
+
+{% block body %}
+<main class="page admin-page">
+  {% include "_admin_nav.html" %}
+  <h1 class="visually-hidden">Настройки</h1>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Настройки на терминала</h2>
+    </div>
+
+    {% if notice_messages %}
+      <div class="notice">
+        {% for message in notice_messages %}
+          <div>{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if settings_result %}
+      <div class="notice error">
+        {% for message in settings_result.messages %}
+          <div>{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <form class="import-form" action="/admin/settings/shifts" method="post">
+      <input type="hidden" name="loaded_version" value="{{ configuration.version }}">
+      <label>
+        Брой смени
+        <input name="shift_count" value="{{ submitted_shift_count if submitted_shift_count is defined else configuration.shift_count }}" inputmode="numeric" required>
+      </label>
+      <button type="submit">Запази</button>
+    </form>
+  </section>
+</main>
+{% endblock %}

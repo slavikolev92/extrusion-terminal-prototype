@@ -50,6 +50,17 @@ def test_admin_routes_are_registered():
     assert "/admin/cards/{card_id}/timing-segments/{segment_id}/delete" in route_paths
 
 
+def test_admin_settings_routes_are_registered_without_admin_shift_operations():
+    route_paths = {route.path for route in app.routes}
+
+    assert "/admin/settings" in route_paths
+    assert "/admin/settings/shifts" in route_paths
+    assert "/admin/shifts/start" not in route_paths
+    assert "/admin/shifts/end" not in route_paths
+    assert "/admin/shifts/history" not in route_paths
+    assert "/admin/shifts/corrections" not in route_paths
+
+
 def test_workstation_cancel_restore_routes_are_not_registered():
     route_paths = {route.path for route in app.routes}
 
@@ -92,6 +103,10 @@ def make_request(path: str, method: str = "POST") -> Request:
     )
 
 
+def admin_route_endpoint(path: str):
+    return next(route.endpoint for route in app.routes if route.path == path)
+
+
 def upload_file(filename: str, content: bytes) -> UploadFile:
     file = SpooledTemporaryFile()
     file.write(content)
@@ -132,6 +147,7 @@ def assert_admin_global_nav(html: str, active_label: str) -> None:
     assert 'href="/admin/import"' in html
     assert 'href="/admin/planning"' in html
     assert 'href="/admin/cards"' in html
+    assert 'href="/admin/settings"' in html
     assert 'href="/terminal"' in html
     assert "Терминал" in html
     assert f'aria-current="page">{active_label}</a>' in html
@@ -182,6 +198,77 @@ def test_admin_cards_list_uses_shared_global_navigation(connection):
     assert response.status_code == 200
     assert_admin_global_nav(html, "Технологични карти")
     assert "Търсене на технологични карти" in html
+
+
+def test_admin_settings_page_uses_shared_nav_and_renders_current_count(connection):
+    route_paths = {route.path for route in app.routes}
+    assert "/admin/settings" in route_paths
+    response = asyncio.run(
+        admin_route_endpoint("/admin/settings")(make_request("/admin/settings", method="GET"))
+    )
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert_admin_global_nav(html, "Настройки")
+    assert "Настройки на терминала" in html
+    assert 'name="shift_count"' in html
+    assert 'value="4"' in html
+    assert 'name="loaded_version"' in html
+    assert 'value="1"' in html
+    assert 'inputmode="numeric"' in html
+
+
+def test_admin_settings_post_redirects_after_valid_update(connection):
+    configuration = db.fetch_terminal_configuration()
+    route_paths = {route.path for route in app.routes}
+    assert "/admin/settings/shifts" in route_paths
+
+    response = asyncio.run(
+        admin_route_endpoint("/admin/settings/shifts")(
+            make_request("/admin/settings/shifts"),
+            shift_count="3",
+            loaded_version=int(configuration["version"]),
+        )
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/settings?notice=shift_count_saved"
+    assert db.fetch_terminal_configuration()["shift_count"] == 3
+
+
+def test_admin_settings_invalid_or_stale_post_renders_error_without_write(connection):
+    initial = db.fetch_terminal_configuration()
+    route_paths = {route.path for route in app.routes}
+    assert "/admin/settings/shifts" in route_paths
+
+    invalid_response = asyncio.run(
+        admin_route_endpoint("/admin/settings/shifts")(
+            make_request("/admin/settings/shifts"),
+            shift_count="0",
+            loaded_version=int(initial["version"]),
+        )
+    )
+    after_invalid = db.fetch_terminal_configuration()
+    assert invalid_response.status_code == 200
+    assert "Брой смени трябва да е положително цяло число." in invalid_response.body.decode(
+        "utf-8"
+    )
+    assert after_invalid == initial
+
+    assert db.update_shift_count(int(initial["version"]), "3").ok
+    stale_response = asyncio.run(
+        admin_route_endpoint("/admin/settings/shifts")(
+            make_request("/admin/settings/shifts"),
+            shift_count="2",
+            loaded_version=int(initial["version"]),
+        )
+    )
+    after_stale = db.fetch_terminal_configuration()
+
+    assert stale_response.status_code == 200
+    assert db.STALE_CONFIGURATION_MESSAGE in stale_response.body.decode("utf-8")
+    assert after_stale["shift_count"] == 3
+    assert after_stale["version"] == int(initial["version"]) + 1
 
 
 def test_successful_admin_import_redirects_to_batch_result_get(connection):
