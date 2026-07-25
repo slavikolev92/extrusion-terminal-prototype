@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
@@ -7,13 +8,19 @@ const { chromium } = require("@playwright/test");
 const fs = require("fs");
 const path = require("path");
 
-const baseURL = process.env.BASE_URL || "http://127.0.0.1:8011";
+function requiredEnvironment(name) {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`Required environment variable ${name} is missing.`);
+  }
+  return value;
+}
+
+const baseURL = requiredEnvironment("BASE_URL").replace(/\/+$/, "");
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
-const artifactDirRelative = path.join("artifacts", "ui-checks", "shift-management");
-const artifactDir = path.resolve(
-  process.env.ARTIFACT_DIR || path.join(repoRoot, artifactDirRelative),
-);
+const artifactDir = path.resolve(requiredEnvironment("ARTIFACT_DIR"));
+const artifactDirRelative = path.relative(repoRoot, artifactDir);
 const databasePath = path.join(artifactDir, "shift-ui.sqlite3");
 const fixturePath = path.join(artifactDir, "shift-management-orders.csv");
 const summaryPath = path.join(artifactDir, "shift-management-ui-summary.json");
@@ -80,18 +87,26 @@ function assertEqual(actual, expected, label) {
 
 function assertArtifactDatabaseSafety() {
   const relativeDatabasePath = path.relative(artifactDir, databasePath);
-  const relativeArtifactPath = path.relative(repoRoot, artifactDir);
+  const artifactRoot = path.join(repoRoot, "artifacts", "ui-checks");
+  const canonicalArtifactRoot = fs.realpathSync(artifactRoot);
+  const canonicalArtifactDir = fs.realpathSync(artifactDir);
+  const canonicalDatabasePath = fs.realpathSync(databasePath);
+  const relativeArtifactPath = path.relative(canonicalArtifactRoot, canonicalArtifactDir);
+  const canonicalDatabaseRelative = path.relative(
+    canonicalArtifactDir,
+    canonicalDatabasePath,
+  );
   assert(
     relativeDatabasePath === "shift-ui.sqlite3",
     `Temporary database must be ${path.join(artifactDir, "shift-ui.sqlite3")}`,
   );
   assert(
     relativeArtifactPath && !relativeArtifactPath.startsWith("..") && !path.isAbsolute(relativeArtifactPath),
-    `Artifact directory must be inside the repository: ${artifactDir}`,
+    `Artifact directory must remain below artifacts/ui-checks: ${artifactDir}`,
   );
   assert(
-    relativeArtifactPath.split(path.sep).slice(0, 2).join("/") === "artifacts/ui-checks",
-    `Artifact directory must remain below artifacts/ui-checks: ${artifactDir}`,
+    canonicalDatabaseRelative === "shift-ui.sqlite3",
+    `Temporary database must be a regular file inside ARTIFACT_DIR: ${databasePath}`,
   );
   assert(
     databasePath !== path.join(repoRoot, "data", "extrusion_terminal.sqlite3"),
@@ -199,7 +214,11 @@ for order_number in sys.argv[2:]:
 
 payload = {
     "configuration": one(
-        "SELECT id, shift_count, version FROM terminal_configuration WHERE id = 1"
+        """
+        SELECT id, shift_count, version, updated_at
+        FROM terminal_configuration
+        WHERE id = 1
+        """
     ),
     "active_shift": one(
         """
@@ -236,6 +255,104 @@ connection.close()
     );
   }
   return JSON.parse(result.stdout);
+}
+
+function writeDatabaseConfiguration(configuration) {
+  const python = String.raw`
+import sqlite3
+import sys
+from pathlib import Path
+
+database_path = Path(sys.argv[1]).resolve()
+shift_count = int(sys.argv[2])
+version = int(sys.argv[3])
+updated_at = sys.argv[4]
+connection = sqlite3.connect(database_path)
+try:
+    connection.execute("BEGIN IMMEDIATE")
+    updated = connection.execute(
+        """
+        UPDATE terminal_configuration
+        SET shift_count = ?, version = ?, updated_at = ?
+        WHERE id = 1
+        """,
+        (shift_count, version, updated_at),
+    )
+    if updated.rowcount != 1:
+        raise RuntimeError("terminal configuration singleton is missing")
+    connection.commit()
+finally:
+    connection.close()
+`;
+  const result = spawnSync(
+    path.join(repoRoot, ".venv", "bin", "python"),
+    [
+      "-c",
+      python,
+      databasePath,
+      String(configuration.shift_count),
+      String(configuration.version),
+      String(configuration.updated_at),
+    ],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `Could not set the temporary identity marker: ${normalizeText(result.stderr || result.stdout)}`,
+    );
+  }
+}
+
+function databaseIdentityMarker(configuration) {
+  const digest = createHash("sha256")
+    .update(`${fs.realpathSync(databasePath)}\0${configuration.version}\0${configuration.updated_at}`)
+    .digest();
+  return {
+    shift_count: 100_000 + (digest.readUInt32BE(0) % 900_000),
+    version: 100_000 + (digest.readUInt32BE(4) % 900_000),
+    updated_at: configuration.updated_at,
+  };
+}
+
+async function readServerConfiguration(page) {
+  const response = await page.goto(`${baseURL}/admin/settings`, { waitUntil: "networkidle" });
+  assert(response?.ok(), `Server identity preflight returned HTTP ${response?.status() || "unknown"}.`);
+  return {
+    shift_count: Number(await page.locator('input[name="shift_count"]').inputValue()),
+    version: Number(await page.locator('input[name="loaded_version"]').inputValue()),
+  };
+}
+
+async function verifyServerDatabaseIdentity(page, initialConfiguration) {
+  const marker = databaseIdentityMarker(initialConfiguration);
+  let observed;
+  try {
+    writeDatabaseConfiguration(marker);
+    observed = await readServerConfiguration(page);
+  } finally {
+    writeDatabaseConfiguration(initialConfiguration);
+  }
+
+  const restored = databaseSnapshot().configuration;
+  assertEqual(restored, initialConfiguration, "artifact configuration restored after identity preflight");
+  if (
+    observed.shift_count !== marker.shift_count
+    || observed.version !== marker.version
+  ) {
+    throw new Error(
+      "Selected HTTP server is not backed by the required artifact database.",
+    );
+  }
+
+  const normalizedServerConfiguration = await readServerConfiguration(page);
+  assertEqual(
+    normalizedServerConfiguration,
+    {
+      shift_count: initialConfiguration.shift_count,
+      version: initialConfiguration.version,
+    },
+    "server configuration restored after identity preflight",
+  );
 }
 
 function cardIdFromHref(href) {
@@ -644,9 +761,9 @@ async function verifySecondPageStaleGate(context, firstPage, cardId, before) {
 }
 
 async function main() {
-  assertArtifactDatabaseSafety();
-  fs.mkdirSync(artifactDir, { recursive: true });
+  assert(fs.existsSync(artifactDir), `ARTIFACT_DIR does not exist: ${artifactDir}`);
   assert(fs.existsSync(databasePath), `Temporary database does not exist: ${databasePath}`);
+  assertArtifactDatabaseSafety();
 
   const initial = databaseSnapshot();
   assertEqual(initial.card_count, 0, "fresh temporary database card count");
@@ -654,7 +771,6 @@ async function main() {
   assertEqual(initial.configuration.shift_count, 4, "default shift count");
   assertEqual(initial.integrity_check, "ok", "initial database integrity");
   assertEqual(initial.foreign_key_errors, [], "initial foreign key errors");
-  writeCsvFixture();
 
   const browserErrors = [];
   let browser;
@@ -664,6 +780,8 @@ async function main() {
     const page = await context.newPage();
     page.on("pageerror", (error) => browserErrors.push(error.message));
 
+    await verifyServerDatabaseIdentity(page, initial.configuration);
+    writeCsvFixture();
     const cardIds = await importAndReleaseOrders(page);
     await configureThreeShifts(page);
 

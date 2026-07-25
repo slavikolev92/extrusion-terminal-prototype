@@ -94,6 +94,13 @@ ARTIFACT_DIR="$PWD/artifacts/ui-checks/shift-management" \
   node scripts/verify_shift_management_ui.mjs
 ```
 
+`BASE_URL` and `ARTIFACT_DIR` are mandatory; the script has no server or
+artifact defaults. Before its first HTTP mutation, it writes a deterministic
+two-field marker only to the artifact database, observes that marker through a
+read-only `/admin/settings` response, restores the original configuration
+exactly, and verifies that the server observes the restoration. A server backed
+by any other database is rejected before import or release.
+
 The ignored evidence files are:
 
 - `artifacts/ui-checks/shift-management/admin-shift-count.png`
