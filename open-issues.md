@@ -379,3 +379,24 @@ Recommended fix:
   dirty/focused, or keep the manual refresh banner as an accepted limitation and
   document it.
 - Verify with focused Playwright keyboard checks and screenshots.
+
+### OI-011 - Build a repeatable Playwright UI test suite
+
+- Status: open
+- Severity: medium
+- Found in: root tooling review, 2026-07-25
+
+The repository uses Playwright for task-specific browser checks and screenshots,
+but it does not have a Playwright configuration or committed browser test files.
+As a result, there is no valid repository-wide Playwright test command today.
+
+Recommended follow-up:
+
+- Add a small Playwright configuration and focused browser test suite for the
+  highest-value admin and terminal workflows.
+- Start and stop the local FastAPI test server deterministically.
+- Use only temporary SQLite databases and never the real runtime database.
+- Keep screenshots, videos, traces, reports, and browser binaries untracked.
+- Run through the repo-local Playwright installation without implicit downloads.
+- Update `AGENTS.md` with the suite command only after the suite exists and has
+  been verified.

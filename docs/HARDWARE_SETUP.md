@@ -17,8 +17,6 @@ Confirmed from the physical machine label:
 | Form factor | Micro PC |
 | Ethernet | Present; wired LAN will be used |
 | Wi-Fi | Present on label, but not planned for server connectivity |
-| Code | 80128970 |
-| Serial number | FJ3K8F3 |
 | Grade | A |
 
 Planned role:

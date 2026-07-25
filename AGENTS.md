@@ -1,6 +1,9 @@
 # AGENTS.md
 
-This file defines how future agents should work in this repository. `README.md` is the authoritative project specification. `IMPLEMENTATION_PLAN.md` is the milestone tracker. If this file conflicts with `README.md`, follow `README.md` and update this file only after the user confirms the change.
+This file defines how future agents should work in this repository. `README.md`
+is the authoritative project specification. If this file conflicts with
+`README.md`, follow `README.md` and update this file only after the user confirms
+the change.
 
 ## Project Scope
 
@@ -55,11 +58,9 @@ For each feature slice:
 4. Add or update automated checks for the behavior.
 5. Run one manual workflow test through the app.
 6. Review the changed code.
-7. Prepare the milestone for review. Stage or commit only when the user explicitly asks.
+7. Prepare the change for review. Stage or commit only when the user explicitly asks.
 
 Do not leave large uncommitted feature piles. Do not mix unrelated refactors into a feature slice.
-
-When a milestone starts or completes, update `IMPLEMENTATION_PLAN.md` in the same branch. The plan should always make the next intended step obvious.
 
 Use `docs/implementation-notes/` for durable implementation notes that future prototype or ERP work may need to understand why a feature was built a certain way. Current contents include `print-output-reference.md`, which preserves the accepted print-output requirements, field mapping, validation/formatting rules, and the note that the remaining two-sheet print issue is local workstation/printer setup rather than an app defect.
 
@@ -141,15 +142,21 @@ source .venv/bin/activate
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Playwright:
+Playwright installation check:
 
 ```bash
-npx playwright test
+./node_modules/.bin/playwright --version
 ```
+
+There is currently no repository-wide Playwright test suite. For UI changes,
+run a task-specific browser check against the live FastAPI app using a temporary
+SQLite database, save the evidence under `artifacts/ui-checks/`, and record the
+exact verification command. Use the repo-local Playwright installation; do not
+download or install browser tooling implicitly during verification.
 
 ## Review And Commit Policy
 
-Review every milestone before asking to commit or when the user explicitly asks for a commit. The review should check:
+Review every feature slice before asking to commit or when the user explicitly asks for a commit. The review should check:
 
 - data integrity
 - validation failures and user-visible messages
@@ -173,7 +180,7 @@ python -m pytest
 
 The automated tests live under `tests/` and must use temporary SQLite database paths. They must not mutate the real runtime database at `data/extrusion_terminal.sqlite3`.
 
-Commit messages should describe the milestone, not internal implementation noise.
+Commit messages should describe the completed change, not internal implementation noise.
 
 ## Operational Safety
 
@@ -189,27 +196,9 @@ Before pilot use, this repository must include:
 
 Do not expose the app directly to the public internet. Remote access, if used, should follow the confirmed Tailscale direction from `README.md`.
 
-## Current Milestone State
+## Active V2 Update Workspace
 
-Completed and committed:
-
-- FastAPI + SQLite scaffold.
-- seeded machines `1` through `4`.
-- `/health`, `/admin`, and `/terminal`.
-- CSV import into persistent imported cards.
-- Excel read-only export macro module.
-- admin machine/sequence release.
-- terminal queue visibility for released cards.
-- automated baseline tests for import/release behavior.
-- terminal card detail view and first version-checked material-field edit.
-- production timing actions: start, pause, resume, one running/occupied card per machine, and timing segments.
-- tare and roll entry: order-level tare, gross roll entry, roll corrections, roll deletion with automatic renumbering, and gross/net totals.
-- finish and history behavior: finish validation, active segment closure, completed workstation archive visibility, and admin-side reversible cancellation.
-- backup and recovery behavior: SQLite-safe timestamped backups, restore helper, retention, startup/restart documentation, and troubleshooting notes.
-- admin production corrections: admin-side cancel/restore, terminal material corrections, tare and roll corrections, and timing segment corrections with loaded-version conflict checks.
-- pre-print workflow walkthrough: temporary-database pass through import, admin review/edit, planning/resequence, terminal timing/tare/roll/finish, completed archive visibility, stale-write blocking, admin correction, admin cancel/restore, and running-card timing invariant checks.
-- workstation V8 live terminal connection: `/terminal` uses the live server-rendered V8 workstation layout with four-machine navigation, active queue drawer, completed lookup, selected-card details, recipe rows, material corrections, tare/roll controls, totals, timing actions, sync banner behavior, read-only maximum roll weight, and no workstation cancellation/restore controls.
-
-Next recommended milestone:
-
-- Keep `workstation-v7.html` as the checkpoint before the top-machine-navigation restructure. The V8 workstation must not expose cancellation or restore controls; cancellation remains an admin/shift-manager action.
+For work in the July 25-26, 2026 update, read `v2-files/AGENTS.md` and follow its
+routing. The phrase “maintain the database migration system” activates the full
+assessment, implementation, testing, and recordkeeping workflow defined there.
+Do not require the user to repeat technical migration instructions.

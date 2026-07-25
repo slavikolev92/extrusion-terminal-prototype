@@ -918,7 +918,7 @@ Do not restore over `data/extrusion_terminal.sqlite3` while the app is running. 
 
 Troubleshooting:
 
-- Failed imports: confirm the uploaded file is CSV, has headers including `order_number` and `extrusion_flag`, and shows extrusion data. Rows without an extrusion step are reported in the import result and skipped.
+- Failed imports: confirm the uploaded file is CSV, uses the current Shift Manager export headers including `order_number`, `ordered_gross_kg`, and `extrusion_sequence`, and includes extrusion detail data. Rows where `extrusion_sequence` is not `1` are reported in the import result and skipped.
 - Planning sequence looks wrong: release, reassignment, and resequencing should normalize each active machine queue to `1..N`; refresh `/admin/planning` and report the affected order if a gap or duplicate remains.
 - Server restart: stop with `Ctrl+C`, start with the documented startup command, run `/health`, then refresh the terminal browser. Data should persist because it is stored in SQLite, not browser memory.
 
