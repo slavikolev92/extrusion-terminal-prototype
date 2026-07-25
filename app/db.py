@@ -371,23 +371,21 @@ def fetch_active_shift() -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
-def suggest_next_shift_number() -> int:
-    with connect() as connection:
-        configuration = connection.execute(
-            "SELECT shift_count FROM terminal_configuration WHERE id = 1"
-        ).fetchone()
-        if configuration is None:
-            raise RuntimeError("terminal configuration is not initialized")
-        latest_completed = connection.execute(
-            """
-            SELECT shift_number
-            FROM shift_occurrences
-            WHERE ended_at IS NOT NULL
-            ORDER BY ended_at DESC, id DESC
-            LIMIT 1
-            """
-        ).fetchone()
-
+def _suggest_next_shift_number(connection: sqlite3.Connection) -> int:
+    configuration = connection.execute(
+        "SELECT shift_count FROM terminal_configuration WHERE id = 1"
+    ).fetchone()
+    if configuration is None:
+        raise RuntimeError("terminal configuration is not initialized")
+    latest_completed = connection.execute(
+        """
+        SELECT shift_number
+        FROM shift_occurrences
+        WHERE ended_at IS NOT NULL
+        ORDER BY ended_at DESC, id DESC
+        LIMIT 1
+        """
+    ).fetchone()
     shift_count = int(configuration["shift_count"])
     if latest_completed is None:
         return 1
@@ -395,6 +393,127 @@ def suggest_next_shift_number() -> int:
     if latest_number < 1 or latest_number > shift_count:
         return 1
     return 1 if latest_number == shift_count else latest_number + 1
+
+
+def suggest_next_shift_number() -> int:
+    with connect() as connection:
+        return _suggest_next_shift_number(connection)
+
+
+def _formatted_shift_totals(row: sqlite3.Row) -> dict[str, Any]:
+    total_gross = decimal_from_database(row["total_gross_weight"])
+    return {
+        "id": int(row["id"]),
+        "shift_number": int(row["shift_number"]),
+        "started_at": str(row["started_at"]),
+        "ended_at": row["ended_at"],
+        "distinct_item_count": int(row["distinct_item_count"]),
+        "roll_count": int(row["roll_count"]),
+        "total_gross_weight": decimal_to_display(total_gross or Decimal("0")),
+    }
+
+
+def _fetch_completed_shifts(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT shift_occurrences.id,
+               shift_occurrences.shift_number,
+               shift_occurrences.started_at,
+               shift_occurrences.ended_at,
+               COUNT(roll_entries.id) AS roll_count,
+               COUNT(DISTINCT roll_entries.card_id) AS distinct_item_count,
+               COALESCE(SUM(CAST(roll_entries.gross_weight AS NUMERIC)), 0)
+                   AS total_gross_weight
+        FROM shift_occurrences
+        LEFT JOIN roll_entries
+          ON roll_entries.shift_occurrence_id = shift_occurrences.id
+        WHERE shift_occurrences.ended_at IS NOT NULL
+        GROUP BY shift_occurrences.id
+        ORDER BY shift_occurrences.ended_at DESC, shift_occurrences.id DESC
+        """
+    ).fetchall()
+    return [_formatted_shift_totals(row) for row in rows]
+
+
+def fetch_completed_shifts() -> list[dict[str, Any]]:
+    with connect() as connection:
+        return _fetch_completed_shifts(connection)
+
+
+def fetch_shift_summary(shift_occurrence_id: int) -> dict[str, Any] | None:
+    with connect() as connection:
+        shift_row = connection.execute(
+            """
+            SELECT shift_occurrences.id,
+                   shift_occurrences.shift_number,
+                   shift_occurrences.started_at,
+                   shift_occurrences.ended_at,
+                   COUNT(roll_entries.id) AS roll_count,
+                   COUNT(DISTINCT roll_entries.card_id) AS distinct_item_count,
+                   COALESCE(SUM(CAST(roll_entries.gross_weight AS NUMERIC)), 0)
+                       AS total_gross_weight
+            FROM shift_occurrences
+            LEFT JOIN roll_entries
+              ON roll_entries.shift_occurrence_id = shift_occurrences.id
+            WHERE shift_occurrences.id = ?
+            GROUP BY shift_occurrences.id
+            """,
+            (shift_occurrence_id,),
+        ).fetchone()
+        if shift_row is None:
+            return None
+        order_rows = connection.execute(
+            """
+            SELECT roll_entries.card_id,
+                   cards.order_number,
+                   cards.customer,
+                   cards.product_type,
+                   COUNT(roll_entries.id) AS roll_count,
+                   COALESCE(SUM(CAST(roll_entries.gross_weight AS NUMERIC)), 0)
+                       AS gross_weight
+            FROM roll_entries
+            JOIN cards ON cards.id = roll_entries.card_id
+            WHERE roll_entries.shift_occurrence_id = ?
+            GROUP BY roll_entries.card_id,
+                     cards.order_number,
+                     cards.customer,
+                     cards.product_type
+            ORDER BY cards.order_number, roll_entries.card_id
+            """,
+            (shift_occurrence_id,),
+        ).fetchall()
+
+    summary = _formatted_shift_totals(shift_row)
+    summary["orders"] = [
+        {
+            "card_id": int(row["card_id"]),
+            "order_number": str(row["order_number"]),
+            "customer": row["customer"],
+            "product_type": row["product_type"],
+            "roll_count": int(row["roll_count"]),
+            "gross_weight": decimal_to_display(
+                decimal_from_database(row["gross_weight"]) or Decimal("0")
+            ),
+        }
+        for row in order_rows
+    ]
+    return summary
+
+
+def fetch_shift_window_state() -> dict[str, Any]:
+    with connect() as connection:
+        configuration = connection.execute(
+            "SELECT * FROM terminal_configuration WHERE id = 1"
+        ).fetchone()
+        if configuration is None:
+            raise RuntimeError("terminal configuration is not initialized")
+        active_shift = fetch_active_shift_row(connection)
+        return {
+            "configuration": dict(configuration),
+            "active_shift": dict(active_shift) if active_shift is not None else None,
+            "suggested_shift_number": _suggest_next_shift_number(connection),
+            "completed_shifts": _fetch_completed_shifts(connection),
+        }
 
 
 def _shift_number_in_configuration(

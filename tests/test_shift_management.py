@@ -242,3 +242,264 @@ def test_reused_shift_number_creates_distinct_occurrence_identity(connection):
         (first["id"], 1, False),
         (second["id"], 1, True),
     ]
+
+
+def insert_shift_occurrence(
+    connection: sqlite3.Connection,
+    shift_number: int,
+    started_at: str,
+    ended_at: str | None = None,
+) -> int:
+    cursor = connection.execute(
+        """
+        INSERT INTO shift_occurrences (shift_number, started_at, ended_at)
+        VALUES (?, ?, ?)
+        """,
+        (shift_number, started_at, ended_at),
+    )
+    return int(cursor.lastrowid)
+
+
+def insert_summary_card(
+    connection: sqlite3.Connection,
+    order_number: str,
+    customer: str | None,
+    product_type: str | None,
+) -> int:
+    cursor = connection.execute(
+        """
+        INSERT INTO cards (order_number, customer, product_type)
+        VALUES (?, ?, ?)
+        """,
+        (order_number, customer, product_type),
+    )
+    return int(cursor.lastrowid)
+
+
+def insert_summary_roll(
+    connection: sqlite3.Connection,
+    card_id: int,
+    order_number: str,
+    roll_number: int,
+    gross_weight: str | None,
+    shift_occurrence_id: int | None,
+) -> int:
+    cursor = connection.execute(
+        """
+        INSERT INTO roll_entries (
+            card_id, order_number, roll_number, gross_weight, shift_occurrence_id
+        )
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (card_id, order_number, roll_number, gross_weight, shift_occurrence_id),
+    )
+    return int(cursor.lastrowid)
+
+
+def test_shift_summary_groups_distinct_orders_roll_count_and_gross_weight(connection):
+    first_shift_id = insert_shift_occurrence(
+        connection, 1, "2026-07-25 06:00:00"
+    )
+    other_shift_id = insert_shift_occurrence(
+        connection, 2, "2026-07-25 14:00:00", "2026-07-25 22:00:00"
+    )
+    later_order_card_id = insert_summary_card(
+        connection, "ORD-200", "Customer two", "Product two"
+    )
+    earlier_order_card_id = insert_summary_card(
+        connection, "ORD-100", "Customer one", "Product one"
+    )
+    insert_summary_roll(
+        connection, later_order_card_id, "ORD-200", 1, "100.25", first_shift_id
+    )
+    insert_summary_roll(
+        connection, later_order_card_id, "ORD-200", 2, "200", first_shift_id
+    )
+    insert_summary_roll(
+        connection, earlier_order_card_id, "ORD-100", 1, "10", first_shift_id
+    )
+    insert_summary_roll(
+        connection, earlier_order_card_id, "ORD-100", 2, "999", other_shift_id
+    )
+    insert_summary_roll(
+        connection, later_order_card_id, "ORD-200", 3, "500", None
+    )
+    connection.commit()
+
+    summary = db.fetch_shift_summary(first_shift_id)
+
+    assert summary == {
+        "id": first_shift_id,
+        "shift_number": 1,
+        "started_at": "2026-07-25 06:00:00",
+        "ended_at": None,
+        "distinct_item_count": 2,
+        "roll_count": 3,
+        "total_gross_weight": "310.25",
+        "orders": [
+            {
+                "card_id": earlier_order_card_id,
+                "order_number": "ORD-100",
+                "customer": "Customer one",
+                "product_type": "Product one",
+                "roll_count": 1,
+                "gross_weight": "10.00",
+            },
+            {
+                "card_id": later_order_card_id,
+                "order_number": "ORD-200",
+                "customer": "Customer two",
+                "product_type": "Product two",
+                "roll_count": 2,
+                "gross_weight": "300.25",
+            },
+        ],
+    }
+
+
+def test_shift_summary_counts_all_linked_rolls_and_sums_available_gross_weight(connection):
+    shift_id = insert_shift_occurrence(connection, 1, "2026-07-25 06:00:00")
+    card_id = insert_summary_card(connection, "ORD-100", None, None)
+    insert_summary_roll(connection, card_id, "ORD-100", 1, "15.5", shift_id)
+    insert_summary_roll(connection, card_id, "ORD-100", 2, None, shift_id)
+    connection.commit()
+
+    summary = db.fetch_shift_summary(shift_id)
+
+    assert summary is not None
+    assert summary["distinct_item_count"] == 1
+    assert summary["roll_count"] == 2
+    assert summary["total_gross_weight"] == "15.50"
+    assert summary["orders"] == [
+        {
+            "card_id": card_id,
+            "order_number": "ORD-100",
+            "customer": None,
+            "product_type": None,
+            "roll_count": 2,
+            "gross_weight": "15.50",
+        }
+    ]
+
+
+def test_shift_summary_reflects_current_card_details_roll_corrections_and_deletions(connection):
+    shift_id = insert_shift_occurrence(connection, 1, "2026-07-25 06:00:00")
+    card_id = insert_summary_card(
+        connection, "ORD-100", "Original customer", "Original product"
+    )
+    retained_roll_id = insert_summary_roll(
+        connection, card_id, "ORD-100", 1, "10", shift_id
+    )
+    deleted_roll_id = insert_summary_roll(
+        connection, card_id, "ORD-100", 2, "4", shift_id
+    )
+    connection.commit()
+
+    before = db.fetch_shift_summary(shift_id)
+    connection.execute(
+        """
+        UPDATE cards
+        SET order_number = ?, customer = ?, product_type = ?
+        WHERE id = ?
+        """,
+        ("ORD-050", "Corrected customer", "Corrected product", card_id),
+    )
+    connection.execute(
+        "UPDATE roll_entries SET gross_weight = ? WHERE id = ?",
+        ("19.75", retained_roll_id),
+    )
+    connection.execute("DELETE FROM roll_entries WHERE id = ?", (deleted_roll_id,))
+    connection.commit()
+
+    after = db.fetch_shift_summary(shift_id)
+
+    assert before is not None
+    assert before["roll_count"] == 2
+    assert before["total_gross_weight"] == "14.00"
+    assert after is not None
+    assert after["distinct_item_count"] == 1
+    assert after["roll_count"] == 1
+    assert after["total_gross_weight"] == "19.75"
+    assert after["orders"] == [
+        {
+            "card_id": card_id,
+            "order_number": "ORD-050",
+            "customer": "Corrected customer",
+            "product_type": "Corrected product",
+            "roll_count": 1,
+            "gross_weight": "19.75",
+        }
+    ]
+
+
+def test_empty_shift_summary_has_zero_totals_and_no_order_rows(connection):
+    shift_id = insert_shift_occurrence(connection, 1, "2026-07-25 06:00:00")
+    connection.commit()
+
+    summary = db.fetch_shift_summary(shift_id)
+    state = db.fetch_shift_window_state()
+
+    assert summary == {
+        "id": shift_id,
+        "shift_number": 1,
+        "started_at": "2026-07-25 06:00:00",
+        "ended_at": None,
+        "distinct_item_count": 0,
+        "roll_count": 0,
+        "total_gross_weight": "0.00",
+        "orders": [],
+    }
+    assert state["active_shift"] == active_shift()
+    assert state["completed_shifts"] == []
+    assert state["suggested_shift_number"] == 1
+    assert state["configuration"] == configuration()
+
+
+def test_completed_shift_history_is_newest_first_and_uses_live_totals(connection):
+    older_shift_id = insert_shift_occurrence(
+        connection, 1, "2026-07-24 06:00:00", "2026-07-25 14:00:00"
+    )
+    newest_shift_id = insert_shift_occurrence(
+        connection, 2, "2026-07-25 06:00:00", "2026-07-25 14:00:00"
+    )
+    older_card_id = insert_summary_card(connection, "ORD-100", None, None)
+    newest_card_id = insert_summary_card(connection, "ORD-200", None, None)
+    newest_second_card_id = insert_summary_card(connection, "ORD-300", None, None)
+    insert_summary_roll(connection, older_card_id, "ORD-100", 1, "5", older_shift_id)
+    newest_roll_id = insert_summary_roll(
+        connection, newest_card_id, "ORD-200", 1, "10", newest_shift_id
+    )
+    insert_summary_roll(
+        connection, newest_second_card_id, "ORD-300", 1, None, newest_shift_id
+    )
+    connection.commit()
+
+    initial_history = db.fetch_completed_shifts()
+    connection.execute(
+        "UPDATE roll_entries SET gross_weight = ? WHERE id = ?",
+        ("12.5", newest_roll_id),
+    )
+    connection.commit()
+    corrected_history = db.fetch_completed_shifts()
+
+    assert initial_history == [
+        {
+            "id": newest_shift_id,
+            "shift_number": 2,
+            "started_at": "2026-07-25 06:00:00",
+            "ended_at": "2026-07-25 14:00:00",
+            "distinct_item_count": 2,
+            "roll_count": 2,
+            "total_gross_weight": "10.00",
+        },
+        {
+            "id": older_shift_id,
+            "shift_number": 1,
+            "started_at": "2026-07-24 06:00:00",
+            "ended_at": "2026-07-25 14:00:00",
+            "distinct_item_count": 1,
+            "roll_count": 1,
+            "total_gross_weight": "5.00",
+        },
+    ]
+    assert corrected_history[0]["total_gross_weight"] == "12.50"
