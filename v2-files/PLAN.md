@@ -14,10 +14,10 @@ export/import contract change is complete, including Task 6 verification.
 The remaining production legacy-data profile and release-candidate rehearsal
 are deployment gates only; both require an immutable SQLite-safe backup.
 
-Next feature workstream: write the implementation plan for the approved
-shift-management specification in
-`v2-files/TASK-01-SHIFT-MANAGEMENT.md`. The post-blocker app/database
-exploration is complete and found no technical blocker to planning.
+Shift management is implemented and verified against the approved specification
+in `v2-files/TASK-01-SHIFT-MANAGEMENT.md`. The remaining M001 production
+legacy-data profile and final release-candidate rehearsal are deployment gates,
+not unfinished shift-management application work.
 
 The original production-tracking workstreams are:
 
@@ -54,13 +54,13 @@ Recommended first project.
 Persist shift occurrences and attach rolls to them so the app can report
 production by numbered shift and time period.
 
-### Current Planning Stage
+### Current Status
 
-The shift-management functionality is approved in
-`v2-files/TASK-01-SHIFT-MANAGEMENT.md`. Read-only post-blocker exploration is
-complete: the current architecture supports the feature and the baseline suite
-passes. The next work is to write and review the implementation plan. Migration
-is a safety part of implementation, not a standalone project.
+The shift-management functionality in
+`v2-files/TASK-01-SHIFT-MANAGEMENT.md` is implemented and verified. M002 adds
+the schema foundation without historical backfill, focused and full automated
+suites pass, and the complete temporary-database Playwright workflow is
+recorded in `docs/implementation-notes/shift-management.md`.
 
 ### Confirmed Data Relationships
 
@@ -69,8 +69,8 @@ is a safety part of implementation, not a standalone project.
 - New roll production links to the applicable shift occurrence.
 - Historical shift summaries are calculated from the latest corrected linked
   roll data rather than frozen summary copies.
-- Exact tables, columns, constraints, and migration steps belong in the
-  implementation plan based on the completed exploration.
+- M002 provides the occurrence/configuration tables, the one-open database
+  invariant, and nullable roll attribution without guessing legacy history.
 
 ### Future Extension Placeholder
 
@@ -141,11 +141,13 @@ package_rolls
 
 1. Full shift-management behavior and the focused specification are approved.
 2. Post-blocker app/database exploration is complete.
-3. Write and review the practical implementation plan.
-4. Implement one reviewed, testable slice at a time, including safe migration.
-5. Verify existing-data preservation, shift lifecycle, roll attribution,
-   terminal gating, summaries, history, and configuration.
-6. Only after shift management is accepted, return to packaging/pallet tracking.
+3. The practical implementation plan was written and reviewed.
+4. The reviewed slices and schema-only M002 migration are implemented.
+5. Existing-data preservation, shift lifecycle, roll attribution, terminal
+   gating, summaries, history, configuration, and stale-page behavior are
+   verified.
+6. Production deployment still requires the M001 legacy-data profile and final
+   release-candidate rehearsal on SQLite-safe backup copies.
 
 ## Open Questions
 
@@ -163,8 +165,9 @@ This list combines the two existing production-tracking workstreams with the new
 1. **Shift management for extrusion production**
    - Surface: `/terminal`, `/admin`, database.
    - Complexity: large.
-   - Status: functionality and post-blocker exploration complete; implementation
-     plan is next.
+   - Status: implementation and verification complete. M001 production
+     profiling and the final release-candidate rehearsal remain deployment
+     gates.
    - Goal: create one active extrusion shift at a time, require/open shift context for new production roll entry, and attach every new roll to the shift that produced it.
    - Approved behavior: `v2-files/TASK-01-SHIFT-MANAGEMENT.md`.
 
@@ -271,16 +274,14 @@ This list combines the two existing production-tracking workstreams with the new
 
 ## Suggested Implementation Order
 
-1. Write and review the approved shift-management implementation plan, then
-   implement it one tested slice at a time.
-2. Before deployment, complete the production legacy-data profile and
+1. Before deployment, complete the production legacy-data profile and
    release-candidate rehearsal after an immutable backup is supplied.
-3. Design admin workflow changes before implementing import and planning
+2. Design admin workflow changes before implementing import and planning
    redesigns.
-4. Design terminal workflow additions before calculator or roll-change timing
+3. Design terminal workflow additions before calculator or roll-change timing
    work.
-5. Implement the larger production-data workstreams in this order unless the
-   user reprioritizes them: shift management, worker recipe editing, then
-   packaging/pallet tracking.
+4. Implement the remaining larger production-data workstreams in the order the
+   user confirms; shift management is complete, while worker recipe editing and
+   packaging/pallet tracking remain separate future work.
 
 This order is only a first cut. The larger items need short design passes before implementation because they change workflow, database shape, and future ERP/costing assumptions.

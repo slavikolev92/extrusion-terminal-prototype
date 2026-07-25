@@ -1,6 +1,8 @@
 # Task 01: Shift Management Functionality Specification
 
-Status: functionality approved on July 25, 2026.
+Status: implementation and verification complete on July 25, 2026. Production
+deployment remains gated by the M001 legacy-data profile and the final
+release-candidate rehearsal.
 
 ## Purpose
 
@@ -243,13 +245,18 @@ exploration.
 
 ## Next technical work
 
-The prerequisite blocker work and read-only app/database exploration are
-complete. The current architecture can support this specification without
-changing its approved functionality.
+The prerequisite blocker work, implementation, and verification are complete.
+M002 provides the schema-only shift foundation, leaves historical rolls
+unattributed, and is covered by focused migration and workflow tests. The full
+temporary-database browser workflow and durable behavior record are in
+`docs/implementation-notes/shift-management.md`.
 
 Next:
 
-1. Decide the practical implementation slices and write the implementation
-   plan.
-2. Design and test the required schema migration as part of implementation.
-3. Preserve existing rolls without inferring historical shift assignments.
+1. Profile an immutable SQLite-safe production backup to resolve the older M001
+   legacy import-field deployment gate without guessing values.
+2. Rehearse the final release candidate and complete migration chain on a fresh
+   clone of a SQLite-safe production backup.
+3. Deploy the application and M002 together only after those gates, backup,
+   integrity, foreign-key, application smoke, repeat-run, and rollback checks
+   pass.
