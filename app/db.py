@@ -442,6 +442,7 @@ def fetch_completed_shifts() -> list[dict[str, Any]]:
 
 def fetch_shift_summary(shift_occurrence_id: int) -> dict[str, Any] | None:
     with connect() as connection:
+        connection.execute("BEGIN")
         shift_row = connection.execute(
             """
             SELECT shift_occurrences.id,
@@ -502,6 +503,7 @@ def fetch_shift_summary(shift_occurrence_id: int) -> dict[str, Any] | None:
 
 def fetch_shift_window_state() -> dict[str, Any]:
     with connect() as connection:
+        connection.execute("BEGIN")
         configuration = connection.execute(
             "SELECT * FROM terminal_configuration WHERE id = 1"
         ).fetchone()

@@ -296,6 +296,37 @@ def insert_summary_roll(
     return int(cursor.lastrowid)
 
 
+def connect_with_writer_after_query_snapshot(
+    monkeypatch,
+    query_marker: str,
+    writer_action,
+) -> list[bool]:
+    original_connect = db.connect
+    writer_committed = [False]
+
+    def instrumented_connect() -> sqlite3.Connection:
+        read_connection = original_connect()
+        target_query_started = False
+
+        def trace(statement: str) -> None:
+            nonlocal target_query_started
+            target_query_started = query_marker in statement
+
+        def progress() -> int:
+            if target_query_started and not writer_committed[0]:
+                writer_action()
+                writer_committed[0] = True
+                read_connection.set_progress_handler(None, 0)
+            return 0
+
+        read_connection.set_trace_callback(trace)
+        read_connection.set_progress_handler(progress, 1)
+        return read_connection
+
+    monkeypatch.setattr(db, "connect", instrumented_connect)
+    return writer_committed
+
+
 def test_shift_summary_groups_distinct_orders_roll_count_and_gross_weight(connection):
     first_shift_id = insert_shift_occurrence(
         connection, 1, "2026-07-25 06:00:00"
@@ -503,3 +534,71 @@ def test_completed_shift_history_is_newest_first_and_uses_live_totals(connection
         },
     ]
     assert corrected_history[0]["total_gross_weight"] == "12.50"
+
+
+def test_shift_summary_uses_one_snapshot_across_concurrent_roll_deletion(
+    connection,
+    monkeypatch,
+):
+    assert connection.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+    shift_id = insert_shift_occurrence(connection, 1, "2026-07-25 06:00:00")
+    card_id = insert_summary_card(connection, "ORD-100", None, None)
+    insert_summary_roll(connection, card_id, "ORD-100", 1, "10", shift_id)
+    deleted_roll_id = insert_summary_roll(connection, card_id, "ORD-100", 2, "4", shift_id)
+    connection.commit()
+
+    writer = sqlite3.connect(db.DB_PATH)
+    try:
+        def delete_roll() -> None:
+            writer.execute("DELETE FROM roll_entries WHERE id = ?", (deleted_roll_id,))
+            writer.commit()
+
+        writer_committed = connect_with_writer_after_query_snapshot(
+            monkeypatch,
+            "COUNT(DISTINCT roll_entries.card_id)",
+            delete_roll,
+        )
+
+        summary = db.fetch_shift_summary(shift_id)
+    finally:
+        writer.close()
+
+    assert writer_committed == [True]
+    assert summary is not None
+    assert summary["roll_count"] == sum(
+        int(order["roll_count"]) for order in summary["orders"]
+    )
+
+
+def test_shift_window_state_uses_one_snapshot_across_concurrent_shift_end(
+    connection,
+    monkeypatch,
+):
+    assert connection.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+    shift_id = insert_shift_occurrence(connection, 1, "2026-07-25 06:00:00")
+    connection.commit()
+
+    writer = sqlite3.connect(db.DB_PATH)
+    try:
+        def end_shift() -> None:
+            writer.execute(
+                "UPDATE shift_occurrences SET ended_at = ? WHERE id = ?",
+                ("2026-07-25 14:00:00", shift_id),
+            )
+            writer.commit()
+
+        writer_committed = connect_with_writer_after_query_snapshot(
+            monkeypatch,
+            "WHERE ended_at IS NULL",
+            end_shift,
+        )
+
+        state = db.fetch_shift_window_state()
+    finally:
+        writer.close()
+
+    assert writer_committed == [True]
+    active_shift = state["active_shift"]
+    active_ids = {int(active_shift["id"])} if active_shift is not None else set()
+    completed_ids = {int(shift["id"]) for shift in state["completed_shifts"]}
+    assert active_ids.isdisjoint(completed_ids)
