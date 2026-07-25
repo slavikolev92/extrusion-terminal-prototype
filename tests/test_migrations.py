@@ -152,6 +152,19 @@ def create_legacy_database(database_path: Path) -> None:
                 UNIQUE (card_id, component_key)
             );
 
+            CREATE TABLE recipe_components (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_id INTEGER NOT NULL REFERENCES cards(id),
+                component_key TEXT NOT NULL,
+                source_text TEXT NOT NULL,
+                material_category TEXT NOT NULL,
+                planned_material TEXT NOT NULL,
+                recipe_percent NUMERIC NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (card_id, component_key)
+            );
+
             CREATE TABLE production_time_segments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 card_id INTEGER NOT NULL REFERENCES cards(id),
@@ -251,6 +264,14 @@ def create_legacy_database(database_path: Path) -> None:
                 '2026-07-20 07:10:00', '2026-07-20 07:10:00'
             );
 
+            INSERT INTO recipe_components (
+                id, card_id, component_key, source_text, material_category,
+                planned_material, recipe_percent, created_at, updated_at
+            ) VALUES (
+                1, 1, 'raw_material_a', 'LDPE; A | 100%', 'raw_material',
+                'LDPE', 100, '2026-07-20 07:10:00', '2026-07-20 07:10:00'
+            );
+
             INSERT INTO production_time_segments (
                 id, card_id, started_at, ended_at, end_reason,
                 created_at, updated_at
@@ -299,6 +320,46 @@ def add_existing_final_values(database_path: Path) -> None:
         )
 
 
+def add_partially_upgraded_shift_schema(database_path: Path) -> None:
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE terminal_configuration (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                shift_count INTEGER NOT NULL DEFAULT 4
+                    CHECK (typeof(shift_count) = 'integer' AND shift_count >= 1),
+                version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE shift_occurrences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                shift_number INTEGER NOT NULL
+                    CHECK (typeof(shift_number) = 'integer' AND shift_number >= 1),
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CHECK (ended_at IS NULL OR ended_at >= started_at)
+            );
+
+            INSERT INTO terminal_configuration (id, shift_count, version, updated_at)
+            VALUES (1, 6, 3, '2026-07-20 06:00:00');
+            INSERT INTO shift_occurrences (
+                id, shift_number, started_at, ended_at, version, created_at, updated_at
+            ) VALUES (
+                1, 2, '2026-07-20 06:00:00', '2026-07-20 14:00:00', 4,
+                '2026-07-20 06:00:00', '2026-07-20 14:00:00'
+            );
+            ALTER TABLE roll_entries
+            ADD COLUMN shift_occurrence_id INTEGER
+                REFERENCES shift_occurrences(id) ON DELETE RESTRICT;
+            UPDATE roll_entries SET shift_occurrence_id = 1 WHERE id = 1;
+            """
+        )
+
+
 def configure_database(
     monkeypatch: pytest.MonkeyPatch,
     database_path: Path,
@@ -321,7 +382,7 @@ def read_row(
     return dict(row)
 
 
-def test_init_db_adds_final_fields_without_guessing_legacy_values(
+def test_m002_adds_shift_schema_without_attributing_legacy_rolls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -358,13 +419,25 @@ def test_init_db_adds_final_fields_without_guessing_legacy_values(
                 "recipe_actual_entries": (
                     "SELECT * FROM recipe_actual_entries ORDER BY id"
                 ),
+                "recipe_components": (
+                    "SELECT * FROM recipe_components ORDER BY id"
+                ),
                 "production_time_segments": (
                     "SELECT * FROM production_time_segments ORDER BY id"
                 ),
+                "machines": "SELECT * FROM machines ORDER BY id",
             }.items()
         }
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
-        violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+        foreign_key_violations = connection.execute(
+            "PRAGMA foreign_key_check"
+        ).fetchall()
+        configuration = dict(
+            connection.execute(
+                "SELECT id, shift_count, version "
+                "FROM terminal_configuration WHERE id = 1"
+            ).fetchone()
+        )
 
     db.init_db()
     with db.connect() as connection:
@@ -379,15 +452,25 @@ def test_init_db_adds_final_fields_without_guessing_legacy_values(
                 "recipe_actual_entries": (
                     "SELECT * FROM recipe_actual_entries ORDER BY id"
                 ),
+                "recipe_components": (
+                    "SELECT * FROM recipe_components ORDER BY id"
+                ),
                 "production_time_segments": (
                     "SELECT * FROM production_time_segments ORDER BY id"
                 ),
+                "machines": "SELECT * FROM machines ORDER BY id",
             }.items()
         }
+        second_migration_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
 
     assert [(row["version"], row["name"]) for row in migration_rows] == [
-        (1, "shift_manager_import_fields")
+        (1, "shift_manager_import_fields"),
+        (2, "shift_management"),
     ]
+    assert configuration == {"id": 1, "shift_count": 4, "version": 1}
+    assert roll["shift_occurrence_id"] is None
     assert [card[column] for column in FINAL_IMPORT_COLUMNS] == [None] * 8
     assert [source[column] for column in FINAL_IMPORT_COLUMNS] == [None] * 8
     assert [imported_card[column] for column in FINAL_IMPORT_COLUMNS] == [None] * 8
@@ -479,8 +562,9 @@ def test_init_db_adds_final_fields_without_guessing_legacy_values(
     assert segment["started_at"] == "2026-07-20 07:00:00"
     assert segment["ended_at"] is None
     assert integrity == "ok"
-    assert violations == []
+    assert foreign_key_violations == []
     assert second_snapshot == first_snapshot
+    assert second_migration_rows == migration_rows
 
 
 def test_m001_keeps_existing_final_values(
@@ -520,7 +604,47 @@ def test_m001_keeps_existing_final_values(
     ]
 
 
-def test_fresh_database_records_m001_once(
+def test_m002_preserves_existing_attribution_in_partially_upgraded_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "partly-upgraded.sqlite3"
+    create_legacy_database(database_path)
+    add_existing_final_values(database_path)
+    add_partially_upgraded_shift_schema(database_path)
+    configure_database(monkeypatch, database_path)
+
+    db.init_db()
+
+    with db.connect() as connection:
+        configuration = dict(
+            connection.execute("SELECT * FROM terminal_configuration WHERE id = 1").fetchone()
+        )
+        roll = read_row(connection, "roll_entries", "id", 1)
+        occurrence = read_row(connection, "shift_occurrences", "id", 1)
+        migration_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        foreign_key_violations = connection.execute(
+            "PRAGMA foreign_key_check"
+        ).fetchall()
+
+    assert configuration["shift_count"] == 6
+    assert configuration["version"] == 3
+    assert configuration["updated_at"] == "2026-07-20 06:00:00"
+    assert roll["shift_occurrence_id"] == 1
+    assert occurrence["shift_number"] == 2
+    assert occurrence["version"] == 4
+    assert [(row["version"], row["name"]) for row in migration_rows] == [
+        (1, "shift_manager_import_fields"),
+        (2, "shift_management"),
+    ]
+    assert integrity == "ok"
+    assert foreign_key_violations == []
+
+
+def test_fresh_database_records_m001_and_m002_once_with_schema_parity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -532,6 +656,12 @@ def test_fresh_database_records_m001_once(
         first_rows = connection.execute(
             "SELECT version, name FROM schema_migrations ORDER BY version"
         ).fetchall()
+        configuration = dict(
+            connection.execute(
+                "SELECT id, shift_count, version "
+                "FROM terminal_configuration WHERE id = 1"
+            ).fetchone()
+        )
         connection.execute("BEGIN")
         assert migrations.apply_pending_migrations(connection) == ()
         card_id = connection.execute(
@@ -583,6 +713,16 @@ def test_fresh_database_records_m001_once(
                 "PRAGMA table_info(card_import_sources)"
             ).fetchall()
         }
+        roll_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(roll_entries)").fetchall()
+        }
+        shift_tables = {
+            row["name"]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
         card = read_row(connection, "cards", "id", int(card_id))
         source = read_row(
             connection,
@@ -592,13 +732,18 @@ def test_fresh_database_records_m001_once(
         )
 
     assert [(row["version"], row["name"]) for row in first_rows] == [
-        (1, "shift_manager_import_fields")
+        (1, "shift_manager_import_fields"),
+        (2, "shift_management"),
     ]
     assert [(row["version"], row["name"]) for row in second_rows] == [
-        (1, "shift_manager_import_fields")
+        (1, "shift_manager_import_fields"),
+        (2, "shift_management"),
     ]
+    assert configuration == {"id": 1, "shift_count": 4, "version": 1}
     assert set(FINAL_IMPORT_COLUMNS).issubset(card_columns)
     assert set(FINAL_IMPORT_COLUMNS).issubset(source_columns)
+    assert "shift_occurrence_id" in roll_columns
+    assert {"terminal_configuration", "shift_occurrences"}.issubset(shift_tables)
     assert [card[column] for column in FINAL_IMPORT_COLUMNS] == [
         "700",
         "40",
@@ -619,6 +764,74 @@ def test_fresh_database_records_m001_once(
         "3",
         "4",
     ]
+
+
+def test_m002_enforces_single_active_shift_and_roll_foreign_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "constraints.sqlite3"
+    configure_database(monkeypatch, database_path)
+    db.init_db()
+
+    with db.connect() as connection:
+        card_id = connection.execute(
+            "INSERT INTO cards (order_number) VALUES ('SHIFT-25452')"
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO shift_occurrences (shift_number, started_at) "
+            "VALUES (1, '2026-07-25 06:00:00')"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO shift_occurrences (shift_number, started_at) "
+                "VALUES (2, '2026-07-25 14:00:00')"
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO roll_entries ("
+                "card_id, order_number, roll_number, shift_occurrence_id"
+                ") VALUES (?, 'SHIFT-25452', 1, 999)",
+                (card_id,),
+            )
+        connection.execute(
+            "INSERT INTO roll_entries ("
+            "card_id, order_number, roll_number, shift_occurrence_id"
+            ") VALUES (?, 'SHIFT-25452', 1, 1)",
+            (card_id,),
+        )
+
+
+def test_m002_failure_rolls_back_schema_and_migration_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m002-failure.sqlite3"
+    create_legacy_database(database_path)
+    configure_database(monkeypatch, database_path)
+    monkeypatch.setattr(migrations, "SHIFT_COMPLETED_INDEX_SQL", "CREATE INDEX")
+
+    with pytest.raises(sqlite3.OperationalError):
+        db.init_db()
+
+    with db.connect() as connection:
+        table_names = {
+            row["name"]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        roll_columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(roll_entries)"
+            ).fetchall()
+        }
+
+    assert "terminal_configuration" not in table_names
+    assert "shift_occurrences" not in table_names
+    assert "schema_migrations" not in table_names
+    assert "shift_occurrence_id" not in roll_columns
 
 
 @pytest.mark.parametrize(

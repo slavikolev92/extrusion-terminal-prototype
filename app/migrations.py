@@ -23,6 +23,50 @@ FINAL_IMPORT_COLUMNS = (
     "confection_sequence",
 )
 
+
+TERMINAL_CONFIGURATION_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS terminal_configuration (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    shift_count INTEGER NOT NULL DEFAULT 4
+        CHECK (typeof(shift_count) = 'integer' AND shift_count >= 1),
+    version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+SHIFT_OCCURRENCES_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS shift_occurrences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    shift_number INTEGER NOT NULL
+        CHECK (typeof(shift_number) = 'integer' AND shift_number >= 1),
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (ended_at IS NULL OR ended_at >= started_at)
+)
+"""
+
+SHIFT_ONE_ACTIVE_INDEX_SQL = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shift_occurrences_one_active
+ON shift_occurrences((1))
+WHERE ended_at IS NULL
+"""
+
+SHIFT_COMPLETED_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_shift_occurrences_completed
+ON shift_occurrences(ended_at DESC, id DESC)
+WHERE ended_at IS NOT NULL
+"""
+
+ROLL_SHIFT_CARD_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_roll_entries_shift_card
+ON roll_entries(shift_occurrence_id, card_id)
+WHERE shift_occurrence_id IS NOT NULL
+"""
+
+
 def _quote_identifier(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
@@ -69,8 +113,31 @@ def _apply_shift_manager_import_fields(connection: sqlite3.Connection) -> None:
         _add_final_import_columns(connection, table_name)
 
 
+def _apply_shift_management(connection: sqlite3.Connection) -> None:
+    connection.execute(TERMINAL_CONFIGURATION_TABLE_SQL)
+    connection.execute(SHIFT_OCCURRENCES_TABLE_SQL)
+    connection.execute(
+        "INSERT OR IGNORE INTO terminal_configuration (id, shift_count) VALUES (1, 4)"
+    )
+
+    roll_columns = _table_columns(connection, "roll_entries")
+    if roll_columns is not None and "shift_occurrence_id" not in roll_columns:
+        connection.execute(
+            "ALTER TABLE roll_entries "
+            "ADD COLUMN shift_occurrence_id INTEGER "
+            "REFERENCES shift_occurrences(id) ON DELETE RESTRICT"
+        )
+        roll_columns.add("shift_occurrence_id")
+
+    connection.execute(SHIFT_ONE_ACTIVE_INDEX_SQL)
+    connection.execute(SHIFT_COMPLETED_INDEX_SQL)
+    if roll_columns is not None:
+        connection.execute(ROLL_SHIFT_CARD_INDEX_SQL)
+
+
 MIGRATIONS = (
     Migration(1, "shift_manager_import_fields", _apply_shift_manager_import_fields),
+    Migration(2, "shift_management", _apply_shift_management),
 )
 
 

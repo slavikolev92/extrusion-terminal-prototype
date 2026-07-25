@@ -193,6 +193,8 @@ CREATE TABLE IF NOT EXISTS card_import_sources (
 CREATE TABLE IF NOT EXISTS roll_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    shift_occurrence_id INTEGER
+        REFERENCES shift_occurrences(id) ON DELETE RESTRICT,
     order_number TEXT NOT NULL,
     roll_number INTEGER NOT NULL CHECK (roll_number >= 1),
     gross_weight NUMERIC CHECK (gross_weight IS NULL OR gross_weight >= 0),

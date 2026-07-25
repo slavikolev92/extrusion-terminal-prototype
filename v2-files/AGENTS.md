@@ -188,6 +188,7 @@ Every migration test set must cover, where applicable:
 | Version | Name | Purpose | Development | Snapshot rehearsal | Production |
 | --- | --- | --- | --- | --- | --- |
 | M001 | `shift_manager_import_fields` | Add the eight final ordered/route columns without guessing legacy values | 9 focused tests passed | Not run | Not run |
+| M002 | `shift_management` | Add shift configuration, durable occurrences, and nullable roll attribution without historical backfill | 12 focused tests passed | Not run | Not run |
 
 ### M001: Shift Manager Import Fields
 
@@ -236,12 +237,38 @@ No production snapshot has been profiled or rehearsed. Do not deploy M001 alone:
 current views expect final fields while historical production rows retain legacy
 quantity/unit pairs.
 
+### M002: Shift Management
+
+M002 adds `terminal_configuration`, `shift_occurrences`, the nullable
+`roll_entries.shift_occurrence_id` foreign key, and the indexes that enforce one
+active shift and support completed-shift and attributed-roll queries. It seeds
+only the singleton configuration row with `id = 1` and `shift_count = 4`.
+
+M002 is schema-only: it does not update cards, import sources, rolls, recipe
+actuals/components, timing segments, machine queues, versions, or timestamps.
+Every historical roll remains `NULL` for `shift_occurrence_id`; no historical
+shift attribution is inferred. A partially upgraded database retains valid
+non-null attribution and its existing configuration values.
+
+Development evidence from July 25, 2026:
+
+```bash
+.venv/bin/python -m pytest tests/test_migrations.py -q
+# 12 passed
+```
+
+The unresolved M001 legacy-data production profile and the later
+release-candidate rehearsal remain deployment gates. M002 and the application
+code that consumes it must deploy together after a SQLite-safe backup and
+rehearsal.
+
 ## Migration Assessment Log
 
 | Date | Feature/change | Decision | Result |
 | --- | --- | --- | --- |
 | 2026-07-25 | Shift Manager V14.04 import-field correction | Schema-only plus later production profile | M001 implemented; legacy values deliberately unchanged; 9 focused and 57 combined tests passed |
 | 2026-07-25 | V2 documentation consolidation and trigger command | No migration | Documentation and agent instructions only; no stored data or schema changed |
+| 2026-07-25 | Shift management M002 schema foundation | Schema-only | Added configuration, occurrences, nullable roll FK, and indexes; no existing values changed and legacy rolls remain `NULL`; M001 production profile and release-candidate rehearsal remain deployment gates |
 
 Append one row after every use of the trigger command, including when no
 migration is required.
