@@ -3056,6 +3056,7 @@
       });
 
       document.addEventListener("terminal:shift-stale", () => {
+        document.dispatchEvent(new CustomEvent("terminal:autosave-suspend"));
         shiftWindow.dataset.shiftBlocking = "true";
         shiftWindow.dataset.shiftState = "reload";
         shiftWindow.hidden = false;
@@ -3172,6 +3173,11 @@
         return;
       }
 
+      let autosaveSuspended = false;
+      document.addEventListener("terminal:autosave-suspend", () => {
+        autosaveSuspended = true;
+      });
+
       const autosaveStates = [];
 
       const bindDirtyAutosaveForm = (form) => {
@@ -3198,7 +3204,7 @@
         };
 
         const submitDirtyForm = () => {
-          if (submitting || !isDirty()) {
+          if (autosaveSuspended || submitting || !isDirty()) {
             return false;
           }
           form.requestSubmit();
@@ -3254,6 +3260,9 @@
       }
 
       document.addEventListener("click", (event) => {
+        if (autosaveSuspended) {
+          return;
+        }
         const target = event.target;
         const submittingState = autosaveStates.find((state) => state.isSubmitting());
         if (submittingState) {
