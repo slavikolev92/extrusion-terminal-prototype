@@ -382,6 +382,55 @@ def read_row(
     return dict(row)
 
 
+PRESERVATION_TABLES = (
+    "cards",
+    "card_import_sources",
+    "roll_entries",
+    "recipe_actual_entries",
+    "recipe_components",
+    "production_time_segments",
+    "machines",
+)
+PRESERVATION_ORDER_COLUMNS = {
+    "card_import_sources": "card_id",
+}
+
+
+def capture_preservation_snapshot(
+    connection: sqlite3.Connection,
+    columns_by_table: dict[str, tuple[str, ...]] | None = None,
+    legacy_machine_ids: tuple[int, ...] | None = None,
+) -> tuple[dict[str, list[tuple[object, ...]]], dict[str, tuple[str, ...]]]:
+    if columns_by_table is None:
+        columns_by_table = {
+            table_name: tuple(
+                row["name"]
+                for row in connection.execute(
+                    f"PRAGMA table_info({table_name})"
+                ).fetchall()
+            )
+            for table_name in PRESERVATION_TABLES
+        }
+
+    snapshot: dict[str, list[tuple[object, ...]]] = {}
+    for table_name, columns in columns_by_table.items():
+        order_column = PRESERVATION_ORDER_COLUMNS.get(table_name, "id")
+        query = "SELECT " + ", ".join(columns) + f" FROM {table_name}"
+        parameters: tuple[int, ...] = ()
+        if table_name == "machines" and legacy_machine_ids is not None:
+            placeholders = ", ".join("?" for _ in legacy_machine_ids)
+            query += f" WHERE id IN ({placeholders})"
+            parameters = legacy_machine_ids
+        snapshot[table_name] = [
+            tuple(row)
+            for row in connection.execute(
+                f"{query} ORDER BY {order_column}",
+                parameters,
+            ).fetchall()
+        ]
+    return snapshot, columns_by_table
+
+
 def test_m002_adds_shift_schema_without_attributing_legacy_rolls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -389,6 +438,15 @@ def test_m002_adds_shift_schema_without_attributing_legacy_rolls(
     database_path = tmp_path / "legacy.sqlite3"
     create_legacy_database(database_path)
     configure_database(monkeypatch, database_path)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        pre_migration_snapshot, legacy_columns = capture_preservation_snapshot(
+            connection
+        )
+        legacy_machine_ids = tuple(
+            int(row[0]) for row in pre_migration_snapshot["machines"]
+        )
 
     db.init_db()
 
@@ -408,26 +466,14 @@ def test_m002_adds_shift_schema_without_attributing_legacy_rolls(
             "card_id",
             2,
         )
-        first_snapshot = {
-            table_name: [tuple(row) for row in connection.execute(query).fetchall()]
-            for table_name, query in {
-                "cards": "SELECT * FROM cards ORDER BY id",
-                "card_import_sources": (
-                    "SELECT * FROM card_import_sources ORDER BY card_id"
-                ),
-                "roll_entries": "SELECT * FROM roll_entries ORDER BY id",
-                "recipe_actual_entries": (
-                    "SELECT * FROM recipe_actual_entries ORDER BY id"
-                ),
-                "recipe_components": (
-                    "SELECT * FROM recipe_components ORDER BY id"
-                ),
-                "production_time_segments": (
-                    "SELECT * FROM production_time_segments ORDER BY id"
-                ),
-                "machines": "SELECT * FROM machines ORDER BY id",
-            }.items()
-        }
+        first_snapshot, _ = capture_preservation_snapshot(
+            connection,
+            legacy_columns,
+            legacy_machine_ids,
+        )
+        machines = connection.execute(
+            "SELECT id, name, is_operational, display_order FROM machines ORDER BY id"
+        ).fetchall()
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
         foreign_key_violations = connection.execute(
             "PRAGMA foreign_key_check"
@@ -441,26 +487,11 @@ def test_m002_adds_shift_schema_without_attributing_legacy_rolls(
 
     db.init_db()
     with db.connect() as connection:
-        second_snapshot = {
-            table_name: [tuple(row) for row in connection.execute(query).fetchall()]
-            for table_name, query in {
-                "cards": "SELECT * FROM cards ORDER BY id",
-                "card_import_sources": (
-                    "SELECT * FROM card_import_sources ORDER BY card_id"
-                ),
-                "roll_entries": "SELECT * FROM roll_entries ORDER BY id",
-                "recipe_actual_entries": (
-                    "SELECT * FROM recipe_actual_entries ORDER BY id"
-                ),
-                "recipe_components": (
-                    "SELECT * FROM recipe_components ORDER BY id"
-                ),
-                "production_time_segments": (
-                    "SELECT * FROM production_time_segments ORDER BY id"
-                ),
-                "machines": "SELECT * FROM machines ORDER BY id",
-            }.items()
-        }
+        second_snapshot, _ = capture_preservation_snapshot(
+            connection,
+            legacy_columns,
+            legacy_machine_ids,
+        )
         second_migration_rows = connection.execute(
             "SELECT version, name FROM schema_migrations ORDER BY version"
         ).fetchall()
@@ -563,6 +594,13 @@ def test_m002_adds_shift_schema_without_attributing_legacy_rolls(
     assert segment["ended_at"] is None
     assert integrity == "ok"
     assert foreign_key_violations == []
+    assert first_snapshot == pre_migration_snapshot
+    assert [tuple(machine) for machine in machines] == [
+        (1, "Legacy machine 1", 1, 1),
+        (2, "Machine 2", 1, 2),
+        (3, "Machine 3", 1, 3),
+        (4, "Machine 4", 1, 4),
+    ]
     assert second_snapshot == first_snapshot
     assert second_migration_rows == migration_rows
 

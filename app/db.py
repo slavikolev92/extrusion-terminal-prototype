@@ -350,10 +350,7 @@ def seed_fixed_machines(connection: sqlite3.Connection) -> None:
         """
         INSERT INTO machines (id, name, is_operational, display_order)
         VALUES (?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            name = excluded.name,
-            display_order = excluded.display_order,
-            updated_at = CURRENT_TIMESTAMP
+        ON CONFLICT(id) DO NOTHING
         """,
         MACHINE_SEED,
     )
