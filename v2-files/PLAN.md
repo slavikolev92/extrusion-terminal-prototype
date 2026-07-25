@@ -14,27 +14,33 @@ export/import contract change is complete, including Task 6 verification.
 The remaining production legacy-data profile and release-candidate rehearsal
 are deployment gates only; both require an immutable SQLite-safe backup.
 
-Next feature workstream: explore the current app and database for the
-already-approved shift-management specification in
-`v2-files/TASK-01-SHIFT-MANAGEMENT.md`, then brainstorm and write its
-implementation plan. Do not modify that specification during exploration.
+Next feature workstream: write the implementation plan for the approved
+shift-management specification in
+`v2-files/TASK-01-SHIFT-MANAGEMENT.md`. The post-blocker app/database
+exploration is complete and found no technical blocker to planning.
 
 The original production-tracking workstreams are:
 
 1. Shift management for extrusion production.
 2. Roll packaging / pallet tracking with label printing.
 
-Repository-root `README.md` remains the authoritative project specification
-until confirmed behavior is merged into it.
+For this V2 workstream, `v2-files/TASK-01-SHIFT-MANAGEMENT.md` is the approved
+shift-management functionality source. Do not reintroduce older shift details
+from the repository-root `README.md` or this tracker's historical notes.
 
 ## Confirmed Direction
 
 - There is one active extrusion shift at a time across all four machines.
 - The terminal should not allow production roll entry unless an active shift is selected/open.
-- Shift tracking starts simple: shift number, people count, timestamps, and optional notes.
-- Named worker assignment is future functionality, not required for the first shift-management slice.
-- The data model should allow future worker/crew import, for example from an Excel roster, without rewriting roll production history.
-- Each new roll should persist the shift that produced it.
+- Shift tracking contains a unique occurrence identity, shift number, start
+  timestamp, and end timestamp. People count, notes, and named worker assignment
+  are not part of this workstream.
+- Each normal new roll should persist the active shift occurrence that produced
+  it. A roll added later to a completed or archived order inherits the latest
+  known shift occurrence already linked to a roll on that order.
+- The relationship should permit future crew data to reference a shift
+  occurrence without rewriting roll production history, but crew functionality
+  is not currently planned.
 - Existing roll data must be migrated safely. Old rolls should not receive guessed shift assignments unless the user explicitly approves an approximate backfill.
 - Packaging/pallet tracking is separate from shift tracking. A shift produces rolls; a package/pallet groups rolls for transport and label printing.
 - Pallet labels should summarize the rolls included, including roll count, gross weight, and net weight.
@@ -45,53 +51,32 @@ Recommended first project.
 
 ### Goal
 
-Persist shift sessions and attach newly entered rolls to the active shift so the app can report production by shift number and later connect shifts to people.
+Persist shift occurrences and attach rolls to them so the app can report
+production by numbered shift and time period.
 
 ### Current Planning Stage
 
 The shift-management functionality is approved in
-`v2-files/TASK-01-SHIFT-MANAGEMENT.md`. The next work is to explore the
-current app and database against that specification, then brainstorm and write
-its implementation plan; do not modify the approved specification. Migration
-is a safety part of that eventual implementation, not a standalone project.
+`v2-files/TASK-01-SHIFT-MANAGEMENT.md`. Read-only post-blocker exploration is
+complete: the current architecture supports the feature and the baseline suite
+passes. The next work is to write and review the implementation plan. Migration
+is a safety part of implementation, not a standalone project.
 
-### Initial Data Shape
+### Confirmed Data Relationships
 
-```text
-production_shifts
-- id
-- operation
-- shift_number
-- started_at
-- ended_at
-- people_count
-- crew_note
-- source
-- status
-- created_at
-- updated_at
-```
-
-```text
-roll_entries additions
-- shift_id
-- produced_at
-```
+- Every shift occurrence has a permanent unique internal identity plus its
+  reusable business shift number and automatic start/end timestamps.
+- New roll production links to the applicable shift occurrence.
+- Historical shift summaries are calculated from the latest corrected linked
+  roll data rather than frozen summary copies.
+- Exact tables, columns, constraints, and migration steps belong in the
+  implementation plan based on the completed exploration.
 
 ### Future Extension Placeholder
 
-Named workers can be added later without changing how rolls attach to shifts:
-
-```text
-workers
-shift_workers
-```
-
-Potential future import path:
-
-- Import a roster/crew Excel or CSV file.
-- Match roster rows to shift sessions by operation, shift number, and date/time.
-- Populate shift worker assignments after production has already been recorded.
+Future worker or crew data could reference the permanent shift-occurrence
+identity without changing existing roll history. No worker, roster, or crew
+interface or import is included in the current workstream.
 
 ## Workstream 2: Roll Packaging / Pallet Tracking
 
@@ -152,25 +137,20 @@ package_rolls
 - Unknown historical shift assignment is better than guessed historical shift assignment.
 - If approximate historical assignment is later desired, it should be a separate explicit admin/backfill action with clear labeling.
 
-## Original Production-Tracking Sequence
+## Shift-Management Sequence
 
-This sequence applied when the only recorded workstreams were shift management and packaging. The Sunday review backlog below may reprioritize smaller correctness and usability fixes ahead of these larger workstreams.
-
-1. Focus only on shift management.
-2. Discuss and confirm the full shift-management behavior.
-3. Decide the implementation split after the behavior is known.
-4. Write a focused shift-management spec.
-5. Implement shift management with a safe database upgrade as part of that work.
-6. Verify old data preservation, new roll shift assignment, terminal behavior, reminders, and admin review/correction.
-7. Only after shift management is accepted, return to packaging/pallet tracking.
+1. Full shift-management behavior and the focused specification are approved.
+2. Post-blocker app/database exploration is complete.
+3. Write and review the practical implementation plan.
+4. Implement one reviewed, testable slice at a time, including safe migration.
+5. Verify existing-data preservation, shift lifecycle, roll attribution,
+   terminal gating, summaries, history, and configuration.
+6. Only after shift management is accepted, return to packaging/pallet tracking.
 
 ## Open Questions
 
-- What are the exact expected shift windows for shift numbers 1 through 4?
-- Should starting a shift allow manual start time entry, or always use the current server time with admin correction later?
-- Should ending a shift allow manual end time entry, or always use the current server time with admin correction later?
-- Should roll entry be blocked entirely when no shift is open, or should admin be able to add/correct rolls without an active shift?
-- Should pallet/package creation happen from `/terminal`, `/admin`, or both?
+- Packaging remains separate: should eventual pallet/package creation happen
+  from `/terminal`, `/admin`, or both?
 
 ## Near-Term Backlog For Sunday Review
 
@@ -183,8 +163,10 @@ This list combines the two existing production-tracking workstreams with the new
 1. **Shift management for extrusion production**
    - Surface: `/terminal`, `/admin`, database.
    - Complexity: large.
+   - Status: functionality and post-blocker exploration complete; implementation
+     plan is next.
    - Goal: create one active extrusion shift at a time, require/open shift context for new production roll entry, and attach every new roll to the shift that produced it.
-   - Needs design: shift start/end workflow, no-open-shift blocking rules, reminders, summary reporting, admin correction, and safe handling of existing rolls with unknown historical shift.
+   - Approved behavior: `v2-files/TASK-01-SHIFT-MANAGEMENT.md`.
 
 2. **Fix technology-card quantity fields to match the new Shift Manager export**
    - Surface: CSV/export import, database fields, admin technology-card edit screen, terminal details.
@@ -289,8 +271,8 @@ This list combines the two existing production-tracking workstreams with the new
 
 ## Suggested Implementation Order
 
-1. Explore the approved shift-management specification against the current app
-   and database, then brainstorm and write its implementation plan.
+1. Write and review the approved shift-management implementation plan, then
+   implement it one tested slice at a time.
 2. Before deployment, complete the production legacy-data profile and
    release-candidate rehearsal after an immutable backup is supplied.
 3. Design admin workflow changes before implementing import and planning

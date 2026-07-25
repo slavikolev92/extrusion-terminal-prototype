@@ -9,9 +9,9 @@ terminal handoff workflow without stopping or changing production orders,
 machines, or production timers.
 
 This is a functionality specification. It does not define database structure,
-migrations, code structure, or implementation slices. Those decisions require a
-fresh exploration of the app and database after the prerequisite blocker work
-is complete.
+migrations, code structure, or implementation slices. Those decisions belong
+in the implementation plan based on the completed post-blocker app/database
+exploration.
 
 ## Scope
 
@@ -69,10 +69,19 @@ is complete.
 - The internal identity does not need to be visible to terminal operators or
   form a gap-free sequence. Its purpose is to identify exactly one shift
   occurrence.
-- Every new roll recorded after shift management is introduced must be linked
-  to the one active shift occurrence at the moment the roll is created.
+- Every roll entered through the normal production workflow while a card is
+  active must be linked to the one active shift occurrence at the moment the
+  roll is created.
 - A roll should link to the unique shift occurrence rather than merely storing
   a copied shift number or relying on timestamps to infer its shift later.
+- When a brand-new roll is added later to a completed or archived production
+  order, it should automatically inherit the chronologically latest shift
+  occurrence already linked to another roll on that same order. The operator
+  should not be asked to choose a historical shift.
+- If an older production order has no roll with a known shift occurrence, then
+  there is no reliable last shift to inherit. That late-added roll should remain
+  without shift attribution rather than receiving a guessed historical or
+  currently active shift.
 - Correcting the selected number of an open shift must not change its unique
   identity or require rewriting its rolls. All rolls remain linked to the same
   occurrence and therefore report the occurrence's final selected shift number.
@@ -232,15 +241,15 @@ is complete.
   - a shift produces rolls
   - a pallet/package groups rolls for transport and label printing
 
-## Deferred technical work
+## Next technical work
 
-After the prerequisite blocker work is complete:
+The prerequisite blocker work and read-only app/database exploration are
+complete. The current architecture can support this specification without
+changing its approved functionality.
 
-1. Explore the resulting app and database.
-2. Confirm how this approved behavior fits the current workflow and persisted
-   data.
-3. Decide the implementation slices and write the implementation plan.
-4. Design and test the required migration as part of implementation.
+Next:
 
-Do not infer historical shift assignments for existing rolls during this design
-stage.
+1. Decide the practical implementation slices and write the implementation
+   plan.
+2. Design and test the required schema migration as part of implementation.
+3. Preserve existing rolls without inferring historical shift assignments.
