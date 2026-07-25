@@ -31,6 +31,11 @@ from .recipe_parser import (
 from .rules import RECIPE_RELEASE_FIELD_LABELS, RuleResult, validate_structured_recipe_release
 
 STALE_CARD_MESSAGE = "Картата е променена след зареждането на страницата. Презаредете и опитайте отново."
+STALE_SHIFT_MESSAGE = "Данните за смяната са променени. Презаредете терминала."
+STALE_CONFIGURATION_MESSAGE = (
+    "Настройките са променени след зареждането. Презаредете и опитайте отново."
+)
+NO_ACTIVE_SHIFT_MESSAGE = "Отворете смяна, преди да продължите."
 TIMING_END_REASONS = ("pause", "finish", "correction")
 TIMING_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -305,6 +310,194 @@ def connect() -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
+
+
+def parse_positive_integer(value: str, field_name: str) -> tuple[int | None, str | None]:
+    cleaned = value.strip()
+    if not cleaned or any(character not in "0123456789" for character in cleaned):
+        return None, f"{field_name} трябва да е положително цяло число."
+    parsed = int(cleaned)
+    if parsed < 1:
+        return None, f"{field_name} трябва да е положително цяло число."
+    return parsed, None
+
+
+def fetch_active_shift_row(connection: sqlite3.Connection) -> sqlite3.Row | None:
+    return connection.execute(
+        """
+        SELECT *
+        FROM shift_occurrences
+        WHERE ended_at IS NULL
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+
+
+def fetch_terminal_configuration() -> dict[str, Any]:
+    with connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM terminal_configuration WHERE id = 1"
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("terminal configuration is not initialized")
+    return dict(row)
+
+
+def update_shift_count(loaded_version: int, shift_count: str) -> RuleResult:
+    parsed_count, error = parse_positive_integer(shift_count, "Брой смени")
+    if error:
+        return RuleResult(False, (error,))
+
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        timestamp = current_database_timestamp(connection)
+        updated = connection.execute(
+            """
+            UPDATE terminal_configuration
+            SET shift_count = ?, version = version + 1, updated_at = ?
+            WHERE id = 1 AND version = ?
+            """,
+            (parsed_count, timestamp, loaded_version),
+        )
+        if updated.rowcount != 1:
+            return RuleResult(False, (STALE_CONFIGURATION_MESSAGE,))
+    return RuleResult(True)
+
+
+def fetch_active_shift() -> dict[str, Any] | None:
+    with connect() as connection:
+        row = fetch_active_shift_row(connection)
+    return dict(row) if row is not None else None
+
+
+def suggest_next_shift_number() -> int:
+    with connect() as connection:
+        configuration = connection.execute(
+            "SELECT shift_count FROM terminal_configuration WHERE id = 1"
+        ).fetchone()
+        if configuration is None:
+            raise RuntimeError("terminal configuration is not initialized")
+        latest_completed = connection.execute(
+            """
+            SELECT shift_number
+            FROM shift_occurrences
+            WHERE ended_at IS NOT NULL
+            ORDER BY ended_at DESC, id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+    shift_count = int(configuration["shift_count"])
+    if latest_completed is None:
+        return 1
+    latest_number = int(latest_completed["shift_number"])
+    if latest_number < 1 or latest_number > shift_count:
+        return 1
+    return 1 if latest_number == shift_count else latest_number + 1
+
+
+def _shift_number_in_configuration(
+    shift_number: str,
+    shift_count: int,
+) -> tuple[int | None, str | None]:
+    parsed_number, error = parse_positive_integer(shift_number, "Номер на смяна")
+    if error:
+        return None, error
+    if parsed_number > shift_count:
+        return None, f"Номер на смяна трябва да е между 1 и {shift_count}."
+    return parsed_number, None
+
+
+def _is_one_active_shift_conflict(error: sqlite3.IntegrityError) -> bool:
+    return "idx_shift_occurrences_one_active" in str(error)
+
+
+def start_shift(shift_number: str, loaded_configuration_version: int) -> RuleResult:
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        configuration = connection.execute(
+            "SELECT shift_count, version FROM terminal_configuration WHERE id = 1"
+        ).fetchone()
+        if configuration is None:
+            raise RuntimeError("terminal configuration is not initialized")
+        if int(configuration["version"]) != loaded_configuration_version:
+            return RuleResult(False, (STALE_CONFIGURATION_MESSAGE,))
+        parsed_number, error = _shift_number_in_configuration(
+            shift_number, int(configuration["shift_count"])
+        )
+        if error:
+            return RuleResult(False, (error,))
+
+        timestamp = current_database_timestamp(connection)
+        try:
+            connection.execute(
+                """
+                INSERT INTO shift_occurrences (
+                    shift_number, started_at, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (parsed_number, timestamp, timestamp, timestamp),
+            )
+        except sqlite3.IntegrityError as integrity_error:
+            if _is_one_active_shift_conflict(integrity_error):
+                return RuleResult(False, (STALE_SHIFT_MESSAGE,))
+            raise
+    return RuleResult(True)
+
+
+def update_active_shift_number(
+    shift_occurrence_id: int,
+    loaded_version: int,
+    shift_number: str,
+) -> RuleResult:
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        configuration = connection.execute(
+            "SELECT shift_count FROM terminal_configuration WHERE id = 1"
+        ).fetchone()
+        if configuration is None:
+            raise RuntimeError("terminal configuration is not initialized")
+        parsed_number, error = _shift_number_in_configuration(
+            shift_number, int(configuration["shift_count"])
+        )
+        if error:
+            return RuleResult(False, (error,))
+
+        timestamp = current_database_timestamp(connection)
+        updated = connection.execute(
+            """
+            UPDATE shift_occurrences
+            SET shift_number = ?, version = version + 1, updated_at = ?
+            WHERE id = ?
+              AND version = ?
+              AND ended_at IS NULL
+            """,
+            (parsed_number, timestamp, shift_occurrence_id, loaded_version),
+        )
+        if updated.rowcount != 1:
+            return RuleResult(False, (STALE_SHIFT_MESSAGE,))
+    return RuleResult(True)
+
+
+def end_shift(shift_occurrence_id: int, loaded_version: int) -> RuleResult:
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        timestamp = current_database_timestamp(connection)
+        updated = connection.execute(
+            """
+            UPDATE shift_occurrences
+            SET ended_at = ?, version = version + 1, updated_at = ?
+            WHERE id = ?
+              AND version = ?
+              AND ended_at IS NULL
+            """,
+            (timestamp, timestamp, shift_occurrence_id, loaded_version),
+        )
+        if updated.rowcount != 1:
+            return RuleResult(False, (STALE_SHIFT_MESSAGE,))
+    return RuleResult(True)
 
 
 def init_db() -> None:
