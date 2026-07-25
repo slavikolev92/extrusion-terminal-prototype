@@ -176,9 +176,9 @@
     .machine-nav-actions {
       min-width: 0;
       display: grid;
-      grid-template-rows: repeat(2, minmax(0, 58px));
+      grid-template-rows: repeat(3, minmax(0, 38px));
       align-content: center;
-      gap: 10px;
+      gap: 6px;
       align-self: stretch;
     }
 
@@ -298,7 +298,8 @@
     }
 
     .history-nav,
-    .queue-nav {
+    .queue-nav,
+    .shift-nav {
       min-width: 0;
       display: grid;
       place-items: center;
@@ -315,7 +316,8 @@
     }
 
     .history-nav:hover,
-    .queue-nav:hover {
+    .queue-nav:hover,
+    .shift-nav:hover {
       border-color: #0b355f;
     }
 
@@ -1668,8 +1670,12 @@
       }
 
       .machine-nav-actions {
-        grid-template-rows: repeat(2, minmax(0, 40px));
+        grid-template-rows: repeat(3, minmax(0, 32px));
         gap: 6px;
+      }
+
+      .machine-nav-actions button {
+        min-height: 32px;
       }
 
       .topbar {
@@ -1770,8 +1776,12 @@
       }
 
       .machine-nav-actions {
-        grid-template-rows: repeat(2, minmax(0, 38px));
+        grid-template-rows: repeat(3, minmax(0, 30px));
         gap: 5px;
+      }
+
+      .machine-nav-actions button {
+        min-height: 30px;
       }
 
       .topbar {
@@ -1780,7 +1790,9 @@
       }
 
       .history-nav,
-      .queue-nav {
+      .queue-nav,
+      .shift-nav {
+        min-height: 30px;
         font-size: 12px;
         padding: 6px 8px;
       }
@@ -2039,6 +2051,292 @@
       color: #0b355f;
     }
 
+    .shift-window-overlay {
+      position: fixed;
+      z-index: 90;
+      inset: 0;
+      padding: 24px;
+      display: grid;
+      place-items: center;
+      background: rgba(31, 41, 51, .42);
+    }
+
+    .shift-window-overlay[hidden],
+    .shift-window-pane[hidden] {
+      display: none;
+    }
+
+    .shift-window-dialog {
+      width: min(1040px, 100%);
+      max-height: calc(100vh - 48px);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: 0 22px 54px rgba(16, 24, 40, .24);
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .shift-window-header {
+      min-height: 58px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .shift-window-header h2 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.15;
+      font-weight: 900;
+    }
+
+    .shift-window-close {
+      width: 38px;
+      padding: 0;
+      font-size: 22px;
+    }
+
+    .shift-window-body {
+      min-height: 0;
+      overflow: auto;
+    }
+
+    .shift-window-pane {
+      min-height: 0;
+      padding: 18px;
+    }
+
+    .shift-gate-pane,
+    .shift-confirm-pane,
+    .shift-reload-pane {
+      width: min(560px, 100%);
+      margin: 0 auto;
+      display: grid;
+      gap: 16px;
+    }
+
+    .shift-number-field {
+      display: grid;
+      gap: 6px;
+      color: var(--secondary-text);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .shift-number-field select {
+      min-height: 38px;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--primary-text);
+      padding: 5px 8px;
+      font: inherit;
+      font-weight: 800;
+    }
+
+    .shift-primary-action,
+    .shift-action-link {
+      min-height: 38px;
+      border: 1px solid var(--blue);
+      border-radius: 8px;
+      background: var(--blue);
+      color: #fff;
+      padding: 8px 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      text-decoration: none;
+    }
+
+    .shift-window-error {
+      border: 1px solid #efb5b8;
+      border-radius: 8px;
+      background: var(--red-soft);
+      color: #7f1d1d;
+      padding: 9px 11px;
+      font-weight: 750;
+    }
+
+    .shift-window-error p,
+    .shift-confirm-pane p,
+    .shift-reload-pane p,
+    .shift-empty-state {
+      margin: 0;
+    }
+
+    .shift-confirm-pane,
+    .shift-reload-pane {
+      font-size: 17px;
+      line-height: 1.4;
+      font-weight: 700;
+    }
+
+    .shift-confirm-actions,
+    .shift-summary-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .shift-overview-pane,
+    .shift-summary-pane {
+      display: grid;
+      gap: 16px;
+    }
+
+    .shift-overview-current {
+      display: grid;
+      grid-template-columns: minmax(140px, 200px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: end;
+    }
+
+    .shift-start-time {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-soft);
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-weight: 800;
+    }
+
+    .shift-start-time span {
+      color: var(--secondary-text);
+      font-size: 14px;
+    }
+
+    .shift-end-section {
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      padding: 14px 0;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .shift-end-action {
+      border-color: var(--red);
+      background: var(--red);
+      color: #fff;
+    }
+
+    .shift-history {
+      min-height: 0;
+      display: grid;
+      gap: 10px;
+    }
+
+    .shift-history h3 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .shift-table-scroll {
+      min-height: 0;
+      max-height: min(48vh, 430px);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: auto;
+    }
+
+    .shift-history-table,
+    .shift-summary-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      font-size: 14px;
+    }
+
+    .shift-history-table th,
+    .shift-history-table td,
+    .shift-summary-table th,
+    .shift-summary-table td {
+      border-bottom: 1px solid var(--line);
+      padding: 9px 10px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .shift-history-table th,
+    .shift-summary-table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #eef3f7;
+      font-weight: 900;
+    }
+
+    .shift-history-table tbody tr:last-child td,
+    .shift-summary-table tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .shift-summary-facts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      font-weight: 800;
+    }
+
+    .shift-summary-facts span {
+      color: var(--secondary-text);
+    }
+
+    .shift-empty-state {
+      color: var(--secondary-text);
+      font-weight: 700;
+    }
+
+    .shift-reload-title {
+      color: var(--red);
+      font-size: 20px;
+      font-weight: 900;
+    }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    @media (max-height: 760px) {
+      .shift-window-overlay {
+        padding: 12px;
+      }
+
+      .shift-window-dialog {
+        max-height: calc(100vh - 24px);
+      }
+
+      .shift-window-header {
+        min-height: 46px;
+        padding: 8px 12px;
+      }
+
+      .shift-window-pane {
+        padding: 12px;
+      }
+
+      .shift-table-scroll {
+        max-height: 42vh;
+      }
+    }
+
     .no-card {
       min-height: 0;
       grid-row: 3;
@@ -2064,7 +2362,7 @@
     </div>
   {% endif %}
   <main class="page">
-    <div class="app">
+    <div class="app"{% if shift_blocking %} inert aria-hidden="true"{% endif %}>
       <header class="machine-nav" aria-label="Навигация по машини">
         <div class="machine-nav-list">
           {% for queue in machine_queues %}
@@ -2098,6 +2396,9 @@
         </div>
 
         <div class="machine-nav-actions" aria-label="Глобални действия">
+          <button class="shift-nav" id="shift-open" type="button" aria-controls="shift-window" aria-expanded="{{ 'true' if shift_window_state != 'closed' else 'false' }}">
+            <span>Shift</span>
+          </button>
           <button class="history-nav" id="history-open" type="button" aria-controls="history-overlay" aria-expanded="false">
             <span>Произведени поръчки</span>
           </button>
@@ -2553,6 +2854,7 @@
       </section>
     </div>
   </main>
+  {% include "_terminal_shift_window.html" %}
   <div class="finish-confirm-modal" id="finish-confirm-modal" data-finish-confirm-modal hidden aria-hidden="true">
     <div class="finish-confirm-panel" role="dialog" aria-modal="true" aria-labelledby="finish-confirm-title" aria-describedby="finish-confirm-body">
       <h2 class="finish-confirm-title" id="finish-confirm-title">Приключване на поръчка</h2>
@@ -2575,6 +2877,197 @@
       closeButton?.addEventListener("click", closeToast);
       if (toast) {
         window.setTimeout(closeToast, 3000);
+      }
+    })();
+
+    (() => {
+      const shiftWindow = document.querySelector('[data-shift-window="true"]');
+      const shiftDialog = shiftWindow?.querySelector("[data-shift-dialog]");
+      const shiftApp = document.querySelector(".app");
+      const shiftOpen = document.getElementById("shift-open");
+      const shiftClose = shiftWindow?.querySelector("[data-shift-close]");
+      const shiftTitle = shiftWindow?.querySelector("[data-shift-title]");
+      const shiftPanes = Array.from(shiftWindow?.querySelectorAll("[data-shift-pane]") || []);
+      const shiftStartNumber = shiftWindow?.querySelector("[data-shift-start-number]");
+      const shiftStartSelection = shiftWindow?.querySelector("[data-shift-start-selection]");
+      const shiftNumberForm = shiftWindow?.querySelector("[data-shift-number-form]");
+      const shiftNumberSelect = shiftWindow?.querySelector("[data-shift-number-select]");
+      const appInitiallyBlocked = shiftApp?.hasAttribute("inert") || false;
+      let activeShiftPane = shiftWindow?.dataset.shiftState === "closed"
+        ? "overview"
+        : shiftWindow?.dataset.shiftState;
+      let shiftReturnFocus = null;
+
+      if (!shiftWindow || !shiftDialog || !shiftApp) {
+        return;
+      }
+
+      const isBlockingShiftWindow = () => (
+        shiftWindow.dataset.shiftBlocking === "true"
+      );
+
+      const canDismissShiftWindow = () => (
+        !isBlockingShiftWindow()
+        && !["start-confirm", "end-confirm", "reload"].includes(activeShiftPane)
+      );
+
+      const setUnderlyingTerminalHidden = (hidden) => {
+        if (hidden) {
+          shiftApp.setAttribute("inert", "");
+          shiftApp.setAttribute("aria-hidden", "true");
+          return;
+        }
+        if (!appInitiallyBlocked) {
+          shiftApp.removeAttribute("inert");
+          shiftApp.removeAttribute("aria-hidden");
+        }
+      };
+
+      const visibleShiftActions = () => Array.from(
+        shiftDialog.querySelectorAll(
+          'button:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => !element.closest("[hidden]"));
+
+      const focusFirstShiftAction = () => {
+        const focusable = visibleShiftActions()[0];
+        (focusable || shiftDialog).focus();
+      };
+
+      const showShiftPane = (paneName) => {
+        const pane = shiftPanes.find((candidate) => candidate.dataset.shiftPane === paneName);
+        if (!pane) {
+          return;
+        }
+        shiftPanes.forEach((candidate) => {
+          candidate.hidden = candidate !== pane;
+        });
+        activeShiftPane = paneName;
+        if (shiftClose) {
+          shiftClose.hidden = (
+            isBlockingShiftWindow() || !["overview", "summary"].includes(paneName)
+          );
+        }
+        if (shiftTitle) {
+          if (paneName === "start-confirm") {
+            shiftTitle.textContent = "Потвърждение за начало";
+          } else if (paneName === "end-confirm") {
+            shiftTitle.textContent = "Потвърждение за край";
+          } else if (paneName === "reload") {
+            shiftTitle.textContent = "Смяната е променена";
+          } else if (paneName === "gate") {
+            shiftTitle.textContent = "Няма активна смяна";
+          } else if (paneName === "overview") {
+            shiftTitle.textContent = "Shift";
+          }
+        }
+        focusFirstShiftAction();
+      };
+
+      const openShiftWindow = () => {
+        shiftReturnFocus = document.activeElement;
+        shiftWindow.hidden = false;
+        shiftWindow.setAttribute("aria-hidden", "false");
+        shiftOpen?.setAttribute("aria-expanded", "true");
+        setUnderlyingTerminalHidden(true);
+        showShiftPane(activeShiftPane || "overview");
+      };
+
+      const closeShiftWindow = () => {
+        if (!canDismissShiftWindow()) {
+          return;
+        }
+        shiftWindow.hidden = true;
+        shiftWindow.dataset.shiftState = "closed";
+        shiftWindow.setAttribute("aria-hidden", "true");
+        shiftOpen?.setAttribute("aria-expanded", "false");
+        setUnderlyingTerminalHidden(false);
+        (shiftReturnFocus || shiftOpen)?.focus();
+      };
+
+      shiftOpen?.addEventListener("click", openShiftWindow);
+      shiftClose?.addEventListener("click", closeShiftWindow);
+      shiftNumberSelect?.addEventListener("change", () => {
+        shiftNumberForm.requestSubmit();
+      });
+
+      shiftWindow.querySelectorAll("[data-shift-confirm-open]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const confirmation = button.dataset.shiftConfirmOpen;
+          if (confirmation === "start") {
+            if (shiftStartSelection && shiftStartNumber) {
+              shiftStartSelection.textContent = shiftStartNumber.value;
+            }
+            showShiftPane("start-confirm");
+          } else if (confirmation === "end") {
+            showShiftPane("end-confirm");
+          }
+        });
+      });
+
+      shiftWindow.querySelectorAll("[data-shift-confirm-back]").forEach((button) => {
+        button.addEventListener("click", () => {
+          showShiftPane(button.dataset.shiftConfirmBack);
+        });
+      });
+
+      shiftWindow.addEventListener("click", (event) => {
+        if (event.target !== shiftWindow) {
+          return;
+        }
+        if (!canDismissShiftWindow()) {
+          return;
+        }
+        closeShiftWindow();
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (shiftWindow.hidden) {
+          return;
+        }
+        if (event.key === "Escape") {
+          if (activeShiftPane === "start-confirm") {
+            showShiftPane("gate");
+          } else if (activeShiftPane === "end-confirm") {
+            showShiftPane("overview");
+          } else if (canDismissShiftWindow()) {
+            closeShiftWindow();
+          }
+          return;
+        }
+        if (event.key !== "Tab") {
+          return;
+        }
+        const focusable = visibleShiftActions();
+        if (focusable.length === 0) {
+          event.preventDefault();
+          shiftDialog.focus();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      });
+
+      document.addEventListener("terminal:shift-stale", () => {
+        shiftWindow.dataset.shiftBlocking = "true";
+        shiftWindow.dataset.shiftState = "reload";
+        shiftWindow.hidden = false;
+        shiftWindow.setAttribute("aria-hidden", "false");
+        shiftOpen?.setAttribute("aria-expanded", "true");
+        setUnderlyingTerminalHidden(true);
+        showShiftPane("reload");
+      });
+
+      if (!shiftWindow.hidden) {
+        setUnderlyingTerminalHidden(true);
+        focusFirstShiftAction();
       }
     })();
 
@@ -2811,6 +3304,7 @@
       const topbar = document.querySelector(".topbar");
       let refreshAlert = document.getElementById("terminal-refresh-alert");
       let currentSignature = initialSnapshot.signature;
+      let currentShiftSignature = initialSnapshot.shift_signature;
       let formSubmitting = false;
 
       const bindRefreshAlert = () => {
@@ -2869,6 +3363,13 @@
           }
           const snapshot = await response.json();
           if (snapshot.signature === currentSignature) {
+            return;
+          }
+
+          if (snapshot.shift_signature !== currentShiftSignature) {
+            currentShiftSignature = snapshot.shift_signature;
+            currentSignature = snapshot.signature;
+            document.dispatchEvent(new CustomEvent("terminal:shift-stale"));
             return;
           }
 

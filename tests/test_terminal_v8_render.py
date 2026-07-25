@@ -106,6 +106,15 @@ def card_version(card_id: int) -> int:
     return int(db.fetch_terminal_card_detail(card_id)["version"])
 
 
+def end_active_test_shift() -> dict[str, object]:
+    active_shift = db.fetch_active_shift()
+    assert active_shift is not None
+    assert db.end_shift(int(active_shift["id"]), int(active_shift["version"])).ok
+    summary = db.fetch_shift_summary(int(active_shift["id"]))
+    assert summary is not None
+    return summary
+
+
 def complete_card(card_id: int) -> None:
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
@@ -134,6 +143,15 @@ def data_block(html: str, attribute: str, value: str) -> str:
     )
     assert match
     return match.group(0)
+
+
+def shift_window_block(html: str) -> str:
+    start = html.find('<div class="shift-window-overlay"')
+    assert start != -1
+    end_marker = "<!-- terminal-shift-window:end -->"
+    end = html.find(end_marker, start)
+    assert end != -1
+    return html[start:end]
 
 
 def form_block(html: str, action: str) -> str:
@@ -2420,3 +2438,227 @@ def test_terminal_v8_refresh_alert_hook_exists_and_old_sync_ui_is_absent(connect
     assert "sync-banner" not in html
     assert "sync-chip" not in html
     assert "Довършете текущото въвеждане" not in html
+
+
+def test_terminal_header_has_one_global_shift_button_without_inline_shift_details(
+    connection,
+):
+    active_shift = db.fetch_active_shift()
+    assert active_shift is not None
+
+    html = render_terminal()
+    header = re.search(
+        r'<header class="machine-nav".*?</header>',
+        html,
+        flags=re.S,
+    )
+
+    assert header is not None
+    assert header.group(0).count('id="shift-open"') == 1
+    assert header.group(0).count(">Shift<") == 1
+    assert str(active_shift["started_at"]) not in header.group(0)
+    assert f'Смяна {active_shift["shift_number"]}' not in header.group(0)
+
+
+def test_no_active_shift_gate_has_no_close_or_escape_dismissal(connection):
+    end_active_test_shift()
+
+    html = render_terminal()
+    shift_window = shift_window_block(html)
+
+    assert 'data-shift-state="gate"' in shift_window
+    assert 'data-shift-blocking="true"' in shift_window
+    assert "Няма активна смяна" in shift_window
+    assert "data-shift-close" not in shift_window
+    assert 'shiftWindow.dataset.shiftBlocking === "true"' in html
+    assert "if (!canDismissShiftWindow())" in html
+
+
+def test_start_confirmation_replaces_gate_content_and_names_selected_shift(connection):
+    ended_shift = end_active_test_shift()
+
+    html = render_terminal()
+    shift_window = shift_window_block(html)
+
+    assert html.count('role="dialog" aria-modal="true" data-shift-dialog') == 1
+    assert 'data-shift-pane="gate"' in shift_window
+    assert 'data-shift-pane="start-confirm" hidden' in shift_window
+    assert 'data-shift-confirm-open="start"' in shift_window
+    assert 'data-shift-start-selection' in shift_window
+    assert f'>{int(ended_shift["shift_number"]) + 1}<' in shift_window
+    assert 'data-shift-confirm-submit="start"' in shift_window
+
+
+def test_active_window_uses_current_number_as_the_only_correction_dropdown(connection):
+    active_shift = db.fetch_active_shift()
+    assert active_shift is not None
+    assert db.update_active_shift_number(
+        int(active_shift["id"]),
+        int(active_shift["version"]),
+        "4",
+    ).ok
+    configuration = db.fetch_terminal_configuration()
+    assert db.update_shift_count(int(configuration["version"]), "3").ok
+
+    html = render_terminal(shift_view="overview")
+    shift_window = shift_window_block(html)
+
+    assert shift_window.count("<select") == 1
+    assert 'name="shift_number" data-shift-number-select' in shift_window
+    assert re.search(r'<option value="4" selected>4</option>', shift_window)
+    assert 'addEventListener("change"' in html
+    assert "shiftNumberForm.requestSubmit()" in html
+
+
+def test_active_window_shows_start_time_separate_end_action_and_newest_history(
+    connection,
+):
+    first = end_active_test_shift()
+    configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("2", int(configuration["version"])).ok
+    second = end_active_test_shift()
+    configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("3", int(configuration["version"])).ok
+    active_shift = db.fetch_active_shift()
+    assert active_shift is not None
+
+    html = render_terminal(shift_view="overview")
+    shift_window = shift_window_block(html)
+
+    assert 'class="shift-start-time"' in shift_window
+    assert str(active_shift["started_at"]) in shift_window
+    assert 'class="shift-end-section"' in shift_window
+    assert "End shift" in shift_window
+    for heading in ("Shift", "Start", "End", "Distinct items", "Rolls", "Gross kg"):
+        assert heading in shift_window
+    assert "View" in shift_window
+    assert shift_window.index(f'data-shift-history-id="{second["id"]}"') < shift_window.index(
+        f'data-shift-history-id="{first["id"]}"'
+    )
+
+
+def test_end_confirmation_replaces_window_content_without_nested_modal(connection):
+    active_shift = db.fetch_active_shift()
+    assert active_shift is not None
+
+    html = render_terminal(shift_view="overview")
+    shift_window = shift_window_block(html)
+
+    assert html.count('role="dialog" aria-modal="true" data-shift-dialog') == 1
+    assert 'data-shift-pane="overview"' in shift_window
+    assert 'data-shift-pane="end-confirm" hidden' in shift_window
+    assert 'data-shift-confirm-open="end"' in shift_window
+    assert f'Смяна {active_shift["shift_number"]}' in shift_window
+    assert 'data-shift-confirm-submit="end"' in shift_window
+    assert "data-shift-nested-modal" not in shift_window
+
+
+def test_end_summary_renders_header_and_required_order_columns(connection):
+    card_id = release_ready_card("SHIFT-SUMMARY", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "60.50").ok
+    summary = end_active_test_shift()
+
+    html = render_terminal(
+        card_id,
+        shift_view="summary",
+        shift_id=str(summary["id"]),
+        handoff="1",
+    )
+    shift_window = shift_window_block(html)
+
+    assert f'Смяна {summary["shift_number"]}' in shift_window
+    assert str(summary["started_at"]) in shift_window
+    assert str(summary["ended_at"]) in shift_window
+    assert f'{summary["distinct_item_count"]} артикула' in shift_window
+    for heading in (
+        "Production order ID",
+        "Customer",
+        "Product type",
+        "Roll count",
+        "Gross kg",
+    ):
+        assert heading in shift_window
+    assert "SHIFT-SUMMARY" in shift_window
+    assert "V8 Customer SHIFT-SUMMARY" in shift_window
+    assert "ТСФ 890/0.082" in shift_window
+    assert "60.50" in shift_window
+
+
+def test_empty_shift_summary_renders_zero_items_and_empty_table(connection):
+    summary = end_active_test_shift()
+
+    html = render_terminal(
+        shift_view="summary",
+        shift_id=str(summary["id"]),
+        handoff="1",
+    )
+    shift_window = shift_window_block(html)
+    table_body = re.search(r'<tbody data-shift-summary-orders>(.*?)</tbody>', shift_window, re.S)
+
+    assert "0 артикула" in shift_window
+    assert table_body is not None
+    assert "data-shift-summary-order" not in table_body.group(1)
+    assert "Няма произведени артикули в тази смяна." in shift_window
+
+
+def test_history_view_and_back_replace_contents_in_one_modal(connection):
+    card_id = release_ready_card("SHIFT-HISTORY", machine_id=1, sequence=1)
+    completed = end_active_test_shift()
+    configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("2", int(configuration["version"])).ok
+
+    overview_html = render_terminal(card_id, shift_view="overview")
+    summary_html = render_terminal(
+        card_id,
+        shift_view="summary",
+        shift_id=str(completed["id"]),
+    )
+
+    assert overview_html.count('<div class="shift-window-overlay"') == 1
+    assert summary_html.count('<div class="shift-window-overlay"') == 1
+    assert (
+        f'href="/terminal/cards/{card_id}?shift_view=summary&shift_id={completed["id"]}"'
+        in overview_html
+    )
+    assert f'href="/terminal/cards/{card_id}?shift_view=overview"' in summary_html
+    assert 'data-shift-pane="summary"' in summary_html
+    assert "Back" in summary_html
+
+
+def test_blocking_shift_state_makes_terminal_content_inert(connection):
+    summary = end_active_test_shift()
+
+    gate_html = render_terminal()
+    handoff_html = render_terminal(
+        shift_view="summary",
+        shift_id=str(summary["id"]),
+        handoff="1",
+    )
+
+    for html in (gate_html, handoff_html):
+        app_element = re.search(r'<div class="app"[^>]*>', html)
+        assert app_element is not None
+        assert " inert" in app_element.group(0)
+        assert 'aria-hidden="true"' in app_element.group(0)
+        assert 'data-shift-blocking="true"' in html
+
+
+def test_shift_snapshot_change_renders_blocking_reload_state_without_discarding_dirty_forms(
+    connection,
+):
+    card_id = release_ready_card("SHIFT-STALE", machine_id=1, sequence=1)
+
+    html = render_terminal(card_id)
+
+    assert 'data-shift-pane="reload" hidden' in html
+    assert "Смяната е променена" in html
+    assert "let currentShiftSignature = initialSnapshot.shift_signature;" in html
+    assert "snapshot.shift_signature !== currentShiftSignature" in html
+    assert 'new CustomEvent("terminal:shift-stale")' in html
+    assert 'shiftApp.setAttribute("inert", "")' in html
+    assert 'shiftApp.setAttribute("aria-hidden", "true")' in html
+    assert 'form[data-recipe-autosave="true"], form[data-dirty-autosave="true"]' in html
+    assert "window.location.reload()" not in html
+    assert ".reset()" not in html

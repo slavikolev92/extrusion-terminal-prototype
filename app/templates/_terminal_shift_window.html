@@ -1,0 +1,193 @@
+{% if selected_card %}
+  {% set shift_terminal_url = "/terminal/cards/" ~ selected_card.id %}
+  {% set shift_query_prefix = "?" %}
+{% elif selected_machine_id %}
+  {% set shift_terminal_url = "/terminal?machine_id=" ~ selected_machine_id %}
+  {% set shift_query_prefix = "&" %}
+{% else %}
+  {% set shift_terminal_url = "/terminal" %}
+  {% set shift_query_prefix = "?" %}
+{% endif %}
+{% set shift_overview_url = shift_terminal_url ~ shift_query_prefix ~ "shift_view=overview" %}
+<div class="shift-window-overlay"
+     id="shift-window"
+     data-shift-window="true"
+     data-shift-state="{{ shift_window_state }}"
+     data-shift-blocking="{{ 'true' if shift_blocking else 'false' }}"
+     aria-hidden="{{ 'true' if shift_window_state == 'closed' else 'false' }}"
+     {% if shift_window_state == "closed" %}hidden{% endif %}>
+  <section class="shift-window-dialog"
+           role="dialog" aria-modal="true" data-shift-dialog
+           aria-labelledby="shift-window-title"
+           tabindex="-1">
+    <header class="shift-window-header">
+      <h2 id="shift-window-title" data-shift-title>
+        {% if shift_window_state == "gate" %}
+          Няма активна смяна
+        {% elif shift_window_state == "summary" and selected_shift_summary %}
+          Смяна {{ selected_shift_summary.shift_number }}
+        {% else %}
+          Shift
+        {% endif %}
+      </h2>
+      {% if active_shift and not shift_blocking %}
+        <button class="shift-window-close" type="button" data-shift-close aria-label="Затвори Shift">×</button>
+      {% endif %}
+    </header>
+
+    <div class="shift-window-body">
+      {% if shift_window_state == "gate" %}
+        <form class="shift-start-form" action="/terminal/shifts/start" method="post" data-shift-start-form>
+          <input type="hidden" name="configuration_version" value="{{ shift_configuration.version }}">
+          {% if selected_card %}<input type="hidden" name="selected_card_id" value="{{ selected_card.id }}">{% endif %}
+          <div class="shift-window-pane shift-gate-pane" data-shift-pane="gate">
+            <label class="shift-number-field">
+              <span>Номер на смяна</span>
+              <select name="shift_number" data-shift-start-number>
+                {% for shift_number in shift_options %}
+                  <option value="{{ shift_number }}"{% if shift_number == suggested_shift_number %} selected{% endif %}>{{ shift_number }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            {% if shift_result and not shift_result.ok %}
+              <div class="shift-window-error" role="alert">
+                {% for message in shift_result.messages %}<p>{{ message }}</p>{% endfor %}
+              </div>
+            {% endif %}
+            <button class="shift-primary-action" type="button" data-shift-confirm-open="start">Начало на смяна</button>
+          </div>
+          <div class="shift-window-pane shift-confirm-pane" data-shift-pane="start-confirm" hidden>
+            <p>Стартиране на смяна <strong data-shift-start-selection>{{ suggested_shift_number }}</strong>?</p>
+            <div class="shift-confirm-actions">
+              <button type="button" data-shift-confirm-back="gate">Back</button>
+              <button class="shift-primary-action" type="submit" data-shift-confirm-submit="start">Yes</button>
+            </div>
+          </div>
+        </form>
+      {% elif shift_window_state == "summary" and selected_shift_summary %}
+        <div class="shift-window-pane shift-summary-pane" data-shift-pane="summary">
+          <div class="shift-summary-facts">
+            <strong>Смяна {{ selected_shift_summary.shift_number }}</strong>
+            <span>Start: <time datetime="{{ selected_shift_summary.started_at }}">{{ selected_shift_summary.started_at }}</time></span>
+            <span>End: <time datetime="{{ selected_shift_summary.ended_at }}">{{ selected_shift_summary.ended_at }}</time></span>
+            <span>{{ selected_shift_summary.distinct_item_count }} артикула</span>
+          </div>
+          <div class="shift-table-scroll">
+            <table class="shift-summary-table">
+              <thead>
+                <tr>
+                  <th>Production order ID</th>
+                  <th>Customer</th>
+                  <th>Product type</th>
+                  <th>Roll count</th>
+                  <th>Gross kg</th>
+                </tr>
+              </thead>
+              <tbody data-shift-summary-orders>
+                {% for order in selected_shift_summary.orders %}
+                  <tr data-shift-summary-order="{{ order.card_id }}">
+                    <td>{{ order.order_number }}</td>
+                    <td>{{ order.customer or "-" }}</td>
+                    <td>{{ order.product_type or "-" }}</td>
+                    <td>{{ order.roll_count }}</td>
+                    <td>{{ order.gross_weight }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% if not selected_shift_summary.orders %}
+            <p class="shift-empty-state">Няма произведени артикули в тази смяна.</p>
+          {% endif %}
+          <div class="shift-summary-actions">
+            {% if shift_blocking %}
+              <a class="shift-primary-action shift-action-link" href="{{ shift_terminal_url }}" data-shift-ack>Продължи</a>
+            {% else %}
+              <a class="shift-action-link" href="{{ shift_overview_url }}" data-shift-history-back>Back</a>
+            {% endif %}
+          </div>
+        </div>
+      {% else %}
+        <div class="shift-window-pane shift-overview-pane" data-shift-pane="overview">
+          <div class="shift-overview-current">
+            <form action="/terminal/shifts/current/number" method="post" data-shift-number-form>
+              <input type="hidden" name="shift_occurrence_id" value="{{ active_shift.id }}">
+              <input type="hidden" name="loaded_version" value="{{ active_shift.version }}">
+              {% if selected_card %}<input type="hidden" name="selected_card_id" value="{{ selected_card.id }}">{% endif %}
+              <label class="shift-number-field">
+                <span>Shift</span>
+                <select name="shift_number" data-shift-number-select>
+                  {% for shift_number in shift_options %}
+                    <option value="{{ shift_number }}"{% if shift_number == active_shift.shift_number %} selected{% endif %}>{{ shift_number }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+            </form>
+            <div class="shift-start-time">
+              <span>Start</span>
+              <time datetime="{{ active_shift.started_at }}">{{ active_shift.started_at }}</time>
+            </div>
+          </div>
+          {% if shift_result and not shift_result.ok %}
+            <div class="shift-window-error" role="alert">
+              {% for message in shift_result.messages %}<p>{{ message }}</p>{% endfor %}
+            </div>
+          {% endif %}
+          <form class="shift-end-section" id="shift-end-form" action="/terminal/shifts/current/end" method="post" data-shift-end-form>
+            <input type="hidden" name="shift_occurrence_id" value="{{ active_shift.id }}">
+            <input type="hidden" name="loaded_version" value="{{ active_shift.version }}">
+            {% if selected_card %}<input type="hidden" name="selected_card_id" value="{{ selected_card.id }}">{% endif %}
+            <button class="shift-end-action" type="button" data-shift-confirm-open="end">End shift</button>
+          </form>
+
+          <section class="shift-history" aria-labelledby="shift-history-title">
+            <h3 id="shift-history-title">История</h3>
+            <div class="shift-table-scroll">
+              <table class="shift-history-table">
+                <thead>
+                  <tr>
+                    <th>Shift</th>
+                    <th>Start</th>
+                    <th>End</th>
+                    <th>Distinct items</th>
+                    <th>Rolls</th>
+                    <th>Gross kg</th>
+                    <th><span class="visually-hidden">Действие</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for shift in completed_shifts %}
+                    <tr data-shift-history-id="{{ shift.id }}">
+                      <td>{{ shift.shift_number }}</td>
+                      <td><time datetime="{{ shift.started_at }}">{{ shift.started_at }}</time></td>
+                      <td><time datetime="{{ shift.ended_at }}">{{ shift.ended_at }}</time></td>
+                      <td>{{ shift.distinct_item_count }}</td>
+                      <td>{{ shift.roll_count }}</td>
+                      <td>{{ shift.total_gross_weight }}</td>
+                      <td><a href="{{ shift_terminal_url }}{{ shift_query_prefix }}shift_view=summary&shift_id={{ shift.id }}">View</a></td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% if not completed_shifts %}<p class="shift-empty-state">Няма приключени смени.</p>{% endif %}
+          </section>
+        </div>
+        <div class="shift-window-pane shift-confirm-pane" data-shift-pane="end-confirm" hidden>
+          <p>Приключване на Смяна {{ active_shift.shift_number }}?</p>
+          <div class="shift-confirm-actions">
+            <button type="button" data-shift-confirm-back="overview">Back</button>
+            <button class="shift-end-action" type="submit" form="shift-end-form" data-shift-confirm-submit="end">Yes</button>
+          </div>
+        </div>
+      {% endif %}
+
+      <div class="shift-window-pane shift-reload-pane" data-shift-pane="reload" hidden>
+        <p class="shift-reload-title">Смяната е променена</p>
+        <p>Презаредете терминала, преди да продължите. Въведените стойности остават на екрана до презареждането.</p>
+        <a class="shift-primary-action shift-action-link" href="{{ shift_terminal_url }}" data-shift-reload>Презареди</a>
+      </div>
+    </div>
+  </section>
+</div>
+<!-- terminal-shift-window:end -->
