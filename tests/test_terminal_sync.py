@@ -5,7 +5,7 @@ import csv
 import io
 
 from app import db
-from app.constants import STATUS_IMPORTED
+from app.constants import STATUS_AWAITING_REWINDING, STATUS_COMPLETED, STATUS_IMPORTED
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 from app.main import app, terminal_snapshot_route
 
@@ -218,3 +218,94 @@ def test_terminal_snapshot_exposes_only_current_shift_state_needed_for_reload(co
     assert "completed_shifts" not in snapshot
     assert "selected_shift_summary" not in snapshot
     assert "shift_history" not in snapshot
+
+
+def test_terminal_snapshot_tracks_waiting_cards_and_roll_writes(connection, start_test_shift):
+    waiting_card_id = release_ready_card("25909", machine_id=1, machine_sequence=1)
+    before_waiting = db.terminal_snapshot()
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET status = ?,
+                finished_at = '2026-07-26 10:00:00',
+                version = version + 1,
+                updated_at = '2026-07-26 10:00:00'
+            WHERE id = ?
+            """,
+            (STATUS_AWAITING_REWINDING, waiting_card_id),
+        )
+        expected_waiting_row = dict(
+            setup_connection.execute(
+                """
+                SELECT id, status, version, updated_at, finished_at, rewinding_roll_count
+                FROM cards
+                WHERE id = ?
+                """,
+                (waiting_card_id,),
+            ).fetchone()
+        )
+    entered_waiting = db.terminal_snapshot()
+
+    assert before_waiting["signature"] != entered_waiting["signature"]
+    assert entered_waiting["waiting_cards"] == [expected_waiting_row]
+    assert entered_waiting["waiting_signature"]
+
+    waiting_version = int(db.fetch_terminal_card_detail(waiting_card_id)["version"])
+    assert db.update_rewinding_roll_count(waiting_card_id, waiting_version, 4).ok
+    marked = db.terminal_snapshot()
+    marked_version = int(db.fetch_terminal_card_detail(waiting_card_id)["version"])
+    assert db.update_rewinding_roll_count(waiting_card_id, marked_version, None).ok
+    cleared = db.terminal_snapshot()
+
+    assert entered_waiting["signature"] != marked["signature"]
+    assert marked["signature"] != cleared["signature"]
+
+    running_card_id = release_ready_card("25910", machine_id=2, machine_sequence=1)
+    start_test_shift()
+    assert db.start_production_timing(
+        running_card_id, card_version(running_card_id), require_active_shift=True
+    ).ok
+    assert db.update_tare_weight(
+        running_card_id, card_version(running_card_id), "1", require_active_shift=True
+    ).ok
+    before_roll = db.terminal_snapshot()
+    assert db.add_roll_gross_weight(
+        running_card_id, card_version(running_card_id), "20", require_active_shift=True
+    ).ok
+    added_roll = db.terminal_snapshot()
+    roll_id = db.fetch_terminal_card_detail(running_card_id)["roll_entries"][0]["id"]
+    assert db.update_roll_weight(
+        running_card_id,
+        roll_id,
+        card_version(running_card_id),
+        "21",
+        "1",
+        require_active_shift=True,
+    ).ok
+    edited_roll = db.terminal_snapshot()
+    assert db.delete_roll_entry(
+        running_card_id,
+        roll_id,
+        card_version(running_card_id),
+        require_active_shift=True,
+    ).ok
+    deleted_roll = db.terminal_snapshot()
+
+    assert before_roll["signature"] != added_roll["signature"]
+    assert added_roll["signature"] != edited_roll["signature"]
+    assert edited_roll["signature"] != deleted_roll["signature"]
+
+    with db.connect() as completion_connection:
+        completion_connection.execute(
+            """
+            UPDATE cards
+            SET status = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (STATUS_COMPLETED, waiting_card_id),
+        )
+    completed = db.terminal_snapshot()
+
+    assert cleared["signature"] != completed["signature"]
+    assert completed["waiting_cards"] == []

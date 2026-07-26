@@ -12,6 +12,7 @@ from .constants import (
     ARCHIVE_STATUSES,
     PRODUCTION_COMPLETE_STATUSES,
     STATUS_ARCHIVED,
+    STATUS_AWAITING_REWINDING,
     STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_IMPORTED,
@@ -19,6 +20,7 @@ from .constants import (
     STATUS_PENDING,
     STATUS_RUNNING,
     TERMINAL_VISIBLE_STATUSES,
+    WAITING_REWINDING_STATUSES,
 )
 from .migrations import (
     apply_startup_migrations,
@@ -40,6 +42,7 @@ STALE_CONFIGURATION_MESSAGE = (
 )
 NO_ACTIVE_SHIFT_MESSAGE = "Отворете смяна, преди да продължите."
 PALLET_NUMBER_ERROR = "Палетът трябва да бъде цяло число от 1 до 999."
+REWINDING_COUNT_ERROR = "Броят за пренавиване трябва да бъде цяло число от 1 до 999."
 MAX_SHIFT_COUNT = 99
 TIMING_END_REASONS = ("pause", "finish", "correction")
 TIMING_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -49,6 +52,14 @@ DATA_DIR = Path(os.getenv("EXTRUSION_DATA_DIR", BASE_DIR / "data"))
 DB_PATH = Path(os.getenv("EXTRUSION_DB_PATH", DATA_DIR / "extrusion_terminal.sqlite3"))
 TERMINAL_ACTION_STATUSES = (*ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES)
 TERMINAL_ACTION_STATUS_PLACEHOLDERS = ", ".join("?" for _ in TERMINAL_ACTION_STATUSES)
+REWINDING_MARKER_STATUSES = (
+    STATUS_RUNNING,
+    STATUS_PAUSED,
+    STATUS_AWAITING_REWINDING,
+)
+REWINDING_MARKER_STATUS_PLACEHOLDERS = ", ".join(
+    "?" for _ in REWINDING_MARKER_STATUSES
+)
 
 
 def _sql_list(values: tuple[str, ...]) -> str:
@@ -881,7 +892,9 @@ def fetch_cards_by_status(statuses: tuple[str, ...]) -> list[dict[str, Any]]:
                    customer, product_type, ordered_gross_kg, ordered_rolls,
                    ordered_meters, ordered_units,
                    product_form, material, size_thickness,
-                   tare_weight, finished_at, version, updated_at,
+                   tare_weight, rewinding_roll_count,
+                   final_extrusion_shift_occurrence_id,
+                   finished_at, version, updated_at,
                    COALESCE((
                        SELECT SUM(CAST(gross_weight AS NUMERIC))
                        FROM roll_entries
@@ -905,6 +918,7 @@ def terminal_snapshot(
 ) -> dict[str, Any]:
     active_placeholders = ", ".join("?" for _ in ACTIVE_TERMINAL_STATUSES)
     visible_placeholders = ", ".join("?" for _ in TERMINAL_VISIBLE_STATUSES)
+    waiting_placeholders = ", ".join("?" for _ in WAITING_REWINDING_STATUSES)
 
     with connect() as connection:
         connection.execute("BEGIN")
@@ -921,6 +935,7 @@ def terminal_snapshot(
         active_rows = connection.execute(
             f"""
             SELECT id, order_number, status, machine_id, machine_sequence,
+                   rewinding_roll_count, final_extrusion_shift_occurrence_id,
                    version, updated_at
             FROM cards
             WHERE status IN ({active_placeholders})
@@ -930,6 +945,16 @@ def terminal_snapshot(
             ACTIVE_TERMINAL_STATUSES,
         ).fetchall()
         active_cards = rows_to_dicts(active_rows)
+        waiting_rows = connection.execute(
+            f"""
+            SELECT id, status, version, updated_at, finished_at, rewinding_roll_count
+            FROM cards
+            WHERE status IN ({waiting_placeholders})
+            ORDER BY finished_at DESC, id DESC
+            """,
+            WAITING_REWINDING_STATUSES,
+        ).fetchall()
+        waiting_cards = rows_to_dicts(waiting_rows)
 
         selected_card = None
         selected_card_missing = False
@@ -937,6 +962,7 @@ def terminal_snapshot(
             selected_row = connection.execute(
                 f"""
                 SELECT id, order_number, status, machine_id, machine_sequence,
+                       rewinding_roll_count, final_extrusion_shift_occurrence_id,
                        version, updated_at
                 FROM cards
                 WHERE id = ?
@@ -980,13 +1006,32 @@ def terminal_snapshot(
     elif selected_card_missing:
         selected_signature = f"missing:{selected_card_id}"
 
+    waiting_signature = "|".join(
+        ":".join(
+            str(card[field] if card[field] is not None else "")
+            for field in (
+                "id",
+                "status",
+                "version",
+                "updated_at",
+                "finished_at",
+                "rewinding_roll_count",
+            )
+        )
+        for card in waiting_cards
+    )
+
     return {
         "active_signature": active_signature,
+        "waiting_signature": waiting_signature,
         "shift_signature": shift_signature,
-        "signature": f"{active_signature}||{selected_signature}||{shift_signature}",
+        "signature": (
+            f"{active_signature}||{waiting_signature}||{selected_signature}||{shift_signature}"
+        ),
         "selected_card": selected_card,
         "selected_card_missing": selected_card_missing,
         "active_cards": active_cards,
+        "waiting_cards": waiting_cards,
     }
 
 
@@ -1034,7 +1079,8 @@ def fetch_admin_cards(filters: dict[str, str] | None = None, limit: int = 100) -
         rows = connection.execute(
             f"""
             SELECT id, order_number, delivery_date, status, customer, product_type,
-                   ordered_gross_kg, machine_id, machine_sequence, updated_at
+                   ordered_gross_kg, machine_id, machine_sequence,
+                   rewinding_roll_count, final_extrusion_shift_occurrence_id, updated_at
             FROM cards
             {where_sql}
             ORDER BY updated_at DESC, id DESC
@@ -1061,7 +1107,9 @@ def fetch_admin_card_detail(card_id: int) -> dict[str, Any] | None:
                    linear_pe, antistatic, masterbatch, chalk,
                    packaging_method, actual_raw_material_used,
                    raw_material_brand_grade, raw_material_batch_lot,
-                   tare_weight, current_pallet_number, first_started_at, finished_at, cancelled_at,
+                   tare_weight, current_pallet_number, rewinding_roll_count,
+                   final_extrusion_shift_occurrence_id,
+                   first_started_at, finished_at, cancelled_at,
                    version, created_at, updated_at
             FROM cards
             WHERE id = ?
@@ -1107,7 +1155,9 @@ def fetch_terminal_card_detail(card_id: int) -> dict[str, Any] | None:
                    raw_material_c, linear_pe, antistatic, masterbatch, chalk,
                    packaging_method, actual_raw_material_used,
                    raw_material_brand_grade, raw_material_batch_lot,
-                   tare_weight, current_pallet_number, first_started_at, finished_at, cancelled_at, version,
+                   tare_weight, current_pallet_number, rewinding_roll_count,
+                   final_extrusion_shift_occurrence_id,
+                   first_started_at, finished_at, cancelled_at, version,
                    updated_at
             FROM cards
             WHERE id = ?
@@ -2405,7 +2455,8 @@ def fetch_admin_production_action_card(
     terminal_visible_statuses = (*ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES)
     return connection.execute(
         f"""
-        SELECT id, order_number, status, version
+        SELECT id, order_number, status, rewinding_roll_count,
+               final_extrusion_shift_occurrence_id, version
         FROM cards
         WHERE id = ?
           AND status IN ({", ".join("?" for _ in terminal_visible_statuses)})
@@ -2662,6 +2713,23 @@ def parse_pallet_number(
     return parsed, None
 
 
+def parse_rewinding_roll_count(value: str) -> tuple[int | None, str | None]:
+    cleaned = value.strip()
+    if not cleaned:
+        return None, None
+    if not cleaned.isascii() or not all("0" <= character <= "9" for character in cleaned):
+        return None, REWINDING_COUNT_ERROR
+    normalized = cleaned.lstrip("0")
+    if not normalized:
+        return None, None
+    if len(normalized) > 3:
+        return None, REWINDING_COUNT_ERROR
+    parsed = int(normalized)
+    if not 1 <= parsed <= 999:
+        return None, REWINDING_COUNT_ERROR
+    return parsed, None
+
+
 def validate_loaded_card_version(card: sqlite3.Row | None, loaded_version: int) -> RuleResult:
     if not card:
         return RuleResult(False, ("Картата не е намерена.",))
@@ -2713,6 +2781,52 @@ def update_current_pallet_number(
         pallet_number=pallet_number,
         require_active_shift=require_active_shift,
     )
+
+
+def update_rewinding_roll_count(
+    card_id: int,
+    loaded_version: int,
+    count: int | None,
+    *,
+    require_active_shift: bool = False,
+) -> RuleResult:
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        shift_result = validate_active_shift_for_terminal_write(
+            connection,
+            require_active_shift,
+        )
+        if not shift_result.ok:
+            return shift_result
+        card = connection.execute(
+            f"""
+            SELECT id, version
+            FROM cards
+            WHERE id = ?
+              AND status IN ({REWINDING_MARKER_STATUS_PLACEHOLDERS})
+            """,
+            (card_id, *REWINDING_MARKER_STATUSES),
+        ).fetchone()
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
+        updated = connection.execute(
+            """
+            UPDATE cards
+            SET rewinding_roll_count = ?,
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND version = ?
+            """,
+            (count, card_id, loaded_version),
+        )
+        if updated.rowcount != 1:
+            return RuleResult(False, (STALE_CARD_MESSAGE,))
+
+    if count is None:
+        return RuleResult(True, ("Броят за пренавиване е изчистен.",))
+    return RuleResult(True, ("Броят за пренавиване е записан.",))
 
 
 def update_roll_defaults(
