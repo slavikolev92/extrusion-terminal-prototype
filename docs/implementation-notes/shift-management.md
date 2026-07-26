@@ -72,8 +72,13 @@ The no-active gate is a compact, non-dismissible shift-number selection. Start
 and end use the same confirmation-card structure. Both show a live Bulgarian
 clock without visible seconds, but the occurrence is created only after the
 final `Потвърди`; the persisted server timestamp is the authoritative start or
-end time. The gate and just-ended handoff summary remain blocking, while the
-active overview, full history, and historical summary can be closed.
+end time. SQLite values remain unchanged UTC timestamps. Both the browser live
+preview and the server-rendered persisted timestamp use the explicit
+`Europe/Sofia` display convention, including the applicable summer or winter
+offset. The gate, start/end confirmations, and just-ended handoff summary stay
+open on Escape and backdrop interaction and move only through explicit actions.
+The active overview, full history, and historical summary close on Escape or
+backdrop and return focus to the shift header action.
 
 The active overview contains the single editable shift-number control, active
 state, formatted start time, a separate end action, and at most the three most
@@ -92,9 +97,10 @@ singleton configuration default and changes no historical production values.
 The application code and M002 must be deployed together after a SQLite-safe
 backup.
 
-The July 26 shift UI redesign changes presentation and navigation only, so it
-requires no additional migration. Deployment is still blocked by both of these
-gates:
+The July 26 shift UI redesign and final-review fixes change presentation,
+client interaction, verification, and documentation only. Stored UTC values,
+schema, and data meanings do not change, so no additional migration is
+required. Deployment is still blocked by both of these gates:
 
 1. The unresolved M001 production legacy-data profile must be performed on an
    immutable SQLite-safe backup. M001 deliberately did not guess how legacy
@@ -106,10 +112,39 @@ gates:
 ## Verification Record
 
 Final redesign verification used only
-`artifacts/ui-checks/shift-redesign-6okG5l/shift-ui.sqlite3`; the runtime
+`artifacts/ui-checks/shift-final-review-UarPfS/shift-ui.sqlite3`; the runtime
 database was not opened or mutated. The focused redesign suite passed 198
 tests, and the full suite passed 552 tests. `compileall`, Node syntax, SQLite
 `integrity_check`, SQLite `foreign_key_check`, and `git diff --check` passed.
+
+The exact automated commands were:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/test_shift_routes.py \
+  tests/test_terminal_v8_render.py \
+  tests/test_shift_management_ui_script_safety.py \
+  tests/test_shift_management.py \
+  tests/test_roll_entry.py \
+  tests/test_admin_production_corrections.py \
+  -q
+# 198 passed
+
+.venv/bin/python -m pytest -q
+# 552 passed
+
+.venv/bin/python -m compileall app tests
+node --check scripts/verify_shift_management_ui.mjs
+git diff --check
+# all exited 0
+```
+
+The final browser pass ran Chromium in a `Europe/Sofia` context and proved that
+the live minute immediately before start confirmation matches the saved start
+display, allowing only a real next-minute boundary. It also proved header
+containment, non-overlap, and right-content-edge alignment at `1536 × 1024` and
+`1366 × 768`; blocking and dismissible Escape/backdrop behavior; focus return;
+and Tab/Shift+Tab wrapping in a blocking and nonblocking state.
 
 Design QA in `design-qa.md` recorded `final result: passed`: no actionable
 P0, P1, or P2 visual mismatch remains.
@@ -152,8 +187,8 @@ read-only `/admin/settings` response, restores the original configuration
 exactly, and verifies that the server observes the restoration. A server backed
 by any other database is rejected before import or release.
 
-The 2026-07-26 evidence is in
-`artifacts/ui-checks/shift-redesign-6okG5l/`: `admin-shift-count.png`,
+The 2026-07-26 fixed-HEAD evidence is in
+`artifacts/ui-checks/shift-final-review-UarPfS/`: `admin-shift-count.png`,
 `terminal-header-no-active.png`, `start-shift-selection.png`,
 `start-shift-confirmation.png`, `terminal-header-active.png`,
 `active-shift-window.png`, `full-shift-history.png`,

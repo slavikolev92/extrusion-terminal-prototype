@@ -179,9 +179,12 @@ def test_no_active_shift_context_is_blocking_gate(connection):
     assert context["shift_blocking"] is True
 
 
-def test_shift_display_helpers_format_bulgarian_values_without_raw_seconds():
-    assert main_module.format_shift_datetime("2026-07-26 21:30:59") == (
+def test_shift_display_helpers_convert_utc_to_sofia_without_raw_seconds():
+    assert main_module.format_shift_datetime("2026-07-26 18:30:59") == (
         "26 юли 2026 г., 21:30"
+    )
+    assert main_module.format_shift_datetime("2026-01-26 19:30:59") == (
+        "26 януари 2026 г., 21:30"
     )
     assert main_module.format_shift_datetime(None) == "-"
     assert main_module.format_shift_datetime("not-a-timestamp") == "-"
@@ -190,8 +193,8 @@ def test_shift_display_helpers_format_bulgarian_values_without_raw_seconds():
         {
             "id": 8,
             "shift_number": 2,
-            "started_at": "2026-07-26 21:30:59",
-            "ended_at": "2026-07-27 06:05:02",
+            "started_at": "2026-07-26 18:30:59",
+            "ended_at": "2026-07-27 03:05:02",
             "total_gross_weight": "550.00",
             "orders": [
                 {
@@ -230,7 +233,7 @@ def test_shift_context_exposes_full_history_state_and_three_recent_rows():
         "active_shift": {
             "id": 5,
             "shift_number": 1,
-            "started_at": "2026-07-26 21:30:59",
+            "started_at": "2026-07-26 18:30:59",
             "ended_at": None,
             "version": 1,
         },

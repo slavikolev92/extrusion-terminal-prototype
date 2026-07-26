@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 import re
 from typing import Any
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import PlainTextResponse, RedirectResponse
@@ -2565,6 +2566,7 @@ BULGARIAN_MONTH_NAMES = (
     "ноември",
     "декември",
 )
+SHIFT_DISPLAY_TIME_ZONE = ZoneInfo("Europe/Sofia")
 
 
 def format_shift_datetime(value: Any) -> str:
@@ -2572,9 +2574,12 @@ def format_shift_datetime(value: Any) -> str:
     if not raw_value:
         return "-"
     try:
-        parsed = datetime.strptime(raw_value, "%Y-%m-%d %H:%M:%S")
+        parsed_utc = datetime.strptime(raw_value, "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone.utc
+        )
     except ValueError:
         return "-"
+    parsed = parsed_utc.astimezone(SHIFT_DISPLAY_TIME_ZONE)
     return (
         f"{parsed.day} {BULGARIAN_MONTH_NAMES[parsed.month]} "
         f"{parsed.year} г., {parsed:%H:%M}"

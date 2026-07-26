@@ -26,6 +26,7 @@ const fixturePath = path.join(artifactDir, "shift-management-orders.csv");
 const summaryPath = path.join(artifactDir, "shift-management-ui-summary.json");
 const orderOne = "SHIFT-UI-001";
 const orderTwo = "SHIFT-UI-002";
+const shiftTimeZone = "Europe/Sofia";
 
 const screenshotNames = [
   "admin-shift-count.png",
@@ -91,6 +92,7 @@ function assertEqual(actual, expected, label) {
 
 async function verifyTerminalHeader(page, expectedLabel, expectedActive) {
   const header = page.locator(".terminal-header");
+  const logo = page.locator(".terminal-brand");
   const actions = page.locator(".terminal-header-action");
   const centerNav = page.locator(".terminal-global-nav");
   await header.waitFor({ state: "visible" });
@@ -113,14 +115,68 @@ async function verifyTerminalHeader(page, expectedLabel, expectedActive) {
   assert(Math.max(...widths) - Math.min(...widths) <= 1, "Header action widths differ");
 
   const viewport = page.viewportSize();
+  const headerBox = await header.boundingBox();
+  const logoBox = await logo.boundingBox();
   const centerBox = await centerNav.boundingBox();
-  assert(viewport !== null && centerBox !== null, "Missing header center geometry");
+  const shiftAction = page.locator('[data-terminal-action="shift"]');
+  const shiftBox = await shiftAction.boundingBox();
+  const headerPadding = await header.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      left: Number.parseFloat(style.paddingLeft),
+      right: Number.parseFloat(style.paddingRight),
+    };
+  });
+  assert(
+    viewport !== null && headerBox !== null && logoBox !== null
+      && centerBox !== null && shiftBox !== null,
+    "Missing terminal header geometry",
+  );
   assert(
     Math.abs(centerBox.x + centerBox.width / 2 - viewport.width / 2) <= 2,
     "Order actions are not centered against the viewport",
   );
+  assert(headerBox.x >= 0, "Terminal header begins outside the viewport");
+  assert(
+    headerBox.x + headerBox.width <= viewport.width
+      && headerBox.y >= 0
+      && headerBox.y + headerBox.height <= viewport.height,
+    "Terminal header extends outside the viewport",
+  );
+  assert(
+    logoBox.x >= headerBox.x + headerPadding.left
+      && logoBox.x + logoBox.width <= headerBox.x + headerBox.width - headerPadding.right
+      && logoBox.y >= headerBox.y
+      && logoBox.y + logoBox.height <= headerBox.y + headerBox.height
+      && logoBox.x >= 0
+      && logoBox.x + logoBox.width <= viewport.width,
+    "Terminal logo is outside the header or viewport bounds",
+  );
+  assert(
+    shiftBox.x >= headerBox.x + headerPadding.left
+      && shiftBox.x + shiftBox.width <= headerBox.x + headerBox.width - headerPadding.right
+      && shiftBox.y >= headerBox.y
+      && shiftBox.y + shiftBox.height <= headerBox.y + headerBox.height
+      && shiftBox.x >= 0
+      && shiftBox.x + shiftBox.width <= viewport.width,
+    "Shift action is outside the header or viewport bounds",
+  );
+  assert(
+    logoBox.x + logoBox.width <= centerBox.x,
+    "Terminal logo overlaps the centered order actions",
+  );
+  assert(
+    centerBox.x + centerBox.width <= shiftBox.x,
+    "Centered order actions overlap the shift action",
+  );
+  assert(
+    Math.abs(
+      shiftBox.x + shiftBox.width
+      - (headerBox.x + headerBox.width - headerPadding.right)
+    ) <= 2,
+    "Shift action is not aligned to the header right content edge",
+  );
 
-  const shiftAction = page.locator('[data-terminal-action="shift"]');
   assertEqual(normalizeText(await shiftAction.textContent()), expectedLabel, "shift header label");
   assertEqual(
     await shiftAction.locator(".shift-status-dot").evaluate((element) =>
@@ -151,6 +207,94 @@ async function verifyLiveClock(clock) {
   await clock.page().waitForTimeout(1100);
   const after = await clock.getAttribute("datetime");
   assert(before !== after, "Live clock datetime did not advance");
+}
+
+function utcMinute(value) {
+  const normalized = /Z$/.test(value) ? value : `${value.replace(" ", "T")}Z`;
+  const timestamp = Date.parse(normalized);
+  assert(Number.isFinite(timestamp), `Could not parse UTC timestamp: ${value}`);
+  return Math.floor(timestamp / 60_000);
+}
+
+function assertSavedShiftMinuteMatchesPreview(preview, saved) {
+  if (preview.text === saved.text) {
+    return;
+  }
+  assertEqual(
+    utcMinute(saved.datetime) - utcMinute(preview.datetime),
+    1,
+    `saved Sofia minute after preview (${preview.text} -> ${saved.text})`,
+  );
+}
+
+async function assertShiftStateOpen(page, expectedState, label) {
+  const window = page.locator('[data-shift-window="true"]');
+  assertEqual(await window.isVisible(), true, `${label} visibility`);
+  assertEqual(await window.getAttribute("data-shift-state"), expectedState, `${label} state`);
+}
+
+async function verifyShiftFocusWraps(page, label) {
+  const focusable = page.locator(
+    '[data-shift-dialog] button:not([disabled]):visible, '
+      + '[data-shift-dialog] select:not([disabled]):visible, '
+      + '[data-shift-dialog] a[href]:visible, '
+      + '[data-shift-dialog] [tabindex]:not([tabindex="-1"]):visible',
+  );
+  const count = await focusable.count();
+  assert(count >= 2, `${label} needs at least two focusable controls`);
+  const first = focusable.first();
+  const last = focusable.last();
+
+  await first.focus();
+  await page.keyboard.press("Shift+Tab");
+  assertEqual(
+    await last.evaluate((element) => element === document.activeElement),
+    true,
+    `${label} Shift+Tab focus wrap`,
+  );
+
+  await last.focus();
+  await page.keyboard.press("Tab");
+  assertEqual(
+    await first.evaluate((element) => element === document.activeElement),
+    true,
+    `${label} Tab focus wrap`,
+  );
+}
+
+async function verifyBlockingShiftInteractions(page, expectedState, label) {
+  const window = page.locator('[data-shift-window="true"]');
+  await page.keyboard.press("Escape");
+  await assertShiftStateOpen(page, expectedState, `${label} after Escape`);
+  await window.click({ position: { x: 4, y: 4 } });
+  await assertShiftStateOpen(page, expectedState, `${label} after backdrop`);
+}
+
+async function verifyDismissibleShiftInteractions(page, expectedState, label) {
+  const window = page.locator('[data-shift-window="true"]');
+  const shiftAction = page.locator("#shift-open");
+  await verifyShiftFocusWraps(page, label);
+
+  await page.keyboard.press("Escape");
+  await window.waitFor({ state: "hidden" });
+  assertEqual(
+    await shiftAction.evaluate((element) => element === document.activeElement),
+    true,
+    `${label} focus return after Escape`,
+  );
+
+  await shiftAction.click();
+  await assertShiftStateOpen(page, expectedState, `${label} reopened after Escape`);
+  await window.click({ position: { x: 4, y: 4 } });
+  await window.waitFor({ state: "hidden" });
+  assertEqual(
+    await shiftAction.evaluate((element) => element === document.activeElement),
+    true,
+    `${label} focus return after backdrop`,
+  );
+
+  await shiftAction.click();
+  await assertShiftStateOpen(page, expectedState, `${label} reopened after backdrop`);
 }
 
 function assertArtifactDatabaseSafety() {
@@ -535,6 +679,17 @@ async function startShift(page, shiftNumber, captureEvidence = false) {
     "start confirmation shift number",
   );
   await verifyLiveClock(confirmation.locator("[data-shift-live-clock]"));
+  if (captureEvidence) {
+    await verifyBlockingShiftInteractions(
+      page,
+      "start-confirm",
+      "start confirmation",
+    );
+    await confirmation.locator('[data-shift-confirm-back="gate"]').click();
+    await assertShiftStateOpen(page, "gate", "start confirmation explicit Back");
+    await window.locator('[data-shift-confirm-open="start"]').click();
+    await confirmation.waitFor({ state: "visible" });
+  }
 
   const pending = databaseSnapshot();
   assertEqual(pending.active_shift, null, "active shift before final confirmation");
@@ -556,6 +711,10 @@ async function startShift(page, shiftNumber, captureEvidence = false) {
     await page.setViewportSize({ width: 1536, height: 1024 });
   }
 
+  const preview = {
+    text: normalizeText(await confirmation.locator("[data-shift-live-clock]").textContent()),
+    datetime: await confirmation.locator("[data-shift-live-clock]").getAttribute("datetime"),
+  };
   await window.locator('[data-shift-confirm-submit="start"]').click();
   await page.waitForLoadState("networkidle");
   await window.waitFor({ state: "hidden" });
@@ -568,6 +727,16 @@ async function startShift(page, shiftNumber, captureEvidence = false) {
     normalizeText(after.active_shift.started_at) !== "",
     "Server did not persist the active shift start time",
   );
+  await page.locator("#shift-open").click();
+  const activeWindow = page.locator('[data-shift-window="true"]');
+  await activeWindow.locator('[data-shift-pane="overview"]').waitFor({ state: "visible" });
+  const savedStart = activeWindow.locator(".shift-start-time time");
+  assertSavedShiftMinuteMatchesPreview(preview, {
+    text: normalizeText(await savedStart.textContent()),
+    datetime: await savedStart.getAttribute("datetime"),
+  });
+  await page.keyboard.press("Escape");
+  await activeWindow.waitFor({ state: "hidden" });
   return after.active_shift;
 }
 
@@ -801,6 +970,11 @@ async function endShiftAndVerifySummary(page, expectedOccurrenceId) {
     "End-shift confirmation did not identify corrected shift 2",
   );
   await verifyLiveClock(confirmation.locator("[data-shift-live-clock]"));
+  await verifyBlockingShiftInteractions(page, "end-confirm", "end confirmation");
+  await confirmation.locator('[data-shift-confirm-back="overview"]').click();
+  await assertShiftStateOpen(page, "overview", "end confirmation explicit Back");
+  await window.locator('[data-shift-confirm-open="end"]').click();
+  await confirmation.waitFor({ state: "visible" });
   await window.locator('[data-shift-confirm-submit="end"]').click();
   await page.waitForURL((url) => (
     url.searchParams.get("shift_view") === "summary"
@@ -818,6 +992,7 @@ async function endShiftAndVerifySummary(page, expectedOccurrenceId) {
     0,
     "handoff summary close controls",
   );
+  await verifyBlockingShiftInteractions(page, "summary", "handoff summary");
   const text = await verifySummary(page, {
     distinctItems: 2,
     orderOneRolls: 2,
@@ -1076,7 +1251,10 @@ async function main() {
   let browser;
   try {
     browser = await chromium.launch();
-    const context = await browser.newContext({ viewport: { width: 1536, height: 1024 } });
+    const context = await browser.newContext({
+      viewport: { width: 1536, height: 1024 },
+      timezoneId: shiftTimeZone,
+    });
     const monitoredPages = new WeakSet();
     const monitorBrowserErrors = (candidatePage) => {
       if (monitoredPages.has(candidatePage)) {
@@ -1101,6 +1279,8 @@ async function main() {
 
     await page.goto(`${baseURL}/terminal`, { waitUntil: "networkidle" });
     await verifyNoActiveShiftGate(page, "1");
+    await verifyShiftFocusWraps(page, "blocking shift gate");
+    await verifyBlockingShiftInteractions(page, "gate", "blocking shift gate");
     await verifyTerminalHeaderAtBothViewports(page, "Няма активна смяна", false);
     await page.screenshot({
       path: path.join(artifactDir, "terminal-header-no-active.png"),
@@ -1119,6 +1299,11 @@ async function main() {
       fullPage: true,
     });
     await page.setViewportSize({ width: 1536, height: 1024 });
+    await page.locator("#shift-open").click();
+    await page.locator('[data-shift-pane="overview"]').waitFor({ state: "visible" });
+    await verifyDismissibleShiftInteractions(page, "overview", "active shift overview");
+    await page.keyboard.press("Escape");
+    await page.locator('[data-shift-window="true"]').waitFor({ state: "hidden" });
 
     await endActiveShiftAndReturnToGate(page, "2");
     await startShift(page, "2");
@@ -1205,6 +1390,7 @@ async function main() {
       path: path.join(artifactDir, "full-shift-history.png"),
       fullPage: true,
     });
+    await verifyDismissibleShiftInteractions(page, "history", "full shift history");
 
     await openHistoricalSummary(page, completedId, 3, 90);
     const initialHistoricalText = await verifySummary(page, {
@@ -1221,6 +1407,11 @@ async function main() {
       await page.locator('[data-shift-window="true"] [data-shift-history-back]').count(),
       1,
       "historical summary Back action",
+    );
+    await verifyDismissibleShiftInteractions(
+      page,
+      "summary",
+      "historical shift summary",
     );
     await page.locator('[data-shift-history-back]').click();
     await page.waitForURL((url) => url.searchParams.get("shift_view") === "history", {
