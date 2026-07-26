@@ -226,9 +226,23 @@ This list combines the two existing production-tracking workstreams with the new
 5. **Redesign admin planning and machine sequencing**
    - Surface: `/admin` planning/release screen.
    - Complexity: large.
+   - Status: complete locally. The approved dense table design, shared
+     release/replan modal, row overflow actions, sortable unreleased headers,
+     guarded delete behavior, transaction-bound release/replan writes,
+     documentation, code review, adversarial fixes, automated tests, and
+     Playwright browser verification are complete.
    - Goal: make machine assignment and sequencing manageable when one machine has many orders.
-   - Problem: current cards are too large and the planning page becomes difficult to use when machine queues are long, especially for machine 1.
-   - Needs design: compact rows vs cards, drag/resequence or explicit sequence editing, machine grouping, filtering, conflict handling, and fast review/release actions.
+   - Implemented behavior: unreleased cards and each machine queue are shown as
+     compact homogeneous tables. Machine queues keep their sequence order.
+     Unreleased cards can be sorted by supported headers. Planning/replanning
+     happens through one modal. Rare actions such as returning to the unreleased
+     queue and deleting unstarted cards live in row overflow menus.
+   - Data-safety behavior: deletion is allowed only before production data
+     exists, blocks running/paused/started/data-bearing cards, and normalizes
+     pending machine queues after deletion. Release and replanning serialize
+     their validation/write transaction to avoid delete/replan races.
+   - Migration decision: no migration required; the feature uses existing
+     planning, roll, timing, tare, and material-actual fields only.
 
 ### Terminal / Workstation
 
@@ -293,8 +307,7 @@ This list combines the two existing production-tracking workstreams with the new
 
 1. Before deployment, complete the production legacy-data profile and
    release-candidate rehearsal after an immutable backup is supplied.
-2. Design admin workflow changes before implementing import and planning
-   redesigns.
+2. Design the remaining admin import workflow changes before implementation.
 3. Design terminal workflow additions before calculator or roll-change timing
    work.
 4. Finish and visually accept the approved shift-management UI redesign, then
