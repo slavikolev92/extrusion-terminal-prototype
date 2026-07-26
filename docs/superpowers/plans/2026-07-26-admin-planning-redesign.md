@@ -1188,3 +1188,78 @@ Confirm:
 - Placeholder scan: the plan contains no unresolved placeholders and no instruction to invent validation later.
 - Type consistency: produced helpers and route/function names are defined before later tasks consume them.
 - Scope check: the plan does not include terminal data-sync, calculator launch, worker recipe editing, import redesign, or countdown timers.
+
+---
+
+## Post-Implementation Verification Log
+
+Recorded after implementation on branch `admin-planning-redesign-implementation`.
+
+Automated checks run from `/home/sk/projects/extrusion-terminal/.worktrees/admin-planning-redesign-implementation`:
+
+```bash
+/home/sk/projects/extrusion-terminal/.venv/bin/python -m pytest tests/test_admin_planning.py -q
+```
+
+Result: `23 passed in 2.08s`.
+
+```bash
+/home/sk/projects/extrusion-terminal/.venv/bin/python -m pytest tests/test_admin_planning.py tests/test_admin_routes.py tests/test_admin_card_review.py tests/test_terminal_detail.py tests/test_recipe_sync.py -q
+```
+
+Result: `100 passed in 6.02s`.
+
+```bash
+/home/sk/projects/extrusion-terminal/.venv/bin/python -m pytest -q
+```
+
+Result: `573 passed in 40.74s`.
+
+```bash
+/home/sk/projects/extrusion-terminal/.venv/bin/python -m compileall app tests
+git diff --check
+```
+
+Result: both passed; `git diff --check` produced no output.
+
+Playwright check:
+
+```bash
+./node_modules/.bin/playwright --version
+```
+
+Result: `Version 1.61.0`.
+
+Temporary browser verification database:
+
+```text
+/home/sk/projects/extrusion-terminal/.worktrees/admin-planning-redesign-implementation/.test-runtime/manual-planning-review/review2.sqlite3
+```
+
+Temporary server command:
+
+```bash
+EXTRUSION_DB_PATH=/home/sk/projects/extrusion-terminal/.worktrees/admin-planning-redesign-implementation/.test-runtime/manual-planning-review/review2.sqlite3 /home/sk/projects/extrusion-terminal/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8017
+```
+
+Browser verification result: live `/admin/planning` workflow passed through repo-local Playwright. The scripted check exercised unreleased sorting, release modal, machine replan modal, hostile order-number delete confirmation dismissal, successful imported-card deletion, blocked running-card deletion, desktop layout, mobile layout, modal-open screenshot, and overflow-menu-open screenshot.
+
+Local ignored screenshot evidence:
+
+```text
+artifacts/ui-checks/admin-planning-review-desktop.png
+artifacts/ui-checks/admin-planning-review-after-workflow.png
+artifacts/ui-checks/admin-planning-review-mobile.png
+artifacts/ui-checks/admin-planning-redesign/planning-desktop.png
+artifacts/ui-checks/admin-planning-redesign/planning-modal.png
+artifacts/ui-checks/admin-planning-redesign/planning-menu.png
+artifacts/ui-checks/admin-planning-redesign/planning-mobile.png
+```
+
+Final temporary database state after the browser workflow:
+
+```text
+[('UI-001', 'pending', 4, 1), ('UI-003', 'imported', None, None), ('UI-PEND', 'pending', 2, 1), ('UI-RUN', 'running', 1, 1), ('UI-XSS-"\';alert(1)//', 'imported', None, None)]
+```
+
+This confirms `UI-002` was deleted, `UI-001` was released to machine 4, `UI-PEND` was replanned to machine 2, `UI-RUN` remained protected from deletion, and the hostile order number remained after dismissed confirmation.
