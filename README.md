@@ -299,8 +299,10 @@ Admin page behavior:
 - The shift manager can return a `pending` card to the unreleased planning pool. This clears machine assignment and queue position, removes the card from the terminal queue, and is only allowed before production has started. `running`, `paused`, `completed`, and `cancelled` cards cannot be returned to the pool.
 - The shift manager can correct terminal-side material fields, tare weight, roll gross weights, and timing segments from the admin card detail page.
 - Admin production corrections use the same loaded-version conflict checks as terminal edits, so stale correction forms are blocked and require reload.
-- The admin page should provide a simple machine planning view split into four machine columns.
-- Each machine column should show active queued cards for that machine sorted by numeric queue position.
+- Admin deletion is allowed only before production starts: imported cards and pending cards with no timing segments, no roll entries, and no first-start timestamp may be deleted. Running, paused, completed, cancelled, or production-data-bearing cards cannot be deleted.
+- The admin planning page should show one stacked table for unreleased technology cards and one stacked table per machine.
+- Machine tables must show active queued cards sorted by numeric queue position; sortable headers are limited to the unreleased-card table so machine execution order remains visible.
+- Planning and replanning use a shared modal for machine and sequence. Rare actions such as returning a pending card to unreleased planning and deleting an unstarted card live in each row's overflow menu.
 - Machine assignment is mandatory before a card is released to the terminal.
 - Sequence is a target display position assigned by the shift manager, not a production lock.
 - Release, reassignment, and resequencing normalize each affected active machine queue to contiguous positions starting at `1`.
