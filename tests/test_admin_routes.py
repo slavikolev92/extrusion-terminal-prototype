@@ -529,39 +529,27 @@ def test_admin_planning_renders_compact_unreleased_release_table(connection):
     html = response.body.decode("utf-8")
 
     assert response.status_code == 200
-    assert '<section class="section" id="unreleased-queue">' in html
-    assert '<th class="col-order" aria-sort="ascending">' in html
-    assert 'href="/admin/planning?draft_sort=order_number&amp;draft_dir=desc#unreleased-queue"' in html
-    assert 'href="/admin/planning?draft_sort=delivery_date&amp;draft_dir=asc#unreleased-queue"' in html
-    assert 'href="/admin/planning?draft_sort=customer&amp;draft_dir=asc#unreleased-queue"' in html
-    assert 'href="/admin/planning?draft_sort=product_type&amp;draft_dir=asc#unreleased-queue"' in html
+    assert '<main class="page wide-page admin-page">' in html
+    assert '<table class="planning-table">' in html
+    assert ">Ред" in html
     assert ">Поръчка" in html
     assert ">Доставка" in html
     assert ">Клиент" in html
     assert ">Изделие" in html
-    assert '<th class="col-gross">Поръчано бруто, кг</th>' in html
-    assert '<th class="col-sequence">Ред</th>' in html
-    assert '<th class="col-machine">Машина</th>' in html
-    assert '<th class="col-action">Действие</th>' in html
-    assert "2026-06-25" in html
-    assert "2026-06-26" in html
-    assert 'id="draft-card-' in html
-    assert 'class="unreleased-table compact-table"' in html
-    assert 'class="release-control release-control-sequence"' in html
-    assert 'class="release-control release-control-machine"' in html
-    assert 'class="release-submit-button"' in html
-    assert '<td class="col-gross">725.50</td>' in html
-    assert '<td class="col-gross">725.50 кг</td>' not in html
-    assert '<td class="col-gross">-</td>' in html
-    assert 'name="return_anchor" value="draft-card-' in html
-    assert 'name="return_anchor" value="unreleased-queue"' in html
+    assert ">Размер" in html
+    assert ">Бруто кг" in html
+    assert ">Действие" in html
+    assert "25.06.2026" in html
+    assert "26.06.2026" in html
+    assert '<td class="col-sequence">-</td>' in html
+    assert 'class="planning-open-button"' in html
+    assert 'data-planning-action="/admin/cards/' in html
+    assert 'class="planning-overflow"' in html
+    assert "Изтрий карта" in html
+    assert 'class="release-control release-control-sequence"' not in html
+    assert 'class="release-control release-control-machine"' not in html
+    assert 'class="release-submit-button"' not in html
     assert '<span>Макс. тегло ролка, кг</span>' not in html
-    assert '<span>Ред <span class="required-marker">*</span></span>' not in html
-    assert '<span>Машина <span class="required-marker">*</span></span>' not in html
-    css = Path("app/static/css/app.css").read_text(encoding="utf-8")
-    assert ".unreleased-table .col-gross {" in css
-    assert "width: 168px;" in css
-    assert "min-width: 1080px;" in css
 
 
 def test_admin_planning_sorts_unreleased_cards_with_header_links(connection):
@@ -618,6 +606,58 @@ def test_admin_planning_sorts_unreleased_cards_with_header_links(connection):
     assert_html_order(delivery_html, "25941", "25940", "25942")
     assert 'href="/admin/planning?draft_sort=delivery_date&amp;draft_dir=asc#unreleased-queue"' in delivery_html
     assert 'aria-sort="descending"' in delivery_html
+
+
+def test_admin_planning_sorts_unreleased_cards_by_size_and_gross(connection):
+    result = import_cards_from_csv(
+        "planning-sort-size-gross-route.csv",
+        csv_bytes(
+            extrusion_row("25951", size_thickness="900/0.050", ordered_gross_kg="700"),
+            extrusion_row("25950", size_thickness="600/0.040", ordered_gross_kg="1200"),
+            extrusion_row("25952", size_thickness="700/0.030", ordered_gross_kg=""),
+        ),
+        overwrite_existing=False,
+    )
+    assert result.rows_imported == 3
+
+    size_response = asyncio.run(
+        admin_planning(
+            make_request("/admin/planning", method="GET"),
+            draft_sort="size_thickness",
+            draft_dir="asc",
+        )
+    )
+    gross_response = asyncio.run(
+        admin_planning(
+            make_request("/admin/planning", method="GET"),
+            draft_sort="ordered_gross_kg",
+            draft_dir="desc",
+        )
+    )
+
+    assert size_response.status_code == 200
+    assert_html_order(size_response.body.decode("utf-8"), "25950", "25952", "25951")
+    assert gross_response.status_code == 200
+    assert_html_order(gross_response.body.decode("utf-8"), "25950", "25951", "25952")
+
+
+def test_admin_planning_sort_does_not_reorder_machine_queues(connection):
+    first_id = import_route_card("25961", customer="Zulu Machine")
+    second_id = import_route_card("25962", customer="Alpha Machine")
+    assert db.release_card(first_id, 1, 1, card_version(first_id)).ok
+    assert db.release_card(second_id, 1, 2, card_version(second_id)).ok
+
+    response = asyncio.run(
+        admin_planning(
+            make_request("/admin/planning", method="GET"),
+            draft_sort="customer",
+            draft_dir="desc",
+        )
+    )
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert_html_order(html, "25961", "25962")
 
 
 def test_admin_planning_delivery_date_sort_keeps_missing_dates_last():

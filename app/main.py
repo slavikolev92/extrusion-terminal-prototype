@@ -97,6 +97,8 @@ DRAFT_SORT_LABELS = {
     "delivery_date": "Доставка",
     "customer": "Клиент",
     "product_type": "Изделие",
+    "size_thickness": "Размер",
+    "ordered_gross_kg": "Бруто кг",
 }
 SAFE_ANCHOR_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
@@ -213,12 +215,21 @@ def admin_planning_context(
     draft_dir: str = "asc",
     **extra: Any,
 ) -> dict[str, Any]:
-    machine_queues = fetch_machine_queues()
+    raw_machine_queues = fetch_machine_queues()
+    machine_queues = [
+        {
+            **queue,
+            "cards": prepare_planning_card_rows(queue["cards"]),
+        }
+        for queue in raw_machine_queues
+    ]
     normalized_sort, normalized_dir = normalize_draft_sort(draft_sort, draft_dir)
-    draft_cards = sorted_draft_cards(
-        fetch_cards_by_status((STATUS_IMPORTED,)),
-        normalized_sort,
-        normalized_dir,
+    draft_cards = prepare_planning_card_rows(
+        sorted_draft_cards(
+            fetch_cards_by_status((STATUS_IMPORTED,)),
+            normalized_sort,
+            normalized_dir,
+        )
     )
     context: dict[str, Any] = {
         "admin_section": "planning",
@@ -299,9 +310,44 @@ def draft_date_sort_value(value: Any) -> tuple[int, str]:
     return (0, raw_value)
 
 
-def draft_sort_value(card: dict[str, Any], sort_key: str) -> tuple[int, str]:
+def draft_decimal_sort_value(value: Any) -> tuple[int, Decimal]:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return (1, Decimal("0"))
+    try:
+        return (0, Decimal(raw_value.replace(",", ".")))
+    except InvalidOperation:
+        return (1, Decimal("0"))
+
+
+def format_planning_delivery_date(value: Any) -> str:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return "-"
+    for date_format in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(raw_value, date_format).strftime("%d.%m.%Y")
+        except ValueError:
+            continue
+    return raw_value
+
+
+def prepare_planning_card_rows(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for card in cards:
+        row = dict(card)
+        row["planning_delivery_date"] = format_planning_delivery_date(card.get("delivery_date"))
+        row["planning_gross_kg"] = str(card.get("ordered_gross_kg") or "").strip() or "-"
+        row["planning_size"] = str(card.get("size_thickness") or "").strip() or "-"
+        rows.append(row)
+    return rows
+
+
+def draft_sort_value(card: dict[str, Any], sort_key: str) -> tuple[int, Any]:
     if sort_key == "delivery_date":
         return draft_date_sort_value(card.get("delivery_date"))
+    if sort_key == "ordered_gross_kg":
+        return draft_decimal_sort_value(card.get("ordered_gross_kg"))
     return (0, str(card.get(sort_key) or "").casefold())
 
 
@@ -333,6 +379,20 @@ def sorted_draft_cards(
             key=lambda card: draft_date_sort_value(card.get("delivery_date")),
             reverse=True,
         ) + missing_date_cards
+    if sort_key == "ordered_gross_kg" and reverse:
+        numeric_cards = []
+        missing_gross_cards = []
+        for card in ordered_cards:
+            missing_gross, _ = draft_decimal_sort_value(card.get("ordered_gross_kg"))
+            if missing_gross:
+                missing_gross_cards.append(card)
+            else:
+                numeric_cards.append(card)
+        return sorted(
+            numeric_cards,
+            key=lambda card: draft_decimal_sort_value(card.get("ordered_gross_kg")),
+            reverse=True,
+        ) + missing_gross_cards
     return sorted(
         ordered_cards,
         key=lambda card: draft_sort_value(card, sort_key),
