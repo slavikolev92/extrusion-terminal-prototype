@@ -2560,28 +2560,62 @@ def test_active_window_uses_current_number_as_the_only_correction_dropdown(conne
 def test_active_window_shows_start_time_separate_end_action_and_newest_history(
     connection,
 ):
-    first = end_active_test_shift()
+    end_active_test_shift()
     configuration = db.fetch_terminal_configuration()
     assert db.start_shift("2", int(configuration["version"])).ok
-    second = end_active_test_shift()
+    end_active_test_shift()
     configuration = db.fetch_terminal_configuration()
     assert db.start_shift("3", int(configuration["version"])).ok
-    active_shift = db.fetch_active_shift()
+    end_active_test_shift()
+    configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("4", int(configuration["version"])).ok
+    end_active_test_shift()
+    configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("1", int(configuration["version"])).ok
+    context = terminal_context(shift_view="overview")
+    active_shift = context["active_shift"]
     assert active_shift is not None
 
     html = render_terminal(shift_view="overview")
     shift_window = shift_window_block(html)
 
-    assert 'class="shift-start-time"' in shift_window
-    assert str(active_shift["started_at"]) in shift_window
-    assert 'class="shift-end-section"' in shift_window
-    assert "End shift" in shift_window
-    for heading in ("Shift", "Start", "End", "Distinct items", "Rolls", "Gross kg"):
+    assert "Управление на смяната" in shift_window
+    assert "Текуща смяна" in shift_window
+    assert 'name="shift_number" data-shift-number-select' in shift_window
+    assert active_shift["started_at_display"] in shift_window
+    assert "Приключи смяната" in shift_window
+    assert "Продължителност" not in shift_window
+    assert "Виж всички" in shift_window
+    assert 'shift_view=history' in shift_window
+    assert shift_window.count("data-shift-history-preview-id=") == 3
+
+
+def test_full_shift_history_replaces_contents_and_uses_bulgarian_columns(connection):
+    completed = end_active_test_shift()
+    configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("2", int(configuration["version"])).ok
+
+    html = render_terminal(shift_view="history")
+    shift_window = shift_window_block(html)
+
+    assert html.count('role="dialog" aria-modal="true" data-shift-dialog') == 1
+    assert 'data-shift-state="history"' in shift_window
+    assert 'data-shift-pane="history"' in shift_window
+    for heading in (
+        "Смяна",
+        "Начало",
+        "Край",
+        "Различни изделия",
+        "Ролки",
+        "Бруто, кг",
+        "Преглед",
+    ):
         assert heading in shift_window
-    assert "View" in shift_window
-    assert shift_window.index(f'data-shift-history-id="{second["id"]}"') < shift_window.index(
-        f'data-shift-history-id="{first["id"]}"'
-    )
+    assert f'data-shift-history-id="{completed["id"]}"' in shift_window
+    assert ">Shift<" not in shift_window
+    assert ">Start<" not in shift_window
+    assert ">End<" not in shift_window
+    assert ">View<" not in shift_window
 
 
 def test_end_confirmation_replaces_window_content_without_nested_modal(connection):
@@ -2608,6 +2642,13 @@ def test_end_summary_renders_header_and_required_order_columns(connection):
     assert db.add_roll_gross_weight(card_id, card_version(card_id), "60.50").ok
     summary = end_active_test_shift()
 
+    summary_context = terminal_context(
+        card_id,
+        shift_view="summary",
+        shift_id=str(summary["id"]),
+        handoff="1",
+    )
+    display_summary = summary_context["selected_shift_summary"]
     html = render_terminal(
         card_id,
         shift_view="summary",
@@ -2616,25 +2657,27 @@ def test_end_summary_renders_header_and_required_order_columns(connection):
     )
     shift_window = shift_window_block(html)
 
+    assert "Произведени количества" in shift_window
     assert f'Смяна {summary["shift_number"]}' in shift_window
-    assert str(summary["started_at"]) in shift_window
-    assert str(summary["ended_at"]) in shift_window
-    assert f'{summary["distinct_item_count"]} артикула' in shift_window
+    assert display_summary["started_at_display"] in shift_window
+    assert display_summary["ended_at_display"] in shift_window
+    assert "артикула" not in shift_window
     for heading in (
-        "Production order ID",
-        "Customer",
-        "Product type",
-        "Roll count",
-        "Gross kg",
+        "Производствена поръчка",
+        "Клиент",
+        "Вид изделие",
+        "Брой ролки",
+        "Бруто, кг",
     ):
         assert heading in shift_window
     assert "SHIFT-SUMMARY" in shift_window
     assert "V8 Customer SHIFT-SUMMARY" in shift_window
     assert "ТСФ 890/0.082" in shift_window
-    assert "60.50" in shift_window
+    assert "60.5" in shift_window
+    assert "60.50" not in shift_window
 
 
-def test_empty_shift_summary_renders_zero_items_and_empty_table(connection):
+def test_empty_shift_summary_renders_empty_table_without_item_counter(connection):
     summary = end_active_test_shift()
 
     html = render_terminal(
@@ -2645,7 +2688,7 @@ def test_empty_shift_summary_renders_zero_items_and_empty_table(connection):
     shift_window = shift_window_block(html)
     table_body = re.search(r'<tbody data-shift-summary-orders>(.*?)</tbody>', shift_window, re.S)
 
-    assert "0 артикула" in shift_window
+    assert "0 артикула" not in shift_window
     assert table_body is not None
     assert "data-shift-summary-order" not in table_body.group(1)
     assert "Няма произведени артикули в тази смяна." in shift_window
@@ -2670,9 +2713,9 @@ def test_history_view_and_back_replace_contents_in_one_modal(connection):
         f'href="/terminal/cards/{card_id}?shift_view=summary&shift_id={completed["id"]}"'
         in overview_html
     )
-    assert f'href="/terminal/cards/{card_id}?shift_view=overview"' in summary_html
+    assert f'href="/terminal/cards/{card_id}?shift_view=history"' in summary_html
     assert 'data-shift-pane="summary"' in summary_html
-    assert "Back" in summary_html
+    assert ">Назад<" in summary_html
 
 
 def test_blocking_shift_state_makes_terminal_content_inert(connection):

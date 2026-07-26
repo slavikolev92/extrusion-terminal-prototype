@@ -2297,16 +2297,44 @@
     }
 
     .shift-overview-pane,
+    .shift-history-pane,
     .shift-summary-pane {
       display: grid;
       gap: 16px;
     }
 
-    .shift-overview-current {
+    .shift-current-section,
+    .shift-history {
+      min-height: 0;
       display: grid;
-      grid-template-columns: minmax(140px, 200px) minmax(0, 1fr);
-      gap: 18px;
+      gap: 10px;
+    }
+
+    .shift-current-section h3,
+    .shift-history h3,
+    .shift-pane-heading h3 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .shift-current-card {
+      display: grid;
+      grid-template-columns: minmax(140px, 190px) auto minmax(220px, 1fr) auto;
+      gap: 14px;
       align-items: end;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface-soft);
+      padding: 14px;
+    }
+
+    .shift-current-status {
+      min-height: 38px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--green);
+      font-size: 14px;
     }
 
     .shift-start-time {
@@ -2328,11 +2356,8 @@
     }
 
     .shift-end-section {
-      border-top: 1px solid var(--line);
-      border-bottom: 1px solid var(--line);
-      padding: 14px 0;
       display: flex;
-      justify-content: flex-end;
+      align-items: end;
     }
 
     .shift-end-action {
@@ -2341,15 +2366,11 @@
       color: #fff;
     }
 
-    .shift-history {
-      min-height: 0;
-      display: grid;
-      gap: 10px;
-    }
-
-    .shift-history h3 {
-      margin: 0;
-      font-size: 18px;
+    .shift-pane-heading {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
     }
 
     .shift-table-scroll {
@@ -2392,15 +2413,25 @@
       border-bottom: 0;
     }
 
-    .shift-summary-facts {
+    .shift-summary-metadata {
       display: flex;
       flex-wrap: wrap;
       gap: 8px 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-soft);
+      padding: 12px;
       font-weight: 800;
     }
 
-    .shift-summary-facts span {
+    .shift-summary-metadata span {
       color: var(--secondary-text);
+    }
+
+    .shift-secondary-link {
+      border-color: #b8c4d1;
+      background: #fff;
+      color: #0b355f;
     }
 
     .shift-empty-state {
@@ -2446,6 +2477,14 @@
 
       .shift-table-scroll {
         max-height: 42vh;
+      }
+
+      .shift-current-card {
+        grid-template-columns: minmax(140px, 1fr) auto;
+      }
+
+      .shift-start-time {
+        grid-column: 1 / -1;
       }
     }
 
@@ -3089,7 +3128,7 @@
         shiftWindow.dataset.shiftState = paneName;
         if (shiftClose) {
           shiftClose.hidden = (
-            isBlockingShiftWindow() || !["overview", "summary"].includes(paneName)
+            isBlockingShiftWindow() || !["overview", "history", "summary"].includes(paneName)
           );
         }
         if (shiftTitle) {
