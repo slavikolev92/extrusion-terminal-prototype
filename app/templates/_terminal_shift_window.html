@@ -23,13 +23,17 @@
     <header class="shift-window-header">
       <h2 id="shift-window-title" data-shift-title>
         {% if shift_window_state == "gate" %}
-          Няма активна смяна
+          Начало на смяна
+        {% elif shift_window_state == "overview" %}
+          Управление на смяната
+        {% elif shift_window_state == "summary" %}
+          Произведени количества
+        {% elif shift_window_state == "history" %}
+          История на смените
         {% elif shift_window_state == "reload" %}
           Смяната е променена
-        {% elif shift_window_state == "summary" and selected_shift_summary %}
-          Смяна {{ selected_shift_summary.shift_number }}
         {% else %}
-          Shift
+          Управление на смяната
         {% endif %}
       </h2>
       {% if active_shift and not shift_blocking %}
@@ -42,7 +46,11 @@
         <form class="shift-start-form" action="/terminal/shifts/start" method="post" data-shift-start-form>
           <input type="hidden" name="configuration_version" value="{{ shift_configuration.version }}">
           {% if selected_card %}<input type="hidden" name="selected_card_id" value="{{ selected_card.id }}">{% endif %}
-          <div class="shift-window-pane shift-gate-pane" data-shift-pane="gate">
+          <div class="shift-window-pane shift-selection-pane" data-shift-pane="gate">
+            <div class="shift-state-intro">
+              <h3>Начало на смяна</h3>
+              <p>Изберете номера на смяната, за да започнете работа.</p>
+            </div>
             <label class="shift-number-field">
               <span>Номер на смяна</span>
               <select name="shift_number" data-shift-start-number>
@@ -56,13 +64,30 @@
                 {% for message in shift_result.messages %}<p>{{ message }}</p>{% endfor %}
               </div>
             {% endif %}
-            <button class="shift-primary-action" type="button" data-shift-confirm-open="start">Начало на смяна</button>
+            <div class="shift-live-time-card">
+              <strong>Начало на смяна</strong>
+              <time data-shift-live-clock></time>
+            </div>
+            <button class="shift-primary-action" type="button" data-shift-confirm-open="start">Започни смяна</button>
           </div>
-          <div class="shift-window-pane shift-confirm-pane" data-shift-pane="start-confirm" hidden>
-            <p>Стартиране на смяна <strong data-shift-start-selection>{{ suggested_shift_number }}</strong>?</p>
+          <div class="shift-window-pane shift-confirmation-pane" data-shift-pane="start-confirm" hidden>
+            <div class="shift-state-intro">
+              <h3>Потвърждение за начало</h3>
+              <p>Проверете данните преди да започнете смяната.</p>
+            </div>
+            <div class="shift-details-card">
+              <div class="shift-detail-row">
+                <span>Смяна</span>
+                <strong data-shift-start-selection>{{ suggested_shift_number }}</strong>
+              </div>
+              <div class="shift-detail-row">
+                <span>Начало</span>
+                <strong><time data-shift-live-clock></time></strong>
+              </div>
+            </div>
             <div class="shift-confirm-actions">
-              <button type="button" data-shift-confirm-back="gate">Back</button>
-              <button class="shift-primary-action" type="submit" data-shift-confirm-submit="start">Yes</button>
+              <button type="button" data-shift-confirm-back="gate">Назад</button>
+              <button class="shift-primary-action" type="submit" data-shift-confirm-submit="start">Потвърди</button>
             </div>
           </div>
         </form>
@@ -110,6 +135,26 @@
           </div>
         </div>
       {% elif shift_window_state != "reload" and active_shift %}
+        <div class="shift-window-pane shift-confirmation-pane" data-shift-pane="start-confirm" hidden>
+          <div class="shift-state-intro">
+            <h3>Потвърждение за начало</h3>
+            <p>Проверете данните преди да започнете смяната.</p>
+          </div>
+          <div class="shift-details-card">
+            <div class="shift-detail-row">
+              <span>Смяна</span>
+              <strong data-shift-start-selection>{{ suggested_shift_number }}</strong>
+            </div>
+            <div class="shift-detail-row">
+              <span>Начало</span>
+              <strong><time data-shift-live-clock></time></strong>
+            </div>
+          </div>
+          <div class="shift-confirm-actions">
+            <button type="button" data-shift-confirm-back="gate">Назад</button>
+            <button class="shift-primary-action" type="button" data-shift-confirm-submit="start">Потвърди</button>
+          </div>
+        </div>
         <div class="shift-window-pane shift-overview-pane" data-shift-pane="overview">
           <div class="shift-overview-current">
             <form action="/terminal/shifts/current/number" method="post" data-shift-number-form>
@@ -125,9 +170,9 @@
                 </select>
               </label>
             </form>
-            <div class="shift-start-time">
-              <span>Start</span>
-              <time datetime="{{ active_shift.started_at }}">{{ active_shift.started_at }}</time>
+          <div class="shift-start-time">
+            <span>Start</span>
+              <time datetime="{{ active_shift.started_at }}">{{ active_shift.started_at_display }}</time>
             </div>
           </div>
           {% if shift_result and not shift_result.ok %}
@@ -175,11 +220,28 @@
             {% if not completed_shifts %}<p class="shift-empty-state">Няма приключени смени.</p>{% endif %}
           </section>
         </div>
-        <div class="shift-window-pane shift-confirm-pane" data-shift-pane="end-confirm" hidden>
-          <p>Приключване на Смяна {{ active_shift.shift_number }}?</p>
+        <div class="shift-window-pane shift-confirmation-pane" data-shift-pane="end-confirm" hidden>
+          <div class="shift-state-intro">
+            <h3>Потвърждение за приключване</h3>
+            <p>Проверете данните преди да приключите смяната.</p>
+          </div>
+          <div class="shift-details-card">
+            <div class="shift-detail-row">
+              <span>Смяна</span>
+              <strong>{{ active_shift.shift_number }}</strong>
+            </div>
+            <div class="shift-detail-row">
+              <span>Начало</span>
+              <strong>{{ active_shift.started_at_display }}</strong>
+            </div>
+            <div class="shift-detail-row">
+              <span>Край</span>
+              <strong><time data-shift-live-clock></time></strong>
+            </div>
+          </div>
           <div class="shift-confirm-actions">
-            <button type="button" data-shift-confirm-back="overview">Back</button>
-            <button class="shift-end-action" type="submit" form="shift-end-form" data-shift-confirm-submit="end">Yes</button>
+            <button type="button" data-shift-confirm-back="overview">Назад</button>
+            <button class="shift-primary-action" type="submit" form="shift-end-form" data-shift-confirm-submit="end">Потвърди</button>
           </div>
         </div>
       {% endif %}

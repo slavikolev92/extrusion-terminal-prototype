@@ -2474,7 +2474,9 @@ def test_terminal_header_shows_nonwrapping_no_active_shift_status(connection):
     assert 'data-terminal-action="shift"' in header_html
 
 
-def test_no_active_shift_gate_has_no_close_or_escape_dismissal(connection):
+def test_no_active_shift_gate_uses_compact_bulgarian_start_flow_without_dismissal(
+    connection,
+):
     end_active_test_shift()
 
     html = render_terminal()
@@ -2482,10 +2484,19 @@ def test_no_active_shift_gate_has_no_close_or_escape_dismissal(connection):
 
     assert 'data-shift-state="gate"' in shift_window
     assert 'data-shift-blocking="true"' in shift_window
-    assert "Няма активна смяна" in shift_window
+    assert 'data-shift-pane="gate"' in shift_window
+    assert 'data-shift-pane="start-confirm" hidden' in shift_window
+    assert "Начало на смяна" in shift_window
+    assert "Изберете номера на смяната, за да започнете работа." in shift_window
+    assert "Номер на смяна" in shift_window
+    assert "Започни смяна" in shift_window
+    assert shift_window.count("data-shift-live-clock") == 2
     assert "data-shift-close" not in shift_window
-    assert 'shiftWindow.dataset.shiftBlocking === "true"' in html
-    assert "if (!canDismissShiftWindow())" in html
+    assert "Отказ" not in shift_window
+    assert ">Back<" not in shift_window
+    assert ">Yes<" not in shift_window
+    assert "updateShiftClocks" in html
+    assert "window.setInterval(updateShiftClocks, 1000)" in html
 
 
 def test_start_confirmation_replaces_gate_content_and_names_selected_shift(connection):
@@ -2501,6 +2512,21 @@ def test_start_confirmation_replaces_gate_content_and_names_selected_shift(conne
     assert 'data-shift-start-selection' in shift_window
     assert f'>{int(ended_shift["shift_number"]) + 1}<' in shift_window
     assert 'data-shift-confirm-submit="start"' in shift_window
+
+
+def test_start_and_end_confirmations_share_the_same_bulgarian_structure(connection):
+    html = render_terminal(shift_view="overview")
+    shift_window = shift_window_block(html)
+
+    assert shift_window.count('class="shift-window-pane shift-confirmation-pane') == 2
+    assert "Потвърждение за начало" in shift_window
+    assert "Потвърждение за приключване" in shift_window
+    assert shift_window.count("shift-details-card") == 2
+    assert shift_window.count(">Назад<") == 2
+    assert shift_window.count(">Потвърди<") == 2
+    assert ">Back<" not in shift_window
+    assert ">Yes<" not in shift_window
+    assert "data-shift-nested-modal" not in shift_window
 
 
 def test_active_window_uses_current_number_as_the_only_correction_dropdown(connection):
@@ -2569,7 +2595,8 @@ def test_end_confirmation_replaces_window_content_without_nested_modal(connectio
     assert 'data-shift-pane="overview"' in shift_window
     assert 'data-shift-pane="end-confirm" hidden' in shift_window
     assert 'data-shift-confirm-open="end"' in shift_window
-    assert f'Смяна {active_shift["shift_number"]}' in shift_window
+    assert "Потвърждение за приключване" in shift_window
+    assert f'>{active_shift["shift_number"]}<' in shift_window
     assert 'data-shift-confirm-submit="end"' in shift_window
     assert "data-shift-nested-modal" not in shift_window
 

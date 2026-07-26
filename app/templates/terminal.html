@@ -2114,7 +2114,7 @@
     }
 
     .shift-window-dialog {
-      width: min(1040px, 100%);
+      width: min(1080px, calc(100vw - 32px));
       max-height: calc(100vh - 48px);
       border: 1px solid var(--line);
       border-radius: 12px;
@@ -2123,6 +2123,12 @@
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
       overflow: hidden;
+    }
+
+    .shift-window-overlay[data-shift-state="gate"] .shift-window-dialog,
+    .shift-window-overlay[data-shift-state="start-confirm"] .shift-window-dialog,
+    .shift-window-overlay[data-shift-state="end-confirm"] .shift-window-dialog {
+      width: min(640px, calc(100vw - 32px));
     }
 
     .shift-window-header {
@@ -2158,13 +2164,72 @@
       padding: 18px;
     }
 
-    .shift-gate-pane,
-    .shift-confirm-pane,
+    .shift-selection-pane,
+    .shift-confirmation-pane,
     .shift-reload-pane {
       width: min(560px, 100%);
       margin: 0 auto;
       display: grid;
       gap: 16px;
+    }
+
+    .shift-state-intro {
+      display: grid;
+      gap: 6px;
+    }
+
+    .shift-state-intro h3,
+    .shift-state-intro p {
+      margin: 0;
+    }
+
+    .shift-state-intro h3 {
+      color: var(--primary-text);
+      font-size: 19px;
+    }
+
+    .shift-state-intro p {
+      color: var(--secondary-text);
+      line-height: 1.4;
+    }
+
+    .shift-live-time-card,
+    .shift-details-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-soft);
+      padding: 12px;
+    }
+
+    .shift-live-time-card {
+      display: grid;
+      gap: 4px;
+      color: var(--primary-text);
+    }
+
+    .shift-live-time-card time {
+      color: var(--secondary-text);
+    }
+
+    .shift-details-card {
+      display: grid;
+    }
+
+    .shift-detail-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 8px 0;
+      color: var(--secondary-text);
+    }
+
+    .shift-detail-row + .shift-detail-row {
+      border-top: 1px solid var(--line);
+    }
+
+    .shift-detail-row strong {
+      color: var(--primary-text);
+      text-align: right;
     }
 
     .shift-number-field {
@@ -2211,13 +2276,13 @@
     }
 
     .shift-window-error p,
-    .shift-confirm-pane p,
+    .shift-confirmation-pane p,
     .shift-reload-pane p,
     .shift-empty-state {
       margin: 0;
     }
 
-    .shift-confirm-pane,
+    .shift-confirmation-pane,
     .shift-reload-pane {
       font-size: 17px;
       line-height: 1.4;
@@ -2958,6 +3023,28 @@
         return;
       }
 
+      const shiftLiveClocks = Array.from(
+        shiftWindow.querySelectorAll("[data-shift-live-clock]"),
+      );
+      const bulgarianMonths = [
+        "януари", "февруари", "март", "април", "май", "юни",
+        "юли", "август", "септември", "октомври", "ноември", "декември",
+      ];
+      const twoDigits = (value) => String(value).padStart(2, "0");
+      const updateShiftClocks = () => {
+        const now = new Date();
+        const visibleValue = (
+          `${now.getDate()} ${bulgarianMonths[now.getMonth()]} ${now.getFullYear()} г., `
+          + `${twoDigits(now.getHours())}:${twoDigits(now.getMinutes())}`
+        );
+        shiftLiveClocks.forEach((clock) => {
+          clock.textContent = visibleValue;
+          clock.dateTime = now.toISOString();
+        });
+      };
+      updateShiftClocks();
+      window.setInterval(updateShiftClocks, 1000);
+
       const isBlockingShiftWindow = () => (
         shiftWindow.dataset.shiftBlocking === "true"
       );
@@ -2999,23 +3086,23 @@
           candidate.hidden = candidate !== pane;
         });
         activeShiftPane = paneName;
+        shiftWindow.dataset.shiftState = paneName;
         if (shiftClose) {
           shiftClose.hidden = (
             isBlockingShiftWindow() || !["overview", "summary"].includes(paneName)
           );
         }
         if (shiftTitle) {
-          if (paneName === "start-confirm") {
-            shiftTitle.textContent = "Потвърждение за начало";
-          } else if (paneName === "end-confirm") {
-            shiftTitle.textContent = "Потвърждение за край";
-          } else if (paneName === "reload") {
-            shiftTitle.textContent = "Смяната е променена";
-          } else if (paneName === "gate") {
-            shiftTitle.textContent = "Няма активна смяна";
-          } else if (paneName === "overview") {
-            shiftTitle.textContent = "Shift";
-          }
+          const shiftPaneTitles = {
+            gate: "Начало на смяна",
+            "start-confirm": "Потвърждение за начало",
+            overview: "Управление на смяната",
+            "end-confirm": "Потвърждение за приключване",
+            history: "История на смените",
+            summary: "Произведени количества",
+            reload: "Смяната е променена",
+          };
+          shiftTitle.textContent = shiftPaneTitles[paneName] || shiftPaneTitles.overview;
         }
         focusFirstShiftAction();
       };
