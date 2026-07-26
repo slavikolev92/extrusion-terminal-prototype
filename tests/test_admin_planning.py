@@ -417,7 +417,7 @@ def test_delete_pending_unstarted_card_removes_it_and_normalizes_queue(connectio
 
 def test_delete_blocks_started_running_and_paused_cards(connection, active_test_shift):
     started_pending_id = release_ready_card("25833", machine_id=2, machine_sequence=1)
-    running_id = release_ready_card("25834", machine_id=2, machine_sequence=2)
+    running_id = release_ready_card("25834", machine_id=3, machine_sequence=1)
     paused_id = release_ready_card("25835", machine_id=2, machine_sequence=3)
 
     connection.execute(
@@ -426,9 +426,11 @@ def test_delete_blocks_started_running_and_paused_cards(connection, active_test_
     )
     connection.commit()
     assert db.start_production_timing(running_id, card_version(running_id)).ok
-    assert db.pause_production_timing(running_id, card_version(running_id)).ok
     assert db.start_production_timing(paused_id, card_version(paused_id)).ok
     assert db.pause_production_timing(paused_id, card_version(paused_id)).ok
+
+    assert db.fetch_admin_card_detail(running_id)["status"] == STATUS_RUNNING
+    assert db.fetch_admin_card_detail(paused_id)["status"] == STATUS_PAUSED
 
     started_result = db.delete_admin_planning_card(started_pending_id, card_version(started_pending_id))
     running_result = db.delete_admin_planning_card(running_id, card_version(running_id))

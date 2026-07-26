@@ -591,6 +591,20 @@ def test_admin_planning_renders_machine_queues_as_shared_tables_with_menus(conne
     assert 'class="queue-return-button"' not in html
 
 
+def test_admin_planning_escapes_delete_confirmation_order_number(connection):
+    order_number = "25973' + confirm('unsafe') + '"
+    import_route_card(order_number)
+
+    response = asyncio.run(admin_planning(make_request("/admin/planning", method="GET")))
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert 'onsubmit="return confirm(' not in html
+    assert 'data-delete-order="25973&#39; + confirm(&#39;unsafe&#39;) + &#39;"' in html
+    assert "deleteForm.dataset.deleteOrder" in html
+    assert "innerHTML" not in html
+
+
 def test_admin_delete_redirects_back_to_planning_when_requested(connection):
     card_id = import_route_card("25972")
 

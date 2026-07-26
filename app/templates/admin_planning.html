@@ -88,7 +88,7 @@
                 <details class="planning-overflow">
                   <summary aria-label="Още действия за поръчка {{ card.order_number }}">⋮</summary>
                   <div class="planning-overflow-menu">
-                    <form action="/admin/cards/{{ card.id }}/delete" method="post" onsubmit="return confirm('Изтриване на поръчка {{ card.order_number }}?');">
+                    <form action="/admin/cards/{{ card.id }}/delete" method="post" data-delete-order="{{ card.order_number }}">
                       <input type="hidden" name="loaded_version" value="{{ card.version }}">
                       <input type="hidden" name="return_to" value="planning">
                       <button type="submit">Изтрий карта</button>
@@ -160,7 +160,7 @@
                               <button type="submit">Върни в неизпратени</button>
                             </form>
                           {% endif %}
-                          <form action="/admin/cards/{{ card.id }}/delete" method="post" onsubmit="return confirm('Изтриване на поръчка {{ card.order_number }}?');">
+                          <form action="/admin/cards/{{ card.id }}/delete" method="post" data-delete-order="{{ card.order_number }}">
                             <input type="hidden" name="loaded_version" value="{{ card.version }}">
                             <input type="hidden" name="return_to" value="planning">
                             <button type="submit">Изтрий карта</button>
@@ -236,6 +236,13 @@
 
       document.querySelectorAll(".planning-modal-close, [data-planning-cancel]").forEach((button) => {
         button.addEventListener("click", () => modal.close());
+      });
+
+      document.querySelectorAll("form[data-delete-order]").forEach((deleteForm) => {
+        deleteForm.addEventListener("submit", (event) => {
+          const message = "Изтриване на поръчка " + (deleteForm.dataset.deleteOrder || "") + "?";
+          if (!window.confirm(message)) event.preventDefault();
+        });
       });
     })();
   </script>
