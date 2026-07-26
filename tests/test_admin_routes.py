@@ -615,10 +615,11 @@ def test_admin_planning_sorts_unreleased_cards_by_size_and_gross(connection):
             extrusion_row("25951", size_thickness="900/0.050", ordered_gross_kg="700"),
             extrusion_row("25950", size_thickness="600/0.040", ordered_gross_kg="1200"),
             extrusion_row("25952", size_thickness="700/0.030", ordered_gross_kg=""),
+            extrusion_row("25953", size_thickness="800/0.040", ordered_gross_kg="NaN"),
         ),
         overwrite_existing=False,
     )
-    assert result.rows_imported == 3
+    assert result.rows_imported == 4
 
     size_response = asyncio.run(
         admin_planning(
@@ -636,9 +637,9 @@ def test_admin_planning_sorts_unreleased_cards_by_size_and_gross(connection):
     )
 
     assert size_response.status_code == 200
-    assert_html_order(size_response.body.decode("utf-8"), "25950", "25952", "25951")
+    assert_html_order(size_response.body.decode("utf-8"), "25950", "25952", "25953", "25951")
     assert gross_response.status_code == 200
-    assert_html_order(gross_response.body.decode("utf-8"), "25950", "25951", "25952")
+    assert_html_order(gross_response.body.decode("utf-8"), "25950", "25951", "25952", "25953")
 
 
 def test_admin_planning_sort_does_not_reorder_machine_queues(connection):

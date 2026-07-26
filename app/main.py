@@ -315,9 +315,12 @@ def draft_decimal_sort_value(value: Any) -> tuple[int, Decimal]:
     if not raw_value:
         return (1, Decimal("0"))
     try:
-        return (0, Decimal(raw_value.replace(",", ".")))
+        decimal_value = Decimal(raw_value.replace(",", "."))
     except InvalidOperation:
         return (1, Decimal("0"))
+    if not decimal_value.is_finite():
+        return (1, Decimal("0"))
+    return (0, decimal_value)
 
 
 def format_planning_delivery_date(value: Any) -> str:

@@ -37,3 +37,23 @@ RED was observed before production changes with the focused command above. The e
 - No Task 3 template or CSS work was included.
 - The compact render test remains red by design until the later template task supplies the accepted markup and formatted display values.
 - Machine queue data is prepared for display but remains in the existing `fetch_machine_queues()` order; only unsent cards are sorted by draft headers.
+
+## Fix Round 1/5
+
+### Finding Fixed
+
+`draft_decimal_sort_value` now treats non-finite Decimal values, including `NaN`, `Infinity`, and `-Infinity`, as missing gross values. They therefore remain in the missing-value group rather than reaching Decimal comparison during descending sorting.
+
+### Focused TDD Evidence
+
+- RED: `source .venv/bin/activate && python -m pytest tests/test_admin_routes.py -k "sorts_unreleased_cards_by_size_and_gross" -q`
+  - Result: `1 failed, 33 deselected`; the route raised `decimal.InvalidOperation` while sorting the imported `ordered_gross_kg="NaN"` card.
+- GREEN: `source .venv/bin/activate && python -m pytest tests/test_admin_routes.py -k "sorts_unreleased_cards_by_size_and_gross" -q`
+  - Result: `1 passed, 33 deselected`.
+- Focused sorting suite: `source .venv/bin/activate && python -m pytest tests/test_admin_routes.py -k "sorts_unreleased_cards or sort_does_not_reorder_machine_queues" -q`
+  - Result: `3 passed, 31 deselected`.
+
+### Fix Round Files
+
+- `app/main.py`
+- `tests/test_admin_routes.py`
