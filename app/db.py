@@ -3876,11 +3876,11 @@ def _update_admin_imported_fields(
     return RuleResult(True, ("Данните на технологичната карта са записани.",))
 
 
-def delete_admin_imported_card(card_id: int, loaded_version: int) -> RuleResult:
+def delete_admin_planning_card(card_id: int, loaded_version: int) -> RuleResult:
     with connect() as connection:
         card = connection.execute(
             """
-            SELECT id, order_number, status, version
+            SELECT id, order_number, status, version, machine_id, first_started_at
             FROM cards
             WHERE id = ?
             """,
@@ -3890,8 +3890,8 @@ def delete_admin_imported_card(card_id: int, loaded_version: int) -> RuleResult:
         if not version_result.ok:
             return version_result
 
-        if card["status"] != STATUS_IMPORTED:
-            return RuleResult(False, ("Само неизпратени импортирани технологични карти могат да се изтриват.",))
+        if card["status"] not in (STATUS_IMPORTED, STATUS_PENDING):
+            return RuleResult(False, ("Картата може да се изтрие само преди започване на производство.",))
 
         roll_count = int(
             connection.execute(
@@ -3905,12 +3905,19 @@ def delete_admin_imported_card(card_id: int, loaded_version: int) -> RuleResult:
                 (card_id,),
             ).fetchone()[0]
         )
-        if roll_count or segment_count:
+        if roll_count or segment_count or card["first_started_at"]:
             return RuleResult(False, ("Технологични карти с производствени данни не могат да се изтриват.",))
 
+        old_machine_id = int(card["machine_id"]) if card["machine_id"] is not None else None
         connection.execute("DELETE FROM cards WHERE id = ?", (card_id,))
+        if old_machine_id is not None:
+            normalize_machine_queue(connection, machine_id=old_machine_id)
 
     return RuleResult(True, (f"Поръчка {card['order_number']} е изтрита.",))
+
+
+def delete_admin_imported_card(card_id: int, loaded_version: int) -> RuleResult:
+    return delete_admin_planning_card(card_id, loaded_version)
 
 
 def update_terminal_material_fields(

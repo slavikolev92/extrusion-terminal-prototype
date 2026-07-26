@@ -391,3 +391,54 @@ def test_unrelease_blocks_imported_completed_and_cancelled_cards(
     assert db.fetch_admin_card_detail(imported_id)["status"] == STATUS_IMPORTED
     assert db.fetch_admin_card_detail(completed_id)["status"] == "completed"
     assert db.fetch_admin_card_detail(cancelled_id)["status"] == "cancelled"
+
+
+def test_delete_pending_unstarted_card_removes_it_and_normalizes_queue(connection):
+    first_id = release_ready_card("25830", machine_id=1, machine_sequence=1)
+    deleted_id = release_ready_card("25831", machine_id=1, machine_sequence=2)
+    third_id = release_ready_card("25832", machine_id=1, machine_sequence=3)
+
+    result = db.delete_admin_planning_card(deleted_id, card_version(deleted_id))
+    machine_1_cards = [
+        (card["order_number"], card["machine_sequence"])
+        for queue in db.fetch_machine_queues()
+        if queue["machine"]["id"] == 1
+        for card in queue["cards"]
+    ]
+
+    assert result.ok
+    assert result.messages == ("Поръчка 25831 е изтрита.",)
+    assert db.fetch_admin_card_detail(deleted_id) is None
+    assert db.fetch_admin_card_detail(first_id)["machine_sequence"] == 1
+    assert db.fetch_admin_card_detail(third_id)["machine_sequence"] == 2
+    assert machine_1_cards == [("25830", 1), ("25832", 2)]
+
+
+def test_delete_blocks_started_running_and_paused_cards(connection, active_test_shift):
+    started_pending_id = release_ready_card("25833", machine_id=2, machine_sequence=1)
+    running_id = release_ready_card("25834", machine_id=2, machine_sequence=2)
+    paused_id = release_ready_card("25835", machine_id=2, machine_sequence=3)
+
+    connection.execute(
+        "UPDATE cards SET first_started_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (started_pending_id,),
+    )
+    connection.commit()
+    assert db.start_production_timing(running_id, card_version(running_id)).ok
+    assert db.pause_production_timing(running_id, card_version(running_id)).ok
+    assert db.start_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.pause_production_timing(paused_id, card_version(paused_id)).ok
+
+    started_result = db.delete_admin_planning_card(started_pending_id, card_version(started_pending_id))
+    running_result = db.delete_admin_planning_card(running_id, card_version(running_id))
+    paused_result = db.delete_admin_planning_card(paused_id, card_version(paused_id))
+
+    assert not started_result.ok
+    assert started_result.messages == ("Технологични карти с производствени данни не могат да се изтриват.",)
+    assert not running_result.ok
+    assert running_result.messages == ("Картата може да се изтрие само преди започване на производство.",)
+    assert not paused_result.ok
+    assert paused_result.messages == ("Картата може да се изтрие само преди започване на производство.",)
+    assert db.fetch_admin_card_detail(started_pending_id) is not None
+    assert db.fetch_admin_card_detail(running_id) is not None
+    assert db.fetch_admin_card_detail(paused_id) is not None

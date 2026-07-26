@@ -335,14 +335,14 @@ def test_admin_delete_removes_unreleased_card(connection):
     card_id = int(cursor.lastrowid)
     loaded_version = db.fetch_admin_card_detail(card_id)["version"]
 
-    result = db.delete_admin_imported_card(card_id, loaded_version)
+    result = db.delete_admin_planning_card(card_id, loaded_version)
     deleted = db.fetch_admin_card_detail(card_id)
 
     assert result.ok
     assert deleted is None
 
 
-def test_admin_delete_blocks_released_card(connection):
+def test_admin_delete_removes_pending_unstarted_card(connection):
     card_id = import_ready_card("25712")
     assert db.release_card(
         card_id,
@@ -351,9 +351,8 @@ def test_admin_delete_blocks_released_card(connection):
     ).ok
     card = db.fetch_admin_card_detail(card_id)
 
-    result = db.delete_admin_imported_card(card_id, card["version"])
-    still_exists = db.fetch_admin_card_detail(card_id)
+    result = db.delete_admin_planning_card(card_id, card["version"])
+    deleted = db.fetch_admin_card_detail(card_id)
 
-    assert not result.ok
-    assert result.messages == ("Само неизпратени импортирани технологични карти могат да се изтриват.",)
-    assert still_exists is not None
+    assert result.ok
+    assert deleted is None
