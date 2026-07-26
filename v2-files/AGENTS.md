@@ -265,7 +265,7 @@ Development evidence from July 25, 2026:
 .venv/bin/python -m pytest tests/test_migrations.py tests/test_baseline.py \
   tests/test_shift_management.py tests/test_roll_entry.py \
   tests/test_admin_production_corrections.py -q
-# 145 passed
+# 149 passed
 ```
 
 The unresolved M001 legacy-data production profile and the later
@@ -288,6 +288,7 @@ rehearsal.
 | 2026-07-26 | Shift UI redesign | No migration | Actual diff changes only presentation helpers, templates/CSS/JavaScript, browser verification, tests, and documentation. M002 schema and stored meanings are unchanged; 198 focused and 552 full-suite tests passed. M001 production profiling and the final release-candidate rehearsal remain deployment gates. |
 | 2026-07-26 | Shift UI kiosk URL, compact overview, date display, and full-recipe reachability fixes | No migration | JavaScript history cleanup, conditional close rendering, CSS sizing/scrolling, display formatting, browser fixtures, tests, and documentation only. No schema or stored-data meaning changed; runtime sample cards use the existing import/release workflow. |
 | 2026-07-26 | Task 01 adversarial review corrections and final migration maintenance | Schema-only M002; no additional migration | M002 and startup validation now reject a partial attribution column without its required foreign key, including a database that already records M002; terminal write gates are transaction-bound; shift-count input is bounded; history reads are paged; UI state and verification were hardened. No existing values are transformed. 14 migration and 560 full-suite tests pass; M001 profiling and release-candidate rehearsal remain deployment gates. |
+| 2026-07-26 | Completed Task 01 post-merge migration maintenance | Schema-only M002; no additional migration | The merged feature and migration chain were reassessed after final integration. M002 remains the only required persistent change, performs no historical attribution or other value transformation, and fails safely on a malformed partial roll foreign key. 14 migration, 149 affected-workflow, and 560 full-suite tests pass. No production snapshot is needed now; M001 profiling and the release-candidate rehearsal remain deployment gates. |
 
 Append one row after every use of the trigger command, including when no
 migration is required.
