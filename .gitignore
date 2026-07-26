@@ -20,6 +20,7 @@ venv/
 .test-runtime/
 .pytest_cache/
 pytest-cache-files-*/
+.superpowers/
 
 # Node/browser tooling noise if used for UI checks.
 node_modules/
