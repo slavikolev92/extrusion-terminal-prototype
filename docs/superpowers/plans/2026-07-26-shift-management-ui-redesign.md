@@ -1,5 +1,11 @@
 # Shift Management UI Redesign Implementation Plan
 
+> **Superseding accepted refinements (July 26, 2026):** Later live review
+> approved a five-row overview preview and Bulgarian timestamps without the
+> `г.` suffix. Those refinements supersede the older three-row/`г.` examples
+> retained in this historical execution plan. The authoritative behavior is
+> `v2-files/TASK-01-SHIFT-MANAGEMENT.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the crowded terminal action rail and unfinished shift dialogs with the approved Kolev-branded header and polished Bulgarian shift workflow while preserving all existing shift persistence, attribution, blocking, and concurrency behavior.

@@ -17,12 +17,13 @@ are deployment gates only; both require an immutable SQLite-safe backup.
 Shift management is functionally implemented and its automated and browser
 workflow checks pass against the approved behavior in
 `v2-files/TASK-01-SHIFT-MANAGEMENT.md`. The approved replacement terminal
-header and shift-interface design is implemented and verified. Task 01 remains
-open pending explicit live visual acceptance; passing automated and isolated
-browser checks does not replace that acceptance gate. The executable plan is
-`docs/superpowers/plans/2026-07-26-shift-management-ui-redesign.md`. The separate M001
-production legacy-data profile and final release-candidate rehearsal remain
-deployment gates.
+header and shift-interface design is implemented, visually accepted, and has
+passed the final adversarial correction gate. Task 01 is complete locally. The
+follow-up kiosk URL cleanup, compact shift overview, shift-date formatting,
+seven-component recipe reachability, transaction-bound active-shift checks,
+bounded history queries, safe shift-count validation, and migration validation
+are implemented and verified. The separate M001 production legacy-data profile
+and final release-candidate rehearsal remain deployment gates.
 
 The original production-tracking workstreams are:
 
@@ -63,15 +64,16 @@ production by numbered shift and time period.
 
 The shift-management backend behavior, M002 schema foundation, terminal
 workflow, approved terminal header and shift-interface redesign, and automated
-checks are implemented. M002 performs no historical backfill; 198 focused and
-552 full automated tests pass, and the temporary-database Playwright workflow
-is recorded in `docs/implementation-notes/shift-management.md`.
+checks are implemented. The follow-up dismissible-window URL cleanup, compact
+overview, year-suffix removal, and full-recipe scrolling are also implemented.
+M002 performs no historical backfill; 118 focused route/render/script-safety,
+14 focused migration, and 560 full automated tests pass, and the
+temporary-database Playwright workflow is
+recorded in `docs/implementation-notes/shift-management.md`.
 
-Task 01 remains open solely for explicit live visual acceptance of the
-implemented redesign. The executable plan is
-`docs/superpowers/plans/2026-07-26-shift-management-ui-redesign.md`. Passing
-automated and isolated browser checks does not by itself complete this UI
-acceptance work.
+Task 01 is complete locally. Production use remains blocked only by the M001
+production profile and final release-candidate rehearsal described in
+`v2-files/AGENTS.md`.
 
 ### Confirmed Data Relationships
 
@@ -179,11 +181,10 @@ This list combines the two existing production-tracking workstreams with the new
 1. **Shift management for extrusion production**
    - Surface: `/terminal`, `/admin`, database.
    - Complexity: large.
-   - Status: functional implementation and verification complete; the approved
-     replacement header/shift UI design is implemented and verified. Task 01
-     remains open pending explicit live visual acceptance. M001
-     production profiling and the final release-candidate rehearsal remain
-     separate deployment gates.
+   - Status: complete locally. The approved replacement header/shift UI design,
+     adversarial review corrections, automated checks, and isolated browser
+     verification pass. M001 production profiling and the final
+     release-candidate rehearsal remain separate deployment gates.
    - Goal: create one active extrusion shift at a time, require/open shift context for new production roll entry, and attach every new roll to the shift that produced it.
    - Approved behavior: `v2-files/TASK-01-SHIFT-MANAGEMENT.md`.
 

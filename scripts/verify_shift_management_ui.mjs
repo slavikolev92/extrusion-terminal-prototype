@@ -34,7 +34,9 @@ const screenshotNames = [
   "start-shift-selection.png",
   "start-shift-confirmation.png",
   "terminal-header-active.png",
+  "full-recipe-layout.png",
   "active-shift-window.png",
+  "end-shift-confirmation.png",
   "full-shift-history.png",
   "ended-shift-summary.png",
   "historical-shift-summary.png",
@@ -200,7 +202,7 @@ async function verifyLiveClock(clock) {
   const visible = normalizeText(await clock.textContent());
   const currentYear = String(new Date().getFullYear());
   const visiblePattern = new RegExp(
-    `^\\d{1,2} [а-я]+ ${currentYear} г\\., \\d{2}:\\d{2}$`,
+    `^\\d{1,2} [а-я]+ ${currentYear}, \\d{2}:\\d{2}$`,
   );
   assert(visiblePattern.test(visible), `Bulgarian clock format: ${visible}`);
   assert(!/\d{2}:\d{2}:\d{2}/.test(visible), "Visible clock must not show seconds");
@@ -241,7 +243,7 @@ async function verifyShiftFocusWraps(page, label) {
       + '[data-shift-dialog] [tabindex]:not([tabindex="-1"]):visible',
   );
   const count = await focusable.count();
-  assert(count >= 2, `${label} needs at least two focusable controls`);
+  assert(count >= 1, `${label} needs at least one focusable control`);
   const first = focusable.first();
   const last = focusable.last();
 
@@ -270,31 +272,144 @@ async function verifyBlockingShiftInteractions(page, expectedState, label) {
   await assertShiftStateOpen(page, expectedState, `${label} after backdrop`);
 }
 
-async function verifyDismissibleShiftInteractions(page, expectedState, label) {
+async function waitForShiftActionFocus(page, label) {
+  await page.waitForFunction(() => document.activeElement?.id === "shift-open");
+  await page.waitForTimeout(50);
+  assertEqual(
+    await page.locator("#shift-open").evaluate((element) => element === document.activeElement),
+    true,
+    label,
+  );
+}
+
+async function verifyDismissibleShiftInteractions(page, label) {
   const window = page.locator('[data-shift-window="true"]');
   const shiftAction = page.locator("#shift-open");
   await verifyShiftFocusWraps(page, label);
 
   await page.keyboard.press("Escape");
   await window.waitFor({ state: "hidden" });
-  assertEqual(
-    await shiftAction.evaluate((element) => element === document.activeElement),
-    true,
-    `${label} focus return after Escape`,
-  );
+  await waitForShiftActionFocus(page, `${label} focus return after Escape`);
 
   await shiftAction.click();
-  await assertShiftStateOpen(page, expectedState, `${label} reopened after Escape`);
+  await assertShiftStateOpen(page, "overview", `${label} reopened after Escape`);
   await window.click({ position: { x: 4, y: 4 } });
   await window.waitFor({ state: "hidden" });
-  assertEqual(
-    await shiftAction.evaluate((element) => element === document.activeElement),
-    true,
-    `${label} focus return after backdrop`,
-  );
+  await waitForShiftActionFocus(page, `${label} focus return after backdrop`);
 
   await shiftAction.click();
-  await assertShiftStateOpen(page, expectedState, `${label} reopened after backdrop`);
+  await assertShiftStateOpen(page, "overview", `${label} reopened after backdrop`);
+}
+
+function assertCanonicalShiftURL(page, expectedPathname, label) {
+  const url = new URL(page.url());
+  assertEqual(url.pathname, expectedPathname, `${label} selected-card pathname`);
+  for (const parameter of ["shift_view", "shift_id", "shift_page", "handoff"]) {
+    assertEqual(url.searchParams.has(parameter), false, `${label} transient ${parameter}`);
+  }
+}
+
+async function verifyDismissibleShiftURLsDoNotSurviveRefresh(
+  context,
+  cardId,
+  completedShiftId,
+) {
+  const probe = await context.newPage();
+  const pathname = `/terminal/cards/${cardId}`;
+  try {
+    await probe.goto(`${baseURL}${pathname}`, { waitUntil: "networkidle" });
+    await probe.locator("#shift-open").click();
+    await probe.locator('[data-shift-pane="overview"]').waitFor({ state: "visible" });
+    assertEqual(
+      await probe.locator('[data-shift-close]:visible').count(),
+      1,
+      "clean-url overview close control",
+    );
+    for (const viewport of [
+      { width: 1536, height: 1024 },
+      { width: 1366, height: 768 },
+    ]) {
+      await probe.setViewportSize(viewport);
+      const dialogBox = await probe.locator("[data-shift-dialog]").boundingBox();
+      const currentCardBox = await probe.locator(".shift-current-card").boundingBox();
+      const startIconBox = await probe.locator(".shift-start-time > img").boundingBox();
+      assert(dialogBox !== null, `Missing shift dialog at ${viewport.width}x${viewport.height}`);
+      assert(currentCardBox !== null, `Missing current-shift card at ${viewport.width}x${viewport.height}`);
+      assert(startIconBox !== null, `Missing shift start icon at ${viewport.width}x${viewport.height}`);
+      assert(
+        dialogBox.width <= 1180,
+        `Shift dialog remains too wide at ${viewport.width}x${viewport.height}: ${dialogBox.width}`,
+      );
+      assert(
+        currentCardBox.height <= 120,
+        `Current-shift card remains too tall at ${viewport.width}x${viewport.height}: ${currentCardBox.height}`,
+      );
+      assert(
+        startIconBox.width <= 36 && startIconBox.height <= 36,
+        `Current-shift start icon remains too large at ${viewport.width}x${viewport.height}`,
+      );
+    }
+    await probe.setViewportSize({ width: 1536, height: 1024 });
+
+    const cases = [
+      ["overview", `${pathname}?shift_view=overview`],
+      ["history", `${pathname}?shift_view=history`],
+      ["summary", `${pathname}?shift_view=summary&shift_id=${completedShiftId}&shift_page=1`],
+    ];
+    for (const [state, relativeURL] of cases) {
+      await probe.goto(`${baseURL}${relativeURL}`, { waitUntil: "networkidle" });
+      await probe.locator(`[data-shift-pane="${state}"]`).waitFor({ state: "visible" });
+      assertCanonicalShiftURL(probe, pathname, `${state} after server render`);
+      await probe.locator('[data-shift-close]').click();
+      await probe.locator('[data-shift-window="true"]').waitFor({ state: "hidden" });
+      assertCanonicalShiftURL(probe, pathname, `${state} after close`);
+      await probe.reload({ waitUntil: "networkidle" });
+      assertEqual(
+        await probe.locator('[data-shift-window="true"]').isHidden(),
+        true,
+        `${state} remains closed after refresh`,
+      );
+    }
+  } finally {
+    await probe.close();
+  }
+}
+
+async function verifyFullRecipeRemainsReachable(page, cardId) {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await page.goto(`${baseURL}/terminal/cards/${cardId}`, { waitUntil: "networkidle" });
+  const details = page.locator(".details-body");
+  const recipeRows = page.locator(".recipe-row");
+  assertEqual(await recipeRows.count(), 7, "full recipe component count");
+  const scrollState = await details.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+    overflowY: getComputedStyle(element).overflowY,
+  }));
+  assert(
+    scrollState.scrollHeight > scrollState.clientHeight,
+    "Full-recipe fixture did not exercise vertical overflow",
+  );
+  assert(
+    ["auto", "scroll"].includes(scrollState.overflowY),
+    `Full recipe cannot be scrolled by the operator: overflow-y=${scrollState.overflowY}`,
+  );
+  await details.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  const detailsBox = await details.boundingBox();
+  const lastRecipeRowBox = await recipeRows.last().boundingBox();
+  assert(detailsBox !== null && lastRecipeRowBox !== null, "Missing full-recipe geometry");
+  assert(
+    lastRecipeRowBox.y >= detailsBox.y
+      && lastRecipeRowBox.y + lastRecipeRowBox.height <= detailsBox.y + detailsBox.height + 1,
+    "The final recipe component is not reachable after scrolling",
+  );
+  await page.screenshot({
+    path: path.join(artifactDir, "full-recipe-layout.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1536, height: 1024 });
 }
 
 function assertArtifactDatabaseSafety() {
@@ -347,7 +462,13 @@ function writeCsvFixture() {
       material: "LDPE",
       size_thickness: "600/0.050",
       extrusion_sequence: "1",
-      raw_material_a: "LDPE; Alpha | 100%",
+      raw_material_a: "LDPE; Alpha | 35%",
+      raw_material_b: "LDPE; Alpha B | 25%",
+      raw_material_c: "MDPE; Alpha C | 15%",
+      linear_pe: "LLDPE; Alpha Linear | 15%",
+      antistatic: "Antistatic; Alpha Agent | 2%",
+      masterbatch: "Masterbatch; Alpha White | 5%",
+      chalk: "Filler; Alpha Chalk | 3%",
       packaging_method: "rolls",
     },
     {
@@ -361,7 +482,13 @@ function writeCsvFixture() {
       material: "LDPE",
       size_thickness: "700/0.060",
       extrusion_sequence: "1",
-      raw_material_a: "LDPE; Beta | 100%",
+      raw_material_a: "LDPE; Beta | 35%",
+      raw_material_b: "LDPE; Beta B | 25%",
+      raw_material_c: "MDPE; Beta C | 15%",
+      linear_pe: "LLDPE; Beta Linear | 15%",
+      antistatic: "Antistatic; Beta Agent | 2%",
+      masterbatch: "Masterbatch; Beta White | 5%",
+      chalk: "Filler; Beta Chalk | 3%",
       packaging_method: "rolls",
     },
   ];
@@ -632,10 +759,33 @@ async function verifyNoActiveShiftGate(page, expectedSuggestedNumber) {
   assertEqual(await page.locator(".app").getAttribute("inert"), "", "underlying terminal inert state");
   assertEqual(
     await window.evaluate((element) => getComputedStyle(element).backgroundColor),
-    "rgba(31, 41, 51, 0.42)",
+    "rgba(31, 41, 51, 0.46)",
     "gate dimming overlay",
   );
   assertEqual(await window.locator("[data-shift-close]").count(), 0, "non-dismissible gate close controls");
+  assertEqual(await window.locator(".shift-window-header").count(), 0, "gate generic header count");
+  assertEqual(
+    await window.locator("[data-shift-dialog]").getAttribute("aria-labelledby"),
+    "shift-start-title",
+    "gate accessible title",
+  );
+  const gateDialogBox = await window.locator("[data-shift-dialog]").boundingBox();
+  assert(gateDialogBox !== null, "Missing gate dialog geometry");
+  assert(Math.abs(gateDialogBox.width - 600) <= 2, `Gate width drifted: ${gateDialogBox.width}`);
+  assert(Math.abs(gateDialogBox.height - 560) <= 2, `Gate height drifted: ${gateDialogBox.height}`);
+  for (const selector of [
+    '.shift-start-icon--selection img[src$="/shift-switch.svg"]',
+    '.shift-live-time-card--start img[src$="/calendar-clock.svg"]',
+  ]) {
+    const loaded = await window.locator(selector).evaluate((image) => (
+      image.complete && image.naturalWidth > 0 && image.naturalHeight > 0
+    ));
+    assert(loaded, `Gate icon did not load: ${selector}`);
+  }
+  const selectorBox = await window.locator("[data-shift-start-number]").boundingBox();
+  const timeCardBox = await window.locator(".shift-live-time-card--start").boundingBox();
+  assert(selectorBox !== null && selectorBox.height >= 52, "Gate selector is too short");
+  assert(timeCardBox !== null && timeCardBox.height >= 92, "Gate time card is too short");
   assertEqual(
     await window.locator('[data-shift-start-number] option').evaluateAll((options) =>
       options.map((option) => option.value),
@@ -669,17 +819,68 @@ async function startShift(page, shiftNumber, captureEvidence = false) {
   const confirmation = window.locator('[data-shift-pane="start-confirm"]');
   await confirmation.waitFor({ state: "visible" });
   assertEqual(
-    normalizeText(await confirmation.locator("h3").textContent()),
+    normalizeText(await confirmation.locator("h2").textContent()),
     "Потвърждение за начало",
     "start confirmation heading",
+  );
+  assertEqual(await window.locator(".shift-window-header").count(), 0, "start confirmation generic header count");
+  assertEqual(
+    await window.locator("[data-shift-dialog]").getAttribute("aria-labelledby"),
+    "shift-start-confirmation-title",
+    "start confirmation accessible title",
+  );
+  const confirmationBox = await window.locator("[data-shift-dialog]").boundingBox();
+  assert(confirmationBox !== null, "Missing start confirmation geometry");
+  assert(Math.abs(confirmationBox.width - 600) <= 2, `Start confirmation width drifted: ${confirmationBox.width}`);
+  assert(Math.abs(confirmationBox.height - 560) <= 2, `Start confirmation height drifted: ${confirmationBox.height}`);
+  const sharedVisualSelectors = [
+    [".shift-state-intro--centered h2", "title", ["color", "fontSize", "fontWeight"]],
+    [".shift-state-intro--centered p", "subtitle", ["color", "fontSize", "fontWeight"]],
+    [".shift-start-icon", "hero icon", ["height", "width"]],
+    [".shift-primary-action", "primary action", ["color", "fontSize", "fontWeight", "minHeight"]],
+  ];
+  for (const [selector, label, properties] of sharedVisualSelectors) {
+    const selectionStyle = await window.locator(`[data-shift-pane="gate"] ${selector}`).evaluate((element, selectedProperties) => {
+      const style = getComputedStyle(element);
+      return Object.fromEntries(selectedProperties.map((property) => [property, style[property]]));
+    }, properties);
+    const confirmationStyle = await confirmation.locator(selector).evaluate((element, selectedProperties) => {
+      const style = getComputedStyle(element);
+      return Object.fromEntries(selectedProperties.map((property) => [property, style[property]]));
+    }, properties);
+    assertEqual(confirmationStyle, selectionStyle, `shared start ${label} visual style`);
+  }
+  for (const selector of [
+    '.shift-start-icon--confirmation img[src$="/check-circle.svg"]',
+    '.shift-start-details-card img[src$="/calendar.svg"]',
+    '.shift-start-details-card img[src$="/clock.svg"]',
+  ]) {
+    const loaded = await confirmation.locator(selector).evaluate((image) => (
+      image.complete && image.naturalWidth > 0 && image.naturalHeight > 0
+    ));
+    assert(loaded, `Start confirmation icon did not load: ${selector}`);
+  }
+  const confirmationButtonBoxes = await confirmation.locator(".shift-confirm-actions button").evaluateAll(
+    (buttons) => buttons.map((button) => button.getBoundingClientRect().width),
+  );
+  assertEqual(confirmationButtonBoxes.length, 2, "start confirmation button count");
+  assert(
+    Math.abs(confirmationButtonBoxes[0] - confirmationButtonBoxes[1]) <= 1,
+    "Start confirmation buttons are not equal width",
   );
   assertEqual(
     normalizeText(await confirmation.locator("[data-shift-start-selection]").textContent()),
     shiftNumber,
     "start confirmation shift number",
   );
+  assertEqual(
+    normalizeText(await confirmation.locator("[data-shift-start-question-number]").textContent()),
+    shiftNumber,
+    "start confirmation question shift number",
+  );
   await verifyLiveClock(confirmation.locator("[data-shift-live-clock]"));
   if (captureEvidence) {
+    await verifyShiftFocusWraps(page, "start confirmation");
     await verifyBlockingShiftInteractions(
       page,
       "start-confirm",
@@ -730,6 +931,11 @@ async function startShift(page, shiftNumber, captureEvidence = false) {
   await page.locator("#shift-open").click();
   const activeWindow = page.locator('[data-shift-window="true"]');
   await activeWindow.locator('[data-shift-pane="overview"]').waitFor({ state: "visible" });
+  assertEqual(
+    normalizeText(await activeWindow.locator("#shift-window-title").textContent()),
+    "Управление на смяната",
+    "active overview title after reopening",
+  );
   const savedStart = activeWindow.locator(".shift-start-time time");
   assertSavedShiftMinuteMatchesPreview(preview, {
     text: normalizeText(await savedStart.textContent()),
@@ -961,15 +1167,29 @@ async function endShiftAndVerifySummary(page, expectedOccurrenceId) {
   const confirmation = window.locator('[data-shift-pane="end-confirm"]');
   await confirmation.waitFor({ state: "visible" });
   assertEqual(
-    normalizeText(await confirmation.locator("h3").textContent()),
+    normalizeText(await confirmation.locator("h2").textContent()),
     "Потвърждение за приключване",
     "end confirmation heading",
   );
+  const endConfirmationBox = await window.locator("[data-shift-dialog]").boundingBox();
+  assert(endConfirmationBox !== null, "Missing end confirmation geometry");
+  assert(Math.abs(endConfirmationBox.width - 600) <= 2, `End confirmation width drifted: ${endConfirmationBox.width}`);
+  assert(Math.abs(endConfirmationBox.height - 560) <= 2, `End confirmation height drifted: ${endConfirmationBox.height}`);
+  assertEqual(
+    await window.locator(".shift-window-header:visible").count(),
+    0,
+    "end confirmation visible shell headers",
+  );
+  await page.screenshot({
+    path: path.join(artifactDir, "end-shift-confirmation.png"),
+    fullPage: true,
+  });
   assert(
     normalizeText(await confirmation.textContent()).includes("Смяна 2"),
     "End-shift confirmation did not identify corrected shift 2",
   );
   await verifyLiveClock(confirmation.locator("[data-shift-live-clock]"));
+  await verifyShiftFocusWraps(page, "end confirmation");
   await verifyBlockingShiftInteractions(page, "end-confirm", "end confirmation");
   await confirmation.locator('[data-shift-confirm-back="overview"]').click();
   await assertShiftStateOpen(page, "overview", "end confirmation explicit Back");
@@ -1020,10 +1240,12 @@ async function openHistoricalSummary(page, completedId, expectedRolls, expectedG
   assertEqual(Number(cells[5]), expectedGross, "history gross total");
   assertEqual(cells[5], expectedGross.toFixed(1), "history one-decimal gross display");
   await historyRow.getByRole("link", { name: "Преглед" }).click();
-  await page.waitForURL((url) => (
-    url.searchParams.get("shift_view") === "summary"
-      && Number(url.searchParams.get("shift_id")) === completedId
-  ), { waitUntil: "networkidle" });
+  await page.locator('[data-shift-pane="summary"]').waitFor({ state: "visible" });
+  assertCanonicalShiftURL(
+    page,
+    new URL(page.url()).pathname,
+    "historical summary navigation",
+  );
   assertEqual(
     await page.locator('[data-shift-window="true"]').getAttribute("data-shift-blocking"),
     "false",
@@ -1107,6 +1329,8 @@ async function verifySecondPageStaleGate(context, firstPage, cardId, before) {
     normalizeText(await firstWindow.textContent()).includes("Смяната е променена"),
     "Stale shift reload message was not shown",
   );
+  await verifyShiftFocusWraps(firstPage, "stale shift reload");
+  await verifyBlockingShiftInteractions(firstPage, "reload", "stale shift reload");
 
   let underlyingActionWasBlocked = false;
   try {
@@ -1301,7 +1525,7 @@ async function main() {
     await page.setViewportSize({ width: 1536, height: 1024 });
     await page.locator("#shift-open").click();
     await page.locator('[data-shift-pane="overview"]').waitFor({ state: "visible" });
-    await verifyDismissibleShiftInteractions(page, "overview", "active shift overview");
+    await verifyDismissibleShiftInteractions(page, "active shift overview");
     await page.keyboard.press("Escape");
     await page.locator('[data-shift-window="true"]').waitFor({ state: "hidden" });
 
@@ -1358,6 +1582,12 @@ async function main() {
     await verifyNoActiveShiftGate(page, "3");
     await startShift(page, "3");
     await verifyTerminalHeaderAtBothViewports(page, "Смяна 3", true);
+    await verifyDismissibleShiftURLsDoNotSurviveRefresh(
+      context,
+      cardIds[orderOne],
+      completedId,
+    );
+    await verifyFullRecipeRemainsReachable(page, cardIds[orderOne]);
 
     await page.locator("#shift-open").click();
     const overviewWindow = page.locator('[data-shift-window="true"]');
@@ -1366,15 +1596,13 @@ async function main() {
     assertEqual(completedBeforeCorrection.length, 4, "completed shifts before history review");
     assertEqual(
       await overviewWindow.locator("[data-shift-history-preview-id]").count(),
-      3,
+      Math.min(5, completedBeforeCorrection.length),
       "overview history preview row limit",
     );
     await overviewWindow.getByRole("link", { name: "Виж всички" }).click();
-    await page.waitForURL((url) => url.searchParams.get("shift_view") === "history", {
-      waitUntil: "networkidle",
-    });
     const historyWindow = page.locator('[data-shift-window="true"]');
     await historyWindow.locator('[data-shift-pane="history"]').waitFor({ state: "visible" });
+    assertCanonicalShiftURL(page, `/terminal/cards/${cardIds[orderOne]}`, "full history navigation");
     assertEqual(await historyWindow.getAttribute("data-shift-blocking"), "false", "history blocking state");
     assertEqual(
       await historyWindow.locator("[data-shift-history-id]").count(),
@@ -1386,11 +1614,25 @@ async function main() {
       1,
       "full history close control",
     );
+    assertEqual(
+      await historyWindow.locator('[aria-label="Страници на историята"]').count(),
+      1,
+      "full history pagination",
+    );
+    assertEqual(
+      normalizeText(await historyWindow.locator('[data-shift-history-page][aria-current="page"]').textContent()),
+      "1",
+      "full history current page",
+    );
     await page.screenshot({
       path: path.join(artifactDir, "full-shift-history.png"),
       fullPage: true,
     });
-    await verifyDismissibleShiftInteractions(page, "history", "full shift history");
+    await verifyDismissibleShiftInteractions(page, "full shift history");
+    await page.locator('[data-shift-window="true"]').getByRole("link", {
+      name: "Виж всички",
+    }).click();
+    await page.locator('[data-shift-pane="history"]').waitFor({ state: "visible" });
 
     await openHistoricalSummary(page, completedId, 3, 90);
     const initialHistoricalText = await verifySummary(page, {
@@ -1408,21 +1650,18 @@ async function main() {
       1,
       "historical summary Back action",
     );
-    await verifyDismissibleShiftInteractions(
-      page,
-      "summary",
-      "historical shift summary",
-    );
     await page.locator('[data-shift-history-back]').click();
-    await page.waitForURL((url) => url.searchParams.get("shift_view") === "history", {
-      waitUntil: "networkidle",
-    });
+    await page.locator('[data-shift-pane="history"]').waitFor({ state: "visible" });
+    assertCanonicalShiftURL(page, `/terminal/cards/${cardIds[orderOne]}`, "summary Back navigation");
     assertEqual(
       await page.locator('[data-shift-window="true"]').getAttribute("data-shift-state"),
       "history",
       "historical Back destination",
     );
-    await page.locator('[data-shift-window="true"] [data-shift-close]').click();
+    await openHistoricalSummary(page, completedId, 3, 90);
+    await verifyDismissibleShiftInteractions(page, "historical shift summary");
+    await page.keyboard.press("Escape");
+    await page.locator('[data-shift-window="true"]').waitFor({ state: "hidden" });
 
     await correctFirstRoll(page, cardIds[orderOne], completedId);
     await page.locator("#shift-open").click();
@@ -1432,9 +1671,8 @@ async function main() {
     await page.locator('[data-shift-window="true"]').getByRole("link", {
       name: "Виж всички",
     }).click();
-    await page.waitForURL((url) => url.searchParams.get("shift_view") === "history", {
-      waitUntil: "networkidle",
-    });
+    await page.locator('[data-shift-pane="history"]').waitFor({ state: "visible" });
+    assertCanonicalShiftURL(page, `/terminal/cards/${cardIds[orderOne]}`, "corrected history navigation");
     await openHistoricalSummary(page, completedId, 3, 95);
     const correctedHistoricalText = await verifySummary(page, {
       distinctItems: 2,

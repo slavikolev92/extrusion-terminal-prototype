@@ -21,7 +21,7 @@ from .constants import (
     STATUS_RUNNING,
     TERMINAL_VISIBLE_STATUSES,
 )
-from .migrations import apply_pending_migrations
+from .migrations import apply_pending_migrations, validate_shift_management_schema
 from .recipe_parser import (
     RECIPE_SOURCE_FIELDS,
     ParsedRecipeComponent,
@@ -36,6 +36,7 @@ STALE_CONFIGURATION_MESSAGE = (
     "Настройките са променени след зареждането. Презаредете и опитайте отново."
 )
 NO_ACTIVE_SHIFT_MESSAGE = "Отворете смяна, преди да продължите."
+MAX_SHIFT_COUNT = 99
 TIMING_END_REASONS = ("pause", "finish", "correction")
 TIMING_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -312,11 +313,24 @@ def connect() -> sqlite3.Connection:
     return connection
 
 
-def parse_positive_integer(value: str, field_name: str) -> tuple[int | None, str | None]:
+def parse_positive_integer(
+    value: str,
+    field_name: str,
+    *,
+    maximum: int | None = None,
+) -> tuple[int | None, str | None]:
     cleaned = value.strip()
     if not cleaned or any(character not in "0123456789" for character in cleaned):
         return None, f"{field_name} трябва да е положително цяло число."
-    parsed = int(cleaned)
+    if maximum is not None and (
+        len(cleaned) > len(str(maximum))
+        or (len(cleaned) == len(str(maximum)) and cleaned > str(maximum))
+    ):
+        return None, f"{field_name} трябва да е между 1 и {maximum}."
+    try:
+        parsed = int(cleaned)
+    except ValueError:
+        return None, f"{field_name} трябва да е положително цяло число."
     if parsed < 1:
         return None, f"{field_name} трябва да е положително цяло число."
     return parsed, None
@@ -345,7 +359,11 @@ def fetch_terminal_configuration() -> dict[str, Any]:
 
 
 def update_shift_count(loaded_version: int, shift_count: str) -> RuleResult:
-    parsed_count, error = parse_positive_integer(shift_count, "Брой смени")
+    parsed_count, error = parse_positive_integer(
+        shift_count,
+        "Брой смени",
+        maximum=MAX_SHIFT_COUNT,
+    )
     if error:
         return RuleResult(False, (error,))
 
@@ -369,6 +387,15 @@ def fetch_active_shift() -> dict[str, Any] | None:
     with connect() as connection:
         row = fetch_active_shift_row(connection)
     return dict(row) if row is not None else None
+
+
+def validate_active_shift_for_terminal_write(
+    connection: sqlite3.Connection,
+    require_active_shift: bool,
+) -> RuleResult:
+    if require_active_shift and fetch_active_shift_row(connection) is None:
+        return RuleResult(False, (NO_ACTIVE_SHIFT_MESSAGE,))
+    return RuleResult(True)
 
 
 def _suggest_next_shift_number(connection: sqlite3.Connection) -> int:
@@ -413,7 +440,17 @@ def _formatted_shift_totals(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def _fetch_completed_shifts(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+def _fetch_completed_shifts(
+    connection: sqlite3.Connection,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    pagination_sql = ""
+    parameters: tuple[int, ...] = ()
+    if limit is not None:
+        pagination_sql = " LIMIT ? OFFSET ?"
+        parameters = (limit, offset)
     rows = connection.execute(
         """
         SELECT shift_occurrences.id,
@@ -430,7 +467,8 @@ def _fetch_completed_shifts(connection: sqlite3.Connection) -> list[dict[str, An
         WHERE shift_occurrences.ended_at IS NOT NULL
         GROUP BY shift_occurrences.id
         ORDER BY shift_occurrences.ended_at DESC, shift_occurrences.id DESC
-        """
+        """ + pagination_sql,
+        parameters,
     ).fetchall()
     return [_formatted_shift_totals(row) for row in rows]
 
@@ -533,6 +571,54 @@ def fetch_shift_window_state() -> dict[str, Any]:
             "shift_signature": _terminal_shift_signature(configuration, active_shift),
             "suggested_shift_number": _suggest_next_shift_number(connection),
             "completed_shifts": _fetch_completed_shifts(connection),
+        }
+
+
+def fetch_terminal_shift_page_state(
+    *,
+    requested_page: int,
+    page_size: int,
+    preview_size: int,
+) -> dict[str, Any]:
+    with connect() as connection:
+        connection.execute("BEGIN")
+        configuration = connection.execute(
+            "SELECT * FROM terminal_configuration WHERE id = 1"
+        ).fetchone()
+        if configuration is None:
+            raise RuntimeError("terminal configuration is not initialized")
+        active_shift = fetch_active_shift_row(connection)
+        completed_shift_count = int(
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM shift_occurrences
+                WHERE ended_at IS NOT NULL
+                """
+            ).fetchone()[0]
+        )
+        history_page_count = max(
+            1,
+            (completed_shift_count + page_size - 1) // page_size,
+        )
+        history_page = min(max(1, requested_page), history_page_count)
+        return {
+            "configuration": dict(configuration),
+            "active_shift": dict(active_shift) if active_shift is not None else None,
+            "shift_signature": _terminal_shift_signature(configuration, active_shift),
+            "suggested_shift_number": _suggest_next_shift_number(connection),
+            "completed_shift_count": completed_shift_count,
+            "recent_completed_shifts": _fetch_completed_shifts(
+                connection,
+                limit=preview_size,
+            ),
+            "history_shifts": _fetch_completed_shifts(
+                connection,
+                limit=page_size,
+                offset=(history_page - 1) * page_size,
+            ),
+            "history_page": history_page,
+            "history_page_count": history_page_count,
         }
 
 
@@ -666,6 +752,7 @@ def init_db() -> None:
         if not connection.in_transaction:
             connection.execute("BEGIN")
         apply_pending_migrations(connection)
+        validate_shift_management_schema(connection)
         ensure_roll_entry_tare_weight(connection)
         backfill_card_import_sources(connection)
         ensure_column(
@@ -1454,8 +1541,21 @@ def fetch_total_production_seconds(card_id: int) -> int:
         return calculate_total_production_seconds(connection, card_id)
 
 
-def start_production_timing(card_id: int, loaded_version: int) -> RuleResult:
+def start_production_timing(
+    card_id: int,
+    loaded_version: int,
+    *,
+    require_active_shift: bool = False,
+) -> RuleResult:
     with connect() as connection:
+        if require_active_shift:
+            connection.execute("BEGIN IMMEDIATE")
+        shift_result = validate_active_shift_for_terminal_write(
+            connection,
+            require_active_shift,
+        )
+        if not shift_result.ok:
+            return shift_result
         card = fetch_timing_action_card(connection, card_id)
         result = validate_timing_action_card(
             card=card,
@@ -1509,8 +1609,21 @@ def start_production_timing(card_id: int, loaded_version: int) -> RuleResult:
     return RuleResult(True, (f"Времето за поръчка {card['order_number']} е стартирано.",))
 
 
-def pause_production_timing(card_id: int, loaded_version: int) -> RuleResult:
+def pause_production_timing(
+    card_id: int,
+    loaded_version: int,
+    *,
+    require_active_shift: bool = False,
+) -> RuleResult:
     with connect() as connection:
+        if require_active_shift:
+            connection.execute("BEGIN IMMEDIATE")
+        shift_result = validate_active_shift_for_terminal_write(
+            connection,
+            require_active_shift,
+        )
+        if not shift_result.ok:
+            return shift_result
         card = fetch_timing_action_card(connection, card_id)
         result = validate_timing_action_card(
             card=card,
@@ -1550,8 +1663,21 @@ def pause_production_timing(card_id: int, loaded_version: int) -> RuleResult:
     return RuleResult(True, (f"Времето за поръчка {card['order_number']} е паузирано.",))
 
 
-def resume_production_timing(card_id: int, loaded_version: int) -> RuleResult:
+def resume_production_timing(
+    card_id: int,
+    loaded_version: int,
+    *,
+    require_active_shift: bool = False,
+) -> RuleResult:
     with connect() as connection:
+        if require_active_shift:
+            connection.execute("BEGIN IMMEDIATE")
+        shift_result = validate_active_shift_for_terminal_write(
+            connection,
+            require_active_shift,
+        )
+        if not shift_result.ok:
+            return shift_result
         card = fetch_timing_action_card(connection, card_id)
         result = validate_timing_action_card(
             card=card,
@@ -1604,8 +1730,21 @@ def resume_production_timing(card_id: int, loaded_version: int) -> RuleResult:
     return RuleResult(True, (f"Времето за поръчка {card['order_number']} е продължено.",))
 
 
-def finish_card(card_id: int, loaded_version: int) -> RuleResult:
+def finish_card(
+    card_id: int,
+    loaded_version: int,
+    *,
+    require_active_shift: bool = False,
+) -> RuleResult:
     with connect() as connection:
+        if require_active_shift:
+            connection.execute("BEGIN IMMEDIATE")
+        shift_result = validate_active_shift_for_terminal_write(
+            connection,
+            require_active_shift,
+        )
+        if not shift_result.ok:
+            return shift_result
         card = fetch_active_terminal_action_card(connection, card_id)
         version_result = validate_loaded_card_version(card, loaded_version)
         if not version_result.ok:
@@ -2696,7 +2835,13 @@ def net_weight_for_roll(
     return net_weight
 
 
-def update_tare_weight(card_id: int, loaded_version: int, tare_weight: str) -> RuleResult:
+def update_tare_weight(
+    card_id: int,
+    loaded_version: int,
+    tare_weight: str,
+    *,
+    require_active_shift: bool = False,
+) -> RuleResult:
     parsed_tare, parse_error = parse_weight(
         tare_weight,
         "Шпула",
@@ -2706,6 +2851,14 @@ def update_tare_weight(card_id: int, loaded_version: int, tare_weight: str) -> R
         return RuleResult(False, (parse_error,))
 
     with connect() as connection:
+        if require_active_shift:
+            connection.execute("BEGIN IMMEDIATE")
+        shift_result = validate_active_shift_for_terminal_write(
+            connection,
+            require_active_shift,
+        )
+        if not shift_result.ok:
+            return shift_result
         card = connection.execute(
             f"""
             SELECT id, order_number, version
@@ -2743,6 +2896,8 @@ def add_roll_gross_weight(
     loaded_version: int,
     gross_weight: str,
     tare_weight: str | None = None,
+    *,
+    require_active_shift: bool = False,
 ) -> RuleResult:
     parsed_gross, parse_error = parse_weight(
         gross_weight,
@@ -2765,6 +2920,12 @@ def add_roll_gross_weight(
 
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
+        shift_result = validate_active_shift_for_terminal_write(
+            connection,
+            require_active_shift,
+        )
+        if not shift_result.ok:
+            return shift_result
         card = fetch_roll_action_card(connection, card_id)
         version_result = validate_loaded_card_version(card, loaded_version)
         if not version_result.ok:
@@ -2863,6 +3024,8 @@ def update_roll_weight(
     loaded_version: int,
     gross_weight: str,
     tare_weight: str,
+    *,
+    require_active_shift: bool = False,
 ) -> RuleResult:
     parsed_gross, parse_error = parse_weight(
         gross_weight,
@@ -2881,6 +3044,14 @@ def update_roll_weight(
         return RuleResult(False, (tare_parse_error,))
 
     with connect() as connection:
+        if require_active_shift:
+            connection.execute("BEGIN IMMEDIATE")
+        shift_result = validate_active_shift_for_terminal_write(
+            connection,
+            require_active_shift,
+        )
+        if not shift_result.ok:
+            return shift_result
         card = fetch_roll_action_card(connection, card_id)
         version_result = validate_loaded_card_version(card, loaded_version)
         if not version_result.ok:
@@ -2964,8 +3135,18 @@ def update_terminal_roll_corrections(
     card_id: int,
     loaded_version: int,
     roll_updates: dict[int, dict[str, str]],
+    *,
+    require_active_shift: bool = False,
 ) -> RuleResult:
     with connect() as connection:
+        if require_active_shift:
+            connection.execute("BEGIN IMMEDIATE")
+        shift_result = validate_active_shift_for_terminal_write(
+            connection,
+            require_active_shift,
+        )
+        if not shift_result.ok:
+            return shift_result
         card = fetch_roll_action_card(connection, card_id)
         version_result = validate_loaded_card_version(card, loaded_version)
         if not version_result.ok:
@@ -3076,6 +3257,8 @@ def update_roll_gross_weight(
     roll_id: int,
     loaded_version: int,
     gross_weight: str,
+    *,
+    require_active_shift: bool = False,
 ) -> RuleResult:
     with connect() as connection:
         roll = connection.execute(
@@ -3096,11 +3279,26 @@ def update_roll_gross_weight(
         loaded_version=loaded_version,
         gross_weight=gross_weight,
         tare_weight=decimal_to_storage(existing_tare) if existing_tare is not None else "",
+        require_active_shift=require_active_shift,
     )
 
 
-def delete_roll_entry(card_id: int, roll_id: int, loaded_version: int) -> RuleResult:
+def delete_roll_entry(
+    card_id: int,
+    roll_id: int,
+    loaded_version: int,
+    *,
+    require_active_shift: bool = False,
+) -> RuleResult:
     with connect() as connection:
+        if require_active_shift:
+            connection.execute("BEGIN IMMEDIATE")
+        shift_result = validate_active_shift_for_terminal_write(
+            connection,
+            require_active_shift,
+        )
+        if not shift_result.ok:
+            return shift_result
         card = fetch_roll_action_card(connection, card_id)
         version_result = validate_loaded_card_version(card, loaded_version)
         if not version_result.ok:
@@ -3810,6 +4008,8 @@ def update_terminal_recipe_actual_entries(
     loaded_version: int,
     entries: dict[str, dict[str, str]],
     raw_material_brand_grade: str | None = None,
+    *,
+    require_active_shift: bool = False,
 ) -> RuleResult:
     component_labels = dict(RECIPE_COMPONENT_FIELDS)
     unknown_keys = sorted(set(entries) - set(component_labels))
@@ -3818,6 +4018,14 @@ def update_terminal_recipe_actual_entries(
 
     import_columns = ", ".join(component_labels)
     with connect() as connection:
+        if require_active_shift:
+            connection.execute("BEGIN IMMEDIATE")
+        shift_result = validate_active_shift_for_terminal_write(
+            connection,
+            require_active_shift,
+        )
+        if not shift_result.ok:
+            return shift_result
         card = connection.execute(
             f"""
             SELECT id,

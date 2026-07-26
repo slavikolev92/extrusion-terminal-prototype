@@ -188,7 +188,7 @@ Every migration test set must cover, where applicable:
 | Version | Name | Purpose | Development | Snapshot rehearsal | Production |
 | --- | --- | --- | --- | --- | --- |
 | M001 | `shift_manager_import_fields` | Add the eight final ordered/route columns without guessing legacy values | 9 focused tests passed | Not run | Not run |
-| M002 | `shift_management` | Add shift configuration, durable occurrences, and nullable roll attribution without historical backfill | 12 focused migration tests and 547 full-suite tests passed | Not run | Not run |
+| M002 | `shift_management` | Add shift configuration, durable occurrences, and nullable roll attribution without historical backfill | 14 focused migration tests and 560 full-suite tests passed | Not run | Not run |
 
 ### M001: Shift Manager Import Fields
 
@@ -248,16 +248,19 @@ M002 is schema-only: it does not update cards, import sources, rolls, recipe
 actuals/components, timing segments, machine queues, versions, or timestamps.
 Every historical roll remains `NULL` for `shift_occurrence_id`; no historical
 shift attribution is inferred. A partially upgraded database retains valid
-non-null attribution and its existing configuration values.
+non-null attribution and its existing configuration values. If the attribution
+column already exists, M002 verifies that it has the required `ON DELETE
+RESTRICT` foreign key to `shift_occurrences(id)`. A malformed partial schema is
+rejected atomically rather than recorded as migrated.
 
 Development evidence from July 25, 2026:
 
 ```bash
 .venv/bin/python -m pytest tests/test_migrations.py -q
-# 12 passed
+# 14 passed
 
 .venv/bin/python -m pytest -q
-# 547 passed
+# 560 passed
 
 .venv/bin/python -m pytest tests/test_migrations.py tests/test_baseline.py \
   tests/test_shift_management.py tests/test_roll_entry.py \
@@ -281,7 +284,10 @@ rehearsal.
 | 2026-07-25 | Admin terminal-configuration page | No migration | Routes, templates, navigation, and CSS now expose the existing M002 singleton configuration row; no schema, stored values, or data meaning changed |
 | 2026-07-25 | Terminal shift routes, state gate, and polling signature | No migration | Routes and read context use the existing M002 configuration/occurrence data; the mutation gate and polling signature change runtime behavior only, with no schema or stored-value transformation |
 | 2026-07-25 | Completed shift-management functionality and final migration maintenance | Schema-only M002; no additional migration | Final feature diff confirmed M002 covers every persistent change; legacy rolls remain `NULL`, no values are transformed, 145 focused affected tests and 547 full-suite tests passed; M001 production profiling and release-candidate rehearsal remain deployment gates |
+| 2026-07-26 | Shift-management UI homogenization and bounded history pagination | No migration | Templates, CSS, supplied SVG assets, GET query pagination, display context, tests, and browser verification only; no schema, stored value, timestamp, roll attribution, or data meaning changed |
 | 2026-07-26 | Shift UI redesign | No migration | Actual diff changes only presentation helpers, templates/CSS/JavaScript, browser verification, tests, and documentation. M002 schema and stored meanings are unchanged; 198 focused and 552 full-suite tests passed. M001 production profiling and the final release-candidate rehearsal remain deployment gates. |
+| 2026-07-26 | Shift UI kiosk URL, compact overview, date display, and full-recipe reachability fixes | No migration | JavaScript history cleanup, conditional close rendering, CSS sizing/scrolling, display formatting, browser fixtures, tests, and documentation only. No schema or stored-data meaning changed; runtime sample cards use the existing import/release workflow. |
+| 2026-07-26 | Task 01 adversarial review corrections and final migration maintenance | Schema-only M002; no additional migration | M002 and startup validation now reject a partial attribution column without its required foreign key, including a database that already records M002; terminal write gates are transaction-bound; shift-count input is bounded; history reads are paged; UI state and verification were hardened. No existing values are transformed. 14 migration and 560 full-suite tests pass; M001 profiling and release-candidate rehearsal remain deployment gates. |
 
 Append one row after every use of the trigger command, including when no
 migration is required.

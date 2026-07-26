@@ -320,10 +320,19 @@ def add_existing_final_values(database_path: Path) -> None:
         )
 
 
-def add_partially_upgraded_shift_schema(database_path: Path) -> None:
+def add_partially_upgraded_shift_schema(
+    database_path: Path,
+    *,
+    include_roll_shift_foreign_key: bool = True,
+) -> None:
+    roll_shift_definition = (
+        "INTEGER REFERENCES shift_occurrences(id) ON DELETE RESTRICT"
+        if include_roll_shift_foreign_key
+        else "INTEGER"
+    )
     with sqlite3.connect(database_path) as connection:
         connection.executescript(
-            """
+            f"""
             CREATE TABLE terminal_configuration (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 shift_count INTEGER NOT NULL DEFAULT 4
@@ -353,8 +362,7 @@ def add_partially_upgraded_shift_schema(database_path: Path) -> None:
                 '2026-07-20 06:00:00', '2026-07-20 14:00:00'
             );
             ALTER TABLE roll_entries
-            ADD COLUMN shift_occurrence_id INTEGER
-                REFERENCES shift_occurrences(id) ON DELETE RESTRICT;
+            ADD COLUMN shift_occurrence_id {roll_shift_definition};
             UPDATE roll_entries SET shift_occurrence_id = 1 WHERE id = 1;
             """
         )
@@ -680,6 +688,78 @@ def test_m002_preserves_existing_attribution_in_partially_upgraded_schema(
     ]
     assert integrity == "ok"
     assert foreign_key_violations == []
+
+
+def test_m002_rejects_partial_roll_shift_column_without_foreign_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "partly-upgraded-without-roll-fk.sqlite3"
+    create_legacy_database(database_path)
+    add_partially_upgraded_shift_schema(
+        database_path,
+        include_roll_shift_foreign_key=False,
+    )
+    configure_database(monkeypatch, database_path)
+
+    with pytest.raises(
+        RuntimeError,
+        match="roll_entries.shift_occurrence_id.*foreign key",
+    ):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        attribution = connection.execute(
+            "SELECT shift_occurrence_id FROM roll_entries WHERE id = 1"
+        ).fetchone()[0]
+        roll_foreign_keys = connection.execute(
+            "PRAGMA foreign_key_list(roll_entries)"
+        ).fetchall()
+        migration_table = connection.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'schema_migrations'
+            """
+        ).fetchone()
+
+    assert attribution == 1
+    assert all(row[2] != "shift_occurrences" for row in roll_foreign_keys)
+    assert migration_table is None
+
+
+def test_init_rejects_recorded_m002_without_roll_shift_foreign_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "recorded-m002-without-roll-fk.sqlite3"
+    create_legacy_database(database_path)
+    add_existing_final_values(database_path)
+    add_partially_upgraded_shift_schema(
+        database_path,
+        include_roll_shift_foreign_key=False,
+    )
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO schema_migrations (version, name)
+            VALUES (1, 'shift_manager_import_fields');
+            INSERT INTO schema_migrations (version, name)
+            VALUES (2, 'shift_management');
+            """
+        )
+    configure_database(monkeypatch, database_path)
+
+    with pytest.raises(
+        RuntimeError,
+        match="roll_entries.shift_occurrence_id.*foreign key",
+    ):
+        db.init_db()
 
 
 def test_fresh_database_records_m001_and_m002_once_with_schema_parity(

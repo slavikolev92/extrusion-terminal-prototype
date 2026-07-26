@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import re
+from pathlib import Path
 from urllib.parse import urlencode
 
 import pytest
@@ -681,7 +682,9 @@ def test_terminal_v8_roll_entry_labels_track_details_label_style_in_compact_view
     assert "margin-bottom: 2px;" not in short_height_rules
 
 
-def test_terminal_v8_recipe_table_follows_details_with_matching_recipe_title(connection):
+def test_terminal_v8_recipe_table_follows_scrollable_details_with_matching_recipe_title(
+    connection,
+):
     card_id = release_ready_card("26240", machine_id=1, sequence=1)
 
     html = render_terminal(card_id)
@@ -715,9 +718,12 @@ def test_terminal_v8_recipe_table_follows_details_with_matching_recipe_title(con
     recipe_section_rules = css_rules(html, r"(?m)^    \.recipe-section")
     shared_head_rules = css_rules_all(html, r"(?m)^    \.panel-head,\s*\.recipe-panel-head")
 
-    assert "grid-template-rows: auto auto;" in details_body_rules
-    assert "align-content: start;" in details_body_rules
+    assert "display: flex;" in details_body_rules
+    assert "flex-direction: column;" in details_body_rules
     assert "gap: 22px;" in details_body_rules
+    assert "overflow-y: auto;" in details_body_rules
+    assert "overscroll-behavior: contain;" in details_body_rules
+    assert "scrollbar-gutter: stable;" in details_body_rules
     assert "align-content: start;" in recipe_section_rules
     assert any("color: var(--primary-text);" in rules for rules in shared_head_rules)
     assert any("font-size: 21px;" in rules for rules in shared_head_rules)
@@ -2474,7 +2480,7 @@ def test_terminal_header_shows_nonwrapping_no_active_shift_status(connection):
     assert 'data-terminal-action="shift"' in header_html
 
 
-def test_no_active_shift_gate_uses_compact_bulgarian_start_flow_without_dismissal(
+def test_no_active_shift_gate_uses_reference_start_screen_without_generic_header(
     connection,
 ):
     end_active_test_shift()
@@ -2486,6 +2492,10 @@ def test_no_active_shift_gate_uses_compact_bulgarian_start_flow_without_dismissa
     assert 'data-shift-blocking="true"' in shift_window
     assert 'data-shift-pane="gate"' in shift_window
     assert 'data-shift-pane="start-confirm" hidden' in shift_window
+    assert 'class="shift-window-header"' not in shift_window
+    assert 'class="shift-start-icon shift-start-icon--selection"' in shift_window
+    assert '/static/images/shift-ui/shift-switch.svg' in shift_window
+    assert '/static/images/shift-ui/calendar-clock.svg' in shift_window
     assert "Начало на смяна" in shift_window
     assert "Изберете номера на смяната, за да започнете работа." in shift_window
     assert "Номер на смяна" in shift_window
@@ -2509,24 +2519,92 @@ def test_start_confirmation_replaces_gate_content_and_names_selected_shift(conne
     assert 'data-shift-pane="gate"' in shift_window
     assert 'data-shift-pane="start-confirm" hidden' in shift_window
     assert 'data-shift-confirm-open="start"' in shift_window
+    assert 'class="shift-start-icon shift-start-icon--confirmation"' in shift_window
+    assert '/static/images/shift-ui/check-circle.svg' in shift_window
+    assert '/static/images/shift-ui/calendar.svg' in shift_window
+    assert '/static/images/shift-ui/clock.svg' in shift_window
     assert 'data-shift-start-selection' in shift_window
+    assert 'data-shift-start-question-number' in shift_window
+    assert "Сигурни ли сте, че искате да започнете смяна" in shift_window
     assert f'>{int(ended_shift["shift_number"]) + 1}<' in shift_window
     assert 'data-shift-confirm-submit="start"' in shift_window
 
 
 def test_start_and_end_confirmations_share_the_same_bulgarian_structure(connection):
-    html = render_terminal(shift_view="overview")
-    shift_window = shift_window_block(html)
+    overview_window = shift_window_block(render_terminal(shift_view="overview"))
+    end_active_test_shift()
+    start_window = shift_window_block(render_terminal())
 
-    assert shift_window.count('class="shift-window-pane shift-confirmation-pane') == 2
-    assert "Потвърждение за начало" in shift_window
-    assert "Потвърждение за приключване" in shift_window
-    assert shift_window.count("shift-details-card") == 2
-    assert shift_window.count(">Назад<") == 2
-    assert shift_window.count(">Потвърди<") == 2
-    assert ">Back<" not in shift_window
-    assert ">Yes<" not in shift_window
-    assert "data-shift-nested-modal" not in shift_window
+    assert 'class="shift-window-pane shift-confirmation-pane shift-start-confirmation-pane"' in start_window
+    assert 'class="shift-window-pane shift-confirmation-pane shift-end-confirmation-pane"' in overview_window
+    assert "Потвърждение за начало" in start_window
+    assert "Потвърждение за приключване" in overview_window
+    for shift_window in (start_window, overview_window):
+        assert "shift-start-icon shift-start-icon--confirmation" in shift_window
+        assert "shift-details-card shift-start-details-card" in shift_window
+        assert "shift-start-confirmation-question" in shift_window
+        assert ">Назад<" in shift_window
+        assert ">Потвърди<" in shift_window
+        assert ">Back<" not in shift_window
+        assert ">Yes<" not in shift_window
+        assert "data-shift-nested-modal" not in shift_window
+    assert "/static/images/shift-ui/stop-square.svg" in overview_window
+
+
+def test_targeted_shift_spacing_uses_equal_summary_columns_and_blue_start_icons(
+    connection,
+):
+    html = render_terminal(shift_view="overview")
+
+    summary_rules = css_rules(html, r"(?m)^    \.shift-summary-metadata")
+    question_rules = css_rules(html, r"(?m)^    \.shift-start-confirmation-question")
+    end_question_rules = css_rules(
+        html,
+        r"(?m)^    \.shift-end-confirmation-pane \.shift-start-confirmation-question",
+    )
+    play_icon = Path("app/static/images/shift-ui/play-circle.svg").read_text()
+
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in summary_rules
+    assert "margin: 6px 0 18px;" in question_rules
+    assert "margin: 10px 0 14px;" in end_question_rules
+    assert 'stroke="#2865d8"' in play_icon
+
+
+def test_targeted_terminal_density_compacts_chrome_without_shrinking_recipe_rows(
+    connection,
+):
+    html = render_terminal()
+
+    compact_height_match = re.search(
+        r"@media \(max-height: 980px\) \{(?P<rules>.*?)@media \(max-height: 760px\)",
+        html,
+        flags=re.S,
+    )
+    short_height_match = re.search(
+        r"@media \(max-height: 760px\) \{(?P<rules>.*?)a\.machine-tab,",
+        html,
+        flags=re.S,
+    )
+    assert compact_height_match is not None
+    assert short_height_match is not None
+
+    compact_rules = compact_height_match.group("rules")
+    assert ".machine-nav {\n        padding: 5px 24px;" in compact_rules
+    assert ".machine-tab {\n        min-height: 70px;" in compact_rules
+    assert ".topbar {\n        min-height: 46px;" in compact_rules
+    assert ".details-body {\n        gap: 6px;" in compact_rules
+    assert ".order-section {\n        padding: 10px 14px;\n        gap: 14px;" in compact_rules
+    assert ".info-grid {\n        row-gap: 14px;" in compact_rules
+    assert ".recipe-row {\n        min-height: 36px;" in compact_rules
+
+    short_rules = short_height_match.group("rules")
+    assert ".machine-nav {\n        padding: 5px 18px;" in short_rules
+    assert ".machine-tab {\n        min-height: 68px;" in short_rules
+    assert ".topbar {\n        min-height: 44px;" in short_rules
+    assert ".details-body {\n        gap: 5px;" in short_rules
+    assert ".order-section {\n        padding: 9px 12px;\n        gap: 12px;" in short_rules
+    assert ".info-grid {\n        row-gap: 14px;" in short_rules
+    assert ".recipe-row {\n        min-height: 32px;" in short_rules
 
 
 def test_active_window_uses_current_number_as_the_only_correction_dropdown(connection):
@@ -2572,6 +2650,9 @@ def test_active_window_shows_start_time_separate_end_action_and_newest_history(
     end_active_test_shift()
     configuration = db.fetch_terminal_configuration()
     assert db.start_shift("1", int(configuration["version"])).ok
+    end_active_test_shift()
+    configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("2", int(configuration["version"])).ok
     context = terminal_context(shift_view="overview")
     active_shift = context["active_shift"]
     assert active_shift is not None
@@ -2579,15 +2660,24 @@ def test_active_window_shows_start_time_separate_end_action_and_newest_history(
     html = render_terminal(shift_view="overview")
     shift_window = shift_window_block(html)
 
-    assert "Управление на смяната" in shift_window
+    title_match = re.search(
+        r'<h2 id="shift-window-title"[^>]*>\s*([^<]+?)\s*</h2>',
+        shift_window,
+    )
+    assert title_match is not None
+    assert title_match.group(1).strip() == "Управление на смяната"
     assert "Текуща смяна" in shift_window
     assert 'name="shift_number" data-shift-number-select' in shift_window
     assert active_shift["started_at_display"] in shift_window
     assert "Приключи смяната" in shift_window
+    assert "shift-current-status" not in shift_window
+    assert "/static/images/shift-ui/play-circle.svg" in shift_window
+    assert "/static/images/shift-ui/stop-square.svg" in shift_window
+    assert "/static/images/shift-ui/eye.svg" in shift_window
     assert "Продължителност" not in shift_window
     assert "Виж всички" in shift_window
     assert 'shift_view=history' in shift_window
-    assert shift_window.count("data-shift-history-preview-id=") == 3
+    assert shift_window.count("data-shift-history-preview-id=") == 5
 
 
 def test_full_shift_history_replaces_contents_and_uses_bulgarian_columns(connection):
@@ -2612,6 +2702,8 @@ def test_full_shift_history_replaces_contents_and_uses_bulgarian_columns(connect
     ):
         assert heading in shift_window
     assert f'data-shift-history-id="{completed["id"]}"' in shift_window
+    assert 'aria-label="Страници на историята"' in shift_window
+    assert 'data-shift-history-page="1"' in shift_window
     assert ">Shift<" not in shift_window
     assert ">Start<" not in shift_window
     assert ">End<" not in shift_window
@@ -2630,7 +2722,12 @@ def test_end_confirmation_replaces_window_content_without_nested_modal(connectio
     assert 'data-shift-pane="end-confirm" hidden' in shift_window
     assert 'data-shift-confirm-open="end"' in shift_window
     assert "Потвърждение за приключване" in shift_window
-    assert f'>{active_shift["shift_number"]}<' in shift_window
+    assert f'Смяна {active_shift["shift_number"]}' in shift_window
+    assert "/static/images/shift-ui/check-circle.svg" in shift_window
+    assert "/static/images/shift-ui/calendar.svg" in shift_window
+    assert "/static/images/shift-ui/clock.svg" in shift_window
+    assert "/static/images/shift-ui/stop-square.svg" in shift_window
+    assert "Сигурни ли сте, че искате да приключите смяна" in shift_window
     assert 'data-shift-confirm-submit="end"' in shift_window
     assert "data-shift-nested-modal" not in shift_window
 

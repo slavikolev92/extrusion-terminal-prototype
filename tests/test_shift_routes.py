@@ -181,10 +181,10 @@ def test_no_active_shift_context_is_blocking_gate(connection):
 
 def test_shift_display_helpers_convert_utc_to_sofia_without_raw_seconds():
     assert main_module.format_shift_datetime("2026-07-26 18:30:59") == (
-        "26 юли 2026 г., 21:30"
+        "26 юли 2026, 21:30"
     )
     assert main_module.format_shift_datetime("2026-01-26 19:30:59") == (
-        "26 януари 2026 г., 21:30"
+        "26 януари 2026, 21:30"
     )
     assert main_module.format_shift_datetime(None) == "-"
     assert main_module.format_shift_datetime("not-a-timestamp") == "-"
@@ -209,24 +209,24 @@ def test_shift_display_helpers_convert_utc_to_sofia_without_raw_seconds():
         }
     )
 
-    assert display["started_at_display"] == "26 юли 2026 г., 21:30"
-    assert display["ended_at_display"] == "27 юли 2026 г., 06:05"
+    assert display["started_at_display"] == "26 юли 2026, 21:30"
+    assert display["ended_at_display"] == "27 юли 2026, 06:05"
     assert display["total_gross_weight_display"] == "550.0"
     assert display["orders"][0]["gross_weight_display"] == "550.0"
 
 
-def test_shift_context_exposes_full_history_state_and_three_recent_rows():
+def test_shift_context_exposes_five_recent_rows_and_ten_row_history_pages():
     completed = [
         {
             "id": shift_id,
-            "shift_number": shift_id,
-            "started_at": f"2026-07-{20 + shift_id:02d} 06:00:00",
-            "ended_at": f"2026-07-{20 + shift_id:02d} 14:00:00",
+            "shift_number": ((shift_id - 1) % 4) + 1,
+            "started_at": f"2026-07-{shift_id:02d} 06:00:00",
+            "ended_at": f"2026-07-{shift_id:02d} 14:00:00",
             "distinct_item_count": 0,
             "roll_count": 0,
             "total_gross_weight": "0.00",
         }
-        for shift_id in (4, 3, 2, 1)
+        for shift_id in range(12, 0, -1)
     ]
     state = {
         "configuration": {"shift_count": 4, "version": 1},
@@ -245,16 +245,60 @@ def test_shift_context_exposes_full_history_state_and_three_recent_rows():
         "history",
         None,
         None,
+        "2",
         state=state,
     )
 
     assert context["shift_window_state"] == "history"
     assert context["shift_blocking"] is False
-    assert [row["id"] for row in context["recent_completed_shifts"]] == [4, 3, 2]
-    assert [row["id"] for row in context["completed_shifts"]] == [4, 3, 2, 1]
+    assert [row["id"] for row in context["recent_completed_shifts"]] == [12, 11, 10, 9, 8]
+    assert [row["id"] for row in context["history_shifts"]] == [2, 1]
+    assert context["shift_history_page"] == 2
+    assert context["shift_history_page_count"] == 2
+    assert context["shift_history_page_numbers"] == [1, 2]
+    assert context["shift_history_has_previous"] is True
+    assert context["shift_history_has_next"] is False
     assert context["active_shift"]["started_at_display"] == (
-        "26 юли 2026 г., 21:30"
+        "26 юли 2026, 21:30"
     )
+
+
+def test_shift_history_page_is_clamped_to_available_pages():
+    completed = [
+        {
+            "id": shift_id,
+            "shift_number": 1,
+            "started_at": "2026-07-25 06:00:00",
+            "ended_at": "2026-07-25 14:00:00",
+            "distinct_item_count": 0,
+            "roll_count": 0,
+            "total_gross_weight": "0.00",
+        }
+        for shift_id in range(11, 0, -1)
+    ]
+    state = {
+        "configuration": {"shift_count": 4, "version": 1},
+        "active_shift": {
+            "id": 12,
+            "shift_number": 2,
+            "started_at": "2026-07-26 18:30:59",
+            "ended_at": None,
+            "version": 1,
+        },
+        "suggested_shift_number": 3,
+        "completed_shifts": completed,
+    }
+
+    context = main_module.build_terminal_shift_context(
+        "history",
+        None,
+        None,
+        "999",
+        state=state,
+    )
+
+    assert context["shift_history_page"] == 2
+    assert [row["id"] for row in context["history_shifts"]] == [1]
 
 
 def test_start_uses_configured_choice_and_explicit_confirmation(connection):
@@ -404,6 +448,46 @@ def test_end_redirects_to_just_completed_blocking_summary(connection):
     assert card_after["roll_entries"] == card_before["roll_entries"]
 
 
+def test_terminal_timing_start_rechecks_shift_inside_write_transaction(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("SR-RACE")
+    configuration = db.fetch_terminal_configuration()
+    assert db.start_shift("1", int(configuration["version"])).ok
+    loaded_version = int(db.fetch_terminal_card_detail(card_id)["version"])
+    original_validation = main_module.validate_terminal_card_available_for_post
+
+    def end_shift_after_route_validation(validated_card_id: int):
+        result = original_validation(validated_card_id)
+        assert result.ok
+        active = db.fetch_active_shift()
+        assert active is not None
+        assert db.end_shift(int(active["id"]), int(active["version"])).ok
+        return result
+
+    monkeypatch.setattr(
+        main_module,
+        "validate_terminal_card_available_for_post",
+        end_shift_after_route_validation,
+    )
+
+    status, _, body = asyncio.run(
+        post_form(
+            f"/terminal/cards/{card_id}/timing/start",
+            {"loaded_version": str(loaded_version)},
+        )
+    )
+
+    card = db.fetch_terminal_card_detail(card_id)
+    assert status == 200
+    assert db.NO_ACTIVE_SHIFT_MESSAGE in body
+    assert card["status"] == "pending"
+    assert card["version"] == loaded_version
+    assert card["timing_segments"] == []
+    assert db.fetch_active_shift() is None
+
+
 def test_summary_acknowledgment_returns_to_no_active_gate(connection):
     configuration = db.fetch_terminal_configuration()
     assert db.start_shift("1", int(configuration["version"])).ok
@@ -454,7 +538,7 @@ def test_history_summary_and_back_use_the_same_window_state(connection):
     assert overview["shift_blocking"] is False
     assert history["shift_window_state"] == "history"
     assert history["shift_blocking"] is False
-    assert history["recent_completed_shifts"] == history["completed_shifts"][:3]
+    assert history["recent_completed_shifts"] == history["completed_shifts"][:5]
     assert summary["shift_window_state"] == "summary"
     assert summary["shift_blocking"] is False
     assert summary["selected_shift_summary"]["id"] == completed["id"]

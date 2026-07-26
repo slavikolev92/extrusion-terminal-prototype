@@ -52,6 +52,20 @@ def test_shift_count_defaults_to_four_and_rejects_non_positive_values(connection
     assert configuration() == initial
 
 
+def test_shift_count_rejects_values_above_safe_terminal_limit(connection):
+    initial = configuration()
+
+    for invalid_value in ("100", "9223372036854775808", "9" * 5000):
+        result = db.update_shift_count(int(initial["version"]), invalid_value)
+
+        assert not result.ok
+        assert result.messages == (
+            f"{SHIFT_COUNT_FIELD} трябва да е между 1 и 99.",
+        )
+
+    assert configuration() == initial
+
+
 def test_shift_count_update_checks_loaded_version_and_preserves_history(connection):
     initial = configuration()
     assert db.start_shift("4", int(initial["version"])).ok
@@ -71,6 +85,39 @@ def test_shift_count_update_checks_loaded_version_and_preserves_history(connecti
     assert history is not None
     assert history["shift_number"] == 4
     assert history["ended_at"] is not None
+
+
+def test_terminal_shift_page_state_bounds_history_rows_at_database_boundary(connection):
+    connection.executemany(
+        """
+        INSERT INTO shift_occurrences (
+            shift_number, started_at, ended_at, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                (index % 4) + 1,
+                f"2026-07-{index:02d} 06:00:00",
+                f"2026-07-{index:02d} 14:00:00",
+                f"2026-07-{index:02d} 06:00:00",
+                f"2026-07-{index:02d} 14:00:00",
+            )
+            for index in range(1, 28)
+        ],
+    )
+    connection.commit()
+
+    state = db.fetch_terminal_shift_page_state(
+        requested_page=2,
+        page_size=10,
+        preview_size=5,
+    )
+
+    assert state["completed_shift_count"] == 27
+    assert state["history_page"] == 2
+    assert [row["id"] for row in state["recent_completed_shifts"]] == [27, 26, 25, 24, 23]
+    assert [row["id"] for row in state["history_shifts"]] == list(range(17, 7, -1))
 
 
 def test_only_one_shift_occurrence_can_be_open_globally(connection):

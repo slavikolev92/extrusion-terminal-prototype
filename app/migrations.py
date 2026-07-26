@@ -108,6 +108,32 @@ def _add_final_import_columns(
     return columns
 
 
+def _roll_shift_foreign_key_is_valid(connection: sqlite3.Connection) -> bool:
+    return any(
+        str(row[2]) == "shift_occurrences"
+        and str(row[3]) == "shift_occurrence_id"
+        and str(row[4]) == "id"
+        and str(row[6]).upper() == "RESTRICT"
+        for row in connection.execute(
+            "PRAGMA foreign_key_list(roll_entries)"
+        ).fetchall()
+    )
+
+
+def validate_shift_management_schema(connection: sqlite3.Connection) -> None:
+    roll_columns = _table_columns(connection, "roll_entries")
+    if roll_columns is None or "shift_occurrence_id" not in roll_columns:
+        raise RuntimeError(
+            "roll_entries.shift_occurrence_id is missing after M002"
+        )
+    if not _roll_shift_foreign_key_is_valid(connection):
+        raise RuntimeError(
+            "roll_entries.shift_occurrence_id exists without the required "
+            "foreign key to shift_occurrences(id); restore a known-good backup "
+            "or repair the partial schema before retrying M002"
+        )
+
+
 def _apply_shift_manager_import_fields(connection: sqlite3.Connection) -> None:
     for table_name in ("cards", "card_import_sources"):
         _add_final_import_columns(connection, table_name)
@@ -128,6 +154,8 @@ def _apply_shift_management(connection: sqlite3.Connection) -> None:
             "REFERENCES shift_occurrences(id) ON DELETE RESTRICT"
         )
         roll_columns.add("shift_occurrence_id")
+    if roll_columns is not None:
+        validate_shift_management_schema(connection)
 
     connection.execute(SHIFT_ONE_ACTIVE_INDEX_SQL)
     connection.execute(SHIFT_COMPLETED_INDEX_SQL)

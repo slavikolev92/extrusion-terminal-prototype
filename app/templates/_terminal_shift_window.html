@@ -10,46 +10,59 @@
 {% endif %}
 {% set shift_overview_url = shift_terminal_url ~ shift_query_prefix ~ "shift_view=overview" %}
 {% set shift_history_url = shift_terminal_url ~ shift_query_prefix ~ "shift_view=history" %}
+{% set shift_history_back_url = shift_history_url %}
+{% if shift_history_page > 1 %}
+  {% set shift_history_back_url = shift_history_url ~ "&shift_page=" ~ shift_history_page %}
+{% endif %}
 <div class="shift-window-overlay"
      id="shift-window"
      data-shift-window="true"
      data-shift-state="{{ shift_window_state }}"
      data-shift-blocking="{{ 'true' if shift_blocking else 'false' }}"
+     data-shift-overview-url="{{ shift_overview_url }}"
      aria-hidden="{{ 'true' if shift_window_state == 'closed' else 'false' }}"
      {% if shift_window_state == "closed" %}hidden{% endif %}>
   <section class="shift-window-dialog"
            role="dialog" aria-modal="true" data-shift-dialog
-           aria-labelledby="shift-window-title"
+           aria-labelledby="{{ 'shift-start-title' if shift_window_state == 'gate' else 'shift-window-title' }}"
            tabindex="-1">
-    <header class="shift-window-header">
-      <h2 id="shift-window-title" data-shift-title>
-        {% if shift_window_state == "gate" %}
-          Начало на смяна
-        {% elif shift_window_state == "overview" %}
-          Управление на смяната
-        {% elif shift_window_state == "summary" %}
-          Произведени количества
-        {% elif shift_window_state == "history" %}
-          История на смените
-        {% elif shift_window_state == "reload" %}
-          Смяната е променена
-        {% else %}
-          Управление на смяната
+    {% if shift_window_state != "gate" %}
+      <header class="shift-window-header" data-shift-shell-header>
+        <div class="shift-window-header-title">
+          <img src="{{ url_for('static', path='/images/shift-ui/calendar-clock.svg') }}" alt="" aria-hidden="true">
+          <h2 id="shift-window-title" data-shift-title>
+            {% if shift_window_state == "overview" %}
+              Управление на смяната
+            {% elif shift_window_state == "summary" %}
+              Произведени количества
+            {% elif shift_window_state == "history" %}
+              История на смените
+            {% elif shift_window_state == "reload" %}
+              Смяната е променена
+            {% else %}
+              Смяна
+            {% endif %}
+          </h2>
+        </div>
+        {% if not shift_blocking and shift_window_state in ["closed", "overview", "history", "summary"] %}
+          <button class="shift-window-close" type="button" data-shift-close aria-label="Затвори">
+            <img src="{{ url_for('static', path='/images/shift-ui/x.svg') }}" alt="" aria-hidden="true">
+          </button>
         {% endif %}
-      </h2>
-      {% if not shift_blocking and shift_window_state in ["overview", "history", "summary"] %}
-        <button class="shift-window-close" type="button" data-shift-close aria-label="Затвори">×</button>
-      {% endif %}
-    </header>
+      </header>
+    {% endif %}
 
     <div class="shift-window-body">
       {% if shift_window_state == "gate" %}
         <form class="shift-start-form" action="/terminal/shifts/start" method="post" data-shift-start-form>
           <input type="hidden" name="configuration_version" value="{{ shift_configuration.version }}">
           {% if selected_card %}<input type="hidden" name="selected_card_id" value="{{ selected_card.id }}">{% endif %}
-          <div class="shift-window-pane shift-selection-pane" data-shift-pane="gate">
-            <div class="shift-state-intro">
-              <h3>Начало на смяна</h3>
+          <div class="shift-window-pane shift-selection-pane shift-start-screen" data-shift-pane="gate">
+            <div class="shift-start-icon shift-start-icon--selection" aria-hidden="true">
+              <img src="{{ url_for('static', path='/images/shift-ui/shift-switch.svg') }}" alt="">
+            </div>
+            <div class="shift-state-intro shift-state-intro--centered">
+              <h2 id="shift-start-title">Начало на смяна</h2>
               <p>Изберете номера на смяната, за да започнете работа.</p>
             </div>
             <label class="shift-number-field">
@@ -65,27 +78,36 @@
                 {% for message in shift_result.messages %}<p>{{ message }}</p>{% endfor %}
               </div>
             {% endif %}
-            <div class="shift-live-time-card">
-              <strong>Начало на смяна</strong>
-              <time data-shift-live-clock></time>
+            <div class="shift-live-time-card shift-live-time-card--start">
+              <img src="{{ url_for('static', path='/images/shift-ui/calendar-clock.svg') }}" alt="" aria-hidden="true">
+              <div>
+                <strong>Начало на смяна</strong>
+                <time data-shift-live-clock></time>
+              </div>
             </div>
             <button class="shift-primary-action" type="button" data-shift-confirm-open="start">Започни смяна</button>
           </div>
-          <div class="shift-window-pane shift-confirmation-pane" data-shift-pane="start-confirm" hidden>
-            <div class="shift-state-intro">
-              <h3>Потвърждение за начало</h3>
-              <p>Проверете данните преди да започнете смяната.</p>
+          <div class="shift-window-pane shift-confirmation-pane shift-start-confirmation-pane" data-shift-pane="start-confirm" hidden>
+            <div class="shift-start-icon shift-start-icon--confirmation" aria-hidden="true">
+              <img src="{{ url_for('static', path='/images/shift-ui/check-circle.svg') }}" alt="">
             </div>
-            <div class="shift-details-card">
+            <div class="shift-state-intro shift-state-intro--centered">
+              <h2 id="shift-start-confirmation-title">Потвърждение за начало</h2>
+              <p>Потвърдете, че искате да стартирате избраната смяна.</p>
+            </div>
+            <div class="shift-details-card shift-start-details-card">
               <div class="shift-detail-row">
-                <span>Смяна</span>
-                <strong data-shift-start-selection>{{ suggested_shift_number }}</strong>
+                <img src="{{ url_for('static', path='/images/shift-ui/calendar.svg') }}" alt="" aria-hidden="true">
+                <span><small>Смяна</small><strong data-shift-start-selection>{{ suggested_shift_number }}</strong></span>
               </div>
               <div class="shift-detail-row">
-                <span>Начало</span>
-                <strong><time data-shift-live-clock></time></strong>
+                <img src="{{ url_for('static', path='/images/shift-ui/clock.svg') }}" alt="" aria-hidden="true">
+                <span><small>Начало</small><strong><time data-shift-live-clock></time></strong></span>
               </div>
             </div>
+            <p class="shift-start-confirmation-question">
+              Сигурни ли сте, че искате да започнете смяна <strong data-shift-start-question-number>{{ suggested_shift_number }}</strong>?
+            </p>
             <div class="shift-confirm-actions">
               <button type="button" data-shift-confirm-back="gate">Назад</button>
               <button class="shift-primary-action" type="submit" data-shift-confirm-submit="start">Потвърди</button>
@@ -95,9 +117,18 @@
       {% elif shift_window_state == "summary" and selected_shift_summary %}
         <div class="shift-window-pane shift-summary-pane" data-shift-pane="summary">
           <div class="shift-summary-metadata">
-            <strong>Смяна {{ selected_shift_summary.shift_number }}</strong>
-            <span>Начало: <time datetime="{{ selected_shift_summary.started_at }}">{{ selected_shift_summary.started_at_display }}</time></span>
-            <span>Край: <time datetime="{{ selected_shift_summary.ended_at }}">{{ selected_shift_summary.ended_at_display }}</time></span>
+            <div class="shift-summary-meta-item">
+              <img src="{{ url_for('static', path='/images/shift-ui/calendar.svg') }}" alt="" aria-hidden="true">
+              <span><small>Приключена смяна</small><strong>Смяна {{ selected_shift_summary.shift_number }}</strong></span>
+            </div>
+            <div class="shift-summary-meta-item">
+              <img src="{{ url_for('static', path='/images/shift-ui/play-circle.svg') }}" alt="" aria-hidden="true">
+              <span><small>Начало</small><strong><time datetime="{{ selected_shift_summary.started_at }}">{{ selected_shift_summary.started_at_display }}</time></strong></span>
+            </div>
+            <div class="shift-summary-meta-item">
+              <img src="{{ url_for('static', path='/images/shift-ui/stop-square.svg') }}" alt="" aria-hidden="true">
+              <span><small>Край</small><strong><time datetime="{{ selected_shift_summary.ended_at }}">{{ selected_shift_summary.ended_at_display }}</time></strong></span>
+            </div>
           </div>
           <div class="shift-table-scroll">
             <table class="shift-summary-table">
@@ -130,15 +161,15 @@
             {% if shift_blocking %}
               <a class="shift-primary-action shift-action-link" href="{{ shift_terminal_url }}" data-shift-ack>Продължи</a>
             {% else %}
-              <a class="shift-action-link" href="{{ shift_history_url }}" data-shift-history-back>Назад</a>
+              <a class="shift-action-link shift-secondary-link" href="{{ shift_history_back_url }}" data-shift-history-back>Назад</a>
             {% endif %}
           </div>
         </div>
       {% elif shift_window_state == "history" %}
         <div class="shift-window-pane shift-history-pane" data-shift-pane="history">
           <div class="shift-pane-heading">
-            <h3>История на смените</h3>
-            <a class="shift-action-link shift-secondary-link" href="{{ shift_overview_url }}">Назад</a>
+            <h3>Всички приключени смени</h3>
+            <a class="shift-action-link shift-secondary-link" href="{{ shift_overview_url }}">Към текущата смяна</a>
           </div>
           <div class="shift-table-scroll">
             <table class="shift-history-table">
@@ -154,48 +185,52 @@
                 </tr>
               </thead>
               <tbody>
-                {% for shift in completed_shifts %}
+                {% for shift in history_shifts %}
                   <tr data-shift-history-id="{{ shift.id }}">
-                    <td>{{ shift.shift_number }}</td>
+                    <td><span class="shift-number-badge">{{ shift.shift_number }}</span></td>
                     <td><time datetime="{{ shift.started_at }}">{{ shift.started_at_display }}</time></td>
                     <td><time datetime="{{ shift.ended_at }}">{{ shift.ended_at_display }}</time></td>
                     <td>{{ shift.distinct_item_count }}</td>
                     <td>{{ shift.roll_count }}</td>
-                    <td>{{ shift.total_gross_weight_display }}</td>
-                    <td><a href="{{ shift_terminal_url }}{{ shift_query_prefix }}shift_view=summary&shift_id={{ shift.id }}">Преглед</a></td>
+                    <td class="shift-weight-cell">{{ shift.total_gross_weight_display }}</td>
+                    <td>
+                      <a class="shift-view-link" href="{{ shift_terminal_url }}{{ shift_query_prefix }}shift_view=summary&shift_id={{ shift.id }}&shift_page={{ shift_history_page }}" aria-label="Преглед на смяна {{ shift.shift_number }}">
+                        <img src="{{ url_for('static', path='/images/shift-ui/eye.svg') }}" alt="" aria-hidden="true">
+                        <span class="visually-hidden">Преглед</span>
+                      </a>
+                    </td>
                   </tr>
                 {% endfor %}
               </tbody>
             </table>
           </div>
-          {% if not completed_shifts %}<p class="shift-empty-state">Няма приключени смени.</p>{% endif %}
+          {% if not history_shifts %}<p class="shift-empty-state">Няма приключени смени.</p>{% endif %}
+          <nav class="shift-history-pagination" aria-label="Страници на историята">
+            {% if shift_history_has_previous %}
+              <a class="shift-page-control shift-page-direction" href="{{ shift_terminal_url }}{{ shift_query_prefix }}shift_view=history&shift_page={{ shift_history_page - 1 }}">Назад</a>
+            {% else %}
+              <span class="shift-page-control shift-page-direction is-disabled" aria-disabled="true">Назад</span>
+            {% endif %}
+            {% for page_number in shift_history_page_numbers %}
+              {% if page_number == shift_history_page %}
+                <span class="shift-page-control is-current" data-shift-history-page="{{ page_number }}" aria-current="page">{{ page_number }}</span>
+              {% else %}
+                <a class="shift-page-control" data-shift-history-page="{{ page_number }}" href="{{ shift_terminal_url }}{{ shift_query_prefix }}shift_view=history&shift_page={{ page_number }}">{{ page_number }}</a>
+              {% endif %}
+            {% endfor %}
+            {% if shift_history_has_next %}
+              <a class="shift-page-control shift-page-direction" href="{{ shift_terminal_url }}{{ shift_query_prefix }}shift_view=history&shift_page={{ shift_history_page + 1 }}">Напред</a>
+            {% else %}
+              <span class="shift-page-control shift-page-direction is-disabled" aria-disabled="true">Напред</span>
+            {% endif %}
+          </nav>
         </div>
       {% elif shift_window_state != "reload" and active_shift %}
-        <div class="shift-window-pane shift-confirmation-pane" data-shift-pane="start-confirm" hidden>
-          <div class="shift-state-intro">
-            <h3>Потвърждение за начало</h3>
-            <p>Проверете данните преди да започнете смяната.</p>
-          </div>
-          <div class="shift-details-card">
-            <div class="shift-detail-row">
-              <span>Смяна</span>
-              <strong data-shift-start-selection>{{ suggested_shift_number }}</strong>
-            </div>
-            <div class="shift-detail-row">
-              <span>Начало</span>
-              <strong><time data-shift-live-clock></time></strong>
-            </div>
-          </div>
-          <div class="shift-confirm-actions">
-            <button type="button" data-shift-confirm-back="gate">Назад</button>
-            <button class="shift-primary-action" type="button" data-shift-confirm-submit="start">Потвърди</button>
-          </div>
-        </div>
         <div class="shift-window-pane shift-overview-pane" data-shift-pane="overview">
           <section class="shift-current-section" aria-labelledby="shift-current-title">
             <h3 id="shift-current-title">Текуща смяна</h3>
             <div class="shift-current-card">
-              <form action="/terminal/shifts/current/number" method="post" data-shift-number-form>
+              <form class="shift-current-number-form" action="/terminal/shifts/current/number" method="post" data-shift-number-form>
                 <input type="hidden" name="shift_occurrence_id" value="{{ active_shift.id }}">
                 <input type="hidden" name="loaded_version" value="{{ active_shift.version }}">
                 {% if selected_card %}<input type="hidden" name="selected_card_id" value="{{ selected_card.id }}">{% endif %}
@@ -208,19 +243,18 @@
                   </select>
                 </label>
               </form>
-              <div class="shift-current-status">
-                <span class="shift-status-dot is-active" aria-hidden="true"></span>
-                <strong>Активна</strong>
-              </div>
               <div class="shift-start-time">
-                <span>Начало</span>
-                <time datetime="{{ active_shift.started_at }}">{{ active_shift.started_at_display }}</time>
+                <img src="{{ url_for('static', path='/images/shift-ui/play-circle.svg') }}" alt="" aria-hidden="true">
+                <span><small>Начало</small><strong><time datetime="{{ active_shift.started_at }}">{{ active_shift.started_at_display }}</time></strong></span>
               </div>
               <form class="shift-end-section" id="shift-end-form" action="/terminal/shifts/current/end" method="post" data-shift-end-form>
                 <input type="hidden" name="shift_occurrence_id" value="{{ active_shift.id }}">
                 <input type="hidden" name="loaded_version" value="{{ active_shift.version }}">
                 {% if selected_card %}<input type="hidden" name="selected_card_id" value="{{ selected_card.id }}">{% endif %}
-                <button class="shift-end-action" type="button" data-shift-confirm-open="end">Приключи смяната</button>
+                <button class="shift-end-action" type="button" data-shift-confirm-open="end">
+                  <img src="{{ url_for('static', path='/images/shift-ui/stop-square.svg') }}" alt="" aria-hidden="true">
+                  <span>Приключи смяната</span>
+                </button>
               </form>
             </div>
           </section>
@@ -232,8 +266,8 @@
 
           <section class="shift-history" aria-labelledby="shift-history-title">
             <div class="shift-pane-heading">
-              <h3 id="shift-history-title">Последни приключени смени</h3>
-              <a class="shift-action-link shift-secondary-link" href="{{ shift_history_url }}">Виж всички</a>
+              <h3 id="shift-history-title">История</h3>
+              <a class="shift-history-all-link" href="{{ shift_history_url }}">Виж всички <span aria-hidden="true">›</span></a>
             </div>
             <div class="shift-table-scroll">
               <table class="shift-history-table">
@@ -251,13 +285,18 @@
                 <tbody>
                   {% for shift in recent_completed_shifts %}
                     <tr data-shift-history-preview-id="{{ shift.id }}">
-                      <td>{{ shift.shift_number }}</td>
+                      <td><span class="shift-number-badge">{{ shift.shift_number }}</span></td>
                       <td><time datetime="{{ shift.started_at }}">{{ shift.started_at_display }}</time></td>
                       <td><time datetime="{{ shift.ended_at }}">{{ shift.ended_at_display }}</time></td>
                       <td>{{ shift.distinct_item_count }}</td>
                       <td>{{ shift.roll_count }}</td>
-                      <td>{{ shift.total_gross_weight_display }}</td>
-                      <td><a href="{{ shift_terminal_url }}{{ shift_query_prefix }}shift_view=summary&shift_id={{ shift.id }}">Преглед</a></td>
+                      <td class="shift-weight-cell">{{ shift.total_gross_weight_display }}</td>
+                      <td>
+                        <a class="shift-view-link" href="{{ shift_terminal_url }}{{ shift_query_prefix }}shift_view=summary&shift_id={{ shift.id }}" aria-label="Преглед на смяна {{ shift.shift_number }}">
+                          <img src="{{ url_for('static', path='/images/shift-ui/eye.svg') }}" alt="" aria-hidden="true">
+                          <span class="visually-hidden">Преглед</span>
+                        </a>
+                      </td>
                     </tr>
                   {% endfor %}
                 </tbody>
@@ -265,26 +304,36 @@
             </div>
             {% if not recent_completed_shifts %}<p class="shift-empty-state">Няма приключени смени.</p>{% endif %}
           </section>
+          <p class="shift-completion-note">
+            <img src="{{ url_for('static', path='/images/shift-ui/info-circle.svg') }}" alt="" aria-hidden="true">
+            <span>Приключването на смяната записва данните и не може да бъде отменено.</span>
+          </p>
         </div>
-        <div class="shift-window-pane shift-confirmation-pane" data-shift-pane="end-confirm" hidden>
-          <div class="shift-state-intro">
-            <h3>Потвърждение за приключване</h3>
-            <p>Проверете данните преди да приключите смяната.</p>
+        <div class="shift-window-pane shift-confirmation-pane shift-end-confirmation-pane" data-shift-pane="end-confirm" hidden>
+          <div class="shift-start-icon shift-start-icon--confirmation" aria-hidden="true">
+            <img src="{{ url_for('static', path='/images/shift-ui/check-circle.svg') }}" alt="">
           </div>
-          <div class="shift-details-card">
+          <div class="shift-state-intro shift-state-intro--centered">
+            <h2 id="shift-end-confirmation-title">Потвърждение за приключване</h2>
+            <p>Потвърдете, че искате да приключите текущата смяна.</p>
+          </div>
+          <div class="shift-details-card shift-start-details-card">
             <div class="shift-detail-row">
-              <span>Смяна</span>
-              <strong>{{ active_shift.shift_number }}</strong>
+              <img src="{{ url_for('static', path='/images/shift-ui/calendar.svg') }}" alt="" aria-hidden="true">
+              <span><small>Текуща смяна</small><strong>Смяна {{ active_shift.shift_number }}</strong></span>
             </div>
             <div class="shift-detail-row">
-              <span>Начало</span>
-              <strong>{{ active_shift.started_at_display }}</strong>
+              <img src="{{ url_for('static', path='/images/shift-ui/clock.svg') }}" alt="" aria-hidden="true">
+              <span><small>Начало</small><strong>{{ active_shift.started_at_display }}</strong></span>
             </div>
             <div class="shift-detail-row">
-              <span>Край</span>
-              <strong><time data-shift-live-clock></time></strong>
+              <img src="{{ url_for('static', path='/images/shift-ui/stop-square.svg') }}" alt="" aria-hidden="true">
+              <span><small>Край</small><strong><time data-shift-live-clock></time></strong></span>
             </div>
           </div>
+          <p class="shift-start-confirmation-question">
+            Сигурни ли сте, че искате да приключите смяна <strong>{{ active_shift.shift_number }}</strong>?
+          </p>
           <div class="shift-confirm-actions">
             <button type="button" data-shift-confirm-back="overview">Назад</button>
             <button class="shift-primary-action" type="submit" form="shift-end-form" data-shift-confirm-submit="end">Потвърди</button>
@@ -293,8 +342,13 @@
       {% endif %}
 
       <div class="shift-window-pane shift-reload-pane" data-shift-pane="reload"{% if shift_window_state != "reload" %} hidden{% endif %}>
-        <p class="shift-reload-title">Смяната е променена</p>
-        <p>Презаредете терминала, преди да продължите. Въведените стойности остават на екрана до презареждането.</p>
+        <div class="shift-start-icon shift-start-icon--confirmation" aria-hidden="true">
+          <img src="{{ url_for('static', path='/images/shift-ui/info-circle.svg') }}" alt="">
+        </div>
+        <div class="shift-state-intro shift-state-intro--centered">
+          <h2>Смяната е променена</h2>
+          <p>Презаредете терминала, преди да продължите. Въведените стойности остават на екрана до презареждането.</p>
+        </div>
         <a class="shift-primary-action shift-action-link" href="{{ shift_terminal_url }}" data-shift-reload>Презареди</a>
       </div>
     </div>

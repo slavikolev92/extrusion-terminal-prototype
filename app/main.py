@@ -24,6 +24,7 @@ from .constants import (
     TIMING_REASON_LABELS,
 )
 from .db import (
+    MAX_SHIFT_COUNT,
     NO_ACTIVE_SHIFT_MESSAGE,
     STALE_CARD_MESSAGE,
     STALE_CONFIGURATION_MESSAGE,
@@ -44,6 +45,7 @@ from .db import (
     fetch_admin_cards,
     fetch_import_batch_result,
     fetch_terminal_configuration,
+    fetch_terminal_shift_page_state,
     fetch_terminal_card_detail,
     fetch_machine_queues,
     fetch_machines,
@@ -111,6 +113,10 @@ TERMINAL_NOTICE_MESSAGES = {
     "card_finished": ("Картата е приключена.",),
     "shift_changed": ("Номерът на смяната е коригиран.",),
 }
+
+SHIFT_HISTORY_PREVIEW_SIZE = 5
+SHIFT_HISTORY_PAGE_SIZE = 10
+SHIFT_HISTORY_PAGE_WINDOW = 5
 
 ADMIN_SETTINGS_NOTICE_MESSAGES = {
     "shift_count_saved": ("Броят смени е записан.",),
@@ -196,6 +202,7 @@ def admin_settings_context(**extra: Any) -> dict[str, Any]:
     context: dict[str, Any] = {
         "admin_section": "settings",
         "configuration": fetch_terminal_configuration(),
+        "maximum_shift_count": MAX_SHIFT_COUNT,
     }
     context.update(extra)
     return context
@@ -1560,6 +1567,7 @@ async def terminal(
     shift_view: str | None = None,
     shift_id: str | None = None,
     handoff: str | None = None,
+    shift_page: str | None = None,
 ):
     return terminal_response(
         request,
@@ -1568,6 +1576,7 @@ async def terminal(
         shift_view=shift_view,
         shift_id=shift_id,
         handoff=handoff,
+        shift_page=shift_page,
     )
 
 
@@ -1584,6 +1593,7 @@ async def terminal_card(
     shift_view: str | None = None,
     shift_id: str | None = None,
     handoff: str | None = None,
+    shift_page: str | None = None,
 ):
     return terminal_response(
         request,
@@ -1592,6 +1602,7 @@ async def terminal_card(
         shift_view=shift_view,
         shift_id=shift_id,
         handoff=handoff,
+        shift_page=shift_page,
     )
 
 
@@ -1726,6 +1737,7 @@ async def save_terminal_materials(
                 card_id=card_id,
                 loaded_version=parsed_version,
                 entries=recipe_actual_entries_from_form(form),
+                require_active_shift=True,
             )
 
     return terminal_post_response(
@@ -1748,7 +1760,12 @@ async def save_tare_weight(
     if parsed_version is not None:
         roll_result = validate_terminal_card_available_for_post(card_id)
         if roll_result.ok:
-            roll_result = update_tare_weight(card_id, parsed_version, tare_weight)
+            roll_result = update_tare_weight(
+                card_id,
+                parsed_version,
+                tare_weight,
+                require_active_shift=True,
+            )
 
     return terminal_post_response(
         request,
@@ -1777,6 +1794,7 @@ async def add_roll_weight(
                 parsed_version,
                 gross_weight,
                 tare_weight=tare_weight,
+                require_active_shift=True,
             )
 
     return terminal_post_response(
@@ -1810,6 +1828,7 @@ async def save_terminal_roll_corrections(
                     card_id,
                     parsed_version,
                     roll_updates,
+                    require_active_shift=True,
                 )
 
     return terminal_post_response(
@@ -1841,6 +1860,7 @@ async def save_roll_weight(
                     roll_id=roll_id,
                     loaded_version=parsed_version,
                     gross_weight=gross_weight,
+                    require_active_shift=True,
                 )
             else:
                 roll_result = update_roll_weight(
@@ -1849,6 +1869,7 @@ async def save_roll_weight(
                     loaded_version=parsed_version,
                     gross_weight=gross_weight,
                     tare_weight=tare_weight,
+                    require_active_shift=True,
                 )
 
     return terminal_post_response(
@@ -1938,7 +1959,11 @@ async def start_timing(
     if parsed_version is not None:
         timing_result = validate_terminal_card_available_for_post(card_id)
         if timing_result.ok:
-            timing_result = start_production_timing(card_id, parsed_version)
+            timing_result = start_production_timing(
+                card_id,
+                parsed_version,
+                require_active_shift=True,
+            )
 
     return terminal_post_response(
         request,
@@ -1959,7 +1984,11 @@ async def pause_timing(
     if parsed_version is not None:
         timing_result = validate_terminal_card_available_for_post(card_id)
         if timing_result.ok:
-            timing_result = pause_production_timing(card_id, parsed_version)
+            timing_result = pause_production_timing(
+                card_id,
+                parsed_version,
+                require_active_shift=True,
+            )
 
     return terminal_post_response(
         request,
@@ -1980,7 +2009,11 @@ async def resume_timing(
     if parsed_version is not None:
         timing_result = validate_terminal_card_available_for_post(card_id)
         if timing_result.ok:
-            timing_result = resume_production_timing(card_id, parsed_version)
+            timing_result = resume_production_timing(
+                card_id,
+                parsed_version,
+                require_active_shift=True,
+            )
 
     return terminal_post_response(
         request,
@@ -2001,7 +2034,11 @@ async def finish_terminal_card(
     if parsed_version is not None:
         workflow_result = validate_terminal_card_available_for_post(card_id)
         if workflow_result.ok:
-            workflow_result = finish_card(card_id, parsed_version)
+            workflow_result = finish_card(
+                card_id,
+                parsed_version,
+                require_active_shift=True,
+            )
 
     return terminal_post_response(
         request,
@@ -2072,7 +2109,12 @@ def delete_terminal_roll_with_confirmation(
     if confirm_roll_number.strip() != expected_roll_number:
         return RuleResult(False, ("Потвърдете изтриването с номера на ролката.",))
 
-    return delete_roll_entry(card_id, roll_id, loaded_version)
+    return delete_roll_entry(
+        card_id,
+        roll_id,
+        loaded_version,
+        require_active_shift=True,
+    )
 
 
 def terminal_response(
@@ -2158,6 +2200,7 @@ def terminal_context(
     shift_view: str | None = None,
     shift_id: str | int | None = None,
     handoff: str | None = None,
+    shift_page: str | int | None = None,
     shift_reload_required: bool = False,
     **extra: Any,
 ) -> dict[str, Any]:
@@ -2208,11 +2251,20 @@ def terminal_context(
             fetch_cards_by_status(TERMINAL_ARCHIVE_STATUSES),
         )
     ]
-    shift_state = fetch_shift_window_state()
+    try:
+        requested_shift_page = int(shift_page or 1)
+    except (TypeError, ValueError):
+        requested_shift_page = 1
+    shift_state = fetch_terminal_shift_page_state(
+        requested_page=requested_shift_page,
+        page_size=SHIFT_HISTORY_PAGE_SIZE,
+        preview_size=SHIFT_HISTORY_PREVIEW_SIZE,
+    )
     shift_context = build_terminal_shift_context(
         shift_view,
         shift_id,
         handoff,
+        shift_page,
         state=shift_state,
         reload_required=shift_reload_required,
     )
@@ -2242,6 +2294,7 @@ def build_terminal_shift_context(
     shift_view: str | None,
     shift_id: str | int | None,
     handoff: str | None,
+    shift_page: str | int | None = None,
     *,
     state: dict[str, Any] | None = None,
     reload_required: bool = False,
@@ -2253,9 +2306,55 @@ def build_terminal_shift_context(
     active_shift = (
         build_shift_display(raw_active_shift) if raw_active_shift is not None else None
     )
-    completed_shifts = [
-        build_shift_display(shift) for shift in state["completed_shifts"]
-    ]
+    if "completed_shifts" in state:
+        completed_shifts = [
+            build_shift_display(shift) for shift in state["completed_shifts"]
+        ]
+        try:
+            requested_history_page = int(shift_page or 1)
+        except (TypeError, ValueError):
+            requested_history_page = 1
+        completed_shift_count = len(completed_shifts)
+        history_page_count = max(
+            1,
+            (completed_shift_count + SHIFT_HISTORY_PAGE_SIZE - 1)
+            // SHIFT_HISTORY_PAGE_SIZE,
+        )
+        history_page = min(max(1, requested_history_page), history_page_count)
+        history_page_start = (history_page - 1) * SHIFT_HISTORY_PAGE_SIZE
+        history_shifts = completed_shifts[
+            history_page_start : history_page_start + SHIFT_HISTORY_PAGE_SIZE
+        ]
+        recent_completed_shifts = completed_shifts[:SHIFT_HISTORY_PREVIEW_SIZE]
+    else:
+        completed_shift_count = int(state["completed_shift_count"])
+        history_page_count = int(state["history_page_count"])
+        history_page = int(state["history_page"])
+        recent_completed_shifts = [
+            build_shift_display(shift)
+            for shift in state["recent_completed_shifts"]
+        ]
+        history_shifts = [
+            build_shift_display(shift) for shift in state["history_shifts"]
+        ]
+        completed_shifts = recent_completed_shifts
+    history_page_window_start = max(
+        1,
+        min(
+            history_page - (SHIFT_HISTORY_PAGE_WINDOW // 2),
+            history_page_count - SHIFT_HISTORY_PAGE_WINDOW + 1,
+        ),
+    )
+    history_page_numbers = list(
+        range(
+            history_page_window_start,
+            min(
+                history_page_count,
+                history_page_window_start + SHIFT_HISTORY_PAGE_WINDOW - 1,
+            )
+            + 1,
+        )
+    )
     normalized_view = (
         shift_view if shift_view in {"overview", "history", "summary"} else None
     )
@@ -2269,11 +2368,13 @@ def build_terminal_shift_context(
         if candidate_shift_id > 0:
             parsed_shift_id = candidate_shift_id
 
-    completed_ids = {int(shift["id"]) for shift in completed_shifts}
     selected_shift_summary = None
-    if normalized_view == "summary" and parsed_shift_id in completed_ids:
+    if normalized_view == "summary" and parsed_shift_id is not None:
         raw_selected_shift_summary = fetch_shift_summary(parsed_shift_id)
-        if raw_selected_shift_summary is not None:
+        if (
+            raw_selected_shift_summary is not None
+            and raw_selected_shift_summary["ended_at"] is not None
+        ):
             selected_shift_summary = build_shift_display(raw_selected_shift_summary)
 
     just_ended_handoff = selected_shift_summary is not None and handoff == "1"
@@ -2315,7 +2416,14 @@ def build_terminal_shift_context(
         "shift_options": shift_options,
         "suggested_shift_number": int(state["suggested_shift_number"]),
         "completed_shifts": completed_shifts,
-        "recent_completed_shifts": completed_shifts[:3],
+        "completed_shift_count": completed_shift_count,
+        "recent_completed_shifts": recent_completed_shifts,
+        "history_shifts": history_shifts,
+        "shift_history_page": history_page,
+        "shift_history_page_count": history_page_count,
+        "shift_history_page_numbers": history_page_numbers,
+        "shift_history_has_previous": history_page > 1,
+        "shift_history_has_next": history_page < history_page_count,
         "selected_shift_summary": selected_shift_summary,
         "shift_window_state": shift_window_state,
         "shift_blocking": shift_blocking,
@@ -2582,7 +2690,7 @@ def format_shift_datetime(value: Any) -> str:
     parsed = parsed_utc.astimezone(SHIFT_DISPLAY_TIME_ZONE)
     return (
         f"{parsed.day} {BULGARIAN_MONTH_NAMES[parsed.month]} "
-        f"{parsed.year} г., {parsed:%H:%M}"
+        f"{parsed.year}, {parsed:%H:%M}"
     )
 
 

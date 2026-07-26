@@ -1,10 +1,9 @@
 # Task 01: Shift Management Functionality Specification
 
-Status: backend behavior and the first functional UI implementation are
-complete. A replacement terminal header and shift-interface design were
-approved on July 26, 2026 and remain to be implemented and visually accepted.
-Production deployment remains separately gated by the M001 legacy-data profile
-and the final release-candidate rehearsal.
+Status: complete in local code and visually accepted on July 26, 2026. The
+final adversarial review findings were corrected and the complete automated and
+temporary-database browser gates pass. Production deployment remains separately
+gated by the M001 legacy-data profile and final release-candidate rehearsal.
 
 ## Purpose
 
@@ -48,7 +47,9 @@ exploration.
 - The first version should default to four available numbered shifts.
 - A separate terminal-configuration page in the admin panel should contain a
   simple input for changing the number of available shifts.
-- The configured shift count should accept only a positive whole number.
+- The configured shift count should accept only a positive whole number from
+  `1` through `99`. This technical ceiling prevents an unusably large terminal
+  dropdown and unsafe integer input.
 - Workers should not be able to change the configured shift count from the
   terminal.
 - If the configured count is `N`, the shift-opening control should offer the
@@ -166,9 +167,10 @@ exploration.
 - When a shift is open, selecting the state-aware shift button should open one
   shift-management window titled `Управление на смяната`.
 - The default window should contain two visually distinct sections:
-  - `Текуща смяна`, with the current shift number, active status, automatically
-    recorded start time, and a clearly separated `Приключи смяната` action
-  - `История`, with a compact preview of up to the three most recently completed
+  - `Текуща смяна`, with the current shift number, automatically recorded start
+    time, and a clearly separated `Приключи смяната` action; it does not need a
+    separate active-status badge
+  - `История`, with a compact preview of up to the five most recently completed
     shifts and a `Виж всички` action
 - The current-shift section must not show a duration or live elapsed-time
   counter.
@@ -204,8 +206,10 @@ exploration.
 - All visible labels, headings, table columns, links, and confirmation actions
   in the shift interface should be in Bulgarian.
 - Visible shift timestamps should use a human-readable Bulgarian format such as
-  `26 юли 2026 г., 21:30`. They should not expose raw database timestamps or
+  `26 юли 2026, 21:30`. They should not expose raw database timestamps or
   seconds.
+- After a dismissible History or historical-summary pane is closed, selecting
+  the header shift action again should open the default current-shift overview.
 - Gross-kilogram values in shift history and summary views should be displayed
   with one decimal place.
 - Dialog widths should match their content: start and confirmation states
@@ -313,30 +317,21 @@ exploration.
   - a shift produces rolls
   - a pallet/package groups rolls for transport and label printing
 
-## Next technical work
+## Completion and deployment
 
-The shift backend, M002 schema foundation, attribution behavior, and initial
-functional UI are implemented. The July 26 terminal header and shift-interface
-redesign above is approved but not yet implemented. M002 leaves historical
-rolls unattributed and is covered by focused migration and workflow tests. The
-existing temporary-database browser workflow and durable behavior record are in
-`docs/implementation-notes/shift-management.md`.
+The shift backend, M002 schema foundation, attribution behavior, approved
+terminal header, complete shift interface, review fixes, and browser workflow
+are implemented. M002 leaves historical rolls unattributed and now rejects a
+malformed partial schema that contains the attribution column without its
+required foreign key. Terminal production writes recheck the active shift
+inside their write transaction.
 
-Next:
+Local Task 01 work is complete. Deployment still requires:
 
-1. Review and execute
-   `docs/superpowers/plans/2026-07-26-shift-management-ui-redesign.md` for the
-   approved terminal header and shift-interface redesign.
-2. Implement the visual changes without changing the confirmed shift lifecycle
-   or persistence behavior, then complete automated, browser, and user visual
-   acceptance checks.
-3. Perform the migration assessment for the finished UI slice. A display-only
-   result should require no new migration, but the final diff remains the
-   authority.
-4. Profile an immutable SQLite-safe production backup to resolve the older M001
+1. Profile an immutable SQLite-safe production backup to resolve the older M001
    legacy import-field deployment gate without guessing values.
-5. Rehearse the final release candidate and complete migration chain on a fresh
+2. Rehearse the final release candidate and complete migration chain on a fresh
    clone of a SQLite-safe production backup.
-6. Deploy the application and M002 together only after those gates, backup,
+3. Deploy the application and M002 together only after those gates, backup,
    integrity, foreign-key, application smoke, repeat-run, and rollback checks
    pass.
