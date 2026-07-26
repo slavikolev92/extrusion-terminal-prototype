@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from app import db, migrations
+from app.schema import cards_table_sql
 
 
 FINAL_IMPORT_COLUMNS = (
@@ -391,6 +392,46 @@ def add_recorded_m001_and_m002(database_path: Path) -> None:
         )
 
 
+def add_recorded_m003(database_path: Path) -> None:
+    add_recorded_m001_and_m002(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO schema_migrations (version, name) "
+            "VALUES (3, 'roll_pallet_assignment')"
+        )
+
+
+def add_partially_upgraded_rewinding_schema(
+    database_path: Path,
+    *,
+    count_definition: str = (
+        "INTEGER CHECK (rewinding_roll_count IS NULL OR "
+        "(typeof(rewinding_roll_count) = 'integer' "
+        "AND rewinding_roll_count BETWEEN 1 AND 999))"
+    ),
+    final_shift_definition: str = (
+        "INTEGER REFERENCES shift_occurrences(id) ON DELETE RESTRICT"
+    ),
+) -> None:
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "ALTER TABLE cards ADD COLUMN rewinding_roll_count "
+            f"{count_definition}"
+        )
+        connection.execute(
+            "ALTER TABLE cards ADD COLUMN final_extrusion_shift_occurrence_id "
+            f"{final_shift_definition}"
+        )
+
+
+def add_recorded_m004(database_path: Path) -> None:
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO schema_migrations (version, name) "
+            "VALUES (4, 'rewinding_return_workflow')"
+        )
+
+
 def add_partially_upgraded_pallet_schema(
     database_path: Path,
     *,
@@ -406,6 +447,22 @@ def add_partially_upgraded_pallet_schema(
             "ALTER TABLE roll_entries ADD COLUMN pallet_number "
             f"{roll_definition}"
         )
+
+
+def create_recorded_m003_database(database_path: Path) -> None:
+    create_legacy_database(database_path)
+    add_existing_final_values(database_path)
+    add_partially_upgraded_shift_schema(database_path)
+    add_partially_upgraded_pallet_schema(
+        database_path,
+        card_definition=(
+            "INTEGER " + PALLET_VALUE_CHECK.format(column="current_pallet_number")
+        ),
+        roll_definition=(
+            "INTEGER " + PALLET_VALUE_CHECK.format(column="pallet_number")
+        ),
+    )
+    add_recorded_m003(database_path)
 
 
 def clear_legacy_production_rows(database_path: Path) -> None:
@@ -515,16 +572,72 @@ def capture_m003_preservation_snapshot(
     }
     snapshot: dict[str, list[tuple[object, ...]]] = {}
     for table_name in table_names:
-        columns = tuple(
+        column_names = [
             row["name"]
             for row in connection.execute(
                 f"PRAGMA table_info({table_name})"
             ).fetchall()
-            if row["name"] not in {"current_pallet_number", "pallet_number"}
-        )
+            if row["name"] not in {
+                "current_pallet_number",
+                "pallet_number",
+                "rewinding_roll_count",
+                "final_extrusion_shift_occurrence_id",
+            }
+        ]
+        columns = tuple(sorted(column_names) if table_name == "cards" else column_names)
         query = (
             "SELECT " + ", ".join(columns) + f" FROM {table_name} "
         )
+        parameters: tuple[int, ...] = ()
+        if table_name == "machines" and legacy_machine_ids is not None:
+            query += "WHERE id IN (" + ", ".join("?" for _ in legacy_machine_ids) + ") "
+            parameters = legacy_machine_ids
+        query += f"ORDER BY {order_columns.get(table_name, 'id')}"
+        snapshot[table_name] = [
+            tuple(row)
+            for row in connection.execute(
+                query,
+                parameters,
+            ).fetchall()
+        ]
+    return snapshot
+
+
+def capture_m004_preservation_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    legacy_machine_ids: tuple[int, ...] | None = None,
+) -> dict[str, list[tuple[object, ...]]]:
+    table_names = (
+        "cards",
+        "card_import_sources",
+        "roll_entries",
+        "recipe_actual_entries",
+        "recipe_components",
+        "production_time_segments",
+        "machines",
+        "terminal_configuration",
+        "shift_occurrences",
+        "schema_migrations",
+    )
+    order_columns = {
+        "card_import_sources": "card_id",
+        "schema_migrations": "version",
+    }
+    snapshot: dict[str, list[tuple[object, ...]]] = {}
+    for table_name in table_names:
+        column_names = [
+            row["name"]
+            for row in connection.execute(
+                f"PRAGMA table_info({table_name})"
+            ).fetchall()
+            if row["name"] not in {
+                "rewinding_roll_count",
+                "final_extrusion_shift_occurrence_id",
+            }
+        ]
+        columns = tuple(sorted(column_names) if table_name == "cards" else column_names)
+        query = "SELECT " + ", ".join(columns) + f" FROM {table_name} "
         parameters: tuple[int, ...] = ()
         if table_name == "machines" and legacy_machine_ids is not None:
             query += "WHERE id IN (" + ", ".join("?" for _ in legacy_machine_ids) + ") "
@@ -609,9 +722,12 @@ def test_m002_adds_shift_schema_without_attributing_legacy_rolls(
         (1, "shift_manager_import_fields"),
         (2, "shift_management"),
         (3, "roll_pallet_assignment"),
+        (4, "rewinding_return_workflow"),
     ]
     assert configuration == {"id": 1, "shift_count": 4, "version": 1}
     assert roll["shift_occurrence_id"] is None
+    assert card["rewinding_roll_count"] is None
+    assert card["final_extrusion_shift_occurrence_id"] is None
     assert [card[column] for column in FINAL_IMPORT_COLUMNS] == [None] * 8
     assert [source[column] for column in FINAL_IMPORT_COLUMNS] == [None] * 8
     assert [imported_card[column] for column in FINAL_IMPORT_COLUMNS] == [None] * 8
@@ -788,6 +904,7 @@ def test_m002_preserves_existing_attribution_in_partially_upgraded_schema(
         (1, "shift_manager_import_fields"),
         (2, "shift_management"),
         (3, "roll_pallet_assignment"),
+        (4, "rewinding_return_workflow"),
     ]
     assert integrity == "ok"
     assert foreign_key_violations == []
@@ -916,11 +1033,14 @@ def test_m003_adds_nullable_pallet_columns_without_backfilling_legacy_data(
     second_migration_rows = second_snapshot.pop("schema_migrations")
     assert first_snapshot == before_snapshot
     assert second_snapshot == first_snapshot
-    assert first_migration_rows[:-1] == prior_migration_rows
+    assert first_migration_rows[:-2] == prior_migration_rows
     assert second_migration_rows == first_migration_rows
     assert legacy_card["current_pallet_number"] is None
     assert legacy_roll["pallet_number"] is None
-    assert migration_rows[-1] == {"version": 3, "name": "roll_pallet_assignment"}
+    assert migration_rows[-2:] == [
+        {"version": 3, "name": "roll_pallet_assignment"},
+        {"version": 4, "name": "rewinding_return_workflow"},
+    ]
     assert integrity == "ok"
     assert foreign_key_violations == []
 
@@ -972,6 +1092,7 @@ def test_m003_accepts_a_valid_partially_upgraded_schema_and_preserves_values(
         (1, "shift_manager_import_fields"),
         (2, "shift_management"),
         (3, "roll_pallet_assignment"),
+        (4, "rewinding_return_workflow"),
     ]
     assert second_rows == first_rows
     assert second_snapshot == first_snapshot
@@ -1139,6 +1260,7 @@ def test_m003_accepts_equivalent_nullable_pallet_constraints_and_preserves_value
         (1, "shift_manager_import_fields"),
         (2, "shift_management"),
         (3, "roll_pallet_assignment"),
+        (4, "rewinding_return_workflow"),
     ]
 
 
@@ -1221,7 +1343,7 @@ def test_m003_rejects_semantically_non_equivalent_pallet_constraints(
     ]
 
 
-def test_fresh_database_records_m001_m002_and_m003_once_with_schema_parity(
+def test_fresh_database_records_migrations_once_with_schema_parity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1280,10 +1402,9 @@ def test_fresh_database_records_m001_m002_and_m003_once_with_schema_parity(
         second_rows = connection.execute(
             "SELECT version, name FROM schema_migrations ORDER BY version"
         ).fetchall()
-        card_columns = [
-            row["name"]
-            for row in connection.execute("PRAGMA table_info(cards)").fetchall()
-        ]
+        card_column_rows = connection.execute("PRAGMA table_info(cards)").fetchall()
+        card_columns = [row["name"] for row in card_column_rows]
+        columns = {row["name"]: row for row in card_column_rows}
         source_columns = {
             row["name"]
             for row in connection.execute(
@@ -1307,24 +1428,46 @@ def test_fresh_database_records_m001_m002_and_m003_once_with_schema_parity(
             "card_id",
             int(card_id),
         )
+        card_foreign_keys = connection.execute(
+            "PRAGMA foreign_key_list(cards)"
+        ).fetchall()
+        foreign_keys_enabled = connection.execute(
+            "PRAGMA foreign_keys"
+        ).fetchone()[0]
 
     assert [(row["version"], row["name"]) for row in first_rows] == [
         (1, "shift_manager_import_fields"),
         (2, "shift_management"),
         (3, "roll_pallet_assignment"),
+        (4, "rewinding_return_workflow"),
     ]
     assert [(row["version"], row["name"]) for row in second_rows] == [
         (1, "shift_manager_import_fields"),
         (2, "shift_management"),
         (3, "roll_pallet_assignment"),
+        (4, "rewinding_return_workflow"),
     ]
     assert configuration == {"id": 1, "shift_count": 4, "version": 1}
     assert set(FINAL_IMPORT_COLUMNS).issubset(card_columns)
+    assert columns["rewinding_roll_count"]["type"] == "INTEGER"
+    assert columns["rewinding_roll_count"]["notnull"] == 0
+    assert columns["rewinding_roll_count"]["dflt_value"] is None
+    assert columns["final_extrusion_shift_occurrence_id"]["type"] == "INTEGER"
+    assert columns["final_extrusion_shift_occurrence_id"]["notnull"] == 0
+    assert columns["final_extrusion_shift_occurrence_id"]["dflt_value"] is None
     assert set(FINAL_IMPORT_COLUMNS).issubset(source_columns)
     assert "shift_occurrence_id" in roll_columns
     assert card_columns.index("current_pallet_number") == card_columns.index("tare_weight") + 1
     assert roll_columns.index("pallet_number") == roll_columns.index("net_weight") + 1
     assert {"terminal_configuration", "shift_occurrences"}.issubset(shift_tables)
+    assert any(
+        row["table"] == "shift_occurrences"
+        and row["from"] == "final_extrusion_shift_occurrence_id"
+        and row["to"] == "id"
+        and row["on_delete"] == "RESTRICT"
+        for row in card_foreign_keys
+    )
+    assert foreign_keys_enabled == 1
     assert [card[column] for column in FINAL_IMPORT_COLUMNS] == [
         "700",
         "40",
@@ -1345,6 +1488,432 @@ def test_fresh_database_records_m001_m002_and_m003_once_with_schema_parity(
         "3",
         "4",
     ]
+
+
+def test_m004_enforces_rewinding_count_status_and_final_shift_foreign_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m004-constraints.sqlite3"
+    configure_database(monkeypatch, database_path)
+    db.init_db()
+
+    with db.connect() as connection:
+        shift_id = connection.execute(
+            "INSERT INTO shift_occurrences (shift_number, started_at) "
+            "VALUES (1, '2026-07-26 06:00:00')"
+        ).lastrowid
+        card_id = connection.execute(
+            "INSERT INTO cards (order_number) VALUES ('REWIND-VALID')"
+        ).lastrowid
+        connection.execute(
+            "UPDATE cards SET rewinding_roll_count = 1 WHERE id = ?",
+            (card_id,),
+        )
+        connection.execute(
+            "UPDATE cards SET status = ? WHERE id = ?",
+            ("awaiting_rewinding", card_id),
+        )
+        connection.execute(
+            "UPDATE cards SET final_extrusion_shift_occurrence_id = ? WHERE id = ?",
+            (shift_id, card_id),
+        )
+
+        for invalid_count in (0, -1, 1000, 1.5, "invalid"):
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(
+                    "UPDATE cards SET rewinding_roll_count = ? WHERE id = ?",
+                    (invalid_count, card_id),
+                )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE cards SET status = 'unknown' WHERE id = ?",
+                (card_id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE cards SET final_extrusion_shift_occurrence_id = 999 "
+                "WHERE id = ?",
+                (card_id,),
+            )
+
+        stored = connection.execute(
+            "SELECT status, rewinding_roll_count, "
+            "final_extrusion_shift_occurrence_id FROM cards WHERE id = ?",
+            (card_id,),
+        ).fetchone()
+
+    assert tuple(stored) == ("awaiting_rewinding", 1, shift_id)
+
+
+def test_m004_upgrades_recorded_m003_without_inference_and_preserves_all_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m004-recorded-m003.sqlite3"
+    create_recorded_m003_database(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            "ALTER TABLE cards ADD COLUMN legacy_extension VARCHAR(32)"
+        )
+        connection.execute(
+            'ALTER TABLE cards ADD COLUMN legacy_unsafe "WEIRD; TYPE"'
+        )
+        connection.execute(
+            "UPDATE cards SET current_pallet_number = 17, "
+            "legacy_extension = 'preserved', legacy_unsafe = 'safe fallback' "
+            "WHERE id = 1"
+        )
+        connection.execute("UPDATE roll_entries SET pallet_number = 18 WHERE id = 1")
+        legacy_machine_ids = tuple(
+            int(row[0])
+            for row in connection.execute("SELECT id FROM machines ORDER BY id")
+        )
+        before = capture_m004_preservation_snapshot(
+            connection,
+            legacy_machine_ids=legacy_machine_ids,
+        )
+    prior_migrations = before.pop("schema_migrations")
+    configure_database(monkeypatch, database_path)
+
+    db.init_db()
+
+    with db.connect() as connection:
+        after = capture_m004_preservation_snapshot(
+            connection,
+            legacy_machine_ids=legacy_machine_ids,
+        )
+        card = read_row(connection, "cards", "id", 1)
+        column_types = {
+            row["name"]: row["type"]
+            for row in connection.execute("PRAGMA table_info(cards)").fetchall()
+        }
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        foreign_key_violations = connection.execute(
+            "PRAGMA foreign_key_check"
+        ).fetchall()
+
+    migration_rows = after.pop("schema_migrations")
+    assert after == before
+    assert migration_rows[:-1] == prior_migrations
+    assert migration_rows[-1][:2] == (4, "rewinding_return_workflow")
+    assert card["rewinding_roll_count"] is None
+    assert card["final_extrusion_shift_occurrence_id"] is None
+    assert card["current_pallet_number"] == 17
+    assert card["legacy_extension"] == "preserved"
+    assert card["legacy_unsafe"] == "safe fallback"
+    assert column_types["legacy_extension"] == "VARCHAR(32)"
+    assert column_types["legacy_unsafe"] == "TEXT"
+    assert integrity == "ok"
+    assert foreign_key_violations == []
+
+
+def test_m004_upgrades_sparse_legacy_cards_before_creating_card_indexes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m004-sparse-legacy.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE cards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_number TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'imported',
+                raw_material_a TEXT
+            );
+            INSERT INTO cards (order_number, raw_material_a)
+            VALUES ('SPARSE-LEGACY-1', 'LDPE Legacy A | 100%');
+            """
+        )
+    configure_database(monkeypatch, database_path)
+
+    db.init_db()
+
+    with db.connect() as connection:
+        card = read_row(connection, "cards", "id", 1)
+        card_indexes = {
+            row["name"]
+            for row in connection.execute("PRAGMA index_list(cards)").fetchall()
+        }
+        migration_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+
+    assert card["order_number"] == "SPARSE-LEGACY-1"
+    assert card["raw_material_a"] == "LDPE Legacy A | 100%"
+    assert card["rewinding_roll_count"] is None
+    assert {
+        "idx_cards_one_running_per_machine",
+        "idx_cards_active_machine_sequence",
+        "idx_cards_status_machine_sequence",
+    }.issubset(card_indexes)
+    assert tuple(migration_rows[-1]) == (4, "rewinding_return_workflow")
+
+
+def test_m004_preserves_valid_partially_deployed_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m004-valid-partial.sqlite3"
+    create_recorded_m003_database(database_path)
+    add_partially_upgraded_rewinding_schema(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE cards SET rewinding_roll_count = 12, "
+            "final_extrusion_shift_occurrence_id = 1 WHERE id = 1"
+        )
+    configure_database(monkeypatch, database_path)
+
+    db.init_db()
+
+    with db.connect() as connection:
+        card = read_row(connection, "cards", "id", 1)
+        migration_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+
+    assert card["rewinding_roll_count"] == 12
+    assert card["final_extrusion_shift_occurrence_id"] == 1
+    assert tuple(migration_rows[-1]) == (4, "rewinding_return_workflow")
+
+
+def test_m004_preserves_cards_autoincrement_high_water_mark(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m004-autoincrement.sqlite3"
+    create_recorded_m003_database(database_path)
+    with sqlite3.connect(database_path) as connection:
+        deleted_id = connection.execute(
+            "INSERT INTO cards (order_number) VALUES ('DELETED-HIGH-WATER')"
+        ).lastrowid
+        connection.execute("DELETE FROM cards WHERE id = ?", (deleted_id,))
+        sequence_before = connection.execute(
+            "SELECT seq FROM sqlite_sequence WHERE name = 'cards'"
+        ).fetchone()[0]
+    configure_database(monkeypatch, database_path)
+
+    db.init_db()
+
+    with db.connect() as connection:
+        inserted_id = connection.execute(
+            "INSERT INTO cards (order_number) VALUES ('AFTER-M004')"
+        ).lastrowid
+
+    assert sequence_before == deleted_id
+    assert inserted_id > deleted_id
+
+
+def test_recorded_m004_rejects_status_constraint_missing_canonical_statuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "recorded-m004-narrow-statuses.sqlite3"
+    configure_database(monkeypatch, database_path)
+    db.init_db()
+
+    canonical_status_sql = (
+        "status TEXT NOT NULL DEFAULT 'imported' CHECK (status IN "
+        "('imported', 'pending', 'running', 'paused', 'completed', 'archived', "
+        "'cancelled', 'awaiting_rewinding'))"
+    )
+    narrow_status_sql = (
+        "status TEXT NOT NULL DEFAULT 'imported' CHECK (status IN "
+        "('imported', 'awaiting_rewinding'))"
+    )
+    narrow_table_sql = cards_table_sql(
+        "cards_narrow_status",
+        if_not_exists=False,
+    ).replace(canonical_status_sql, narrow_status_sql)
+    assert narrow_table_sql != cards_table_sql(
+        "cards_narrow_status",
+        if_not_exists=False,
+    )
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute(narrow_table_sql)
+        connection.execute("DROP TABLE cards")
+        connection.execute("ALTER TABLE cards_narrow_status RENAME TO cards")
+
+    with pytest.raises(RuntimeError, match="status.*canonical"):
+        db.init_db()
+
+
+@pytest.mark.parametrize(
+    "invalid_kind",
+    ("count", "dangling-final-shift"),
+)
+def test_m004_rejects_invalid_partially_deployed_data_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_kind: str,
+) -> None:
+    database_path = tmp_path / f"m004-invalid-partial-{invalid_kind}.sqlite3"
+    create_recorded_m003_database(database_path)
+    add_partially_upgraded_rewinding_schema(
+        database_path,
+        count_definition="INTEGER",
+    )
+    with sqlite3.connect(database_path) as connection:
+        if invalid_kind == "count":
+            connection.execute(
+                "UPDATE cards SET rewinding_roll_count = 0 WHERE id = 1"
+            )
+        else:
+            connection.execute(
+                "UPDATE cards SET final_extrusion_shift_occurrence_id = 999 "
+                "WHERE id = 1"
+            )
+    configure_database(monkeypatch, database_path)
+
+    with pytest.raises((RuntimeError, sqlite3.IntegrityError)):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        card = connection.execute(
+            "SELECT rewinding_roll_count, final_extrusion_shift_occurrence_id "
+            "FROM cards WHERE id = 1"
+        ).fetchone()
+        migration_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+
+    expected = (0, None) if invalid_kind == "count" else (None, 999)
+    assert card == expected
+    assert migration_rows[-1] == (3, "roll_pallet_assignment")
+
+
+@pytest.mark.parametrize(
+    ("malformation", "error_match"),
+    (
+        ("missing-final-column", "final_extrusion_shift_occurrence_id.*missing"),
+        ("count-without-constraint", "rewinding_roll_count.*constraint"),
+        ("final-shift-without-foreign-key", "final_extrusion.*foreign key"),
+        ("status-without-awaiting", "status.*awaiting_rewinding"),
+    ),
+)
+def test_init_rejects_recorded_m004_with_malformed_cards_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    malformation: str,
+    error_match: str,
+) -> None:
+    database_path = tmp_path / f"recorded-m004-{malformation}.sqlite3"
+    create_recorded_m003_database(database_path)
+    if malformation == "missing-final-column":
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                "ALTER TABLE cards ADD COLUMN rewinding_roll_count "
+                + "INTEGER "
+                + PALLET_VALUE_CHECK.format(column="rewinding_roll_count")
+            )
+    else:
+        add_partially_upgraded_rewinding_schema(
+            database_path,
+            count_definition=(
+                "INTEGER"
+                if malformation == "count-without-constraint"
+                else "INTEGER "
+                + PALLET_VALUE_CHECK.format(column="rewinding_roll_count")
+            ),
+            final_shift_definition=(
+                "INTEGER"
+                if malformation == "final-shift-without-foreign-key"
+                else "INTEGER REFERENCES shift_occurrences(id) ON DELETE RESTRICT"
+            ),
+        )
+    add_recorded_m004(database_path)
+    configure_database(monkeypatch, database_path)
+
+    with pytest.raises(RuntimeError, match=error_match):
+        db.init_db()
+
+
+def test_m004_failure_after_cards_copy_rolls_back_schema_data_and_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m004-failure-after-copy.sqlite3"
+    create_recorded_m003_database(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("ALTER TABLE cards ADD COLUMN legacy_extension TEXT")
+        connection.execute(
+            "UPDATE cards SET legacy_extension = 'still here' WHERE id = 1"
+        )
+        original_schema = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cards'"
+        ).fetchone()[0]
+    configure_database(monkeypatch, database_path)
+    startup_connection = sqlite3.connect(database_path)
+    startup_connection.row_factory = sqlite3.Row
+    startup_connection.execute("PRAGMA foreign_keys = ON")
+    monkeypatch.setattr(db, "connect", lambda: startup_connection)
+    monkeypatch.setattr(
+        migrations,
+        "CARD_INDEX_SQL",
+        (*migrations.CARD_INDEX_SQL, "CREATE INDEX"),
+    )
+
+    with pytest.raises(sqlite3.OperationalError):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        restored_schema = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cards'"
+        ).fetchone()[0]
+        card = connection.execute(
+            "SELECT status, machine_id, machine_sequence, version, "
+            "legacy_extension FROM cards WHERE id = 1"
+        ).fetchone()
+        migration_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+        temporary_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cards_m004'"
+        ).fetchone()
+    foreign_keys_enabled = startup_connection.execute(
+        "PRAGMA foreign_keys"
+    ).fetchone()[0]
+    startup_connection.close()
+
+    assert restored_schema == original_schema
+    assert card == ("running", 1, 1, 7, "still here")
+    assert migration_rows[-1] == (3, "roll_pallet_assignment")
+    assert temporary_table is None
+    assert foreign_keys_enabled == 1
+
+
+def test_apply_startup_migrations_restores_foreign_keys_after_success_and_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "startup-foreign-keys.sqlite3"
+    configure_database(monkeypatch, database_path)
+    db.init_db()
+
+    with db.connect() as connection:
+        assert migrations.apply_startup_migrations(connection) == ()
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+        def fail_validation(_connection: sqlite3.Connection) -> None:
+            raise RuntimeError("injected startup validation failure")
+
+        monkeypatch.setattr(
+            migrations,
+            "validate_rewinding_schema",
+            fail_validation,
+        )
+        with pytest.raises(
+            RuntimeError,
+            match="injected startup validation failure",
+        ):
+            migrations.apply_startup_migrations(connection)
+
+        assert connection.in_transaction is False
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
 def test_m003_enforces_integer_pallet_range_on_cards_and_rolls(

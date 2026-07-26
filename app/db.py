@@ -10,7 +10,6 @@ from typing import Any
 from .constants import (
     ACTIVE_TERMINAL_STATUSES,
     ARCHIVE_STATUSES,
-    CARD_STATUSES,
     PRODUCTION_COMPLETE_STATUSES,
     STATUS_ARCHIVED,
     STATUS_CANCELLED,
@@ -22,9 +21,8 @@ from .constants import (
     TERMINAL_VISIBLE_STATUSES,
 )
 from .migrations import (
-    apply_pending_migrations,
-    validate_roll_pallet_schema,
-    validate_shift_management_schema,
+    apply_startup_migrations,
+    ensure_foreign_keys_valid,
 )
 from .recipe_parser import (
     RECIPE_SOURCE_FIELDS,
@@ -33,6 +31,7 @@ from .recipe_parser import (
     parse_recipe_source_fields,
 )
 from .rules import RECIPE_RELEASE_FIELD_LABELS, RuleResult, validate_structured_recipe_release
+from .schema import CARD_INDEX_SQL, _quote_identifier, cards_table_sql
 
 STALE_CARD_MESSAGE = "Картата е променена след зареждането на страницата. Презаредете и опитайте отново."
 STALE_SHIFT_MESSAGE = "Данните за смяната са променени. Презаредете терминала."
@@ -98,69 +97,6 @@ CARD_IMPORT_SOURCE_FIELDS = (
 
 def _sql_text_columns(values: tuple[str, ...]) -> str:
     return ",\n    ".join(f"{value} TEXT" for value in values)
-
-
-def cards_table_sql(table_name: str = "cards", if_not_exists: bool = True) -> str:
-    create_clause = "CREATE TABLE IF NOT EXISTS" if if_not_exists else "CREATE TABLE"
-    return f"""
-{create_clause} {table_name} (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    order_number TEXT NOT NULL UNIQUE,
-    status TEXT NOT NULL DEFAULT 'imported' CHECK (status IN ({_sql_list(CARD_STATUSES)})),
-    import_batch_id INTEGER REFERENCES import_batches(id) ON DELETE SET NULL,
-    machine_id INTEGER REFERENCES machines(id) ON DELETE RESTRICT,
-    machine_sequence INTEGER,
-
-    order_date TEXT,
-    delivery_date TEXT,
-    customer TEXT,
-    city TEXT,
-    product_type TEXT,
-    ordered_gross_kg TEXT,
-    ordered_rolls TEXT,
-    ordered_meters TEXT,
-    ordered_units TEXT,
-    product_form TEXT,
-    material TEXT,
-    max_roll_weight TEXT,
-    size_thickness TEXT,
-    notes TEXT,
-
-    printing_sequence TEXT,
-    extrusion_sequence TEXT,
-    rewinding_slitting_sequence TEXT,
-    confection_sequence TEXT,
-    extrusion_folding TEXT,
-    extrusion_next_operation TEXT,
-    extrusion_treatment TEXT,
-    raw_material_a TEXT,
-    raw_material_b TEXT,
-    raw_material_c TEXT,
-    linear_pe TEXT,
-    antistatic TEXT,
-    masterbatch TEXT,
-    chalk TEXT,
-    packaging_method TEXT,
-
-    actual_raw_material_used TEXT,
-    raw_material_brand_grade TEXT,
-    raw_material_batch_lot TEXT,
-    tare_weight NUMERIC CHECK (tare_weight IS NULL OR tare_weight >= 0),
-    current_pallet_number INTEGER CHECK (
-        current_pallet_number IS NULL OR (
-            typeof(current_pallet_number) = 'integer'
-            AND current_pallet_number BETWEEN 1 AND 999
-        )
-    ),
-
-    first_started_at TEXT,
-    finished_at TEXT,
-    cancelled_at TEXT,
-    version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-"""
 
 
 SCHEMA_SQL = f"""
@@ -263,19 +199,6 @@ CREATE TABLE IF NOT EXISTS production_time_segments (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CHECK (ended_at IS NULL OR ended_at >= started_at)
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_cards_one_running_per_machine
-ON cards(machine_id)
-WHERE status = 'running' AND machine_id IS NOT NULL;
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_cards_active_machine_sequence
-ON cards(machine_id, machine_sequence)
-WHERE status IN ({_sql_list(ACTIVE_TERMINAL_STATUSES)})
-  AND machine_id IS NOT NULL
-  AND machine_sequence IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_cards_status_machine_sequence
-ON cards(status, machine_id, machine_sequence);
 
 CREATE INDEX IF NOT EXISTS idx_card_import_sources_order_number
 ON card_import_sources(order_number);
@@ -743,33 +666,16 @@ def end_shift(shift_occurrence_id: int, loaded_version: int) -> RuleResult:
 
 def init_db() -> None:
     with connect() as connection:
-        existing_cards_table = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cards'"
-        ).fetchone()
-        cards_status_migrated_before_schema = False
-        if existing_cards_table:
-            cards_status_migrated_before_schema = ensure_cards_status_constraint(
-                connection,
-                validate_foreign_keys=False,
-            )
         connection.executescript(SCHEMA_SQL)
         seed_fixed_machines(connection)
-        ensure_cards_status_constraint(connection)
-        if cards_status_migrated_before_schema:
-            ensure_foreign_keys_valid(
-                connection,
-                "cards status migration failed foreign key check",
-            )
         ensure_recipe_components_material_category_constraint(connection)
         connection.executescript(SCHEMA_SQL)
         # Existing pilot databases may still have legacy cards.validation_status;
         # current code ignores it and validates current card fields directly.
         ensure_column(connection, "cards", "max_roll_weight", "TEXT")
-        if not connection.in_transaction:
-            connection.execute("BEGIN")
-        apply_pending_migrations(connection)
-        validate_shift_management_schema(connection)
-        validate_roll_pallet_schema(connection)
+        apply_startup_migrations(connection)
+        for index_sql in CARD_INDEX_SQL:
+            connection.execute(index_sql)
         ensure_roll_entry_tare_weight(connection)
         backfill_card_import_sources(connection)
         ensure_column(
@@ -852,89 +758,6 @@ def ensure_roll_entry_tare_weight(connection: sqlite3.Connection) -> None:
     )
 
 
-def _quote_identifier(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
-
-
-def _legacy_column_type_sql(declared_type: Any) -> str:
-    column_type = str(declared_type or "").strip()
-    if not column_type:
-        return "TEXT"
-    safe_type_characters = (
-        character.isascii() and (character.isalnum() or character in " _()")
-        for character in column_type
-    )
-    if not all(safe_type_characters):
-        return "TEXT"
-    return column_type
-
-
-def ensure_cards_status_constraint(
-    connection: sqlite3.Connection,
-    *,
-    validate_foreign_keys: bool = True,
-) -> bool:
-    schema_row = connection.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cards'"
-    ).fetchone()
-    schema_sql = str(schema_row["sql"] or "") if schema_row else ""
-    if f"'{STATUS_ARCHIVED}'" in schema_sql:
-        return False
-
-    connection.commit()
-    connection.execute("PRAGMA foreign_keys = OFF")
-    try:
-        connection.execute("DROP TABLE IF EXISTS cards_status_migration")
-        connection.execute(cards_table_sql("cards_status_migration", if_not_exists=False))
-
-        legacy_column_info = connection.execute("PRAGMA table_info(cards)").fetchall()
-        legacy_columns = {row["name"]: row for row in legacy_column_info}
-        target_columns = {
-            row["name"]
-            for row in connection.execute(
-                "PRAGMA table_info(cards_status_migration)"
-            ).fetchall()
-        }
-        for column_name, column_info in legacy_columns.items():
-            if column_name in target_columns:
-                continue
-            connection.execute(
-                f"""
-                ALTER TABLE cards_status_migration
-                ADD COLUMN {_quote_identifier(column_name)} {_legacy_column_type_sql(column_info["type"])}
-                """
-            )
-            target_columns.add(column_name)
-
-        copy_columns = [
-            row["name"]
-            for row in connection.execute(
-                "PRAGMA table_info(cards_status_migration)"
-            ).fetchall()
-            if row["name"] in legacy_columns
-        ]
-        column_sql = ", ".join(_quote_identifier(column) for column in copy_columns)
-        connection.execute(
-            f"""
-            INSERT INTO cards_status_migration ({column_sql})
-            SELECT {column_sql}
-            FROM cards
-            """
-        )
-        connection.execute("DROP TABLE cards")
-        connection.execute("ALTER TABLE cards_status_migration RENAME TO cards")
-        connection.commit()
-    finally:
-        connection.execute("PRAGMA foreign_keys = ON")
-
-    if validate_foreign_keys:
-        ensure_foreign_keys_valid(
-            connection,
-            "cards status migration failed foreign key check",
-        )
-    return True
-
-
 def ensure_recipe_components_material_category_constraint(
     connection: sqlite3.Connection,
 ) -> bool:
@@ -1000,15 +823,6 @@ def ensure_recipe_components_material_category_constraint(
         "recipe_components category migration failed foreign key check",
     )
     return True
-
-
-def ensure_foreign_keys_valid(
-    connection: sqlite3.Connection,
-    message: str,
-) -> None:
-    violations = connection.execute("PRAGMA foreign_key_check").fetchall()
-    if violations:
-        raise sqlite3.IntegrityError(message)
 
 
 def backfill_card_import_sources(connection: sqlite3.Connection) -> None:

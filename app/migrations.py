@@ -4,6 +4,14 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from .constants import CARD_STATUSES, STATUS_AWAITING_REWINDING
+from .schema import (
+    CARD_INDEX_SQL,
+    _quote_identifier,
+    cards_table_sql,
+    extend_cards_rebuild_target,
+)
+
 
 @dataclass(frozen=True)
 class Migration:
@@ -79,10 +87,6 @@ def _pallet_column_definition(column_name: str) -> str:
         f"(typeof({column_name}) = 'integer' AND {column_name} BETWEEN 1 AND 999)"
         ")"
     )
-
-
-def _quote_identifier(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
 
 
 def _table_columns(
@@ -479,6 +483,174 @@ def validate_roll_pallet_schema(connection: sqlite3.Connection) -> None:
             )
 
 
+def _rewinding_column_has_required_metadata(
+    connection: sqlite3.Connection,
+    column_name: str,
+) -> bool:
+    column = next(
+        (
+            row
+            for row in connection.execute("PRAGMA table_info(cards)").fetchall()
+            if str(row[1]) == column_name
+        ),
+        None,
+    )
+    return (
+        column is not None
+        and str(column[2]).strip().upper() == "INTEGER"
+        and int(column[3]) == 0
+        and column[4] is None
+    )
+
+
+def _final_extrusion_shift_foreign_key_is_valid(
+    connection: sqlite3.Connection,
+) -> bool:
+    return any(
+        str(row[2]) == "shift_occurrences"
+        and str(row[3]) == "final_extrusion_shift_occurrence_id"
+        and str(row[4]) == "id"
+        and str(row[6]).upper() == "RESTRICT"
+        for row in connection.execute("PRAGMA foreign_key_list(cards)").fetchall()
+    )
+
+
+def _validate_rewinding_constraints(connection: sqlite3.Connection) -> None:
+    savepoint_name = "validate_rewinding_constraints"
+    connection.execute(f"SAVEPOINT {savepoint_name}")
+    try:
+        probe_suffix = connection.execute(
+            "SELECT lower(hex(randomblob(16)))"
+        ).fetchone()[0]
+        card_id = connection.execute(
+            "INSERT INTO cards (order_number) VALUES (?)",
+            (f"__m004_rewinding_probe_{probe_suffix}",),
+        ).lastrowid
+
+        for value in (None, 1, 42, 999, "1"):
+            try:
+                connection.execute(
+                    "UPDATE cards SET rewinding_roll_count = ? WHERE id = ?",
+                    (value, card_id),
+                )
+            except sqlite3.IntegrityError as error:
+                raise RuntimeError(
+                    "cards.rewinding_roll_count lacks the required constraint"
+                ) from error
+
+        for value in (0, -1, 1000, 1.5, "invalid", b"1"):
+            try:
+                connection.execute(
+                    "UPDATE cards SET rewinding_roll_count = ? WHERE id = ?",
+                    (value, card_id),
+                )
+            except sqlite3.IntegrityError:
+                continue
+            raise RuntimeError(
+                "cards.rewinding_roll_count lacks the required constraint"
+            )
+
+        for status in CARD_STATUSES:
+            try:
+                connection.execute(
+                    "UPDATE cards SET status = ? WHERE id = ?",
+                    (status, card_id),
+                )
+            except sqlite3.IntegrityError as error:
+                if status == STATUS_AWAITING_REWINDING:
+                    message = (
+                        "cards status constraint must accept awaiting_rewinding"
+                    )
+                else:
+                    message = (
+                        "cards status constraint must accept canonical status "
+                        f"{status!r}"
+                    )
+                raise RuntimeError(message) from error
+
+        try:
+            connection.execute(
+                "UPDATE cards SET status = 'unknown' WHERE id = ?",
+                (card_id,),
+            )
+        except sqlite3.IntegrityError:
+            pass
+        else:
+            raise RuntimeError(
+                "cards status constraint must reject unknown and accept "
+                "awaiting_rewinding"
+            )
+    finally:
+        connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
+        connection.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+
+
+def ensure_foreign_keys_valid(
+    connection: sqlite3.Connection,
+    message: str,
+) -> None:
+    violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise sqlite3.IntegrityError(message)
+
+
+def validate_rewinding_schema(connection: sqlite3.Connection) -> None:
+    columns = _table_columns(connection, "cards")
+    for column_name in (
+        "rewinding_roll_count",
+        "final_extrusion_shift_occurrence_id",
+    ):
+        if columns is None or column_name not in columns:
+            raise RuntimeError(f"cards.{column_name} is missing after M004")
+        if not _rewinding_column_has_required_metadata(connection, column_name):
+            raise RuntimeError(
+                f"cards.{column_name} must be nullable, defaultless INTEGER"
+            )
+
+    if not _final_extrusion_shift_foreign_key_is_valid(connection):
+        raise RuntimeError(
+            "cards.final_extrusion_shift_occurrence_id exists without the required "
+            "foreign key to shift_occurrences(id)"
+        )
+
+    invalid_count = connection.execute(
+        """
+        SELECT 1
+        FROM cards
+        WHERE rewinding_roll_count IS NOT NULL
+          AND (
+              typeof(rewinding_roll_count) != 'integer'
+              OR rewinding_roll_count NOT BETWEEN 1 AND 999
+          )
+        LIMIT 1
+        """
+    ).fetchone()
+    if invalid_count is not None:
+        raise RuntimeError("cards.rewinding_roll_count contains an invalid value")
+
+    dangling_shift = connection.execute(
+        """
+        SELECT 1
+        FROM cards
+        LEFT JOIN shift_occurrences
+          ON shift_occurrences.id = cards.final_extrusion_shift_occurrence_id
+        WHERE cards.final_extrusion_shift_occurrence_id IS NOT NULL
+          AND shift_occurrences.id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if dangling_shift is not None:
+        raise RuntimeError(
+            "cards.final_extrusion_shift_occurrence_id contains a dangling value"
+        )
+
+    _validate_rewinding_constraints(connection)
+    ensure_foreign_keys_valid(
+        connection,
+        "rewinding schema foreign key check failed",
+    )
+
+
 def _apply_shift_manager_import_fields(connection: sqlite3.Connection) -> None:
     for table_name in ("cards", "card_import_sources"):
         _add_final_import_columns(connection, table_name)
@@ -522,10 +694,60 @@ def _apply_roll_pallet_assignment(connection: sqlite3.Connection) -> None:
     validate_roll_pallet_schema(connection)
 
 
+def apply_m004_rewinding_return_workflow(
+    connection: sqlite3.Connection,
+) -> None:
+    source_sequence_row = connection.execute(
+        "SELECT seq FROM sqlite_sequence WHERE name = 'cards'"
+    ).fetchone()
+    source_sequence = (
+        int(source_sequence_row[0]) if source_sequence_row is not None else None
+    )
+    connection.execute(cards_table_sql("cards_m004", if_not_exists=False))
+    copy_columns = extend_cards_rebuild_target(
+        connection,
+        "cards",
+        "cards_m004",
+    )
+    column_sql = ", ".join(
+        _quote_identifier(column_name) for column_name in copy_columns
+    )
+    connection.execute(
+        f"INSERT INTO cards_m004 ({column_sql}) "
+        f"SELECT {column_sql} FROM cards"
+    )
+    connection.execute("DROP TABLE cards")
+    connection.execute("ALTER TABLE cards_m004 RENAME TO cards")
+    replacement_sequence_row = connection.execute(
+        "SELECT seq FROM sqlite_sequence WHERE name = 'cards'"
+    ).fetchone()
+    replacement_sequence = (
+        int(replacement_sequence_row[0])
+        if replacement_sequence_row is not None
+        else None
+    )
+    if source_sequence is not None and (
+        replacement_sequence is None or source_sequence > replacement_sequence
+    ):
+        if replacement_sequence_row is None:
+            connection.execute(
+                "INSERT INTO sqlite_sequence (name, seq) VALUES ('cards', ?)",
+                (source_sequence,),
+            )
+        else:
+            connection.execute(
+                "UPDATE sqlite_sequence SET seq = ? WHERE name = 'cards'",
+                (source_sequence,),
+            )
+    for index_sql in CARD_INDEX_SQL:
+        connection.execute(index_sql)
+
+
 MIGRATIONS = (
     Migration(1, "shift_manager_import_fields", _apply_shift_manager_import_fields),
     Migration(2, "shift_management", _apply_shift_management),
     Migration(3, "roll_pallet_assignment", _apply_roll_pallet_assignment),
+    Migration(4, "rewinding_return_workflow", apply_m004_rewinding_return_workflow),
 )
 
 
@@ -611,3 +833,27 @@ def apply_pending_migrations(
         connection.execute(f"RELEASE SAVEPOINT {savepoint_name}")
 
     return tuple(applied_versions)
+
+
+def apply_startup_migrations(
+    connection: sqlite3.Connection,
+) -> tuple[int, ...]:
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        connection.execute("BEGIN")
+        applied_versions = apply_pending_migrations(connection)
+        validate_shift_management_schema(connection)
+        validate_roll_pallet_schema(connection)
+        validate_rewinding_schema(connection)
+        ensure_foreign_keys_valid(
+            connection,
+            "migration foreign key check failed",
+        )
+        connection.commit()
+        return applied_versions
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON")
