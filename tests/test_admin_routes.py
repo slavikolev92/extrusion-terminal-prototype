@@ -546,6 +546,7 @@ def test_admin_planning_renders_compact_unreleased_release_table(connection):
     assert 'data-planning-action="/admin/cards/' in html
     assert 'class="planning-overflow"' in html
     assert "Изтрий карта" in html
+    assert ">2 карти<" not in html
     assert 'class="release-control release-control-sequence"' not in html
     assert 'class="release-control release-control-machine"' not in html
     assert 'class="release-submit-button"' not in html
