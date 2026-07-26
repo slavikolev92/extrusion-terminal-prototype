@@ -1185,7 +1185,7 @@ select {
 
 .roll-ledger .admin-ledger-head,
 .roll-ledger .admin-ledger-row {
-  grid-template-columns: 70px minmax(120px, 0.6fr) minmax(120px, 0.6fr) minmax(120px, 0.6fr) 110px;
+  grid-template-columns: 70px minmax(84px, 0.42fr) minmax(120px, 0.6fr) minmax(120px, 0.6fr) minmax(120px, 0.6fr) 110px;
 }
 
 .timing-ledger .admin-ledger-head,
@@ -1235,7 +1235,7 @@ select {
 
 .admin-roll-toolbar {
   display: grid;
-  grid-template-columns: minmax(160px, 220px) minmax(180px, 240px);
+  grid-template-columns: minmax(160px, 220px) minmax(130px, 160px) minmax(180px, 240px);
   gap: 10px;
 }
 
@@ -1813,7 +1813,7 @@ thead th {
 
   .roll-ledger .admin-ledger-head,
   .roll-ledger .admin-ledger-row {
-    min-width: 640px;
+    min-width: 740px;
   }
 
   .timing-ledger .admin-ledger-head,

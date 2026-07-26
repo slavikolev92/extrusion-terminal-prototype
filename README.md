@@ -15,7 +15,7 @@ This is not V1 of a product roadmap. This is the complete standalone pilot/proto
 - Treat the shift-manager workbook as the source of production-order information.
 - Treat terminal-entered production data as app data unless the user later confirms that it must be written back to Excel.
 - Pilot scope is extrusion only. Other workbook operations are context, not app scope.
-- Printed output must match the existing Excel front/back operational card one-to-one, except for mild confirmed additions such as start time, stop/finish time, total gross weight, and total net weight.
+- Printed output must match the existing Excel front/back operational card one-to-one, except for confirmed additions such as start time, stop/finish time, total gross/net weight, and the derived pallet summary with overflow pages when required.
 
 ## Confirmed Pilot Scope
 
@@ -40,12 +40,17 @@ Confirmed workflow facts:
 - The app keeps a current/default tare-weight field for the order.
 - Tare weight means the actual weight of the roll core.
 - Each roll stores the tare weight that applied when that roll was entered; changing the order default affects future rolls only.
+- Each card may keep an optional current pallet number from `1` through `999` for future rolls.
+- Each new roll snapshots the card's current pallet number, including a blank value. Changing the current pallet later does not change existing rolls.
+- Operators and shift-manager/admin can correct the current pallet and individual roll pallet assignments. Per-roll corrections do not change the card's current pallet.
 - Operators input gross weight for each roll.
 - The app calculates net weight per roll from that roll's gross weight and stored tare weight.
 - The app calculates total net weight for the order from the roll net weights.
+- A mixed assigned/unassigned card shows a finish confirmation warning with the number of gross rolls lacking a pallet; pallet assignment is not a finish blocker.
 - At the end of the order, operators click `Finished` to mark the card as produced.
 - After production is finished, shift-manager/admin reviews and prints/reprints from the admin operational card detail.
 - Printing should print the whole front and back.
+- Completed-card print output derives pallet roll counts plus gross and net totals from current saved rolls, in numeric pallet order, with a final `Без палет` group only when numbered and blank assignments are mixed.
 - Completed data should be stored in the app.
 
 The terminal UI can present information in whatever way is practical. The printed paper output has a stricter requirement: it must visually match the Excel front and back card layout as closely as possible.
@@ -496,9 +501,9 @@ Recommended conceptual schema:
 
 | Entity | Purpose |
 | --- | --- |
-| `orders` / `cards` | One row per imported extrusion operational card/order. Stores the structured fields imported from Excel, current status, current/default tare for future rolls, and print/workflow timestamps. |
+| `orders` / `cards` | One row per imported extrusion operational card/order. Stores the structured fields imported from Excel, current status, current/default tare and current pallet number for future rolls, and print/workflow timestamps. |
 | `recipe_material_entries` | One row per recipe material line for a card. Stores the row type, imported/source material, operator-entered actual used material, and operator-entered batch/lot. |
-| `roll_entries` | One row per produced roll. Linked to the parent order/card by internal ID and order number. Stores roll number, gross weight, copied roll tare weight, and calculated net weight. |
+| `roll_entries` | One row per produced roll. Linked to the parent order/card by internal ID and order number. Stores roll number, gross weight, copied roll tare and pallet snapshots, and calculated net weight. |
 | `production_time_segments` | One row per production run segment. Stores each start/resume and pause/finish interval so total production time can exclude pauses. |
 | `imports` / `import_batches` | One row per CSV import event, so the app can show which file/import created drafts. |
 | `machines` | Four fixed machine records used for assignment, sequencing, and terminal quick navigation. |
@@ -526,6 +531,9 @@ Confirmed storage behavior:
 - Total net weight formula: `total_net_weight = sum(roll_net_weight)`.
 - The order/card tare weight is the current/default tare copied into newly added rolls.
 - Changing the order/card tare weight does not mutate existing roll tare or net weights.
+- The order/card current pallet number is optional and is copied into newly added rolls.
+- Changing the order/card current pallet number does not mutate existing roll pallet assignments.
+- Re-import/overwrite preserves both current and per-roll pallet values as production data.
 - The legacy `cards.max_roll_weight` column remains present but is not used by
   import, admin forms, release, terminal display, or roll validation.
 - Roll entries do not need notes for the pilot.
@@ -712,9 +720,10 @@ Confirmed print requirements:
 - Printing implementation is flexible. Browser print, generated HTML/CSS, PDF generation, or another method is acceptable if it is simple, reliable, and produces the required paper output.
 - Print the extrusion front.
 - Print the back page.
-- Output is always exactly two pages: extrusion front page plus back page.
+- Output is normally exactly two pages: extrusion front page plus back page.
+- Page 3 and later are generated only when the derived pallet summary cannot fit in the two pallet columns on page 2. Roll-grid capacity remains fixed at 120 rolls.
 - Paper size is A4.
-- The app should generate two pages. Duplex/front-back printing on one sheet can be handled by printer settings.
+- The app should generate the normal two pages. Duplex/front-back printing on one sheet can be handled by printer settings; pallet-summary overflow pages are additional sheets.
 - Printing/reprinting is an admin/shift-manager action from the operational card detail.
 - Workstation operators do not print from `/terminal`.
 - Printing is allowed for produced (`completed`) and finished/archived (`archived`) cards.
@@ -730,10 +739,12 @@ Confirmed print requirements:
   - tare weight
   - total gross weight
   - total net weight
+  - derived per-pallet roll count, gross total, and net total, with conditional overflow pages
 
 The accepted runtime print reference is `source-files/print-template.xlsx`,
 using its `ACTUAL TEMPLATE` and `DATA-FILLED TEMPLATE` sheets. The app
-implements exactly two A4 pages: the extrusion front and the 120-roll back.
+implements the extrusion front and 120-roll back as the normal two A4 pages,
+with page 3+ reserved only for pallet-summary overflow.
 The production summary belongs in the accepted bottom back-page summary area.
 The four ordered-amount cells are, in order, gross kilograms, rolls, meters,
 and units; a blank source value leaves its complete cell blank, including its
@@ -744,6 +755,10 @@ unit.
 Do not build this in the current implementation unless the user explicitly reopens it:
 
 - Per-machine roll-change timer. Possible shape discussed: a simple timer or countdown related to when rolls are removed/changed, useful because one terminal services multiple extrusion machines. This is deferred until after the prototype is tested and the user confirms whether it is useful.
+- Pallet/package entities, pallet selection across rolls, capacity/full/closed state, or a pallet lifecycle beyond the implemented per-roll number.
+- Pallet or product label printing, including label routes, barcodes, reprint/replace, and void history.
+- Shipping, dispatch, delivery, or sent-pallet tracking.
+- Cross-card packages or pallets; the implemented pallet attribution and operational-card summary are always scoped to one card.
 
 ## Infrastructure Context
 

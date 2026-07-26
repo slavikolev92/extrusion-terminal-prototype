@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 
 import pytest
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from starlette.datastructures import FormData
 from starlette.requests import Request
 
 from app import db
@@ -16,17 +17,20 @@ from app.db import STALE_CARD_MESSAGE
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 from app.main import (
     TERMINAL_CARD_UNAVAILABLE_MESSAGE,
+    add_roll_weight,
     app,
     delete_selected_roll_weight,
     finish_terminal_card,
     progress_percent,
     remaining_gross_display,
+    save_current_pallet_number,
     save_roll_weight,
     save_terminal_roll_corrections,
     save_tare_weight,
     target_gross_decimal,
     terminal_card,
     terminal_context,
+    terminal_roll_corrections_from_form,
 )
 from app.rules import RuleResult
 
@@ -278,6 +282,18 @@ async def post_form_to_app(path: str, data: dict[str, str]) -> tuple[int, dict[s
         for key, value in response_start["headers"]
     }
     return int(response_start["status"]), headers
+
+
+class TerminalFormRequest:
+    def __init__(self, path: str, form: FormData) -> None:
+        self._request = make_test_request(path)
+        self._form = form
+
+    async def form(self) -> FormData:
+        return self._form
+
+    def __getattr__(self, name: str):
+        return getattr(self._request, name)
 
 
 def test_terminal_v8_route_is_registered_and_cancel_restore_routes_are_absent():
@@ -971,12 +987,12 @@ def test_terminal_v8_recipe_body_values_use_homogeneous_regular_style(connection
     assert "color: var(--secondary-text);" in input_style.group("rules")
 
     assert (
-        "grid-template-columns: 132px minmax(152px, 1fr) 86px 86px "
-        "minmax(140px, .72fr) minmax(110px, .52fr);"
+        "grid-template-columns: 120px minmax(146px, 1fr) 86px 86px "
+        "minmax(112px, .58fr) minmax(110px, .52fr);"
     ) in html
     assert (
-        "grid-template-columns: 96px minmax(124px, 1fr) 76px 76px "
-        "minmax(118px, .62fr) minmax(92px, .48fr);"
+        "grid-template-columns: 88px minmax(116px, 1fr) 68px 68px "
+        "minmax(104px, .52fr) minmax(84px, .42fr);"
     ) in html
     assert "padding: 0 14px;" in html
 
@@ -1478,9 +1494,9 @@ def test_terminal_v8_finish_form_uses_app_native_confirmation_modal(connection):
     assert "Приключване на поръчка" in html
     assert "Сигурни ли сте, че искате да приключите тази поръчка?" in html
     assert 'data-finish-confirm-submit' in html
-    assert "Да, приключи" in html
+    assert ">Да</button>" in html
     assert 'data-finish-confirm-cancel' in html
-    assert "Не, назад" in html
+    assert ">Не</button>" in html
 
 
 def test_terminal_v8_finish_confirmation_script_handles_modal_lifecycle(connection):
@@ -1499,6 +1515,91 @@ def test_terminal_v8_finish_confirmation_script_handles_modal_lifecycle(connecti
     assert "finishConfirmSubmitting || !pendingFinishForm" in html
     assert "finishConfirmSubmit.disabled = true;" in html
     assert "pendingFinishForm.requestSubmit();" in html
+
+
+def test_terminal_finish_confirmation_warns_only_for_mixed_saved_gross_roll_pallets(
+    connection,
+):
+    def running_card_with_roll_pallets(
+        order_number: str,
+        machine_id: int,
+        pallets: tuple[str | None, ...],
+    ) -> int:
+        card_id = release_ready_card(order_number, machine_id=machine_id, sequence=1)
+        assert db.start_production_timing(card_id, card_version(card_id)).ok
+        assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
+        for pallet_number in pallets:
+            assert db.add_roll_gross_weight(
+                card_id,
+                card_version(card_id),
+                "50.00",
+                pallet_number=pallet_number,
+            ).ok
+        return card_id
+
+    all_blank_id = running_card_with_roll_pallets(
+        "FINISH-PALLET-BLANK", 1, (None, None)
+    )
+    all_assigned_id = running_card_with_roll_pallets(
+        "FINISH-PALLET-ASSIGNED", 2, ("7", "7")
+    )
+    mixed_singular_id = running_card_with_roll_pallets(
+        "FINISH-PALLET-SINGULAR", 3, (None, "8")
+    )
+    mixed_plural_id = running_card_with_roll_pallets(
+        "FINISH-PALLET-PLURAL", 4, (None, None, None, "9")
+    )
+
+    # An unsaved row must not count as a roll without a pallet.
+    with db.connect() as db_connection:
+        db_connection.execute(
+            """
+            INSERT INTO roll_entries (card_id, order_number, roll_number)
+            VALUES (?, ?, ?)
+            """,
+            (mixed_singular_id, "FINISH-PALLET-SINGULAR", 3),
+        )
+
+    standard_question = "Сигурни ли сте, че искате да приключите тази поръчка?"
+    expected_questions = {
+        all_blank_id: standard_question,
+        all_assigned_id: standard_question,
+        mixed_singular_id: "В поръчката има 1 ролка без палет. Искате ли да приключите поръчката?",
+        mixed_plural_id: "В поръчката има 3 ролки без палет. Искате ли да приключите поръчката?",
+    }
+
+    for card_id, expected_question in expected_questions.items():
+        finish_form = form_block(
+            render_terminal(card_id),
+            f"/terminal/cards/{card_id}/finish",
+        )
+        assert f'data-finish-confirm-message="{expected_question}"' in finish_form
+
+
+def test_terminal_finish_pallet_confirmation_script_uses_selected_message_and_simple_actions(
+    connection,
+):
+    card_id = release_ready_card("FINISH-PALLET-SCRIPT", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+
+    html = render_terminal(card_id)
+    script_start = html.find('const finishConfirmModal =')
+    script_end = html.find("    })();", script_start)
+    assert script_start != -1
+    assert script_end != -1
+    script = html[script_start:script_end]
+
+    assert ">Не</button>" in html
+    assert ">Да</button>" in html
+    assert "Не, назад" not in html
+    assert "Да, приключи" not in html
+    assert 'finishConfirmModal?.querySelector("#finish-confirm-body")' in script
+    assert "finishConfirmBody.textContent = form.dataset.finishConfirmMessage;" in script
+    assert "finishConfirmBack?.addEventListener(\"click\", closeFinishConfirm);" in script
+    assert "finishConfirmSubmitting = true;" in script
+    assert "pendingFinishForm.requestSubmit();" in script
+    assert "openRollCorrection" not in script
+    assert "fetch(" not in script
 
 
 def test_terminal_v8_success_result_renders_one_dismissible_toast(connection):
@@ -1620,15 +1721,113 @@ def test_terminal_roll_correction_actions_replace_totals_footer(connection):
     )
 
 
-def test_terminal_roll_entry_controls_follow_roll_table_weight_order(connection):
+def test_terminal_roll_entry_controls_follow_roll_table_weight_and_pallet_order(connection):
     card_id = release_ready_card("26197", machine_id=1, sequence=1)
 
     html = render_terminal(card_id)
     entry_html = roll_entry_block(html)
+    pallet_form = form_block(html, f"/terminal/cards/{card_id}/tare")
+    add_roll_form = form_block(html, f"/terminal/cards/{card_id}/rolls")
 
     assert entry_html.find('class="add-roll-form"') < entry_html.find('class="tare-form')
+    assert entry_html.find('class="tare-form') < entry_html.find('class="pallet-form')
     assert entry_html.find("Нова ролка, кг") < entry_html.find("Шпула, кг")
-    assert entry_html.find("Шпула, кг") < entry_html.find('class="roll-add-button"')
+    assert entry_html.find("Шпула, кг") < entry_html.find("Палет")
+    assert entry_html.find("Палет") < entry_html.find('class="roll-add-button"')
+    assert 'data-dirty-autosave="true"' in pallet_form
+    assert 'data-dirty-autosave-group="roll-entry"' in pallet_form
+    current_pallet_match = re.search(
+        r'<input[^>]+name="pallet_number"[^>]*>',
+        pallet_form,
+    )
+    assert current_pallet_match is not None
+    current_pallet_tag = current_pallet_match.group(0)
+    assert 'type="text"' in current_pallet_tag
+    assert 'inputmode="numeric"' in current_pallet_tag
+    for forbidden_attribute in ('min="', 'max="', 'step="', 'pattern="', 'maxlength="'):
+        assert forbidden_attribute not in current_pallet_tag
+    assert 'data-current-pallet-input="true"' in pallet_form
+    assert 'data-new-roll-pallet-copy="true"' in add_roll_form
+    assert 'name="pallet_number"' in add_roll_form
+    assert "syncNewRollPallet" in html
+    assert "currentPalletInput?.addEventListener(\"input\", syncNewRollPallet);" in html
+    assert "currentPalletInput?.addEventListener(\"change\", syncNewRollPallet);" in html
+    assert "newRollPalletCopy?.form?.addEventListener(\"submit\", syncNewRollPallet);" in html
+    assert "flex: 0 0 122px;" in css_rules(
+        html, r"\.roll-entry \.core-weight-field"
+    )
+    assert "flex: 0 0 92px;" in css_rules(html, r"\.roll-entry \.pallet-form")
+    workspace_rules = css_rules_all(html, r"\.workspace")
+    assert any(
+        "grid-template-columns: minmax(0, 1fr) 510px;" in rules
+        for rules in workspace_rules
+    )
+    assert any(
+        "grid-template-columns: minmax(0, 1fr) 460px;" in rules
+        for rules in workspace_rules
+    )
+
+
+def test_terminal_tare_and_pallet_render_as_one_coordinated_autosave_form(connection):
+    card_id = release_ready_card("PALLET-COORDINATED-FORM", machine_id=1, sequence=1)
+
+    html = render_terminal(card_id)
+    entry_html = roll_entry_block(html)
+    defaults_form = form_block(html, f"/terminal/cards/{card_id}/tare")
+    add_roll_form = form_block(html, f"/terminal/cards/{card_id}/rolls")
+
+    assert 'name="tare_weight"' in defaults_form
+    assert 'name="pallet_number"' in defaults_form
+    assert defaults_form.count('data-dirty-autosave="true"') == 1
+    assert 'data-dirty-autosave-group="roll-entry"' in defaults_form
+    assert f'action="/terminal/cards/{card_id}/pallet"' not in entry_html
+    assert 'data-persist-dirty-autosave-group="roll-entry"' in add_roll_form
+
+
+def test_terminal_roll_ledger_renders_blank_pallet_and_editable_pallet_correction(
+    connection,
+):
+    card_id = release_ready_card("PALLET-TERMINAL-RENDER", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "60.00").ok
+    roll = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]
+
+    html = render_terminal(card_id)
+    ledger_head = html.split('<div class="roll-head">', 1)[1].split(
+        '<div class="roll-list"', 1
+    )[0]
+    row_html = roll_row_block(html, int(roll["id"]))
+
+    assert [ledger_head.find(label) for label in ("№", "Палет", "Бруто кг", "Шпула кг", "Нето кг")] == sorted(
+        ledger_head.find(label)
+        for label in ("№", "Палет", "Бруто кг", "Шпула кг", "Нето кг")
+    )
+    assert 'data-roll-display="pallet">-</span>' in row_html
+    pallet_input_match = re.search(
+        rf'<input[^>]+name="pallet_number__{roll["id"]}"[^>]*>',
+        row_html,
+    )
+    assert pallet_input_match is not None
+    pallet_input_tag = pallet_input_match.group(0)
+    assert 'type="text"' in pallet_input_tag
+    assert 'inputmode="numeric"' in pallet_input_tag
+    for forbidden_attribute in ('min="', 'max="', 'step="', 'pattern="', 'maxlength="'):
+        assert forbidden_attribute not in pallet_input_tag
+    assert "grid-template-columns: 44px minmax(74px, .62fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);" in html
+
+
+def test_terminal_pallet_errors_render_under_current_pallet_control(connection):
+    card_id = release_ready_card("PALLET-TERMINAL-FEEDBACK", machine_id=1, sequence=1)
+
+    html = render_terminal(
+        card_id,
+        roll_result=RuleResult(False, ("pallet validation failure",)),
+        roll_result_target="pallet",
+    )
+
+    pallet_feedback = data_block(html, "data-feedback-target", "pallet")
+    assert "pallet validation failure" in pallet_feedback
 
 
 def test_terminal_new_roll_autofocus_marker_renders_only_for_running_card(connection):
@@ -1705,7 +1904,7 @@ def test_terminal_new_roll_autofocus_script_guards_reload_and_roll_correction_mo
     assert 'data-new-roll-autofocus="true"' in new_roll_input_tag(correction_html)
 
 
-def test_terminal_tare_and_correction_forms_use_dirty_autosave_without_new_roll_autosave(connection):
+def test_terminal_coordinated_defaults_and_correction_forms_use_dirty_autosave_without_new_roll_autosave(connection):
     card_id = release_ready_card("26198", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "2.00").ok
@@ -1720,6 +1919,7 @@ def test_terminal_tare_and_correction_forms_use_dirty_autosave_without_new_roll_
     row_html = roll_row_block(html, roll["id"])
 
     assert 'data-dirty-autosave="true"' in tare_form
+    assert tare_form.count('data-dirty-autosave="true"') == 1
     assert 'data-dirty-autosave="true"' not in add_roll_form
     assert 'data-dirty-autosave="true"' not in correction_form
     assert 'data-dirty-autosave="true"' not in row_html
@@ -1727,9 +1927,13 @@ def test_terminal_tare_and_correction_forms_use_dirty_autosave_without_new_roll_
     assert 'data-dirty-autosave-group="roll-entry"' not in add_roll_form
     assert 'data-dirty-autosave-group="roll-entry"' not in correction_form
     assert 'data-new-roll-tare-copy="true"' in add_roll_form
+    assert 'data-new-roll-pallet-copy="true"' in add_roll_form
+    assert 'data-persist-dirty-autosave-group="roll-entry"' in add_roll_form
     assert 'data-current-tare-input="true"' in tare_form
+    assert 'data-current-pallet-input="true"' in tare_form
     assert 'form[data-recipe-autosave="true"], form[data-dirty-autosave="true"]' in html
     assert "syncNewRollTare" in html
+    assert "syncNewRollPallet" in html
     assert "dirtyAutosaveGroup" in html
     assert "bindDirtyAutosaveForm" in html
     assert "submitDirtyForm" in html
@@ -1753,6 +1957,7 @@ def test_terminal_roll_correction_script_blocks_other_actions_while_open(connect
     assert "[data-roll-correction-open]" in html
     assert ".roll-add-button" in html
     assert ".tare-form input" in html
+    assert ".pallet-form input" in html
     assert ".recipe-table input" in html
     assert "#queue-open" in html
     assert "#history-open" in html
@@ -1795,6 +2000,16 @@ def test_terminal_v8_notice_code_renders_one_dismissible_toast(connection):
     assert "Шпула е записана." in html
     assert 'class="terminal-toast-close"' in html
     assert html.count('role="alert"') == 0
+
+
+def test_terminal_v8_roll_defaults_notice_uses_generic_saved_message(connection):
+    card_id = release_ready_card("26191-defaults", machine_id=1, sequence=1)
+
+    html = render_terminal(card_id, terminal_notice="roll_defaults_saved")
+
+    assert html.count('class="terminal-toast"') == 1
+    assert "Данните са записани." in html
+    assert "Шпула е записана." not in html
 
 
 def test_terminal_card_notice_query_renders_one_dismissible_toast(connection):
@@ -2298,6 +2513,369 @@ def test_terminal_success_post_redirects_with_notice_query(connection):
     assert response.status_code == 303
     assert response.headers["location"] == (
         f"/terminal/cards/{card_id}?notice=tare_saved"
+    )
+
+
+def test_terminal_roll_correction_parser_includes_pallet_values():
+    updates = terminal_roll_corrections_from_form(
+        FormData(
+            [
+                ("gross_weight__17", "55.50"),
+                ("pallet_number__17", "6"),
+                ("pallet_number__18", "7"),
+            ]
+        )
+    )
+
+    assert updates == {
+        17: {"gross_weight": "55.50", "pallet_number": "6"},
+        18: {"pallet_number": "7"},
+    }
+
+
+def test_terminal_current_pallet_route_trims_saves_and_uses_prg(connection):
+    card_id = release_ready_card("PALLET-TERMINAL-SAVE", machine_id=1, sequence=1)
+    loaded_version = card_version(card_id)
+
+    response = asyncio.run(
+        save_current_pallet_number(
+            make_test_request(f"/terminal/cards/{card_id}/pallet"),
+            card_id,
+            str(loaded_version),
+            " 7 ",
+        )
+    )
+    saved = db.fetch_terminal_card_detail(card_id)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=pallet_saved"
+    )
+    assert saved["current_pallet_number"] == 7
+
+
+def test_terminal_current_pallet_route_clears_existing_value(connection):
+    card_id = release_ready_card("PALLET-TERMINAL-CLEAR", machine_id=1, sequence=1)
+    assert db.update_current_pallet_number(card_id, card_version(card_id), "4").ok
+
+    response = asyncio.run(
+        save_current_pallet_number(
+            make_test_request(f"/terminal/cards/{card_id}/pallet"),
+            card_id,
+            str(card_version(card_id)),
+            " ",
+        )
+    )
+
+    assert response.status_code == 303
+    assert db.fetch_terminal_card_detail(card_id)["current_pallet_number"] is None
+
+
+def test_terminal_current_pallet_route_targets_validation_error_to_pallet(connection):
+    card_id = release_ready_card("PALLET-TERMINAL-ERROR", machine_id=1, sequence=1)
+
+    response = asyncio.run(
+        save_current_pallet_number(
+            make_test_request(f"/terminal/cards/{card_id}/pallet"),
+            card_id,
+            str(card_version(card_id)),
+            "1000",
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.context["terminal_feedback"]["errors"]["pallet"] == (
+        "Палетът трябва да бъде цяло число от 1 до 999.",
+    )
+
+
+def test_terminal_add_roll_saves_submitted_pallet_with_roll_atomically(connection):
+    card_id = release_ready_card("PALLET-TERMINAL-ROLL", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
+
+    response = asyncio.run(
+        add_roll_weight(
+            make_test_request(f"/terminal/cards/{card_id}/rolls"),
+            card_id,
+            str(card_version(card_id)),
+            "60.00",
+            None,
+            " 8 ",
+        )
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert response.status_code == 303
+    assert card["current_pallet_number"] == 8
+    assert card["roll_entries"][-1]["pallet_number"] == 8
+
+
+def test_terminal_tare_route_saves_dirty_tare_and_pallet_atomically(connection):
+    card_id = release_ready_card("PALLET-TERMINAL-DEFAULTS", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    loaded_version = card_version(card_id)
+
+    response = asyncio.run(
+        save_tare_weight(
+            make_test_request(f"/terminal/cards/{card_id}/tare"),
+            card_id,
+            str(loaded_version),
+            "2.50",
+            "9",
+        )
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=roll_defaults_saved"
+    )
+    assert card["tare_weight"] == 2.5
+    assert card["current_pallet_number"] == 9
+    assert card["version"] == loaded_version + 1
+
+
+@pytest.mark.parametrize(
+    "invalid_pallet",
+    ("1000", "15+1", pytest.param("9" * 5000, id="5000-digits")),
+)
+def test_terminal_tare_route_targets_invalid_pallet_and_saves_neither_default(
+    connection,
+    invalid_pallet,
+):
+    card_id = release_ready_card("PALLET-TERMINAL-DEFAULTS-ERROR", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.25").ok
+    assert db.update_current_pallet_number(card_id, card_version(card_id), "7").ok
+    before = db.fetch_terminal_card_detail(card_id)
+
+    response = asyncio.run(
+        save_tare_weight(
+            make_test_request(f"/terminal/cards/{card_id}/tare"),
+            card_id,
+            str(before["version"]),
+            "2.50",
+            invalid_pallet,
+        )
+    )
+    after = db.fetch_terminal_card_detail(card_id)
+
+    assert response.status_code == 200
+    assert response.context["terminal_feedback"]["errors"]["pallet"] == (
+        "Палетът трябва да бъде цяло число от 1 до 999.",
+    )
+    assert after["tare_weight"] == before["tare_weight"] == 1.25
+    assert after["current_pallet_number"] == before["current_pallet_number"] == 7
+    assert after["version"] == before["version"]
+
+
+def test_terminal_tare_route_blocks_stale_coordinated_defaults_without_partial_write(connection):
+    card_id = release_ready_card("PALLET-TERMINAL-DEFAULTS-STALE", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    loaded_version = card_version(card_id)
+    assert db.update_tare_weight(card_id, loaded_version, "1.25").ok
+    current = db.fetch_terminal_card_detail(card_id)
+
+    response = asyncio.run(
+        save_tare_weight(
+            make_test_request(f"/terminal/cards/{card_id}/tare"),
+            card_id,
+            str(loaded_version),
+            "2.50",
+            "9",
+        )
+    )
+    after = db.fetch_terminal_card_detail(card_id)
+
+    assert response.status_code == 200
+    assert response.context["terminal_feedback"]["refresh_required"] is True
+    assert after["tare_weight"] == current["tare_weight"] == 1.25
+    assert after["current_pallet_number"] is None
+    assert after["version"] == current["version"]
+
+
+@pytest.mark.parametrize("invalid_pallet", ("1000", "15+1"))
+def test_terminal_add_roll_targets_invalid_pallet_to_current_pallet_control(
+    connection,
+    invalid_pallet,
+):
+    card_id = release_ready_card("PALLET-TERMINAL-ROLL-ERROR", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
+
+    response = asyncio.run(
+        add_roll_weight(
+            make_test_request(f"/terminal/cards/{card_id}/rolls"),
+            card_id,
+            str(card_version(card_id)),
+            "60.00",
+            None,
+            invalid_pallet,
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.context["terminal_feedback"]["errors"]["pallet"] == (
+        "Палетът трябва да бъде цяло число от 1 до 999.",
+    )
+    assert db.fetch_terminal_card_detail(card_id)["roll_entries"] == []
+
+
+def test_terminal_roll_corrections_route_saves_per_row_pallet(connection):
+    card_id = release_ready_card("PALLET-TERMINAL-CORRECTION", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "60.00").ok
+    roll_id = int(db.fetch_terminal_card_detail(card_id)["roll_entries"][0]["id"])
+
+    response = asyncio.run(
+        save_terminal_roll_corrections(
+            TerminalFormRequest(
+                f"/terminal/cards/{card_id}/rolls/corrections",
+                FormData(
+                    [
+                        ("loaded_version", str(card_version(card_id))),
+                        (f"pallet_number__{roll_id}", "3"),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=rolls_saved"
+    )
+    assert db.fetch_terminal_card_detail(card_id)["roll_entries"][0]["pallet_number"] == 3
+
+
+def test_terminal_roll_corrections_route_rejects_malformed_pallet_atomically(connection):
+    card_id = release_ready_card("PALLET-TERMINAL-CORRECTION-INVALID", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
+    assert db.add_roll_gross_weight(
+        card_id,
+        card_version(card_id),
+        "60.00",
+        pallet_number="3",
+    ).ok
+    before = db.fetch_terminal_card_detail(card_id)
+    roll_id = int(before["roll_entries"][0]["id"])
+
+    response = asyncio.run(
+        save_terminal_roll_corrections(
+            TerminalFormRequest(
+                f"/terminal/cards/{card_id}/rolls/corrections",
+                FormData(
+                    [
+                        ("loaded_version", str(before["version"])),
+                        (f"pallet_number__{roll_id}", "15+1"),
+                        (f"gross_weight__{roll_id}", "75.00"),
+                    ]
+                ),
+            ),
+            card_id,
+        )
+    )
+    after = db.fetch_terminal_card_detail(card_id)
+
+    assert response.status_code == 200
+    assert "Палетът трябва да бъде цяло число от 1 до 999." in response.body.decode("utf-8")
+    assert after["version"] == before["version"]
+    assert after["current_pallet_number"] == before["current_pallet_number"]
+    assert [
+        (roll["pallet_number"], roll["gross_weight"], roll["tare_weight"], roll["net_weight"])
+        for roll in after["roll_entries"]
+    ] == [
+        (roll["pallet_number"], roll["gross_weight"], roll["tare_weight"], roll["net_weight"])
+        for roll in before["roll_entries"]
+    ]
+
+
+def test_terminal_roll_corrections_route_reports_malformed_pallet_roll_id(connection):
+    card_id = release_ready_card("PALLET-TERMINAL-MALFORMED", machine_id=1, sequence=1)
+
+    response = asyncio.run(
+        save_terminal_roll_corrections(
+            TerminalFormRequest(
+                f"/terminal/cards/{card_id}/rolls/corrections",
+                FormData(
+                    [
+                        ("loaded_version", str(card_version(card_id))),
+                        ("pallet_number__bad-id", "3"),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+
+    assert response.status_code == 200
+    assert "Формата съдържа невалидна ролка." in response.body.decode("utf-8")
+
+
+def test_terminal_current_pallet_route_blocks_stale_post(connection):
+    card_id = release_ready_card("PALLET-TERMINAL-STALE", machine_id=1, sequence=1)
+    loaded_version = card_version(card_id)
+    assert db.update_current_pallet_number(card_id, loaded_version, "2").ok
+
+    response = asyncio.run(
+        save_current_pallet_number(
+            make_test_request(f"/terminal/cards/{card_id}/pallet"),
+            card_id,
+            str(loaded_version),
+            "3",
+        )
+    )
+
+    assert response.status_code == 200
+    assert db.fetch_terminal_card_detail(card_id)["current_pallet_number"] == 2
+    assert response.context["terminal_feedback"]["refresh_required"] is True
+
+
+@pytest.mark.parametrize("terminal_state", ("cancelled", "archived"))
+def test_terminal_current_pallet_route_blocks_nonterminal_cards(connection, terminal_state):
+    card_id = release_ready_card(f"PALLET-TERMINAL-{terminal_state}", machine_id=1, sequence=1)
+    if terminal_state == "cancelled":
+        assert db.cancel_card(card_id, card_version(card_id)).ok
+    else:
+        complete_card(card_id)
+        assert db.archive_completed_card(card_id, card_version(card_id)).ok
+    card = db.fetch_admin_card_detail(card_id)
+
+    response = asyncio.run(
+        save_current_pallet_number(
+            make_test_request(f"/terminal/cards/{card_id}/pallet"),
+            card_id,
+            str(card["version"]),
+            "3",
+        )
+    )
+
+    assert response.status_code == 200
+    assert db.fetch_admin_card_detail(card_id)["current_pallet_number"] is None
+    assert response.context["terminal_feedback"]["refresh_required"] is True
+
+
+def test_terminal_current_pallet_route_requires_active_shift(connection):
+    card_id = release_ready_card("PALLET-TERMINAL-NO-SHIFT", machine_id=1, sequence=1)
+    end_active_test_shift()
+
+    response = asyncio.run(
+        save_current_pallet_number(
+            make_test_request(f"/terminal/cards/{card_id}/pallet"),
+            card_id,
+            str(card_version(card_id)),
+            "3",
+        )
+    )
+
+    assert response.status_code == 200
+    assert db.fetch_terminal_card_detail(card_id)["current_pallet_number"] is None
+    assert response.context["terminal_feedback"]["errors"]["topbar"] == (
+        "Отворете смяна, преди да продължите.",
     )
 
 

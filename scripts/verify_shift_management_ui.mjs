@@ -988,7 +988,7 @@ async function startCardAndSaveTare(page, cardId, tareWeight) {
   const tareInput = page.locator('input[data-current-tare-input="true"]');
   await tareInput.fill(tareWeight);
   await Promise.all([
-    page.waitForURL((url) => url.searchParams.get("notice") === "tare_saved", {
+    page.waitForURL((url) => url.searchParams.get("notice") === "roll_defaults_saved", {
       waitUntil: "networkidle",
     }),
     tareInput.press("Enter"),

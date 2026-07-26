@@ -5,12 +5,14 @@ import csv
 import io
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 from html import unescape
 from pathlib import Path
 
 import pytest
 
 from app import db
+from app import printing
 from app.constants import (
     STATUS_ARCHIVED,
     STATUS_CANCELLED,
@@ -23,6 +25,7 @@ from app.constants import (
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 from app.main import app
 from app.printing import (
+    PrintReadiness,
     build_print_readiness,
     format_datetime,
     format_duration,
@@ -248,6 +251,204 @@ def test_completed_card_with_required_production_data_is_printable(connection):
     }
 
 
+def test_build_pallet_summary_returns_no_rows_when_every_saved_gross_roll_is_unassigned():
+    rows = printing.build_pallet_summary(
+        [
+            {"gross_weight": Decimal("10.00"), "net_weight": Decimal("8.75"), "pallet_number": None},
+            {"gross_weight": Decimal("20.00"), "net_weight": Decimal("18.75"), "pallet_number": None},
+        ]
+    )
+
+    assert rows == []
+
+
+def test_build_pallet_summary_sorts_numbered_pallets_and_uses_decimal_totals():
+    rows = printing.build_pallet_summary(
+        [
+            {"gross_weight": Decimal("10.00"), "net_weight": Decimal("8.75"), "pallet_number": 10},
+            {"gross_weight": Decimal("20.01"), "net_weight": Decimal("18.76"), "pallet_number": 2},
+            {"gross_weight": Decimal("30.24"), "net_weight": Decimal("28.99"), "pallet_number": 2},
+            {"gross_weight": Decimal("51.25"), "net_weight": Decimal("50.00"), "pallet_number": 7},
+        ]
+    )
+
+    assert rows == [
+        {
+            "pallet_label": "2",
+            "roll_count": 2,
+            "gross_display": "50.3",
+            "net_display": "47.8",
+        },
+        {
+            "pallet_label": "7",
+            "roll_count": 1,
+            "gross_display": "51.3",
+            "net_display": "50.0",
+        },
+        {
+            "pallet_label": "10",
+            "roll_count": 1,
+            "gross_display": "10.0",
+            "net_display": "8.8",
+        },
+    ]
+
+
+def test_build_pallet_summary_appends_mixed_unassigned_rolls_and_ignores_unsaved_rolls():
+    rows = printing.build_pallet_summary(
+        [
+            {"gross_weight": Decimal("20.00"), "net_weight": Decimal("18.75"), "pallet_number": 3},
+            {"gross_weight": Decimal("10.00"), "net_weight": Decimal("8.75"), "pallet_number": None},
+            {"gross_weight": None, "net_weight": None, "pallet_number": None},
+        ]
+    )
+
+    assert rows == [
+        {
+            "pallet_label": "3",
+            "roll_count": 1,
+            "gross_display": "20.0",
+            "net_display": "18.8",
+        },
+        {
+            "pallet_label": "Без палет",
+            "roll_count": 1,
+            "gross_display": "10.0",
+            "net_display": "8.8",
+        },
+    ]
+
+
+def test_print_readiness_rebuilds_pallet_summary_from_corrected_completed_rolls(connection):
+    card_id = make_completed_printable_card("27064", roll_count=2)
+
+    with db.connect() as connection:
+        connection.execute(
+            """
+            UPDATE roll_entries
+            SET pallet_number = 7,
+                gross_weight = '91.25',
+                tare_weight = '2.50',
+                net_weight = '88.75'
+            WHERE card_id = ?
+              AND roll_number = 1
+            """,
+            (card_id,),
+        )
+        connection.commit()
+
+    readiness = build_print_readiness(card_id)
+
+    assert readiness.ok
+    assert readiness.data is not None
+    assert readiness.data["pallet_summary"] == [
+        {
+            "pallet_label": "7",
+            "roll_count": 1,
+            "gross_display": "91.3",
+            "net_display": "88.8",
+        },
+        {
+            "pallet_label": "Без палет",
+            "roll_count": 1,
+            "gross_display": "10.0",
+            "net_display": "8.8",
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    ("row_count", "expected_middle_count", "expected_right_count", "expected_overflow_counts"),
+    [
+        (0, 0, 0, []),
+        (1, 1, 0, []),
+        (2, 2, 0, []),
+        (3, 2, 1, []),
+        (4, 2, 2, []),
+        (5, 0, 0, [3, 2]),
+        (7, 0, 0, [3, 3, 1]),
+    ],
+)
+def test_split_pallet_summary_preserves_whole_rows_in_deterministic_order(
+    row_count,
+    expected_middle_count,
+    expected_right_count,
+    expected_overflow_counts,
+):
+    rows = [{"pallet_label": str(index)} for index in range(1, row_count + 1)]
+
+    split = printing.split_pallet_summary(
+        rows,
+        back_column_capacity=2,
+        overflow_page_capacity=3,
+    )
+
+    assert len(split["middle_rows"]) == expected_middle_count
+    assert len(split["right_rows"]) == expected_right_count
+    assert [len(page) for page in split["overflow_pages"]] == expected_overflow_counts
+    assert (
+        split["middle_rows"]
+        + split["right_rows"]
+        + [row for page in split["overflow_pages"] for row in page]
+    ) == rows
+
+
+@pytest.mark.parametrize(
+    ("back_column_capacity", "overflow_page_capacity"),
+    [(0, 3), (2, 0), (-1, 3), (2, -1)],
+)
+def test_split_pallet_summary_rejects_non_positive_capacities(
+    back_column_capacity,
+    overflow_page_capacity,
+):
+    with pytest.raises(ValueError):
+        printing.split_pallet_summary(
+            [{"pallet_label": "1"}],
+            back_column_capacity=back_column_capacity,
+            overflow_page_capacity=overflow_page_capacity,
+        )
+
+
+def test_assembled_print_layout_uses_measured_whole_row_boundaries():
+    def assembled_layout(row_count: int):
+        card = {
+            "id": 701,
+            "status": STATUS_COMPLETED,
+            "roll_entries": [
+                {
+                    "roll_number": roll_number,
+                    "gross_weight": Decimal("20.00"),
+                    "tare_weight": Decimal("1.25"),
+                    "net_weight": Decimal("18.75"),
+                    "pallet_number": roll_number,
+                }
+                for roll_number in range(1, row_count + 1)
+            ],
+            "recipe_actual_entries": {},
+        }
+        return printing.assemble_print_data(card)["pallet_summary_layout"]
+
+    assert printing.PALLET_BACK_COLUMN_CAPACITY > 0
+    assert printing.PALLET_OVERFLOW_PAGE_CAPACITY > 0
+
+    fitting_count = 2 * printing.PALLET_BACK_COLUMN_CAPACITY
+    fitting = assembled_layout(fitting_count)
+    assert len(fitting["middle_rows"]) == printing.PALLET_BACK_COLUMN_CAPACITY
+    assert len(fitting["right_rows"]) == printing.PALLET_BACK_COLUMN_CAPACITY
+    assert fitting["overflow_pages"] == []
+
+    first_overflow = assembled_layout(fitting_count + 1)
+    assert first_overflow["middle_rows"] == []
+    assert first_overflow["right_rows"] == []
+    assert sum(map(len, first_overflow["overflow_pages"])) == fitting_count + 1
+
+    overflow_boundary = assembled_layout(printing.PALLET_OVERFLOW_PAGE_CAPACITY + 1)
+    assert [len(page) for page in overflow_boundary["overflow_pages"]] == [
+        printing.PALLET_OVERFLOW_PAGE_CAPACITY,
+        1,
+    ]
+
+
 def test_archived_card_with_required_production_data_is_printable(connection):
     card_id = make_completed_printable_card("27035")
     set_card_status(card_id, STATUS_ARCHIVED)
@@ -465,6 +666,25 @@ def get_print_page(card_id: int, auto: bool = False) -> RouteResponse:
     )
 
 
+def get_print_page_with_pallet_layout(
+    monkeypatch: pytest.MonkeyPatch,
+    card_id: int,
+    pallet_summary_layout: dict[str, list[object]],
+) -> RouteResponse:
+    readiness = build_print_readiness(card_id)
+    assert readiness.ok
+    assert readiness.data is not None
+    print_data = {
+        **readiness.data,
+        "pallet_summary_layout": pallet_summary_layout,
+    }
+    monkeypatch.setattr(
+        "app.main.build_print_readiness",
+        lambda _card_id: PrintReadiness(True, [], print_data),
+    )
+    return get_print_page(card_id)
+
+
 def data_block(html: str, attribute: str, value: str) -> str:
     pattern = re.compile(
         rf"<(?P<tag>[a-z0-9]+)\b[^>]*\b{attribute}=\"{re.escape(value)}\"[^>]*>"
@@ -571,6 +791,133 @@ def test_print_route_rendered_page_contains_exactly_two_print_page_containers(
     assert len(pages) == 2
     assert any('class="print-page print-page-front"' in page for page in pages)
     assert any('class="print-page print-page-back"' in page for page in pages)
+
+
+def test_print_route_without_pallet_rows_omits_pallet_summary_frames(connection):
+    card_id = make_completed_printable_card("27011-no-pallets")
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    assert len(print_page_sections(response.text)) == 2
+    assert 'data-pallet-summary-table=' not in response.text
+    assert "Палет" not in response.text
+
+
+def test_print_route_renders_fitting_pallet_rows_in_three_back_page_blocks(
+    connection,
+    monkeypatch,
+):
+    card_id = make_completed_printable_card("27011-fitting-pallets")
+    layout = {
+        "middle_rows": [
+            {
+                "pallet_label": "2",
+                "roll_count": 3,
+                "gross_display": "10.0",
+                "net_display": "8.8",
+            },
+            {
+                "pallet_label": "7",
+                "roll_count": 1,
+                "gross_display": "51.3",
+                "net_display": "50.0",
+            },
+        ],
+        "right_rows": [
+            {
+                "pallet_label": "10",
+                "roll_count": 2,
+                "gross_display": "20.0",
+                "net_display": "17.5",
+            }
+        ],
+        "overflow_pages": [],
+    }
+
+    response = get_print_page_with_pallet_layout(monkeypatch, card_id, layout)
+
+    assert response.status_code == 200
+    assert len(print_page_sections(response.text)) == 2
+    assert response.text.count('data-summary-table="production"') == 1
+    assert response.text.count('data-pallet-summary-table="middle"') == 1
+    assert response.text.count('data-pallet-summary-table="right"') == 1
+    assert re.findall(
+        r'<th>\s*(Палет|Ролки|Бруто, кг|Нето, кг)\s*</th>',
+        data_block(response.text, "data-pallet-summary-table", "middle"),
+    ) == ["Палет", "Ролки", "Бруто, кг", "Нето, кг"]
+    assert " ".join(
+        rendered_text(data_block(response.text, "data-pallet-summary-row", "2")).split()
+    ) == "2 3 10.0 8.8"
+    assert " ".join(
+        rendered_text(data_block(response.text, "data-pallet-summary-row", "10")).split()
+    ) == "10 2 20.0 17.5"
+    assert 'data-pallet-summary-total=' not in response.text
+
+
+def test_print_route_omits_an_empty_right_pallet_frame(connection, monkeypatch):
+    card_id = make_completed_printable_card("27011-one-pallet-column")
+    layout = {
+        "middle_rows": [
+            {
+                "pallet_label": "2",
+                "roll_count": 3,
+                "gross_display": "10.0",
+                "net_display": "8.8",
+            }
+        ],
+        "right_rows": [],
+        "overflow_pages": [],
+    }
+
+    response = get_print_page_with_pallet_layout(monkeypatch, card_id, layout)
+
+    assert response.status_code == 200
+    assert response.text.count('data-pallet-summary-table="middle"') == 1
+    assert 'data-pallet-summary-table="right"' not in response.text
+
+
+def test_print_route_moves_an_overflow_summary_wholly_to_identified_pages(
+    connection,
+    monkeypatch,
+):
+    card_id = make_completed_printable_card("27011-overflow-pallets")
+    source_rows = [
+        {
+            "pallet_label": str(100 + index),
+            "roll_count": index,
+            "gross_display": f"{index}.0",
+            "net_display": f"{index - 0.5:.1f}",
+        }
+        for index in range(1, 6)
+    ]
+    layout = printing.split_pallet_summary(
+        source_rows,
+        back_column_capacity=2,
+        overflow_page_capacity=2,
+    )
+
+    response = get_print_page_with_pallet_layout(monkeypatch, card_id, layout)
+
+    assert response.status_code == 200
+    pages = print_page_sections(response.text)
+    assert len(pages) == 5
+    back_page = next(page for page in pages if "print-page-back" in page)
+    assert 'data-pallet-summary-table=' not in back_page
+    overflow_pages = [page for page in pages if "print-page-pallet-overflow" in page]
+    assert len(overflow_pages) == 3
+    assert [
+        re.search(r'data-pallet-overflow-page="(\d+)"', page).group(1)
+        for page in overflow_pages
+    ] == ["1", "2", "3"]
+    for page in overflow_pages:
+        assert rendered_text(data_block(page, "data-overflow-header-value", "order")) == "27011-overflow-pallets"
+        assert rendered_text(data_block(page, "data-overflow-header-value", "customer")) == "Print Customer"
+        assert rendered_text(data_block(page, "data-overflow-header-value", "product")) == "PE film"
+    assert re.findall(
+        r'data-pallet-summary-row="([^"]+)"',
+        "".join(overflow_pages),
+    ) == [row["pallet_label"] for row in source_rows]
 
 
 def test_print_route_rendered_page_includes_front_and_back_template_labels(
@@ -1204,16 +1551,22 @@ def test_print_css_front_page_uses_reference_weight_borders():
     )
 
 
-def test_print_route_back_page_summary_fields_render_in_two_side_by_side_tables(connection):
+def test_print_route_back_page_summary_fields_render_in_one_ordered_production_table(connection):
     card_id = make_completed_printable_card("27034")
 
     response = get_print_page(card_id)
 
     assert response.status_code == 200
-    timing_table = data_block(response.text, "data-summary-table", "timing")
-    weights_table = data_block(response.text, "data-summary-table", "weights")
-    assert timing_table.count("<tr") == 3
-    assert weights_table.count("<tr") == 3
+    production_table = data_block(response.text, "data-summary-table", "production")
+    assert production_table.count("<tr") == 6
+    assert re.findall(r"<th>(.*?)</th>", production_table) == [
+        "Старт производство",
+        "Стоп производство",
+        "Време за изработка",
+        "Шпула /кг/",
+        "Произведено кол. бруто /кг/",
+        "Произведено кол. нето /кг/",
+    ]
     for field_name in ("start", "stop", "duration", "tare", "total-gross", "total-net"):
         assert f'data-summary-field="{field_name}"' in response.text
 

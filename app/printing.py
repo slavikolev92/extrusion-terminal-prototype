@@ -10,6 +10,8 @@ from .constants import PRINTABLE_STATUSES
 from .recipe_parser import parse_recipe_cell
 
 MAX_PRINT_ROLLS = 120
+PALLET_BACK_COLUMN_CAPACITY = 8
+PALLET_OVERFLOW_PAGE_CAPACITY = 48
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,7 @@ def validate_print_weight_values(
 def assemble_print_data(card: dict[str, Any]) -> dict[str, Any]:
     gross_rolls = gross_roll_entries(card)
     recipe_actual_entries = card.get("recipe_actual_entries") or {}
+    pallet_summary = build_pallet_summary(gross_rolls)
 
     front = {
         "order_number": text_value(card.get("order_number")),
@@ -158,6 +161,12 @@ def assemble_print_data(card: dict[str, Any]) -> dict[str, Any]:
         "front": front,
         "back": back,
         "roll_slots": build_roll_slots(gross_rolls),
+        "pallet_summary": pallet_summary,
+        "pallet_summary_layout": split_pallet_summary(
+            pallet_summary,
+            back_column_capacity=PALLET_BACK_COLUMN_CAPACITY,
+            overflow_page_capacity=PALLET_OVERFLOW_PAGE_CAPACITY,
+        ),
     }
 
 
@@ -239,6 +248,83 @@ def gross_roll_entries(card: dict[str, Any]) -> list[dict[str, Any]]:
         for roll in card.get("roll_entries", [])
         if roll.get("gross_weight") is not None
     ]
+
+
+def build_pallet_summary(gross_rolls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    buckets: dict[int | None, tuple[int, Decimal, Decimal]] = {}
+    for roll in gross_rolls:
+        gross_weight = decimal_from_value(roll.get("gross_weight"))
+        if gross_weight is None:
+            continue
+
+        net_weight = decimal_from_value(roll.get("net_weight"))
+        if net_weight is None:
+            raise ValueError("Saved gross rolls need a valid net weight for pallet printing.")
+
+        pallet_value = roll.get("pallet_number")
+        pallet_number = int(pallet_value) if pallet_value is not None else None
+        roll_count, gross_total, net_total = buckets.get(
+            pallet_number,
+            (0, Decimal("0"), Decimal("0")),
+        )
+        buckets[pallet_number] = (
+            roll_count + 1,
+            gross_total + gross_weight,
+            net_total + net_weight,
+        )
+
+    numbered_pallets = sorted(
+        pallet_number for pallet_number in buckets if pallet_number is not None
+    )
+    if not numbered_pallets:
+        return []
+
+    summary_rows = [
+        pallet_summary_row(pallet_number, buckets[pallet_number])
+        for pallet_number in numbered_pallets
+    ]
+    if None in buckets:
+        summary_rows.append(pallet_summary_row(None, buckets[None]))
+    return summary_rows
+
+
+def pallet_summary_row(
+    pallet_number: int | None,
+    bucket: tuple[int, Decimal, Decimal],
+) -> dict[str, Any]:
+    roll_count, gross_weight, net_weight = bucket
+    return {
+        "pallet_label": str(pallet_number) if pallet_number is not None else "Без палет",
+        "roll_count": roll_count,
+        "gross_display": format_weight(gross_weight),
+        "net_display": format_weight(net_weight),
+    }
+
+
+def split_pallet_summary(
+    rows: list[dict[str, Any]],
+    *,
+    back_column_capacity: int,
+    overflow_page_capacity: int,
+) -> dict[str, list[Any]]:
+    if back_column_capacity <= 0 or overflow_page_capacity <= 0:
+        raise ValueError("Pallet summary capacities must be positive.")
+
+    if len(rows) <= 2 * back_column_capacity:
+        return {
+            "middle_rows": rows[:back_column_capacity],
+            "right_rows": rows[back_column_capacity:],
+            "overflow_pages": [],
+        }
+
+    return {
+        "middle_rows": [],
+        "right_rows": [],
+        "overflow_pages": [
+            rows[index : index + overflow_page_capacity]
+            for index in range(0, len(rows), overflow_page_capacity)
+        ],
+    }
 
 
 def tare_summary_display(card: dict[str, Any]) -> str:

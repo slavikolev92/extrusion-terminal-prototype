@@ -1152,6 +1152,7 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
         """
         UPDATE cards
         SET tare_weight = 1.25,
+            current_pallet_number = 7,
             actual_raw_material_used = 'Actual LDPE',
             raw_material_brand_grade = 'Grade A',
             raw_material_batch_lot = 'Batch 42',
@@ -1163,8 +1164,10 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
     )
     connection.execute(
         """
-        INSERT INTO roll_entries (card_id, order_number, roll_number, gross_weight, net_weight)
-        VALUES (?, '25281', 1, 25.50, 24.25)
+        INSERT INTO roll_entries (
+            card_id, order_number, roll_number, pallet_number, gross_weight, net_weight
+        )
+        VALUES (?, '25281', 1, 6, 25.50, 24.25)
         """,
         (card_id,),
     )
@@ -1193,16 +1196,20 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
         """
         SELECT status, machine_id, machine_sequence, customer, max_roll_weight, raw_material_a,
                tare_weight, actual_raw_material_used, raw_material_brand_grade,
-               raw_material_batch_lot, first_started_at
+               raw_material_batch_lot, first_started_at, current_pallet_number
         FROM cards
         WHERE id = ?
         """,
         (card_id,),
     ).fetchone()
-    roll_count = connection.execute(
-        "SELECT COUNT(*) FROM roll_entries WHERE card_id = ?",
+    roll = connection.execute(
+        """
+        SELECT COUNT(*) AS entry_count, MAX(pallet_number) AS pallet_number
+        FROM roll_entries
+        WHERE card_id = ?
+        """,
         (card_id,),
-    ).fetchone()[0]
+    ).fetchone()
     segment_count = connection.execute(
         "SELECT COUNT(*) FROM production_time_segments WHERE card_id = ?",
         (card_id,),
@@ -1222,7 +1229,9 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
     assert card["raw_material_brand_grade"] == "Grade A"
     assert card["raw_material_batch_lot"] == "Batch 42"
     assert card["first_started_at"] == "2026-06-12T08:00:00"
-    assert roll_count == 1
+    assert card["current_pallet_number"] == 7
+    assert roll["entry_count"] == 1
+    assert roll["pallet_number"] == 6
     assert segment_count == 1
 
 

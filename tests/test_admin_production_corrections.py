@@ -925,6 +925,38 @@ def test_admin_roll_ledger_updates_per_roll_tare_without_changing_default_tare(
     assert updated["roll_entries"][0]["net_weight"] == 47
 
 
+def test_archived_admin_roll_pallet_correction_preserves_other_snapshots(connection, active_test_shift):
+    card_id = prepare_completed_card("26041")
+    assert db.add_roll_gross_weight(
+        card_id,
+        card_version(card_id),
+        "30.00",
+        pallet_number="2",
+    ).ok
+    assert db.archive_completed_card(card_id, card_version(card_id)).ok
+    before = db.fetch_admin_card_detail(card_id)
+    first_id = int(before["roll_entries"][0]["id"])
+    second_id = int(before["roll_entries"][1]["id"])
+
+    result = db.update_admin_roll_ledger(
+        card_id=card_id,
+        loaded_version=before["version"],
+        tare_weight="1.00",
+        current_pallet_number="5",
+        roll_updates={first_id: {"pallet_number": "1"}},
+        delete_roll_ids=set(),
+        new_gross_weights=[],
+    )
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert result.ok
+    assert after["current_pallet_number"] == 5
+    assert [(int(roll["id"]), roll["pallet_number"]) for roll in after["roll_entries"]] == [
+        (first_id, 1),
+        (second_id, 2),
+    ]
+
+
 def test_archived_card_materials_remain_editable(connection, active_test_shift):
     card_id = prepare_completed_card("26031")
     assert db.archive_completed_card(card_id, card_version(card_id)).ok

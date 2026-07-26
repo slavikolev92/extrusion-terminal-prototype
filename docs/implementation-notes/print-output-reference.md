@@ -2,15 +2,16 @@
 
 This document preserves the accepted print-output requirements, field mapping, validation rules, and implementation history for future maintenance.
 
-**Goal:** Add completed-card printing/reprinting for the extrusion terminal pilot, producing a two-page A4 operational card that follows `source-files/print-template.xlsx` as closely as practical.
+**Goal:** Maintain completed-card printing/reprinting for the extrusion terminal pilot, producing a normally two-page A4 operational card that follows `source-files/print-template.xlsx` as closely as practical, with page 3+ used only when the pallet summary overflows.
 
-**Architecture:** The durable requirement is a two-page print output generated from app data, not from Excel. The recommended first implementation is a FastAPI server-rendered HTML/CSS print route that maps SQLite card data into print-only templates matching the workbook layout. If HTML/CSS cannot reach acceptable fidelity, this document still defines the persistent data, formatting, validation, and behavior requirements for another rendering approach.
+**Architecture:** The durable requirement is an app-data print output generated independently of Excel: the extrusion front and 120-roll back are the normal two pages, and derived pallet-summary overflow may add page 3+. The implementation is a FastAPI server-rendered HTML/CSS print route that maps SQLite card data into print-only templates matching the workbook layout.
 
 **Tech Stack:** FastAPI, Jinja2 templates, direct `sqlite3`, app-local CSS, browser print, pytest, Playwright/browser visual checks.
 
-**Current status:** The accepted two-page layout is implemented. The front
-quantity row uses the four final Shift Manager ordered amounts. The established
-browser/PDF and physical-printer layout remains the reference for verification.
+**Current status:** The accepted normal two-page layout and conditional pallet-
+summary overflow are implemented. The front quantity row uses the four final
+Shift Manager ordered amounts. The established browser/PDF and physical-printer
+layout remains the reference for verification.
 
 ---
 
@@ -18,7 +19,8 @@ browser/PDF and physical-printer layout remains the reference for verification.
 
 The former sequencing note that placed printing after a V8 workstation
 bug/edge-case slice is historical. Printing is implemented and its accepted
-two-page output is the current maintenance reference.
+normal two-page output, plus conditional pallet-summary overflow, is the current
+maintenance reference.
 
 The app must not fill, mutate, print from, or otherwise use `source-files/print-template.xlsx` as a runtime template. The workbook is a visual/content reference only.
 
@@ -31,17 +33,25 @@ The printed output must be generated from completed app data stored in SQLite:
 - timing segments and calculated active production duration
 - completion timestamp
 
-The template fields are the boundary for printed content. If information is not present in `source-files/print-template.xlsx`, do not add it to the printout. App workflow fields such as status, machine number, machine sequence, queue position, and max roll weight must not be printed unless the user later updates the print template to include them.
+The template fields plus confirmed production-summary additions are the boundary
+for printed content. The accepted additions are timing, tare, order gross/net,
+and the derived pallet summary documented below. Other app workflow fields such
+as status, machine number, machine sequence, queue position, and max roll weight
+must not be printed unless the user later updates the print contract.
 
 Cancelled cards are never printable. Printing is strictly for completed or
 archived cards.
 
 ## Definite Functional Requirements
 
-The print output is always exactly two A4 portrait pages:
+The print output is normally exactly two A4 portrait pages:
 
 1. Front page: extrusion operational card.
 2. Back page: roll grid and production summary.
+
+Page 3 and later are permitted only when the complete derived pallet summary
+cannot fit in the two pallet blocks on page 2. The fixed roll grid never
+overflows: it remains limited to rolls `1-120` on page 2.
 
 The front page must represent only the extrusion card. Do not include the other original workbook operation blocks such as printing/flexo, rewinding/slitting, or confection.
 
@@ -49,9 +59,12 @@ The back page must keep the same 120-roll grid structure, even when fewer rolls 
 
 The output should match the supplied print template as closely as possible, while fixing clearly bad legacy behavior where text becomes unreadable or clipped.
 
-The implementation must preserve the template structure. Fixed boxes/sections should keep their dimensions. Long text may wrap inside the box. If wrapped text still does not fit, shrink the text only as much as needed, down to a readable minimum. Do not expand sections in a way that breaks the two-page structure.
+The implementation must preserve the template structure. Fixed boxes/sections should keep their dimensions. Long text may wrap inside the box. If wrapped text still does not fit, shrink the text only as much as needed, down to a readable minimum. Do not expand the front, 120-roll grid, or page-2 production summary in a way that breaks the normal two-page structure.
 
-The `Дата / смяна` columns on the back-page roll grid must remain visually present but blank for v1. The app does not capture per-roll date/shift data.
+The `Дата / смяна` columns on the back-page roll grid must remain visually
+present but deliberately blank. M002 records durable per-roll shift attribution
+in `roll_entries.shift_occurrence_id`, but the accepted print contract does not
+render that attribution into these legacy compatibility cells.
 
 Legacy front-page sections such as `ШПУЛИ`, `БРАК`, and `ФОЛИО [kg]` must remain visually present but blank unless a future confirmed template/data mapping explicitly fills them.
 
@@ -87,7 +100,8 @@ Printing is allowed only when all of these are true:
 
 If any condition fails, block printing and show a clear actionable message. Do not silently render blanks for critical production data. Do not silently omit rolls beyond the template capacity.
 
-More than 120 rolls must block printing with a clear error. There is no v1 overflow page.
+More than 120 rolls must block printing with a clear error. There is no roll-
+grid overflow page; pallet-summary overflow does not expand the 120-roll limit.
 
 ## Formatting Rules
 
@@ -239,6 +253,38 @@ Back page summary:
 | `Произведено кол. бруто /кг/` | sum of roll gross weights, one decimal |
 | `Произведено кол. нето /кг/` | total net weight, one decimal |
 
+Back-page pallet summary:
+
+- The lower area is three side-by-side blocks: the six-row production summary
+  on the left, then two independently headed pallet blocks in the middle and
+  right.
+- Each pallet block repeats `Палет | Ролки | Бруто, кг | Нето, кг`.
+- Each row is derived at print time from saved gross roll rows. Numbered pallets
+  are sorted numerically; gaps do not create rows.
+- Roll count and the gross/net sums are calculated per pallet. Both weight
+  totals use the established one-decimal print formatting.
+- When numbered and blank assignments are mixed, `Без палет` appears once as
+  the final row. When every saved gross roll has a blank pallet, the entire
+  pallet summary is omitted, including empty frames.
+- The complete summary fills the middle page-2 block before the right block.
+  If it cannot fit across both blocks, page 2 contains no partial pallet
+  summary and the complete list starts on page 3.
+- Every overflow page repeats order number, customer, and product type and uses
+  the same pallet headings. Rows remain whole; no row may be split or omitted.
+- Corrections are reflected on reprint because the summary is derived from the
+  current roll rows rather than persisted as a separate aggregate.
+
+Measured Chromium/PDF renderer capacities, recorded on 2026-07-26:
+
+- `8` whole pallet rows per page-2 pallet block (`16` across both blocks);
+- `48` whole pallet rows per overflow page.
+
+These capacities are renderer geometry facts for the current CSS, not business
+limits. The live boundary fixture proved that 16 rows fit as `8 + 8`, row 17
+moves the whole summary to overflow, row 48 fits on an overflow page, and row 49
+starts the next page. Recalibrate them after any print typography, spacing, or
+page-geometry change.
+
 Do not print `cards.max_roll_weight`. The legacy column is inert and is not part
 of the print template.
 
@@ -246,11 +292,11 @@ of the print template.
 
 Use a dedicated print route and print-only templates:
 
-- route renders a completed card into two A4 `.print-page` blocks
+- route renders a completed card into two normal A4 `.print-page` blocks plus conditional pallet-summary overflow blocks
 - page 1 is the front card
 - page 2 is the back grid
 - CSS uses `@page { size: A4 portrait; }`
-- CSS forces exactly one page break between front and back
+- CSS forces the front/back break and adds positional breaks only when overflow pages follow
 - CSS uses physical page dimensions and fixed layout measurements for the main structure
 - use CSS grid/absolute page measurements for outer geometry
 - use table-like internal blocks where they simplify repeated rows and borders
@@ -293,7 +339,7 @@ Likely files to create:
   - roll-slot construction for `1-120`
 
 - `app/templates/print_card.html`
-  - two-page print document
+  - normal two-page print document with conditional pallet-summary overflow
   - front page markup
   - back page markup
   - minimal non-print fallback controls such as admin preview print button
@@ -394,7 +440,7 @@ Likely files to modify:
   - completed printable card returns `200`
   - non-completed card returns a blocked response
   - card with more than 120 rolls returns a blocked response
-  - rendered page contains exactly two print page containers
+  - a normal card without pallet-summary overflow contains exactly two print page containers
   - rendered page includes front/back known labels from the template
   - rendered page includes gross-only roll values and does not include per-roll net values
 
@@ -415,7 +461,7 @@ Likely files to modify:
 
   Requirements:
 
-  - includes two `.print-page` containers
+  - includes the front and back `.print-page` containers, plus conditional pallet-summary overflow containers
   - includes front and back page landmarks/classes
   - includes a screen-only print button/fallback control
   - calls `window.print()` only when auto-print mode is requested
@@ -578,7 +624,7 @@ Likely files to modify:
 
   Check:
 
-  - exactly two A4 pages
+  - exactly two A4 pages for a normal card, with page 3+ only for pallet-summary overflow
   - front and back page break correctly
   - fields do not overlap
   - long text wraps/shrinks inside fixed boxes
@@ -619,11 +665,13 @@ Before saying print work is complete:
 - [x] cancelled cards are blocked from print
 - [x] missing print-critical data is blocked with actionable messages
 - [x] more than 120 rolls is blocked
-- [x] completed printable card renders two pages
+- [x] completed printable card renders two normal pages
 - [x] front page matches extrusion template structure
 - [x] back page keeps 120-roll grid
 - [x] roll cells show gross only
 - [x] totals show tare, gross, and net
+- [x] pallet summaries use numeric order, one-decimal gross/net totals, conditional `Без палет`, and all-blank omission
+- [x] page-2 pallet blocks fit 8 whole rows each; overflow pages fit 48 whole rows and repeat card identification
 - [x] timing shows start, stop, and active duration excluding pauses
 - [x] app-only fields are absent
 - [x] automated tests pass
@@ -638,7 +686,7 @@ These are intentionally not part of v1:
 - terminal print/reprint controls
 - per-roll date/shift capture
 - per-roll net display
-- overflow page for more than 120 rolls
+- overflow page for more than 120 roll-grid entries (pallet-summary overflow remains supported)
 - modifying the Excel workbook
 - writing app production data back to Excel
 - adding app workflow metadata to print

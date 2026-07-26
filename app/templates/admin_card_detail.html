@@ -299,6 +299,10 @@
           <input type="number" name="tare_weight" min="0" step="0.01" value="{{ card.tare_weight if card.tare_weight is not none else '' }}">
         </label>
         <label>
+          <span>Палет</span>
+          <input type="text" inputmode="numeric" name="current_pallet_number" value="{{ card.current_pallet_number if card.current_pallet_number is not none else '' }}">
+        </label>
+        <label>
           <span>Нова ролка, кг</span>
           <input type="number" name="new_gross_weight" min="0" step="0.01" placeholder="Бруто">
         </label>
@@ -308,6 +312,7 @@
         <div class="admin-ledger-table roll-ledger">
           <div class="admin-ledger-head">
             <div>№</div>
+            <div>Палет</div>
             <div>Бруто, кг</div>
             <div>Шпула, кг</div>
             <div>Нето, кг</div>
@@ -316,6 +321,9 @@
           {% for roll in card.roll_entries %}
             <div class="admin-ledger-row admin-roll-ledger-row">
               <div>{{ roll.roll_number }}</div>
+              <div>
+                <input type="text" inputmode="numeric" name="pallet_number__{{ roll.id }}" value="{{ roll.pallet_number if roll.pallet_number is not none else '' }}" placeholder="-">
+              </div>
               <div>
                 <input type="number" name="gross_weight__{{ roll.id }}" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}">
               </div>

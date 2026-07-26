@@ -368,6 +368,59 @@ def add_partially_upgraded_shift_schema(
         )
 
 
+PALLET_VALUE_CHECK = (
+    "CHECK ({column} IS NULL OR "
+    "(typeof({column}) = 'integer' AND {column} BETWEEN 1 AND 999))"
+)
+
+
+def add_recorded_m001_and_m002(database_path: Path) -> None:
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO schema_migrations (version, name)
+            VALUES (1, 'shift_manager_import_fields');
+            INSERT INTO schema_migrations (version, name)
+            VALUES (2, 'shift_management');
+            """
+        )
+
+
+def add_partially_upgraded_pallet_schema(
+    database_path: Path,
+    *,
+    card_definition: str,
+    roll_definition: str,
+) -> None:
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "ALTER TABLE cards ADD COLUMN current_pallet_number "
+            f"{card_definition}"
+        )
+        connection.execute(
+            "ALTER TABLE roll_entries ADD COLUMN pallet_number "
+            f"{roll_definition}"
+        )
+
+
+def clear_legacy_production_rows(database_path: Path) -> None:
+    with sqlite3.connect(database_path) as connection:
+        for table_name in (
+            "production_time_segments",
+            "recipe_actual_entries",
+            "recipe_components",
+            "roll_entries",
+            "card_import_sources",
+            "cards",
+        ):
+            connection.execute(f"DELETE FROM {table_name}")
+
+
 def configure_database(
     monkeypatch: pytest.MonkeyPatch,
     database_path: Path,
@@ -439,6 +492,54 @@ def capture_preservation_snapshot(
     return snapshot, columns_by_table
 
 
+def capture_m003_preservation_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    legacy_machine_ids: tuple[int, ...] | None = None,
+) -> dict[str, list[tuple[object, ...]]]:
+    table_names = (
+        "cards",
+        "card_import_sources",
+        "roll_entries",
+        "recipe_actual_entries",
+        "recipe_components",
+        "production_time_segments",
+        "machines",
+        "terminal_configuration",
+        "shift_occurrences",
+        "schema_migrations",
+    )
+    order_columns = {
+        "card_import_sources": "card_id",
+        "schema_migrations": "version",
+    }
+    snapshot: dict[str, list[tuple[object, ...]]] = {}
+    for table_name in table_names:
+        columns = tuple(
+            row["name"]
+            for row in connection.execute(
+                f"PRAGMA table_info({table_name})"
+            ).fetchall()
+            if row["name"] not in {"current_pallet_number", "pallet_number"}
+        )
+        query = (
+            "SELECT " + ", ".join(columns) + f" FROM {table_name} "
+        )
+        parameters: tuple[int, ...] = ()
+        if table_name == "machines" and legacy_machine_ids is not None:
+            query += "WHERE id IN (" + ", ".join("?" for _ in legacy_machine_ids) + ") "
+            parameters = legacy_machine_ids
+        query += f"ORDER BY {order_columns.get(table_name, 'id')}"
+        snapshot[table_name] = [
+            tuple(row)
+            for row in connection.execute(
+                query,
+                parameters,
+            ).fetchall()
+        ]
+    return snapshot
+
+
 def test_m002_adds_shift_schema_without_attributing_legacy_rolls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -507,6 +608,7 @@ def test_m002_adds_shift_schema_without_attributing_legacy_rolls(
     assert [(row["version"], row["name"]) for row in migration_rows] == [
         (1, "shift_manager_import_fields"),
         (2, "shift_management"),
+        (3, "roll_pallet_assignment"),
     ]
     assert configuration == {"id": 1, "shift_count": 4, "version": 1}
     assert roll["shift_occurrence_id"] is None
@@ -685,6 +787,7 @@ def test_m002_preserves_existing_attribution_in_partially_upgraded_schema(
     assert [(row["version"], row["name"]) for row in migration_rows] == [
         (1, "shift_manager_import_fields"),
         (2, "shift_management"),
+        (3, "roll_pallet_assignment"),
     ]
     assert integrity == "ok"
     assert foreign_key_violations == []
@@ -762,7 +865,363 @@ def test_init_rejects_recorded_m002_without_roll_shift_foreign_key(
         db.init_db()
 
 
-def test_fresh_database_records_m001_and_m002_once_with_schema_parity(
+def test_m003_adds_nullable_pallet_columns_without_backfilling_legacy_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m003-legacy.sqlite3"
+    create_legacy_database(database_path)
+    add_existing_final_values(database_path)
+    add_partially_upgraded_shift_schema(database_path)
+    add_recorded_m001_and_m002(database_path)
+    configure_database(monkeypatch, database_path)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        before_snapshot = capture_m003_preservation_snapshot(connection)
+    legacy_machine_ids = tuple(
+        int(row[0]) for row in before_snapshot["machines"]
+    )
+    prior_migration_rows = before_snapshot.pop("schema_migrations")
+
+    db.init_db()
+
+    with db.connect() as connection:
+        migration_rows = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT version, name FROM schema_migrations ORDER BY version"
+            ).fetchall()
+        ]
+        legacy_card = read_row(connection, "cards", "id", 1)
+        legacy_roll = read_row(connection, "roll_entries", "id", 1)
+        first_snapshot = capture_m003_preservation_snapshot(
+            connection,
+            legacy_machine_ids=legacy_machine_ids,
+        )
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        foreign_key_violations = connection.execute(
+            "PRAGMA foreign_key_check"
+        ).fetchall()
+
+    db.init_db()
+
+    with db.connect() as connection:
+        second_snapshot = capture_m003_preservation_snapshot(
+            connection,
+            legacy_machine_ids=legacy_machine_ids,
+        )
+
+    first_migration_rows = first_snapshot.pop("schema_migrations")
+    second_migration_rows = second_snapshot.pop("schema_migrations")
+    assert first_snapshot == before_snapshot
+    assert second_snapshot == first_snapshot
+    assert first_migration_rows[:-1] == prior_migration_rows
+    assert second_migration_rows == first_migration_rows
+    assert legacy_card["current_pallet_number"] is None
+    assert legacy_roll["pallet_number"] is None
+    assert migration_rows[-1] == {"version": 3, "name": "roll_pallet_assignment"}
+    assert integrity == "ok"
+    assert foreign_key_violations == []
+
+
+def test_m003_accepts_a_valid_partially_upgraded_schema_and_preserves_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m003-partially-upgraded.sqlite3"
+    create_legacy_database(database_path)
+    add_existing_final_values(database_path)
+    add_partially_upgraded_shift_schema(database_path)
+    add_recorded_m001_and_m002(database_path)
+    add_partially_upgraded_pallet_schema(
+        database_path,
+        card_definition=(
+            "INTEGER " + PALLET_VALUE_CHECK.format(column="current_pallet_number")
+        ),
+        roll_definition=(
+            "INTEGER " + PALLET_VALUE_CHECK.format(column="pallet_number")
+        ),
+    )
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("UPDATE cards SET current_pallet_number = 17 WHERE id = 1")
+        connection.execute("UPDATE roll_entries SET pallet_number = 18 WHERE id = 1")
+    configure_database(monkeypatch, database_path)
+
+    db.init_db()
+
+    with db.connect() as connection:
+        first_card = read_row(connection, "cards", "id", 1)
+        first_roll = read_row(connection, "roll_entries", "id", 1)
+        first_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+        first_snapshot = capture_m003_preservation_snapshot(connection)
+
+    db.init_db()
+
+    with db.connect() as connection:
+        second_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+        second_snapshot = capture_m003_preservation_snapshot(connection)
+
+    assert first_card["current_pallet_number"] == 17
+    assert first_roll["pallet_number"] == 18
+    assert [(row["version"], row["name"]) for row in first_rows] == [
+        (1, "shift_manager_import_fields"),
+        (2, "shift_management"),
+        (3, "roll_pallet_assignment"),
+    ]
+    assert second_rows == first_rows
+    assert second_snapshot == first_snapshot
+
+
+def test_m003_rejects_partial_pallet_columns_without_required_constraints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m003-partial-constraints.sqlite3"
+    create_legacy_database(database_path)
+    add_existing_final_values(database_path)
+    add_partially_upgraded_shift_schema(database_path)
+    add_recorded_m001_and_m002(database_path)
+    add_partially_upgraded_pallet_schema(
+        database_path,
+        card_definition="INTEGER",
+        roll_definition="INTEGER",
+    )
+    configure_database(monkeypatch, database_path)
+
+    with pytest.raises(RuntimeError, match="required pallet constraint"):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        migration_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+
+    assert migration_rows == [
+        (1, "shift_manager_import_fields"),
+        (2, "shift_management"),
+    ]
+
+
+def test_init_rejects_recorded_m003_with_malformed_pallet_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "recorded-m003-malformed.sqlite3"
+    create_legacy_database(database_path)
+    add_existing_final_values(database_path)
+    add_partially_upgraded_shift_schema(database_path)
+    add_recorded_m001_and_m002(database_path)
+    add_partially_upgraded_pallet_schema(
+        database_path,
+        card_definition="INTEGER",
+        roll_definition="INTEGER",
+    )
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO schema_migrations (version, name) "
+            "VALUES (3, 'roll_pallet_assignment')"
+        )
+    configure_database(monkeypatch, database_path)
+
+    with pytest.raises(RuntimeError, match="required pallet constraint"):
+        db.init_db()
+
+
+@pytest.mark.parametrize(
+    (
+        "card_definition",
+        "roll_definition",
+        "clear_rows",
+    ),
+    [
+        (
+            "INTEGER NOT NULL "
+            + PALLET_VALUE_CHECK.format(column="current_pallet_number"),
+            "INTEGER NOT NULL " + PALLET_VALUE_CHECK.format(column="pallet_number"),
+            True,
+        ),
+        (
+            "INTEGER DEFAULT 1 "
+            + PALLET_VALUE_CHECK.format(column="current_pallet_number"),
+            "INTEGER DEFAULT 1 " + PALLET_VALUE_CHECK.format(column="pallet_number"),
+            False,
+        ),
+        (
+            "INTEGER /* CHECK (current_pallet_number IS NULL OR "
+            "(typeof(current_pallet_number) = 'integer' AND "
+            "current_pallet_number BETWEEN 1 AND 999)) */",
+            "INTEGER /* CHECK (pallet_number IS NULL OR "
+            "(typeof(pallet_number) = 'integer' AND pallet_number BETWEEN 1 "
+            "AND 999)) */",
+            False,
+        ),
+    ],
+    ids=("not-null", "default", "comment-spoofed"),
+)
+def test_m003_rejects_partial_pallet_columns_that_violate_nullable_defaultless_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    card_definition: str,
+    roll_definition: str,
+    clear_rows: bool,
+) -> None:
+    database_path = tmp_path / "m003-invalid-column-contract.sqlite3"
+    create_legacy_database(database_path)
+    add_existing_final_values(database_path)
+    add_partially_upgraded_shift_schema(database_path)
+    if clear_rows:
+        clear_legacy_production_rows(database_path)
+    add_recorded_m001_and_m002(database_path)
+    add_partially_upgraded_pallet_schema(
+        database_path,
+        card_definition=card_definition,
+        roll_definition=roll_definition,
+    )
+    configure_database(monkeypatch, database_path)
+
+    with pytest.raises(RuntimeError, match="pallet"):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        migration_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+
+    assert migration_rows == [
+        (1, "shift_manager_import_fields"),
+        (2, "shift_management"),
+    ]
+
+
+def test_m003_accepts_equivalent_nullable_pallet_constraints_and_preserves_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m003-equivalent-constraint.sqlite3"
+    create_legacy_database(database_path)
+    add_existing_final_values(database_path)
+    add_partially_upgraded_shift_schema(database_path)
+    add_recorded_m001_and_m002(database_path)
+    add_partially_upgraded_pallet_schema(
+        database_path,
+        card_definition=(
+            "INTEGER CHECK ((typeof(current_pallet_number) = 'integer' "
+            "AND current_pallet_number BETWEEN 1 AND 999) OR "
+            "current_pallet_number IS NULL)"
+        ),
+        roll_definition=(
+            "INTEGER CHECK ((typeof(pallet_number) = 'integer' "
+            "AND pallet_number BETWEEN 1 AND 999) OR pallet_number IS NULL)"
+        ),
+    )
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("UPDATE cards SET current_pallet_number = 17 WHERE id = 1")
+        connection.execute("UPDATE roll_entries SET pallet_number = 18 WHERE id = 1")
+    configure_database(monkeypatch, database_path)
+
+    db.init_db()
+
+    with db.connect() as connection:
+        card = read_row(connection, "cards", "id", 1)
+        roll = read_row(connection, "roll_entries", "id", 1)
+        migration_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+
+    assert card["current_pallet_number"] == 17
+    assert roll["pallet_number"] == 18
+    assert [(row["version"], row["name"]) for row in migration_rows] == [
+        (1, "shift_manager_import_fields"),
+        (2, "shift_management"),
+        (3, "roll_pallet_assignment"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("card_definition", "roll_definition"),
+    [
+        (
+            "INTEGER CHECK (current_pallet_number IS NULL OR "
+            "(typeof(current_pallet_number) = 'integer' AND "
+            "current_pallet_number BETWEEN 1 AND 999 AND "
+            "current_pallet_number <> 42))",
+            "INTEGER CHECK (pallet_number IS NULL OR "
+            "(typeof(pallet_number) = 'integer' AND pallet_number BETWEEN 1 "
+            "AND 999 AND pallet_number <> 42))",
+        ),
+        (
+            "INTEGER CHECK (current_pallet_number IS NULL OR "
+            "(typeof(current_pallet_number) = 'integer' AND "
+            "current_pallet_number BETWEEN 1 AND 999) OR "
+            "current_pallet_number = 1001)",
+            "INTEGER CHECK (pallet_number IS NULL OR "
+            "(typeof(pallet_number) = 'integer' AND pallet_number BETWEEN 1 "
+            "AND 999) OR pallet_number = 1001)",
+        ),
+        (
+            "INTEGER CHECK (current_pallet_number IS NULL OR "
+            "(typeof(current_pallet_number) = 'integer' AND "
+            "current_pallet_number BETWEEN 1 AND 999)) "
+            "CHECK (current_pallet_number <> 42)",
+            "INTEGER CHECK (pallet_number IS NULL OR "
+            "(typeof(pallet_number) = 'integer' AND pallet_number BETWEEN 1 "
+            "AND 999)) CHECK (pallet_number <> 42)",
+        ),
+        (
+            "INTEGER CHECK (current_pallet_number IS NULL OR "
+            "(typeof(current_pallet_number) = 'integer' AND "
+            "current_pallet_number BETWEEN 1 AND 999)) "
+            "CHECK (\"current_pallet_number\" <> 42)",
+            "INTEGER CHECK (pallet_number IS NULL OR "
+            "(typeof(pallet_number) = 'integer' AND pallet_number BETWEEN 1 "
+            "AND 999)) CHECK ([pallet_number] <> 42)",
+        ),
+    ],
+    ids=(
+        "excludes-valid-42",
+        "permits-invalid-1001",
+        "extra-target-column-check",
+        "quoted-extra-target-column-check",
+    ),
+)
+def test_m003_rejects_semantically_non_equivalent_pallet_constraints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    card_definition: str,
+    roll_definition: str,
+) -> None:
+    database_path = tmp_path / "m003-non-equivalent-constraint.sqlite3"
+    create_legacy_database(database_path)
+    add_existing_final_values(database_path)
+    add_partially_upgraded_shift_schema(database_path)
+    add_recorded_m001_and_m002(database_path)
+    add_partially_upgraded_pallet_schema(
+        database_path,
+        card_definition=card_definition,
+        roll_definition=roll_definition,
+    )
+    configure_database(monkeypatch, database_path)
+
+    with pytest.raises(RuntimeError, match="required pallet constraint"):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        migration_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+
+    assert migration_rows == [
+        (1, "shift_manager_import_fields"),
+        (2, "shift_management"),
+    ]
+
+
+def test_fresh_database_records_m001_m002_and_m003_once_with_schema_parity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -821,20 +1280,20 @@ def test_fresh_database_records_m001_and_m002_once_with_schema_parity(
         second_rows = connection.execute(
             "SELECT version, name FROM schema_migrations ORDER BY version"
         ).fetchall()
-        card_columns = {
+        card_columns = [
             row["name"]
             for row in connection.execute("PRAGMA table_info(cards)").fetchall()
-        }
+        ]
         source_columns = {
             row["name"]
             for row in connection.execute(
                 "PRAGMA table_info(card_import_sources)"
             ).fetchall()
         }
-        roll_columns = {
+        roll_columns = [
             row["name"]
             for row in connection.execute("PRAGMA table_info(roll_entries)").fetchall()
-        }
+        ]
         shift_tables = {
             row["name"]
             for row in connection.execute(
@@ -852,15 +1311,19 @@ def test_fresh_database_records_m001_and_m002_once_with_schema_parity(
     assert [(row["version"], row["name"]) for row in first_rows] == [
         (1, "shift_manager_import_fields"),
         (2, "shift_management"),
+        (3, "roll_pallet_assignment"),
     ]
     assert [(row["version"], row["name"]) for row in second_rows] == [
         (1, "shift_manager_import_fields"),
         (2, "shift_management"),
+        (3, "roll_pallet_assignment"),
     ]
     assert configuration == {"id": 1, "shift_count": 4, "version": 1}
     assert set(FINAL_IMPORT_COLUMNS).issubset(card_columns)
     assert set(FINAL_IMPORT_COLUMNS).issubset(source_columns)
     assert "shift_occurrence_id" in roll_columns
+    assert card_columns.index("current_pallet_number") == card_columns.index("tare_weight") + 1
+    assert roll_columns.index("pallet_number") == roll_columns.index("net_weight") + 1
     assert {"terminal_configuration", "shift_occurrences"}.issubset(shift_tables)
     assert [card[column] for column in FINAL_IMPORT_COLUMNS] == [
         "700",
@@ -881,6 +1344,111 @@ def test_fresh_database_records_m001_and_m002_once_with_schema_parity(
         "1",
         "3",
         "4",
+    ]
+
+
+def test_m003_enforces_integer_pallet_range_on_cards_and_rolls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m003-constraints.sqlite3"
+    configure_database(monkeypatch, database_path)
+    db.init_db()
+
+    valid_values: tuple[object, ...] = (None, 1, 999, "1")
+    with db.connect() as connection:
+        for index, value in enumerate(valid_values, start=1):
+            order_number = f"PALLET-VALID-{index}"
+            card_id = connection.execute(
+                "INSERT INTO cards (order_number, current_pallet_number) VALUES (?, ?)",
+                (order_number, value),
+            ).lastrowid
+            connection.execute(
+                "INSERT INTO roll_entries ("
+                "card_id, order_number, roll_number, pallet_number"
+                ") VALUES (?, ?, 1, ?)",
+                (card_id, order_number, value),
+            )
+
+        for index, value in enumerate(("abc", 0, -1, 1000), start=1):
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(
+                    "INSERT INTO cards (order_number, current_pallet_number) "
+                    "VALUES (?, ?)",
+                    (f"PALLET-CARD-INVALID-{index}", value),
+                )
+            card_id = connection.execute(
+                "INSERT INTO cards (order_number) VALUES (?)",
+                (f"PALLET-ROLL-INVALID-{index}",),
+            ).lastrowid
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(
+                    "INSERT INTO roll_entries ("
+                    "card_id, order_number, roll_number, pallet_number"
+                    ") VALUES (?, ?, 1, ?)",
+                    (card_id, f"PALLET-ROLL-INVALID-{index}", value),
+                )
+
+        stored_card_types = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT current_pallet_number, typeof(current_pallet_number) "
+                "FROM cards WHERE order_number LIKE 'PALLET-VALID-%' ORDER BY id"
+            ).fetchall()
+        ]
+        stored_roll_types = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT pallet_number, typeof(pallet_number) FROM roll_entries "
+                "WHERE order_number LIKE 'PALLET-VALID-%' ORDER BY id"
+            ).fetchall()
+        ]
+
+    assert stored_card_types == [
+        (None, "null"),
+        (1, "integer"),
+        (999, "integer"),
+        (1, "integer"),
+    ]
+    assert stored_roll_types == stored_card_types
+
+
+def test_m003_failure_rolls_back_columns_and_migration_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m003-failure.sqlite3"
+    create_legacy_database(database_path)
+    add_existing_final_values(database_path)
+    add_partially_upgraded_shift_schema(database_path)
+    add_recorded_m001_and_m002(database_path)
+    configure_database(monkeypatch, database_path)
+
+    def fail_validation(connection: sqlite3.Connection) -> None:
+        raise RuntimeError("injected M003 validation failure")
+
+    monkeypatch.setattr(migrations, "validate_roll_pallet_schema", fail_validation)
+
+    with pytest.raises(RuntimeError, match="injected M003 validation failure"):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        card_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(cards)").fetchall()
+        }
+        roll_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(roll_entries)").fetchall()
+        }
+        migration_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+
+    assert "current_pallet_number" not in card_columns
+    assert "pallet_number" not in roll_columns
+    assert migration_rows == [
+        (1, "shift_manager_import_fields"),
+        (2, "shift_management"),
     ]
 
 

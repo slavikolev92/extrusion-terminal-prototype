@@ -26,6 +26,7 @@ from .constants import (
 from .db import (
     MAX_SHIFT_COUNT,
     NO_ACTIVE_SHIFT_MESSAGE,
+    PALLET_NUMBER_ERROR,
     STALE_CARD_MESSAGE,
     STALE_CONFIGURATION_MESSAGE,
     STALE_SHIFT_MESSAGE,
@@ -67,6 +68,8 @@ from .db import (
     update_admin_roll_ledger,
     update_admin_timing_ledger,
     update_card_planning,
+    update_current_pallet_number,
+    update_roll_defaults,
     update_roll_gross_weight,
     update_roll_weight,
     update_tare_weight,
@@ -105,6 +108,8 @@ SAFE_ANCHOR_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 TERMINAL_NOTICE_MESSAGES = {
     "materials_saved": ("Материалите са записани.",),
     "tare_saved": ("Шпула е записана.",),
+    "roll_defaults_saved": ("Данните са записани.",),
+    "pallet_saved": ("Палетът е записан.",),
     "roll_saved": ("Ролката е записана.",),
     "rolls_saved": ("Ролките са записани.",),
     "roll_updated": ("Ролката е коригирана.",),
@@ -674,7 +679,7 @@ def validate_admin_recipe_source_fields(source_fields: dict[str, str]) -> RuleRe
 
 def roll_ledger_from_form(
     form: Any,
-) -> tuple[str, dict[int, dict[str, str]], set[int], list[str]]:
+) -> tuple[str, str | None, dict[int, dict[str, str]], set[int], list[str]]:
     roll_updates: dict[int, dict[str, str]] = {}
     delete_roll_ids: set[int] = set()
     new_gross_weights: list[str] = []
@@ -687,13 +692,22 @@ def roll_ledger_from_form(
         elif key.startswith("tare_weight__"):
             roll_id = int(key.removeprefix("tare_weight__"))
             roll_updates.setdefault(roll_id, {})["tare_weight"] = text_value
+        elif key.startswith("pallet_number__"):
+            roll_id = int(key.removeprefix("pallet_number__"))
+            roll_updates.setdefault(roll_id, {})["pallet_number"] = text_value
         elif key == "delete_roll_id":
             delete_roll_ids.add(int(text_value))
         elif key == "new_gross_weight":
             new_gross_weights.append(text_value)
 
+    submitted_current_pallet = form.get("current_pallet_number")
     return (
         str(form.get("tare_weight") or ""),
+        (
+            None
+            if submitted_current_pallet is None
+            else str(submitted_current_pallet or "")
+        ),
         roll_updates,
         delete_roll_ids,
         new_gross_weights,
@@ -710,6 +724,9 @@ def terminal_roll_corrections_from_form(form: Any) -> dict[int, dict[str, str]]:
         elif key.startswith("tare_weight__"):
             roll_id = int(key.removeprefix("tare_weight__"))
             roll_updates.setdefault(roll_id, {})["tare_weight"] = text_value
+        elif key.startswith("pallet_number__"):
+            roll_id = int(key.removeprefix("pallet_number__"))
+            roll_updates.setdefault(roll_id, {})["pallet_number"] = text_value
     return roll_updates
 
 
@@ -1078,7 +1095,13 @@ def save_all_admin_card_changes(
         assert current_version is not None
 
         try:
-            tare_weight, roll_updates, delete_roll_ids, new_gross_weights = (
+            (
+                tare_weight,
+                current_pallet_number,
+                roll_updates,
+                delete_roll_ids,
+                new_gross_weights,
+            ) = (
                 roll_ledger_from_form(form)
             )
         except ValueError:
@@ -1088,6 +1111,7 @@ def save_all_admin_card_changes(
             card_id=card_id,
             loaded_version=current_version,
             tare_weight=tare_weight,
+            current_pallet_number=current_pallet_number,
             roll_updates=roll_updates,
             delete_roll_ids=delete_roll_ids,
             new_gross_weights=new_gross_weights,
@@ -1401,7 +1425,13 @@ async def save_admin_roll_ledger(request: Request, card_id: int):
     )
     if parsed_version is not None:
         try:
-            tare_weight, roll_updates, delete_roll_ids, new_gross_weights = (
+            (
+                tare_weight,
+                current_pallet_number,
+                roll_updates,
+                delete_roll_ids,
+                new_gross_weights,
+            ) = (
                 roll_ledger_from_form(form)
             )
         except ValueError:
@@ -1411,6 +1441,7 @@ async def save_admin_roll_ledger(request: Request, card_id: int):
                 card_id=card_id,
                 loaded_version=parsed_version,
                 tare_weight=tare_weight,
+                current_pallet_number=current_pallet_number,
                 roll_updates=roll_updates,
                 delete_roll_ids=delete_roll_ids,
                 new_gross_weights=new_gross_weights,
@@ -1828,15 +1859,57 @@ async def save_tare_weight(
     card_id: int,
     loaded_version: str = Form(...),
     tare_weight: str = Form(""),
+    pallet_number: str | None = Form(None),
+):
+    notice_code = (
+        "roll_defaults_saved" if isinstance(pallet_number, str) else "tare_saved"
+    )
+    parsed_version, roll_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        roll_result = validate_terminal_card_available_for_post(card_id)
+        if roll_result.ok:
+            submitted_pallet = (
+                pallet_number if isinstance(pallet_number, str) else None
+            )
+            roll_result = update_roll_defaults(
+                card_id,
+                parsed_version,
+                tare_weight=tare_weight,
+                pallet_number=submitted_pallet,
+                require_active_shift=True,
+            )
+
+    roll_result_target = (
+        "pallet"
+        if not roll_result.ok and PALLET_NUMBER_ERROR in roll_result.messages
+        else "tare"
+    )
+
+    return terminal_post_response(
+        request,
+        card_id,
+        "roll_result",
+        roll_result,
+        notice_code=notice_code,
+        roll_result_target=roll_result_target,
+    )
+
+
+@app.post("/terminal/cards/{card_id}/pallet")
+async def save_current_pallet_number(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(...),
+    pallet_number: str = Form(""),
 ):
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
         roll_result = validate_terminal_card_available_for_post(card_id)
         if roll_result.ok:
-            roll_result = update_tare_weight(
+            roll_result = update_current_pallet_number(
                 card_id,
                 parsed_version,
-                tare_weight,
+                pallet_number,
                 require_active_shift=True,
             )
 
@@ -1845,8 +1918,8 @@ async def save_tare_weight(
         card_id,
         "roll_result",
         roll_result,
-        notice_code="tare_saved",
-        roll_result_target="tare",
+        notice_code="pallet_saved",
+        roll_result_target="pallet",
     )
 
 
@@ -1857,6 +1930,7 @@ async def add_roll_weight(
     loaded_version: str = Form(...),
     gross_weight: str = Form(""),
     tare_weight: str | None = Form(None),
+    pallet_number: str | None = Form(None),
 ):
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
@@ -1867,8 +1941,15 @@ async def add_roll_weight(
                 parsed_version,
                 gross_weight,
                 tare_weight=tare_weight,
+                pallet_number=pallet_number,
                 require_active_shift=True,
             )
+
+    roll_result_target = (
+        "pallet"
+        if not roll_result.ok and PALLET_NUMBER_ERROR in roll_result.messages
+        else "new_roll"
+    )
 
     return terminal_post_response(
         request,
@@ -1876,7 +1957,7 @@ async def add_roll_weight(
         "roll_result",
         roll_result,
         notice_code="roll_saved",
-        roll_result_target="new_roll",
+        roll_result_target=roll_result_target,
     )
 
 
@@ -2512,6 +2593,7 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
         "roll_delete_selected_roll_id": results.get("roll_delete_selected_roll_id"),
         "errors": {
             "tare": (),
+            "pallet": (),
             "new_roll": (),
             "roll_corrections": (),
             "roll_delete": (),
@@ -2581,7 +2663,14 @@ def is_terminal_card_state_error(messages: tuple[str, ...]) -> bool:
 
 def terminal_roll_feedback_target(results: dict[str, Any]) -> str:
     target = str(results.get("roll_result_target") or "new_roll")
-    if target in {"tare", "new_roll", "roll_row", "roll_delete", "roll_corrections"}:
+    if target in {
+        "tare",
+        "pallet",
+        "new_roll",
+        "roll_row",
+        "roll_delete",
+        "roll_corrections",
+    }:
         return target
     return "new_roll"
 
@@ -2616,6 +2705,23 @@ def enrich_machine_queues(
 
 def enrich_terminal_card_display(card: dict[str, Any]) -> dict[str, Any]:
     enrich_terminal_list_card(card, card)
+    gross_rolls = [
+        roll for roll in card["roll_entries"] if roll["gross_weight"] is not None
+    ]
+    missing_pallet_count = sum(
+        roll["pallet_number"] is None for roll in gross_rolls
+    )
+    assigned_pallet_count = len(gross_rolls) - missing_pallet_count
+    if missing_pallet_count > 0 and assigned_pallet_count > 0:
+        roll_label = "ролка" if missing_pallet_count == 1 else "ролки"
+        card["finish_confirmation_message"] = (
+            f"В поръчката има {missing_pallet_count} {roll_label} без палет. "
+            "Искате ли да приключите поръчката?"
+        )
+    else:
+        card["finish_confirmation_message"] = (
+            "Сигурни ли сте, че искате да приключите тази поръчка?"
+        )
     card["quantity_display"] = build_quantity_display(card)
     card["recipe_rows"] = build_terminal_recipe_rows(card)
     card["target_gross_weight"] = target_gross_display(card)

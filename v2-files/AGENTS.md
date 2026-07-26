@@ -189,6 +189,7 @@ Every migration test set must cover, where applicable:
 | --- | --- | --- | --- | --- | --- |
 | M001 | `shift_manager_import_fields` | Add the eight final ordered/route columns without guessing legacy values | 9 focused tests passed | Not run | Not run |
 | M002 | `shift_management` | Add shift configuration, durable occurrences, and nullable roll attribution without historical backfill | 14 focused migration tests and 560 full-suite tests passed | Not run | Not run |
+| M003 | `roll_pallet_assignment` | Add nullable constrained current-card and per-roll pallet numbers without historical backfill | 28 focused migration, 78 focused print/verifier-safety, and 686 full-suite tests passed | Not needed for M003 itself; final release rehearsal still required | Not run |
 
 ### M001: Shift Manager Import Fields
 
@@ -273,6 +274,56 @@ release-candidate rehearsal remain deployment gates. M002 and the application
 code that consumes it must deploy together after a SQLite-safe backup and
 rehearsal.
 
+### M003: Roll Pallet Assignment
+
+M003 adds nullable `cards.current_pallet_number` and
+`roll_entries.pallet_number` columns. Each column is a defaultless SQLite
+`INTEGER` constrained to `NULL` or a whole integer from `1` through `999`.
+Startup validation rejects missing, malformed, non-null/defaulted, or
+constraint-spoofed partial definitions and validates persisted non-null values.
+
+M003 is schema-only. It updates no existing row: historical cards and rolls
+retain `NULL` in the new columns, and no pallet assignment is inferred.
+Statuses, assignments, queues, versions, timestamps, tare, gross/net roll data,
+shift attribution, timing, recipe/material actuals, and import-source values are
+preserved. A valid partially upgraded schema keeps its existing pallet values.
+The migration and record share the existing caller-owned transaction/savepoint,
+and injected validation failure rolls both columns and the M003 record back.
+
+Development evidence from July 26, 2026:
+
+```bash
+.venv/bin/python -m pytest tests/test_migrations.py -q
+# 28 passed in 2.02s
+
+.venv/bin/python -m pytest \
+  tests/test_roll_pallet_ui_script_safety.py tests/test_print_output.py -q
+# 78 passed in 3.52s
+
+.venv/bin/python -m pytest -q
+# 686 passed in 50.00s
+```
+
+The focused migration suite covers fresh, oldest accepted legacy, valid and
+malformed partial, recorded-malformed, repeat-run, rollback, direct constraints,
+full production-data preservation, `PRAGMA integrity_check == 'ok'`, and empty
+`PRAGMA foreign_key_check` results on temporary databases. No production or
+runtime database was opened or changed.
+
+The independent live Playwright 1.61.0 verifier exited `0` at `1536x1024` and
+`1366x768`. It exercised current-pallet autosave/reload, roll snapshotting,
+correction/clear, mixed finish confirmation, terminal/admin geometry, and
+browser/PDF print boundaries. The measured renderer capacities are 8 whole
+rows per page-2 pallet block and 48 whole rows per overflow page. Evidence is
+under `artifacts/ui-checks/roll-pallet-assignment/`; the normal PDF is 2 A4
+pages and the overflow fixture PDF is 5 A4 pages.
+
+No production snapshot is needed for M003 itself because its approved rule is
+to leave historical values `NULL`. M003 and the consuming application code must
+deploy together after a SQLite-safe backup. The unresolved M001 legacy-data
+production profile and the final release-candidate rehearsal remain separate
+deployment gates.
+
 ## Migration Assessment Log
 
 | Date | Feature/change | Decision | Result |
@@ -291,6 +342,8 @@ rehearsal.
 | 2026-07-26 | Completed Task 01 post-merge migration maintenance | Schema-only M002; no additional migration | The merged feature and migration chain were reassessed after final integration. M002 remains the only required persistent change, performs no historical attribution or other value transformation, and fails safely on a malformed partial roll foreign key. 14 migration, 149 affected-workflow, and 560 full-suite tests pass. No production snapshot is needed now; M001 profiling and the release-candidate rehearsal remain deployment gates. |
 | 2026-07-26 | Admin planning page redesign and guarded planning writes | No migration | The merged diff changes planning display, templates/CSS/JavaScript, sorting/display helpers, delete/release/replan transaction boundaries, and tests/documentation only. It reuses existing `cards`, `roll_entries`, `production_time_segments`, and `recipe_actual_entries` columns/tables; no schema, constraints, migration registry entry, status meaning, units, assignments, queues, versions, timestamps, tare, rolls, timing, or material actual values are transformed. 573 full-suite tests passed after merge; M001 profiling and release-candidate rehearsal remain deployment gates. |
 | 2026-07-26 | Repeated admin planning migration maintenance check | No migration | Re-read the migration procedure and re-inspected the merged admin-planning diff, `app/migrations.py`, `app/db.py` schema/init ordering, and migration tests. The feature still only changes UI/planning behavior and guarded writes over existing columns/tables; no new migration version or production data profile is required for this feature. |
+| 2026-07-26 | Per-roll pallet attribution and operational-card summary | Schema-only M003 | Added constrained nullable current-card and per-roll pallet columns; historical values deliberately remain `NULL` and no values are transformed. 28 migration, 78 print/verifier-safety, and 686 full-suite tests pass; integrity is `ok`, foreign-key checks are empty, and live browser/PDF acceptance passed at both supported viewports. No M003 snapshot is needed now; M001 profiling and the final release-candidate rehearsal remain deployment gates. |
+| 2026-07-26 | Repeated pallet-assignment migration maintenance after user acceptance | Schema-only M003; no additional migration | Re-inspected the accepted feature diff, schema/init ordering, M003 registry entry, startup validation, and synthetic legacy/partial-schema tests. M003 remains the only required persistent change; historical card and roll pallet values remain `NULL`, no stored values are transformed, and no production snapshot is needed for M003. The M001 production profile and final release-candidate rehearsal remain deployment gates. |
 
 Append one row after every use of the trigger command, including when no
 migration is required.

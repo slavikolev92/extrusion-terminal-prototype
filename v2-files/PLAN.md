@@ -28,7 +28,7 @@ and final release-candidate rehearsal remain deployment gates.
 The original production-tracking workstreams are:
 
 1. Shift management for extrusion production.
-2. Roll packaging / pallet tracking with label printing.
+2. Bounded per-roll pallet attribution and operational-card summary.
 
 For this V2 workstream, `v2-files/TASK-01-SHIFT-MANAGEMENT.md` is the approved
 shift-management functionality source. Do not reintroduce older shift details
@@ -48,8 +48,11 @@ from the repository-root `README.md` or this tracker's historical notes.
   occurrence without rewriting roll production history, but crew functionality
   is not currently planned.
 - Existing roll data must be migrated safely. Old rolls should not receive guessed shift assignments unless the user explicitly approves an approximate backfill.
-- Packaging/pallet tracking is separate from shift tracking. A shift produces rolls; a package/pallet groups rolls for transport and label printing.
-- Pallet labels should summarize the rolls included, including roll count, gross weight, and net weight.
+- Per-roll pallet attribution is separate from shift tracking. A shift produces
+  rolls; each roll may snapshot an optional pallet number scoped to its card.
+- The operational card summarizes roll count, gross weight, and net weight by
+  pallet. Separate package entities, labels, shipping, and pallet lifecycle are
+  outside the implemented workstream.
 
 ## Workstream 1: Shift Management
 
@@ -91,53 +94,29 @@ Future worker or crew data could reference the permanent shift-occurrence
 identity without changing existing roll history. No worker, roster, or crew
 interface or import is included in the current workstream.
 
-## Workstream 2: Roll Packaging / Pallet Tracking
+## Workstream 2: Roll Pallet Assignment And Operational-Card Summary
 
-Recommended second project, after shift management is stable.
+Completed locally after shift management on July 26, 2026, following
+feature-wide verification and independent review.
 
 ### Goal
 
-Group produced rolls into packages or pallets and generate printable labels for transport and handling.
+Record an optional pallet number on each produced roll and show calculated
+pallet aggregates on the completed operational card.
 
-### Suggested Feature Slices
+### Current Status And Boundary
 
-1. Packaging data foundation
-   - Add packages/pallets.
-   - Add package-to-roll assignment.
-   - Prevent one roll from being assigned to more than one active package.
+The bounded feature is complete in the local worktree. It provides a card-level current
+pallet value for future rolls, independent per-roll snapshots that remain
+correctable, a mixed-assignment finish warning, and current-data operational-
+card aggregates with measured page-2/overflow geometry. The final verification
+passed 469 focused and 686 full-suite tests plus guarded live browser/PDF
+acceptance at both supported viewports.
 
-2. Packaging workflow
-   - Let users select produced rolls and create a pallet/package.
-   - Show totals for selected rolls before saving.
-   - Allow package correction before label printing.
-
-3. Label printing
-   - Add a package label print route.
-   - Label should show package number, roll count, gross total, net total, order/product details, and included roll numbers.
-   - Keep this separate from the operational-card print route.
-
-4. Packaging history and correction
-   - Add package index and package detail.
-   - Allow voiding/replacing bad package labels without deleting production roll history.
-
-### Initial Data Shape
-
-```text
-packages
-- id
-- package_number
-- package_type
-- operation
-- status
-- created_at
-- updated_at
-```
-
-```text
-package_rolls
-- package_id
-- roll_entry_id
-```
+It deliberately does not create a package/pallet entity or a selection
+workflow. Package creation, roll selection across a package, label routes,
+label void/reprint history, package/pallet lifecycle, shipping state, and
+cross-card packaging are deferred and outside this implemented workstream.
 
 ## Migration Safety Notes
 
@@ -167,8 +146,9 @@ package_rolls
 
 ## Open Questions
 
-- Packaging remains separate: should eventual pallet/package creation happen
-  from `/terminal`, `/admin`, or both?
+- Any future package, label, shipping, or pallet-lifecycle workflow requires a
+  separate approved design; no such workflow is implied by the implemented
+  per-roll pallet number.
 
 ## Near-Term Backlog For Sunday Review
 
@@ -296,12 +276,12 @@ This list combines the two existing production-tracking workstreams with the new
 
 ### Packaging / Pallets
 
-12. **Roll packaging / pallet tracking with label printing**
-   - Surface: `/terminal` and/or `/admin`, database, print route.
-   - Complexity: large.
-   - Goal: group produced rolls into packages/pallets and generate printable transport labels.
-   - Desired behavior: select produced rolls, create a package/pallet, prevent one roll from being assigned to more than one active package, show package totals, print labels, and allow voiding/replacing bad labels without deleting production roll history.
-   - Needs design: whether packaging happens from `/terminal`, `/admin`, or both; package numbering; package type names; correction workflow; and label format.
+12. **Per-roll pallet attribution and operational-card summary**
+   - Surface: `/terminal`, `/admin`, database, operational-card print route.
+   - Complexity: medium to large.
+   - Status: complete in the local worktree after feature-wide verification and independent review. M003, terminal/admin current and per-roll correction, overwrite-import preservation, mixed finish warning, derived print aggregates, measured renderer capacities, 469 focused tests, 686 full-suite tests, and guarded live browser/PDF acceptance pass.
+   - Implemented behavior: each roll optionally snapshots a `1..999` pallet number scoped to its card; corrections preserve current-versus-snapshot semantics; print output groups current saved rolls by numeric pallet with gross/net totals and conditional `Без палет`.
+   - Explicitly deferred/out of scope: package/pallet entities, roll-selection workflow, label routes, label void/reprint history, package/pallet lifecycle, shipping state, and cross-card packaging.
 
 ## Suggested Implementation Order
 
@@ -310,9 +290,12 @@ This list combines the two existing production-tracking workstreams with the new
 2. Design the remaining admin import workflow changes before implementation.
 3. Design terminal workflow additions before calculator or roll-change timing
    work.
-4. Finish and visually accept the approved shift-management UI redesign, then
-   implement the remaining larger production-data workstreams in the order the
-   user confirms. Worker recipe editing and packaging/pallet tracking remain
-   separate future work.
+4. Implement the remaining larger production-data workstreams in the order the
+   user confirms. Worker recipe editing, roll-change timing, waiting-for-
+   rewound-rolls, and any future package/label/shipping lifecycle remain
+   separate future work. Task 12's bounded per-roll pallet attribution and
+   operational-card summary are complete and user-approved for repository
+   integration. Production deployment remains a separate, explicitly gated
+   operation.
 
 This order is only a first cut. The larger items need short design passes before implementation because they change workflow, database shape, and future ERP/costing assumptions.

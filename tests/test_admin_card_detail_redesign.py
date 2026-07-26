@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import re
 
 import pytest
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -12,6 +13,7 @@ from app.constants import CARD_STATUSES, STATUS_LABELS
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 from app.main import (
     admin_card_detail_context,
+    roll_ledger_from_form,
     save_admin_card_changes,
     save_admin_imported_fields,
     save_admin_roll_ledger,
@@ -519,7 +521,7 @@ def test_admin_detail_renders_accepted_order_groups_without_route_inputs(connect
     assert "Фалцоване" not in html
 
 
-def test_admin_roll_ledger_renders_editable_per_roll_tare(connection):
+def test_admin_roll_ledger_renders_current_and_per_roll_pallets(connection):
     card_id = prepare_dense_completed_card("27120", roll_count=1)
     card = db.fetch_admin_card_detail(card_id)
     roll = card["roll_entries"][0]
@@ -532,15 +534,43 @@ def test_admin_roll_ledger_renders_editable_per_roll_tare(connection):
         1,
     )[0]
 
+    toolbar_html = html.split('<div class="admin-roll-toolbar">', 1)[1].split("</div>", 1)[0]
+
+    assert toolbar_html.find("Шпула, кг") < toolbar_html.find("Палет")
+    assert toolbar_html.find("Палет") < toolbar_html.find("Нова ролка, кг")
+    assert 'name="current_pallet_number"' in toolbar_html
+    current_pallet_match = re.search(
+        r'<input[^>]+name="current_pallet_number"[^>]*>',
+        toolbar_html,
+    )
+    assert current_pallet_match is not None
+    current_pallet_tag = current_pallet_match.group(0)
+    assert 'type="text"' in current_pallet_tag
+    assert 'inputmode="numeric"' in current_pallet_tag
+    for forbidden_attribute in ('min="', 'max="', 'step="', 'pattern="', 'maxlength="'):
+        assert forbidden_attribute not in current_pallet_tag
+    assert ">Палет<" in header_html
     assert ">Бруто, кг<" in header_html
     assert ">Шпула, кг<" in header_html
     assert ">Нето, кг<" in header_html
     assert f'name="gross_weight__{roll_id}"' in roll_ledger_html
+    pallet_input_match = re.search(
+        rf'<input[^>]+name="pallet_number__{roll_id}"[^>]*>',
+        roll_ledger_html,
+    )
+    assert pallet_input_match is not None
+    pallet_input_tag = pallet_input_match.group(0)
+    assert 'type="text"' in pallet_input_tag
+    assert 'inputmode="numeric"' in pallet_input_tag
+    assert 'placeholder="-"' in pallet_input_tag
+    for forbidden_attribute in ('min="', 'max="', 'step="', 'pattern="', 'maxlength="'):
+        assert forbidden_attribute not in pallet_input_tag
     assert f'name="tare_weight__{roll_id}"' in roll_ledger_html
     assert str(roll["net_weight"]) in roll_ledger_html
     assert f'form="roll-delete-{roll_id}"' in roll_ledger_html
     assert 'name="new_gross_weight"' in html
     assert 'name="new_tare_weight"' not in html
+    assert "Без палет" not in roll_ledger_html
 
 
 def test_admin_detail_uses_single_timing_ledger_without_duplicate_segment_forms(connection):
@@ -969,8 +999,10 @@ def test_admin_global_save_updates_order_materials_and_roll_data(connection):
                             },
                         ),
                         ("tare_weight", "2.00"),
+                        ("current_pallet_number", "4"),
                         (f"gross_weight__{roll_id}", "60.00"),
                         (f"tare_weight__{roll_id}", "3.00"),
+                        (f"pallet_number__{roll_id}", "2"),
                     ]
                 )
             ),
@@ -989,8 +1021,10 @@ def test_admin_global_save_updates_order_materials_and_roll_data(connection):
     )
     assert updated["recipe_actual_entries"]["raw_material_a"]["batch_lot"] == "Global batch A"
     assert updated["tare_weight"] == 2
+    assert updated["current_pallet_number"] == 4
     assert updated["roll_entries"][0]["gross_weight"] == 60
     assert updated["roll_entries"][0]["tare_weight"] == 3
+    assert updated["roll_entries"][0]["pallet_number"] == 2
     assert updated["roll_entries"][0]["net_weight"] == 57
 
 
@@ -1134,6 +1168,147 @@ def test_admin_global_save_rolls_back_all_sections_when_timing_is_invalid(connec
     assert after["roll_entries"][0]["gross_weight"] == before["roll_entries"][0]["gross_weight"]
     assert after["roll_entries"][0]["net_weight"] == before["roll_entries"][0]["net_weight"]
     assert after_segments == before_segments
+
+
+@pytest.mark.parametrize("failure", ("invalid_pallet", "foreign_roll", "stale_version"))
+def test_admin_ledger_failure_rolls_back_prior_global_save_sections_in_caller_transaction(
+    connection,
+    failure,
+):
+    card_id = prepare_dense_completed_card(f"27110-{failure}", roll_count=1)
+    before = db.fetch_admin_card_detail(card_id)
+    roll_id = int(before["roll_entries"][0]["id"])
+    foreign_card_id: int | None = None
+    foreign_before: dict[str, object] | None = None
+    foreign_roll_id: int | None = None
+    if failure == "foreign_roll":
+        foreign_card_id = prepare_dense_completed_card("27111-foreign-roll", roll_count=1)
+        foreign_before = db.fetch_admin_card_detail(foreign_card_id)
+        foreign_roll_id = int(foreign_before["roll_entries"][0]["id"])
+    before_segments = [
+        (segment["started_at"], segment["ended_at"], segment["end_reason"])
+        for segment in before["timing_segments"]
+    ]
+    imported_fields = current_import_fields(card_id)
+    imported_fields["customer"] = "Transaction customer"
+    planned_materials = {
+        field: str(before[field] or "")
+        for field in (
+            "raw_material_a",
+            "raw_material_b",
+            "raw_material_c",
+            "linear_pe",
+            "antistatic",
+            "masterbatch",
+            "chalk",
+        )
+    }
+    planned_materials["raw_material_a"] = "LDPE; Transaction planned A | 50%"
+    actual_entries = {
+        "raw_material_a": {
+            "actual_material_used": "Transaction actual A",
+            "batch_lot": "Transaction batch A",
+        }
+    }
+
+    with db.connect() as caller_connection:
+        caller_connection.execute("BEGIN IMMEDIATE")
+        imported_result = db.update_admin_imported_fields(
+            card_id,
+            before["version"],
+            imported_fields,
+            connection=caller_connection,
+        )
+        assert imported_result.ok
+        material_version = int(
+            caller_connection.execute(
+                "SELECT version FROM cards WHERE id = ?", (card_id,)
+            ).fetchone()["version"]
+        )
+        material_result = db.update_admin_material_ledger(
+            card_id,
+            material_version,
+            planned_materials,
+            actual_entries,
+            connection=caller_connection,
+        )
+        assert material_result.ok
+        ledger_version = int(
+            caller_connection.execute(
+                "SELECT version FROM cards WHERE id = ?", (card_id,)
+            ).fetchone()["version"]
+        )
+
+        if failure == "invalid_pallet":
+            result = db.update_admin_roll_ledger(
+                card_id,
+                ledger_version,
+                tare_weight="2.00",
+                current_pallet_number="1000",
+                roll_updates={roll_id: {"pallet_number": "2", "gross_weight": "60.00"}},
+                delete_roll_ids=set(),
+                new_gross_weights=[],
+                connection=caller_connection,
+            )
+        elif failure == "foreign_roll":
+            assert foreign_roll_id is not None
+            result = db.update_admin_roll_ledger(
+                card_id,
+                ledger_version,
+                tare_weight="2.00",
+                current_pallet_number="2",
+                roll_updates={foreign_roll_id: {"pallet_number": "2", "gross_weight": "60.00"}},
+                delete_roll_ids=set(),
+                new_gross_weights=[],
+                connection=caller_connection,
+            )
+        else:
+            result = db.update_admin_roll_ledger(
+                card_id,
+                before["version"],
+                tare_weight="2.00",
+                current_pallet_number="2",
+                roll_updates={roll_id: {"pallet_number": "2", "gross_weight": "60.00"}},
+                delete_roll_ids=set(),
+                new_gross_weights=[],
+                connection=caller_connection,
+            )
+
+        assert not result.ok
+        caller_connection.rollback()
+
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert after["version"] == before["version"]
+    assert after["customer"] == before["customer"]
+    assert after["raw_material_a"] == before["raw_material_a"]
+    assert after["recipe_actual_entries"]["raw_material_a"] == (
+        before["recipe_actual_entries"]["raw_material_a"]
+    )
+    assert after["tare_weight"] == before["tare_weight"]
+    assert after["current_pallet_number"] == before["current_pallet_number"]
+    assert [
+        (roll["gross_weight"], roll["tare_weight"], roll["net_weight"], roll["pallet_number"])
+        for roll in after["roll_entries"]
+    ] == [
+        (roll["gross_weight"], roll["tare_weight"], roll["net_weight"], roll["pallet_number"])
+        for roll in before["roll_entries"]
+    ]
+    assert [
+        (segment["started_at"], segment["ended_at"], segment["end_reason"])
+        for segment in after["timing_segments"]
+    ] == before_segments
+    if foreign_card_id is not None:
+        assert foreign_before is not None
+        foreign_after = db.fetch_admin_card_detail(foreign_card_id)
+        assert foreign_after["version"] == foreign_before["version"]
+        assert [
+            (roll["gross_weight"], roll["tare_weight"], roll["net_weight"], roll["pallet_number"])
+            for roll in foreign_after["roll_entries"]
+        ] == [
+            (roll["gross_weight"], roll["tare_weight"], roll["net_weight"], roll["pallet_number"])
+            for roll in foreign_before["roll_entries"]
+        ]
 
 
 def test_admin_global_save_rolls_back_recipe_components_when_timing_is_invalid(connection):
@@ -1391,6 +1566,183 @@ def test_admin_roll_ledger_blocks_roll_add_on_paused_card(connection):
     )
 
 
+def test_admin_roll_ledger_current_pallet_and_roll_snapshots_are_atomic(connection):
+    card_id = prepare_dense_completed_card("27025", roll_count=3)
+    card = db.fetch_admin_card_detail(card_id)
+    first_id = int(card["roll_entries"][0]["id"])
+    middle_id = int(card["roll_entries"][1]["id"])
+    last_id = int(card["roll_entries"][2]["id"])
+
+    result = db.update_admin_roll_ledger(
+        card_id=card_id,
+        loaded_version=card["version"],
+        tare_weight="1.50",
+        current_pallet_number="7",
+        roll_updates={
+            first_id: {"pallet_number": "1", "gross_weight": "55.00"},
+            last_id: {"pallet_number": "3"},
+        },
+        delete_roll_ids={middle_id},
+        new_gross_weights=["56.25"],
+    )
+    updated = db.fetch_admin_card_detail(card_id)
+
+    changed = db.update_admin_roll_ledger(
+        card_id=card_id,
+        loaded_version=updated["version"],
+        tare_weight="1.50",
+        roll_updates={first_id: {"pallet_number": "2"}},
+        delete_roll_ids=set(),
+        new_gross_weights=[],
+    )
+    changed_card = db.fetch_admin_card_detail(card_id)
+    cleared = db.update_admin_roll_ledger(
+        card_id=card_id,
+        loaded_version=changed_card["version"],
+        tare_weight="1.50",
+        roll_updates={first_id: {"pallet_number": ""}},
+        delete_roll_ids=set(),
+        new_gross_weights=[],
+    )
+    final_card = db.fetch_admin_card_detail(card_id)
+
+    assert result.ok
+    assert changed.ok
+    assert cleared.ok
+    assert updated["current_pallet_number"] == 7
+    assert final_card["current_pallet_number"] == 7
+    assert [(roll["roll_number"], roll["pallet_number"], roll["gross_weight"], roll["tare_weight"])
+            for roll in final_card["roll_entries"]] == [
+        (1, None, 55, 1.25),
+        (2, 3, 51.2, 1.25),
+        (3, 7, 56.25, 1.5),
+    ]
+
+
+def test_admin_roll_ledger_current_pallet_only_save_is_allowed_while_paused(connection):
+    card_id = import_ready_card("27026")
+    assert db.release_card(card_id, machine_id=1, machine_sequence=1, loaded_version=card_version(card_id)).ok
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.pause_production_timing(card_id, card_version(card_id)).ok
+    before = db.fetch_admin_card_detail(card_id)
+
+    saved = db.update_admin_roll_ledger(
+        card_id=card_id,
+        loaded_version=before["version"],
+        tare_weight="",
+        current_pallet_number="4",
+        roll_updates={},
+        delete_roll_ids=set(),
+        new_gross_weights=[],
+    )
+    after = db.fetch_admin_card_detail(card_id)
+
+    cleared = db.update_admin_roll_ledger(
+        card_id=card_id,
+        loaded_version=after["version"],
+        tare_weight="",
+        current_pallet_number="",
+        roll_updates={},
+        delete_roll_ids=set(),
+        new_gross_weights=[],
+    )
+    final_card = db.fetch_admin_card_detail(card_id)
+
+    assert saved.ok
+    assert cleared.ok
+    assert after["current_pallet_number"] == 4
+    assert after["version"] == before["version"] + 1
+    assert final_card["current_pallet_number"] is None
+
+
+def test_admin_roll_ledger_blocks_pallet_snapshot_mutation_while_paused(connection):
+    card_id = import_ready_card("27027")
+    assert db.release_card(card_id, machine_id=1, machine_sequence=1, loaded_version=card_version(card_id)).ok
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "25.00").ok
+    assert db.pause_production_timing(card_id, card_version(card_id)).ok
+    before = db.fetch_admin_card_detail(card_id)
+    roll_id = int(before["roll_entries"][0]["id"])
+
+    blocked = db.update_admin_roll_ledger(
+        card_id=card_id,
+        loaded_version=before["version"],
+        tare_weight="1.00",
+        current_pallet_number=None,
+        roll_updates={roll_id: {"pallet_number": "4"}},
+        delete_roll_ids=set(),
+        new_gross_weights=[],
+    )
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert not blocked.ok
+    assert after["version"] == before["version"]
+    assert after["roll_entries"][0]["pallet_number"] is None
+
+
+@pytest.mark.parametrize("invalid_pallet", ("1000", "15+1"))
+def test_admin_roll_ledger_rejects_invalid_pallet_before_writing_tare_or_rolls(
+    connection,
+    invalid_pallet,
+):
+    card_id = prepare_dense_completed_card("27028", roll_count=1)
+    before = db.fetch_admin_card_detail(card_id)
+    roll_id = int(before["roll_entries"][0]["id"])
+
+    result = db.update_admin_roll_ledger(
+        card_id=card_id,
+        loaded_version=before["version"],
+        tare_weight="2.00",
+        current_pallet_number=invalid_pallet,
+        roll_updates={roll_id: {"pallet_number": "2", "gross_weight": "60.00"}},
+        delete_roll_ids=set(),
+        new_gross_weights=[],
+    )
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert not result.ok
+    assert result.messages == ("Палетът трябва да бъде цяло число от 1 до 999.",)
+    assert after["version"] == before["version"]
+    assert after["tare_weight"] == before["tare_weight"]
+    assert after["current_pallet_number"] == before["current_pallet_number"]
+    assert after["roll_entries"][0]["gross_weight"] == before["roll_entries"][0]["gross_weight"]
+    assert after["roll_entries"][0]["pallet_number"] == before["roll_entries"][0]["pallet_number"]
+
+
+def test_admin_roll_ledger_rejects_malformed_roll_pallet_before_any_write(connection):
+    card_id = prepare_dense_completed_card("PALLET-ADMIN-ROW-INVALID", roll_count=1)
+    assert db.update_current_pallet_number(card_id, card_version(card_id), "7").ok
+    before = db.fetch_admin_card_detail(card_id)
+    roll_id = int(before["roll_entries"][0]["id"])
+
+    result = db.update_admin_roll_ledger(
+        card_id=card_id,
+        loaded_version=before["version"],
+        tare_weight="2.00",
+        current_pallet_number="8",
+        roll_updates={
+            roll_id: {"pallet_number": "15+1", "gross_weight": "60.00"}
+        },
+        delete_roll_ids=set(),
+        new_gross_weights=[],
+    )
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert not result.ok
+    assert result.messages == ("Палетът трябва да бъде цяло число от 1 до 999.",)
+    assert after["version"] == before["version"]
+    assert after["tare_weight"] == before["tare_weight"]
+    assert after["current_pallet_number"] == before["current_pallet_number"]
+    assert [
+        (roll["pallet_number"], roll["gross_weight"], roll["tare_weight"], roll["net_weight"])
+        for roll in after["roll_entries"]
+    ] == [
+        (roll["pallet_number"], roll["gross_weight"], roll["tare_weight"], roll["net_weight"])
+        for roll in before["roll_entries"]
+    ]
+
+
 def test_admin_roll_ledger_route_blocks_malformed_roll_ids(connection):
     card_id = prepare_dense_completed_card("27022", roll_count=2)
     loaded_version = card_version(card_id)
@@ -1405,6 +1757,11 @@ def test_admin_roll_ledger_route_blocks_malformed_roll_ids(connection):
             ("tare_weight", "1.50"),
             ("delete_roll_id", "bad-id"),
         ],
+        [
+            ("loaded_version", str(loaded_version)),
+            ("tare_weight", "1.50"),
+            ("pallet_number__bad-id", "2"),
+        ],
     ]
 
     for items in malformed_forms:
@@ -1415,6 +1772,117 @@ def test_admin_roll_ledger_route_blocks_malformed_roll_ids(connection):
 
         assert response.status_code == 200
         assert "Формата съдържа невалидна ролка." in body
+
+
+def test_admin_roll_ledger_parser_returns_current_and_per_roll_pallets():
+    parsed = roll_ledger_from_form(
+        MultiItemForm(
+            [
+                ("tare_weight", "1.50"),
+                ("current_pallet_number", "5"),
+                ("gross_weight__17", "55.00"),
+                ("pallet_number__17", "3"),
+                ("pallet_number__18", "4"),
+            ]
+        )
+    )
+
+    assert parsed == (
+        "1.50",
+        "5",
+        {
+            17: {"gross_weight": "55.00", "pallet_number": "3"},
+            18: {"pallet_number": "4"},
+        },
+        set(),
+        [],
+    )
+
+
+def test_admin_roll_ledger_parser_distinguishes_omitted_current_pallet_from_blank():
+    omitted = roll_ledger_from_form(MultiItemForm([("tare_weight", "1.50")]))
+    explicit_blank = roll_ledger_from_form(
+        MultiItemForm(
+            [
+                ("tare_weight", "1.50"),
+                ("current_pallet_number", ""),
+            ]
+        )
+    )
+
+    assert omitted[1] is None
+    assert explicit_blank[1] == ""
+
+
+def test_admin_roll_ledger_older_client_omission_preserves_and_explicit_blank_clears_pallet(
+    connection,
+):
+    card_id = prepare_dense_completed_card("PALLET-ADMIN-OMITTED", roll_count=1)
+    assert db.update_current_pallet_number(card_id, card_version(card_id), "7").ok
+    before = db.fetch_admin_card_detail(card_id)
+
+    omitted_response = asyncio.run(
+        save_admin_roll_ledger(
+            FormRequest(
+                MultiItemForm(
+                    [
+                        ("loaded_version", str(before["version"])),
+                        ("tare_weight", str(before["tare_weight"])),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+    preserved = db.fetch_admin_card_detail(card_id)
+    blank_response = asyncio.run(
+        save_admin_roll_ledger(
+            FormRequest(
+                MultiItemForm(
+                    [
+                        ("loaded_version", str(preserved["version"])),
+                        ("tare_weight", str(preserved["tare_weight"])),
+                        ("current_pallet_number", ""),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+    cleared = db.fetch_admin_card_detail(card_id)
+
+    assert omitted_response.status_code == 303
+    assert preserved["current_pallet_number"] == 7
+    assert blank_response.status_code == 303
+    assert cleared["current_pallet_number"] is None
+
+
+def test_admin_roll_ledger_route_saves_current_and_per_roll_pallets(connection):
+    card_id = prepare_dense_completed_card("PALLET-ADMIN-LEDGER", roll_count=1)
+    card = db.fetch_admin_card_detail(card_id)
+    roll_id = int(card["roll_entries"][0]["id"])
+
+    response = asyncio.run(
+        save_admin_roll_ledger(
+            FormRequest(
+                MultiItemForm(
+                    [
+                        ("loaded_version", str(card["version"])),
+                        ("tare_weight", str(card["tare_weight"])),
+                        ("current_pallet_number", "6"),
+                        (f"pallet_number__{roll_id}", "2"),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+    updated = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/admin/cards/{card_id}#rolls"
+    assert updated["current_pallet_number"] == 6
+    assert updated["roll_entries"][0]["pallet_number"] == 2
 
 
 def test_admin_timing_ledger_updates_deletes_and_adds_segments(connection):

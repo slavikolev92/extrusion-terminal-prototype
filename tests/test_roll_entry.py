@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import io
 
+import pytest
+
 from app import db
 from app.constants import STATUS_COMPLETED, STATUS_PAUSED, STATUS_PENDING, STATUS_RUNNING
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
@@ -262,6 +264,253 @@ def test_tare_update_persists_and_checks_loaded_version(connection):
     assert stale_result.messages == (
         "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )
+
+
+def test_roll_defaults_update_saves_tare_and_pallet_with_one_version_increment(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("25569")
+    start_card(card_id)
+    before = db.fetch_terminal_card_detail(card_id)
+
+    result = db.update_roll_defaults(
+        card_id,
+        before["version"],
+        tare_weight=" 2.50 ",
+        pallet_number=" 9 ",
+        require_active_shift=True,
+    )
+    after = db.fetch_terminal_card_detail(card_id)
+
+    assert result.ok
+    assert after["tare_weight"] == 2.5
+    assert after["current_pallet_number"] == 9
+    assert after["version"] == before["version"] + 1
+    assert after["roll_entries"] == []
+
+
+def test_roll_defaults_update_rejects_invalid_pallet_without_saving_tare(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("25570")
+    start_card(card_id)
+    assert db.update_roll_defaults(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        tare_weight="1.25",
+        pallet_number="7",
+        require_active_shift=True,
+    ).ok
+    before = db.fetch_terminal_card_detail(card_id)
+
+    result = db.update_roll_defaults(
+        card_id,
+        before["version"],
+        tare_weight="2.50",
+        pallet_number="1000",
+        require_active_shift=True,
+    )
+    after = db.fetch_terminal_card_detail(card_id)
+
+    assert not result.ok
+    assert result.messages == ("Палетът трябва да бъде цяло число от 1 до 999.",)
+    assert after["tare_weight"] == 1.25
+    assert after["current_pallet_number"] == 7
+    assert after["version"] == before["version"]
+
+
+def test_roll_defaults_update_blocks_stale_combined_write_without_partial_change(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("25571")
+    start_card(card_id)
+    loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
+    assert db.update_tare_weight(card_id, loaded_version, "1.25").ok
+    current = db.fetch_terminal_card_detail(card_id)
+
+    result = db.update_roll_defaults(
+        card_id,
+        loaded_version,
+        tare_weight="2.50",
+        pallet_number="9",
+        require_active_shift=True,
+    )
+    after = db.fetch_terminal_card_detail(card_id)
+
+    assert not result.ok
+    assert result.messages == (
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
+    )
+    assert after["tare_weight"] == current["tare_weight"] == 1.25
+    assert after["current_pallet_number"] is None
+    assert after["version"] == current["version"]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (
+        ("", None),
+        ("   ", None),
+        ("1", 1),
+        (" 1 ", 1),
+        ("999", 999),
+        ("001", 1),
+    ),
+)
+def test_parse_pallet_number_accepts_blank_or_ascii_numbers_in_range(value, expected):
+    assert db.parse_pallet_number(value) == (expected, None)
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "0",
+        "-1",
+        "1000",
+        "1.0",
+        "1,0",
+        "+1",
+        "15+1",
+        "1e2",
+        "1 2",
+        pytest.param("9" * 5000, id="5000-digits"),
+        "A",
+        "1A",
+        "١",
+    ),
+)
+def test_parse_pallet_number_rejects_invalid_values_with_one_message(value):
+    assert db.parse_pallet_number(value) == (
+        None,
+        "Палетът трябва да бъде цяло число от 1 до 999.",
+    )
+
+
+def test_current_pallet_save_and_clear_trim_values_without_creating_or_rewriting_rolls(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("25548")
+    start_card(card_id)
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "25.00",
+        tare_weight="1.00",
+    ).ok
+    before = db.fetch_terminal_card_detail(card_id)
+
+    saved = db.update_current_pallet_number(
+        card_id,
+        before["version"],
+        " 001 ",
+        require_active_shift=True,
+    )
+    saved_card = db.fetch_terminal_card_detail(card_id)
+    cleared = db.update_current_pallet_number(
+        card_id,
+        saved_card["version"],
+        "   ",
+        require_active_shift=True,
+    )
+    stored_types = connection.execute(
+        "SELECT current_pallet_number, typeof(current_pallet_number) AS value_type FROM cards WHERE id = ?",
+        (card_id,),
+    ).fetchone()
+    rolls = db.fetch_terminal_card_detail(card_id)["roll_entries"]
+
+    assert saved.ok
+    assert saved.messages == ("Палетът е записан.",)
+    assert saved_card["current_pallet_number"] == 1
+    assert saved_card["version"] == before["version"] + 1
+    assert cleared.ok
+    assert cleared.messages == ("Палетът е изчистен.",)
+    assert stored_types["current_pallet_number"] is None
+    assert stored_types["value_type"] == "null"
+    assert len(rolls) == 1
+    assert rolls[0]["pallet_number"] is None
+
+
+def test_current_pallet_invalid_or_stale_write_preserves_card_and_rolls(connection, active_test_shift):
+    card_id = import_and_release_card("25549")
+    start_card(card_id)
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "25.00",
+        tare_weight="1.00",
+    ).ok
+    before = db.fetch_terminal_card_detail(card_id)
+
+    invalid = db.update_current_pallet_number(
+        card_id,
+        before["version"],
+        "1000",
+        require_active_shift=True,
+    )
+    assert db.update_current_pallet_number(
+        card_id,
+        before["version"],
+        "1",
+        require_active_shift=True,
+    ).ok
+    stale = db.update_current_pallet_number(
+        card_id,
+        before["version"],
+        "2",
+        require_active_shift=True,
+    )
+    after = db.fetch_terminal_card_detail(card_id)
+
+    assert not invalid.ok
+    assert invalid.messages == ("Палетът трябва да бъде цяло число от 1 до 999.",)
+    assert not stale.ok
+    assert stale.messages == (
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
+    )
+    assert after["current_pallet_number"] == 1
+    assert after["version"] == before["version"] + 1
+    assert [(roll["roll_number"], roll["pallet_number"]) for roll in after["roll_entries"]] == [(1, None)]
+
+
+def test_current_pallet_respects_terminal_status_and_active_shift_gates(connection, start_test_shift):
+    card_id = import_and_release_card("25550")
+    loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
+
+    blocked_shift = db.update_current_pallet_number(
+        card_id,
+        loaded_version,
+        "1",
+        require_active_shift=True,
+    )
+    start_test_shift("1")
+    assert db.update_current_pallet_number(
+        card_id,
+        loaded_version,
+        "1",
+        require_active_shift=True,
+    ).ok
+    changed = db.fetch_terminal_card_detail(card_id)
+    connection.execute("UPDATE cards SET status = 'imported' WHERE id = ?", (card_id,))
+    connection.commit()
+    blocked_status = db.update_current_pallet_number(
+        card_id,
+        changed["version"],
+        "2",
+        require_active_shift=True,
+    )
+
+    assert not blocked_shift.ok
+    assert blocked_shift.messages == ("Отворете смяна, преди да продължите.",)
+    assert not blocked_status.ok
+    assert blocked_status.messages == ("Картата не е намерена.",)
+    stored = connection.execute(
+        "SELECT current_pallet_number, version FROM cards WHERE id = ?", (card_id,)
+    ).fetchone()
+    assert dict(stored) == {"current_pallet_number": 1, "version": changed["version"]}
 
 
 def test_add_roll_while_running_assigns_roll_numbers(connection, active_test_shift):
@@ -537,6 +786,175 @@ def test_new_roll_copies_current_default_tare_without_mutating_existing_rolls(
     assert card["total_net_weight"] == "105.50"
 
 
+def test_new_roll_omitting_pallet_copies_stored_current_pallet(connection, active_test_shift):
+    card_id = import_and_release_card("25551")
+    start_card(card_id)
+    assert db.update_current_pallet_number(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "1",
+        require_active_shift=True,
+    ).ok
+
+    result = db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "25.00",
+        tare_weight="1.50",
+        require_active_shift=True,
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert result.ok
+    assert card["current_pallet_number"] == 1
+    assert [
+        (roll["pallet_number"], roll["gross_weight"], roll["tare_weight"], roll["net_weight"])
+        for roll in card["roll_entries"]
+    ] == [(1, 25, 1.5, 23.5)]
+    assert card["roll_entries"][0]["shift_occurrence_id"] is not None
+
+
+def test_new_roll_submitted_pallet_updates_current_and_snapshots_once(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("25552")
+    start_card(card_id)
+    before = db.fetch_terminal_card_detail(card_id)
+
+    result = db.add_roll_gross_weight(
+        card_id,
+        before["version"],
+        "25.00",
+        tare_weight="1.50",
+        pallet_number=" 2 ",
+        require_active_shift=True,
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+    row = connection.execute(
+        "SELECT pallet_number, typeof(pallet_number) AS value_type FROM roll_entries WHERE card_id = ?",
+        (card_id,),
+    ).fetchone()
+
+    assert result.ok
+    assert card["current_pallet_number"] == 2
+    assert card["version"] == before["version"] + 1
+    assert card["roll_entries"][0]["pallet_number"] == 2
+    assert dict(row) == {"pallet_number": 2, "value_type": "integer"}
+
+
+def test_new_roll_with_blank_submitted_pallet_clears_current_and_snapshots_blank(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("25553")
+    start_card(card_id)
+    assert db.update_current_pallet_number(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "1",
+        require_active_shift=True,
+    ).ok
+
+    result = db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "25.00",
+        tare_weight="1.50",
+        pallet_number="",
+        require_active_shift=True,
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+    row = connection.execute(
+        "SELECT pallet_number, typeof(pallet_number) AS value_type FROM roll_entries WHERE card_id = ?",
+        (card_id,),
+    ).fetchone()
+
+    assert result.ok
+    assert card["current_pallet_number"] is None
+    assert card["roll_entries"][0]["pallet_number"] is None
+    assert dict(row) == {"pallet_number": None, "value_type": "null"}
+
+
+def test_new_roll_pallet_changes_do_not_rewrite_prior_roll_snapshot(connection, active_test_shift):
+    card_id = import_and_release_card("25554")
+    start_card(card_id)
+    first_version = db.fetch_terminal_card_detail(card_id)["version"]
+    assert db.add_roll_gross_weight(
+        card_id,
+        first_version,
+        "25.00",
+        tare_weight="1.50",
+        pallet_number="1",
+        require_active_shift=True,
+    ).ok
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "30.00",
+        pallet_number="2",
+        require_active_shift=True,
+    ).ok
+
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert card["current_pallet_number"] == 2
+    assert [(roll["roll_number"], roll["pallet_number"]) for roll in card["roll_entries"]] == [
+        (1, 1),
+        (2, 2),
+    ]
+
+
+def test_invalid_or_stale_submitted_pallet_does_not_create_roll_or_change_current(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("25555")
+    start_card(card_id)
+    assert db.update_current_pallet_number(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "1",
+        require_active_shift=True,
+    ).ok
+    before = db.fetch_terminal_card_detail(card_id)
+
+    invalid = db.add_roll_gross_weight(
+        card_id,
+        before["version"],
+        "25.00",
+        tare_weight="1.50",
+        pallet_number="1000",
+        require_active_shift=True,
+    )
+    assert db.add_roll_gross_weight(
+        card_id,
+        before["version"],
+        "25.00",
+        tare_weight="1.50",
+        pallet_number="2",
+        require_active_shift=True,
+    ).ok
+    stale = db.add_roll_gross_weight(
+        card_id,
+        before["version"],
+        "30.00",
+        pallet_number="3",
+        require_active_shift=True,
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert not invalid.ok
+    assert invalid.messages == ("Палетът трябва да бъде цяло число от 1 до 999.",)
+    assert not stale.ok
+    assert stale.messages == (
+        "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
+    )
+    assert card["current_pallet_number"] == 2
+    assert card["version"] == before["version"] + 1
+    assert [(roll["roll_number"], roll["pallet_number"]) for roll in card["roll_entries"]] == [(1, 2)]
+
+
 def test_editing_roll_tare_recalculates_only_that_roll_and_not_default_tare(
     connection,
     active_test_shift,
@@ -754,6 +1172,139 @@ def test_terminal_roll_corrections_completed_card_keeps_final_gross_roll(
     assert not result.ok
     assert result.messages == ("Завършените карти трябва да запазят поне едно бруто тегло на ролка.",)
     assert roll_values(card_id) == [(50, 2, 48)]
+
+
+def test_terminal_roll_corrections_set_change_and_clear_pallet_without_changing_current_pallet(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("25566")
+    start_card(card_id)
+    assert db.update_current_pallet_number(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "9",
+        require_active_shift=True,
+    ).ok
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "50.00",
+        tare_weight="2.00",
+        require_active_shift=True,
+    ).ok
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "60.00",
+        require_active_shift=True,
+    ).ok
+    card = db.fetch_terminal_card_detail(card_id)
+    first_id = int(card["roll_entries"][0]["id"])
+    second_id = int(card["roll_entries"][1]["id"])
+
+    result = db.update_terminal_roll_corrections(
+        card_id,
+        card["version"],
+        {
+            first_id: {"pallet_number": " 1 ", "gross_weight": "51.00"},
+            second_id: {"pallet_number": "", "tare_weight": "3.00"},
+        },
+        require_active_shift=True,
+    )
+    changed = db.fetch_terminal_card_detail(card_id)
+    changed_first_id = int(changed["roll_entries"][0]["id"])
+
+    changed_again = db.update_terminal_roll_corrections(
+        card_id,
+        changed["version"],
+        {changed_first_id: {"pallet_number": "2"}},
+        require_active_shift=True,
+    )
+    final_card = db.fetch_terminal_card_detail(card_id)
+
+    assert result.ok
+    assert changed_again.ok
+    assert changed["current_pallet_number"] == 9
+    assert final_card["current_pallet_number"] == 9
+    assert [(roll["pallet_number"], roll["gross_weight"], roll["tare_weight"], roll["net_weight"])
+            for roll in final_card["roll_entries"]] == [
+        (2, 51, 2, 49),
+        (None, 60, 3, 57),
+    ]
+
+
+def test_terminal_roll_corrections_invalid_pallet_rolls_back_all_roll_values(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("25567")
+    start_card(card_id)
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "50.00",
+        tare_weight="2.00",
+        pallet_number="1",
+        require_active_shift=True,
+    ).ok
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "60.00",
+        pallet_number="2",
+        require_active_shift=True,
+    ).ok
+    before = db.fetch_terminal_card_detail(card_id)
+    first_id = int(before["roll_entries"][0]["id"])
+    second_id = int(before["roll_entries"][1]["id"])
+
+    result = db.update_terminal_roll_corrections(
+        card_id,
+        before["version"],
+        {
+            first_id: {"pallet_number": "3", "gross_weight": "55.00", "tare_weight": "2.50"},
+            second_id: {"pallet_number": "1000", "gross_weight": "65.00", "tare_weight": "3.00"},
+        },
+        require_active_shift=True,
+    )
+    after = db.fetch_terminal_card_detail(card_id)
+
+    assert not result.ok
+    assert result.messages == ("Палетът трябва да бъде цяло число от 1 до 999.",)
+    assert after["version"] == before["version"]
+    assert [(roll["pallet_number"], roll["gross_weight"], roll["tare_weight"], roll["net_weight"])
+            for roll in after["roll_entries"]] == [
+        (1, 50, 2, 48),
+        (2, 60, 2, 58),
+    ]
+
+
+def test_terminal_roll_corrections_pallet_noop_does_not_increment_version(connection, active_test_shift):
+    card_id = import_and_release_card("25568")
+    start_card(card_id)
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "50.00",
+        tare_weight="2.00",
+        pallet_number="1",
+        require_active_shift=True,
+    ).ok
+    before = db.fetch_terminal_card_detail(card_id)
+    roll_id = int(before["roll_entries"][0]["id"])
+
+    result = db.update_terminal_roll_corrections(
+        card_id,
+        before["version"],
+        {roll_id: {"pallet_number": "001"}},
+        require_active_shift=True,
+    )
+    after = db.fetch_terminal_card_detail(card_id)
+
+    assert result.ok
+    assert after["version"] == before["version"]
+    assert after["roll_entries"][0]["pallet_number"] == 1
 
 
 def test_stale_roll_add_and_update_are_blocked(connection, active_test_shift):

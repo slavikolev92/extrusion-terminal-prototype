@@ -688,7 +688,7 @@
       grid-row: 3;
       padding: 18px 24px 24px;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 480px;
+      grid-template-columns: minmax(0, 1fr) 510px;
       grid-template-rows: minmax(0, 1fr);
       gap: 28px;
     }
@@ -910,7 +910,7 @@
     .recipe-head,
     .recipe-row {
       display: grid;
-      grid-template-columns: 132px minmax(152px, 1fr) 86px 86px minmax(140px, .72fr) minmax(110px, .52fr);
+      grid-template-columns: 120px minmax(146px, 1fr) 86px 86px minmax(112px, .58fr) minmax(110px, .52fr);
       align-items: stretch;
     }
 
@@ -1124,7 +1124,11 @@
     }
 
     .roll-entry .core-weight-field {
-      flex: 0 0 138px;
+      flex: 0 0 122px;
+    }
+
+    .roll-entry .pallet-form {
+      flex: 0 0 92px;
     }
 
     .roll-entry .field-label {
@@ -1170,7 +1174,7 @@
     .roll-head,
     .roll-row {
       display: grid;
-      grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-columns: 44px minmax(74px, .62fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
       align-items: stretch;
     }
 
@@ -1702,13 +1706,13 @@
       }
 
       .workspace {
-        grid-template-columns: minmax(0, 1fr) 440px;
+        grid-template-columns: minmax(0, 1fr) 460px;
         gap: 20px;
       }
 
       .recipe-head,
       .recipe-row {
-        grid-template-columns: 96px minmax(124px, 1fr) 76px 76px minmax(118px, .62fr) minmax(92px, .48fr);
+        grid-template-columns: 88px minmax(116px, 1fr) 68px 68px minmax(104px, .52fr) minmax(84px, .42fr);
       }
 
       .history-filters {
@@ -1978,7 +1982,12 @@
       margin: 0;
     }
 
+    .roll-defaults-form {
+      display: contents;
+    }
+
     .tare-form,
+    .pallet-form,
     .add-roll-form {
       min-width: 0;
       display: grid;
@@ -1988,7 +1997,12 @@
     }
 
     .tare-form {
-      flex: 0 0 138px;
+      flex: 0 0 122px;
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .pallet-form {
+      flex: 0 0 92px;
       grid-template-columns: minmax(0, 1fr);
     }
 
@@ -2003,11 +2017,13 @@
     }
 
     .tare-form label,
+    .pallet-form label,
     .add-roll-form label {
       min-width: 0;
     }
 
     .tare-form .field-error-slot,
+    .pallet-form .field-error-slot,
     .add-roll-form .field-error-slot {
       grid-column: 1 / -1;
     }
@@ -3210,7 +3226,7 @@
               {% endif %}
 
               {% if selected_card and selected_card.status in ["running", "paused"] %}
-                <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post" data-finish-confirm-form="true">
+                <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post" data-finish-confirm-form="true" data-finish-confirm-message="{{ selected_card.finish_confirmation_message }}">
                   <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                   <button class="action-button {% if selected_card.status == 'running' %}action-primary{% else %}action-secondary{% endif %}" type="submit">{{ button_icon("check-circle") }}<span>Приключи</span></button>
                 </form>
@@ -3357,9 +3373,10 @@
               </div>
               <div class="panel-body roll-body{% if terminal_feedback.open_roll_corrections %} roll-correction-mode{% endif %}" data-roll-body>
                 <div class="roll-entry">
-                  <form action="/terminal/cards/{{ selected_card.id }}/rolls" id="add-roll-form-{{ selected_card.id }}" class="add-roll-form" method="post">
+                  <form action="/terminal/cards/{{ selected_card.id }}/rolls" id="add-roll-form-{{ selected_card.id }}" class="add-roll-form" method="post" data-persist-dirty-autosave-group="roll-entry">
                     <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                     <input type="hidden" name="tare_weight" value="{{ selected_card.tare_weight if selected_card.tare_weight is not none else '' }}" data-new-roll-tare-copy="true">
+                    <input type="hidden" name="pallet_number" value="{{ selected_card.current_pallet_number if selected_card.current_pallet_number is not none else '' }}" data-new-roll-pallet-copy="true">
                     <label>
                       <span class="field-label">Нова ролка, кг</span>
                       <input
@@ -3381,20 +3398,37 @@
                       {% endif %}
                     </div>
                   </form>
-                  <form class="tare-form core-weight-field" action="/terminal/cards/{{ selected_card.id }}/tare" method="post" data-dirty-autosave="true" data-dirty-autosave-group="roll-entry">
+                  <form class="roll-defaults-form" action="/terminal/cards/{{ selected_card.id }}/tare" method="post" data-dirty-autosave="true" data-dirty-autosave-group="roll-entry">
                     <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                    <label>
-                      <span class="field-label">Шпула, кг</span>
-                      <input type="number" name="tare_weight" min="0" step="0.01" value="{{ selected_card.tare_weight if selected_card.tare_weight is not none else '' }}" data-current-tare-input="true" {% if not can_edit_card %}disabled{% endif %}>
-                    </label>
-                    <div class="field-error-slot" data-feedback-target="tare">
-                      {% if terminal_feedback.errors.tare %}
-                        <div class="inline-error" role="alert">
-                          {% for message in terminal_feedback.errors.tare %}
-                            <p>{{ message }}</p>
-                          {% endfor %}
-                        </div>
-                      {% endif %}
+                    <div class="tare-form core-weight-field">
+                      <label>
+                        <span class="field-label">Шпула, кг</span>
+                        <input type="number" name="tare_weight" min="0" step="0.01" value="{{ selected_card.tare_weight if selected_card.tare_weight is not none else '' }}" data-current-tare-input="true" {% if not can_edit_card %}disabled{% endif %}>
+                      </label>
+                      <div class="field-error-slot" data-feedback-target="tare">
+                        {% if terminal_feedback.errors.tare %}
+                          <div class="inline-error" role="alert">
+                            {% for message in terminal_feedback.errors.tare %}
+                              <p>{{ message }}</p>
+                            {% endfor %}
+                          </div>
+                        {% endif %}
+                      </div>
+                    </div>
+                    <div class="pallet-form">
+                      <label>
+                        <span class="field-label">Палет</span>
+                        <input type="text" inputmode="numeric" name="pallet_number" value="{{ selected_card.current_pallet_number if selected_card.current_pallet_number is not none else '' }}" data-current-pallet-input="true" {% if not can_edit_card %}disabled{% endif %}>
+                      </label>
+                      <div class="field-error-slot" data-feedback-target="pallet">
+                        {% if terminal_feedback.errors.pallet %}
+                          <div class="inline-error" role="alert">
+                            {% for message in terminal_feedback.errors.pallet %}
+                              <p>{{ message }}</p>
+                            {% endfor %}
+                          </div>
+                        {% endif %}
+                      </div>
                     </div>
                   </form>
                   <button class="roll-add-button" type="submit" form="add-roll-form-{{ selected_card.id }}" {% if not can_edit_rolls %}disabled{% endif %}>{{ button_icon("plus") }}<span>Добави</span></button>
@@ -3405,6 +3439,7 @@
                   <div class="roll-table">
                     <div class="roll-head">
                       <div>№</div>
+                      <div>Палет</div>
                       <div>Бруто кг</div>
                       <div>Шпула кг</div>
                       <div>Нето кг</div>
@@ -3414,6 +3449,19 @@
                         {% for roll in selected_card.roll_entries %}
                           <div class="roll-row" data-roll-id="{{ roll.id }}">
                             <div>{{ roll.roll_number }}</div>
+                            <div class="roll-weight-cell">
+                              <span class="roll-display-value" data-roll-display="pallet">{{ roll.pallet_number if roll.pallet_number is not none else "-" }}</span>
+                              <input
+                                class="roll-correction-input"
+                                data-roll-correction-input
+                                type="text"
+                                inputmode="numeric"
+                                name="pallet_number__{{ roll.id }}"
+                                value="{{ roll.pallet_number if roll.pallet_number is not none else '' }}"
+                                {% if not terminal_feedback.open_roll_corrections %}disabled hidden{% endif %}
+                                {% if not can_edit_rolls %}disabled{% endif %}
+                              >
+                            </div>
                             <div class="roll-weight-cell">
                               <span class="roll-display-value" data-roll-display="gross">{{ roll.gross_weight if roll.gross_weight is not none else "-" }}</span>
                               <input
@@ -3456,7 +3504,7 @@
                           </div>
                         {% endfor %}
                       {% else %}
-                        <div class="roll-row"><div>-</div><div>Няма въведени ролки.</div><div>-</div><div>-</div></div>
+                        <div class="roll-row"><div>-</div><div>-</div><div>Няма въведени ролки.</div><div>-</div><div>-</div></div>
                       {% endif %}
                     </div>
                   </div>
@@ -3552,8 +3600,8 @@
       <h2 class="finish-confirm-title" id="finish-confirm-title">Приключване на поръчка</h2>
       <p class="finish-confirm-body" id="finish-confirm-body">Сигурни ли сте, че искате да приключите тази поръчка?</p>
       <div class="finish-confirm-actions">
-        <button class="finish-confirm-secondary" type="button" data-finish-confirm-cancel>Не, назад</button>
-        <button class="finish-confirm-primary" type="button" data-finish-confirm-submit>Да, приключи</button>
+        <button class="finish-confirm-secondary" type="button" data-finish-confirm-cancel>Не</button>
+        <button class="finish-confirm-primary" type="button" data-finish-confirm-submit>Да</button>
       </div>
     </div>
   </div>
@@ -3842,9 +3890,11 @@
     (() => {
       const finishConfirmModal = document.getElementById("finish-confirm-modal");
       const finishConfirmForms = document.querySelectorAll('form[data-finish-confirm-form="true"]');
+      const finishConfirmBody = finishConfirmModal?.querySelector("#finish-confirm-body");
       const finishConfirmBack = finishConfirmModal?.querySelector("[data-finish-confirm-cancel]");
       const finishConfirmSubmit = finishConfirmModal?.querySelector("[data-finish-confirm-submit]");
       let pendingFinishForm = null;
+      let finishConfirmReturnFocus = null;
       let finishConfirmSubmitting = false;
 
       if (!finishConfirmModal || finishConfirmForms.length === 0) {
@@ -3853,6 +3903,8 @@
 
       const openFinishConfirm = (form) => {
         pendingFinishForm = form;
+        finishConfirmReturnFocus = document.activeElement;
+        finishConfirmBody.textContent = form.dataset.finishConfirmMessage;
         finishConfirmSubmit.disabled = false;
         finishConfirmModal.hidden = false;
         finishConfirmModal.setAttribute("aria-hidden", "false");
@@ -3864,6 +3916,9 @@
         finishConfirmModal.setAttribute("aria-hidden", "true");
         finishConfirmSubmit.disabled = false;
         pendingFinishForm = null;
+        finishConfirmSubmitting = false;
+        finishConfirmReturnFocus?.focus({ preventScroll: true });
+        finishConfirmReturnFocus = null;
       };
 
       finishConfirmForms.forEach((form) => {
@@ -3925,13 +3980,24 @@
     (() => {
       const currentTareInput = document.querySelector("input[data-current-tare-input='true']");
       const newRollTareCopy = document.querySelector("input[data-new-roll-tare-copy='true']");
+      const currentPalletInput = document.querySelector("input[data-current-pallet-input='true']");
+      const newRollPalletCopy = document.querySelector("input[data-new-roll-pallet-copy='true']");
       const syncNewRollTare = () => {
         if (currentTareInput && newRollTareCopy) {
           newRollTareCopy.value = currentTareInput.value;
         }
       };
+      const syncNewRollPallet = () => {
+        if (currentPalletInput && newRollPalletCopy) {
+          newRollPalletCopy.value = currentPalletInput.value;
+        }
+      };
       currentTareInput?.addEventListener("input", syncNewRollTare);
+      currentTareInput?.addEventListener("change", syncNewRollTare);
       newRollTareCopy?.form?.addEventListener("submit", syncNewRollTare);
+      currentPalletInput?.addEventListener("input", syncNewRollPallet);
+      currentPalletInput?.addEventListener("change", syncNewRollPallet);
+      newRollPalletCopy?.form?.addEventListener("submit", syncNewRollPallet);
 
       const dirtyAutosaveForms = Array.from(
         document.querySelectorAll('form[data-recipe-autosave="true"], form[data-dirty-autosave="true"]'),
@@ -4012,6 +4078,10 @@
           isDirty,
           isSubmitting: () => submitting,
           submitDirtyForm,
+          markPersisting: () => {
+            submitting = true;
+            rememberValues();
+          },
         };
       };
 
@@ -4025,6 +4095,16 @@
       if (autosaveStates.length === 0) {
         return;
       }
+
+      document.querySelectorAll("form[data-persist-dirty-autosave-group]").forEach((form) => {
+        form.addEventListener("submit", () => {
+          const groupName = form.dataset.persistDirtyAutosaveGroup;
+          const group = groupName ? form.closest(`.${groupName}`) : null;
+          autosaveStates
+            .filter((state) => group && state.group === group)
+            .forEach((state) => state.markPersisting());
+        });
+      });
 
       document.addEventListener("click", (event) => {
         if (autosaveSuspended) {
@@ -4185,7 +4265,7 @@
       const rollDeleteClose = document.getElementById("roll-delete-close");
       const rollBody = document.querySelector("[data-roll-body]");
       const correctionBlockedControls = document.querySelectorAll(
-        ".actions form button, .menu-btn, [data-roll-correction-open], .roll-add-button, .add-roll-form input, .tare-form input, .recipe-table input, #queue-open, #history-open, [data-roll-delete-open]"
+        ".actions form button, .menu-btn, [data-roll-correction-open], .roll-add-button, .add-roll-form input, .tare-form input, .pallet-form input, .recipe-table input, #queue-open, #history-open, [data-roll-delete-open]"
       );
       const correctionBlockedLinks = document.querySelectorAll(
         ".machine-tab, .queue-card, .history-row"

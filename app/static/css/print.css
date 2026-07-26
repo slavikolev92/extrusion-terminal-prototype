@@ -42,7 +42,7 @@ body {
   padding: 10mm;
   background: #fff;
   border: 1px solid #222;
-  page-break-after: always;
+  page-break-after: auto;
 }
 
 .print-page-back {
@@ -52,6 +52,21 @@ body {
   gap: 5mm;
   padding: 14mm 18mm 10mm;
   page-break-after: auto;
+}
+
+.print-page-front,
+.print-page-back-has-overflow,
+.print-page-pallet-overflow:not(.print-page-last) {
+  break-after: page;
+  page-break-after: always;
+}
+
+.print-page-pallet-overflow {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  align-content: start;
+  gap: 5mm;
+  padding: 14mm 18mm 10mm;
 }
 
 .print-section {
@@ -519,9 +534,9 @@ body {
 
 .print-summary {
   display: grid;
-  grid-template-columns: 63mm 75mm;
+  grid-template-columns: 63mm 53.5mm 53.5mm;
   justify-content: space-between;
-  gap: 0;
+  gap: 2mm;
   width: 174mm;
   margin: 1.6mm auto 0;
   font-size: 7.6pt;
@@ -549,20 +564,71 @@ body {
   font-weight: 700;
 }
 
-.print-summary-timing th {
-  width: 35mm;
+.print-summary-production th {
+  width: 39mm;
 }
 
-.print-summary-timing td {
-  width: 28mm;
+.print-summary-production td {
+  width: 24mm;
 }
 
-.print-summary-weights th {
-  width: 52mm;
+.print-summary-production {
+  font-size: 6.5pt;
 }
 
-.print-summary-weights td {
-  width: 23mm;
+.print-summary-production th,
+.print-summary-production td {
+  padding: 0.3mm 0.35mm;
+}
+
+.print-pallet-summary {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 7pt;
+  line-height: 1.05;
+}
+
+.print-pallet-summary th,
+.print-pallet-summary td {
+  height: 4.6mm;
+  border: 1px solid #222;
+  padding: 0.3mm 0.35mm;
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.print-pallet-summary th {
+  font-weight: 700;
+}
+
+.print-pallet-summary tr {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.print-pallet-summary th:nth-child(1) {
+  width: 28%;
+}
+
+.print-pallet-summary th:nth-child(2) {
+  width: 17%;
+}
+
+.print-pallet-summary th:nth-child(3),
+.print-pallet-summary th:nth-child(4) {
+  width: 27.5%;
+}
+
+.print-pallet-overflow-table {
+  font-size: 8pt;
+}
+
+.print-pallet-overflow-table th,
+.print-pallet-overflow-table td {
+  height: 5mm;
+  padding: 0.5mm 1mm;
 }
 
 .print-blocked {
@@ -594,12 +660,19 @@ body {
     min-height: 297mm;
     border: 0;
     overflow: hidden;
-    break-after: page;
-    page-break-after: always;
+    break-after: auto;
+    page-break-after: auto;
   }
 
   .print-page-back {
     break-after: auto;
     page-break-after: auto;
+  }
+
+  .print-page-front,
+  .print-page-back-has-overflow,
+  .print-page-pallet-overflow:not(.print-page-last) {
+    break-after: page;
+    page-break-after: always;
   }
 }
