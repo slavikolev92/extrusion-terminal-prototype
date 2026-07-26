@@ -188,7 +188,7 @@ Every migration test set must cover, where applicable:
 | Version | Name | Purpose | Development | Snapshot rehearsal | Production |
 | --- | --- | --- | --- | --- | --- |
 | M001 | `shift_manager_import_fields` | Add the eight final ordered/route columns without guessing legacy values | 9 focused tests passed | Not run | Not run |
-| M002 | `shift_management` | Add shift configuration, durable occurrences, and nullable roll attribution without historical backfill | 12 focused tests passed | Not run | Not run |
+| M002 | `shift_management` | Add shift configuration, durable occurrences, and nullable roll attribution without historical backfill | 12 focused migration tests and 547 full-suite tests passed | Not run | Not run |
 
 ### M001: Shift Manager Import Fields
 
@@ -255,6 +255,14 @@ Development evidence from July 25, 2026:
 ```bash
 .venv/bin/python -m pytest tests/test_migrations.py -q
 # 12 passed
+
+.venv/bin/python -m pytest -q
+# 547 passed
+
+.venv/bin/python -m pytest tests/test_migrations.py tests/test_baseline.py \
+  tests/test_shift_management.py tests/test_roll_entry.py \
+  tests/test_admin_production_corrections.py -q
+# 145 passed
 ```
 
 The unresolved M001 legacy-data production profile and the later
@@ -272,6 +280,7 @@ rehearsal.
 | 2026-07-25 | New-roll shift occurrence attribution and correction preservation | No migration | M002 already provides the nullable roll FK; only new roll writes resolve attribution, while historical `NULL` values and existing linked rolls remain unchanged |
 | 2026-07-25 | Admin terminal-configuration page | No migration | Routes, templates, navigation, and CSS now expose the existing M002 singleton configuration row; no schema, stored values, or data meaning changed |
 | 2026-07-25 | Terminal shift routes, state gate, and polling signature | No migration | Routes and read context use the existing M002 configuration/occurrence data; the mutation gate and polling signature change runtime behavior only, with no schema or stored-value transformation |
+| 2026-07-25 | Completed shift-management functionality and final migration maintenance | Schema-only M002; no additional migration | Final feature diff confirmed M002 covers every persistent change; legacy rolls remain `NULL`, no values are transformed, 145 focused affected tests and 547 full-suite tests passed; M001 production profiling and release-candidate rehearsal remain deployment gates |
 
 Append one row after every use of the trigger command, including when no
 migration is required.

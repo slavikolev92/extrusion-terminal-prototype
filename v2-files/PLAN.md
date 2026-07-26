@@ -14,10 +14,15 @@ export/import contract change is complete, including Task 6 verification.
 The remaining production legacy-data profile and release-candidate rehearsal
 are deployment gates only; both require an immutable SQLite-safe backup.
 
-Shift management is implemented and verified against the approved specification
-in `v2-files/TASK-01-SHIFT-MANAGEMENT.md`. The remaining M001 production
-legacy-data profile and final release-candidate rehearsal are deployment gates,
-not unfinished shift-management application work.
+Shift management is functionally implemented and its automated and browser
+workflow checks pass against the approved behavior in
+`v2-files/TASK-01-SHIFT-MANAGEMENT.md`. Task 01 is not yet complete: the current
+shift forms/modals are not visually acceptable. The replacement terminal
+header and shift-interface design are approved, and the executable plan is
+`docs/superpowers/plans/2026-07-26-shift-management-ui-redesign.md`.
+Implementation and live-browser acceptance remain. The separate M001
+production legacy-data profile and final release-candidate rehearsal remain
+deployment gates.
 
 The original production-tracking workstreams are:
 
@@ -56,11 +61,17 @@ production by numbered shift and time period.
 
 ### Current Status
 
-The shift-management functionality in
-`v2-files/TASK-01-SHIFT-MANAGEMENT.md` is implemented and verified. M002 adds
-the schema foundation without historical backfill, focused and full automated
-suites pass, and the complete temporary-database Playwright workflow is
-recorded in `docs/implementation-notes/shift-management.md`.
+The shift-management backend behavior, M002 schema foundation, terminal
+workflow, and automated checks are implemented. M002 performs no historical
+backfill, focused and full automated suites pass, and the temporary-database
+Playwright workflow is recorded in
+`docs/implementation-notes/shift-management.md`.
+
+Task 01 remains open because the approved replacement terminal header and
+shift-interface design still need to be implemented and visually accepted.
+The executable plan is
+`docs/superpowers/plans/2026-07-26-shift-management-ui-redesign.md`. Passing
+functional tests does not by itself complete this UI acceptance work.
 
 ### Confirmed Data Relationships
 
@@ -146,7 +157,10 @@ package_rolls
 5. Existing-data preservation, shift lifecycle, roll attribution, terminal
    gating, summaries, history, configuration, and stale-page behavior are
    verified.
-6. Production deployment still requires the M001 legacy-data profile and final
+6. The replacement terminal header and shift-interface design are approved and
+   their implementation plan is written.
+7. Implement the redesign and complete live-browser UI acceptance.
+8. Production deployment still requires the M001 legacy-data profile and final
    release-candidate rehearsal on SQLite-safe backup copies.
 
 ## Open Questions
@@ -165,9 +179,11 @@ This list combines the two existing production-tracking workstreams with the new
 1. **Shift management for extrusion production**
    - Surface: `/terminal`, `/admin`, database.
    - Complexity: large.
-   - Status: implementation and verification complete. M001 production
-     profiling and the final release-candidate rehearsal remain deployment
-     gates.
+   - Status: functional implementation and verification complete; replacement
+     header/shift UI design approved and implementation plan written. Task 01
+     remains open pending implementation and live-browser acceptance. M001
+     production profiling and the final release-candidate rehearsal remain
+     separate deployment gates.
    - Goal: create one active extrusion shift at a time, require/open shift context for new production roll entry, and attach every new roll to the shift that produced it.
    - Approved behavior: `v2-files/TASK-01-SHIFT-MANAGEMENT.md`.
 
@@ -280,8 +296,9 @@ This list combines the two existing production-tracking workstreams with the new
    redesigns.
 3. Design terminal workflow additions before calculator or roll-change timing
    work.
-4. Implement the remaining larger production-data workstreams in the order the
-   user confirms; shift management is complete, while worker recipe editing and
-   packaging/pallet tracking remain separate future work.
+4. Finish and visually accept the approved shift-management UI redesign, then
+   implement the remaining larger production-data workstreams in the order the
+   user confirms. Worker recipe editing and packaging/pallet tracking remain
+   separate future work.
 
 This order is only a first cut. The larger items need short design passes before implementation because they change workflow, database shape, and future ERP/costing assumptions.

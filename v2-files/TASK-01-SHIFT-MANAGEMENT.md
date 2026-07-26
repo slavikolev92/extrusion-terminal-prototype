@@ -1,8 +1,10 @@
 # Task 01: Shift Management Functionality Specification
 
-Status: implementation and verification complete on July 25, 2026. Production
-deployment remains gated by the M001 legacy-data profile and the final
-release-candidate rehearsal.
+Status: backend behavior and the first functional UI implementation are
+complete. A replacement terminal header and shift-interface design were
+approved on July 26, 2026 and remain to be implemented and visually accepted.
+Production deployment remains separately gated by the M001 legacy-data profile
+and the final release-candidate rehearsal.
 
 ## Purpose
 
@@ -14,6 +16,24 @@ This is a functionality specification. It does not define database structure,
 migrations, code structure, or implementation slices. Those decisions belong
 in the implementation plan based on the completed post-blocker app/database
 exploration.
+
+## Approved visual references
+
+- `source-files/new-design.JPG` is the structural reference for the new terminal
+  header only. Its unrelated machine-card and selected-order changes are not
+  part of Task 01.
+- `source-files/screen_start_shift.png` is the visual reference for the compact
+  start-selection state, subject to this specification's blocking behavior,
+  Bulgarian copy, existing terminal accent color, and live clock rules.
+- `source-files/screen_start_shift_confirmation.png` is the visual reference for
+  both start and end confirmation states. Their content and action meaning
+  differ, but they should share the same layout and visual language.
+- `source-files/main_shift_button.png` is the visual reference for the default
+  active-shift and history-preview window, subject to the editable-number,
+  no-duration, Bulgarian date, one-decimal weight, and full-history rules below.
+- These references define direction, proportions, hierarchy, and polish. Where
+  a reference conflicts with an explicit behavior in this specification, the
+  explicit behavior controls.
 
 ## Scope
 
@@ -66,7 +86,7 @@ exploration.
 
 - Every shift occurrence must have its own permanent, unique internal identity.
   The internal identity is different from the reusable business shift number.
-  For example, two occurrences may both be called `Shift 1`, but they must have
+  For example, two occurrences may both be called `Смяна 1`, but they must have
   different internal identities because they happened at different times.
 - The internal identity does not need to be visible to terminal operators or
   form a gap-free sequence. Its purpose is to identify exactly one shift
@@ -105,17 +125,37 @@ exploration.
 
 - Shift opening, changing, and closing should be operated from the terminal
   only in the pilot.
-- The normal terminal screen should contain one global button labelled
-  `Shift`, positioned with the other global terminal actions such as the queue
-  and produced orders.
-- The main terminal screen does not need to display the active shift number or
-  its start time. Those details should be available after opening the `Shift`
-  window.
+- The terminal should have a dedicated full-width header above the machine
+  cards. Adding this header must not otherwise redesign the machine cards,
+  selected-order screen, or production controls.
+- The company logo should be aligned on the left side of the header.
+- Two equal-size global navigation buttons should be centered against the full
+  viewport, not merely centered in the space remaining between the logo and
+  the right-side action. They should be labelled `Чакащи поръчки` and
+  `Произведени поръчки`.
+- The shift-management button should be aligned on the right and use the same
+  width and height as the two centered buttons. All three labels must remain
+  inside their buttons without wrapping, clipping, overlapping, or changing
+  the header alignment.
+- When no shift is open, the shift button should show the same gray status dot
+  used for an inactive machine plus the full label `Няма активна смяна`.
+- When a shift is open, the dot should be green and the button should show the
+  current label, such as `Смяна 1`. Correcting the active shift number should
+  update this label.
+- The right-side control is always a shift-management button, not an `exit
+  shift` button. Selecting it while a shift is active opens the shift window;
+  ending the shift remains a separate action inside that window.
+- The main terminal header does not need to show the shift start time. The
+  start time is available inside the shift window.
 - Starting a shift should automatically record the current time. Operators
   should not type or edit the start timestamp.
+- Before the shift is saved, the start-selection and start-confirmation screens
+  should display a live current-time preview in the approved Bulgarian date
+  format. The authoritative server timestamp is recorded only when the operator
+  selects the final confirmation action.
 - Before recording the start time, the terminal should require an explicit
   confirmation that shows the selected shift number, such as
-  `Start Shift 2 now?`.
+  `Да започне ли Смяна 2?`.
 - Ending a shift should automatically record the current time. Operators should
   not type or edit the end timestamp.
 - The normal start/stop workflow should be deliberately simple and should
@@ -123,38 +163,55 @@ exploration.
 
 ### Shift window
 
-- When a shift is open, selecting the global `Shift` button should open one
-  shift window containing:
-  - the current shift number
-  - the automatically recorded start time
-  - a clearly separated `End shift` action
-  - a brief, read-only list of all completed shifts
+- When a shift is open, selecting the state-aware shift button should open one
+  shift-management window titled `Управление на смяната`.
+- The default window should contain two visually distinct sections:
+  - `Текуща смяна`, with the current shift number, active status, automatically
+    recorded start time, and a clearly separated `Приключи смяната` action
+  - `История`, with a compact preview of up to the three most recently completed
+    shifts and a `Виж всички` action
+- The current-shift section must not show a duration or live elapsed-time
+  counter.
 - The displayed current shift number should itself be the constrained dropdown
   for changing the active shift number. Do not show a separate shift-number
   display and a second correction dropdown.
 - Selecting another configured number in that dropdown should update the open
   shift's current number. The correction should not create a separate shift or
   change the original start time.
-- The `End shift` action may be positioned at the top or bottom of the window,
-  but it must remain visually distinct from changing the shift number and from
-  opening history.
-- Completed shifts should appear newest first in a compact, scrollable history
-  table. The pilot does not need history search or filters.
-- The history table should show:
+- The `Приключи смяната` action may be positioned at the top or bottom of the
+  current-shift section, but it must remain visually distinct from changing the
+  shift number and from opening history.
+- The compact history preview and the full history view should show completed
+  shifts newest first. `Виж всички` should replace the contents of the same
+  modal with a compact, scrollable full-history table; it must not stack a
+  second modal. The pilot does not need history search or filters.
+- The full history table should show:
   - shift number
   - start date and time
   - end date and time
   - number of distinct items produced during the shift
   - total number of rolls produced during the shift
   - total gross kilograms produced during the shift
-  - a `View` action
+  - a `Преглед` action
 - The aggregate item, roll, and gross-kilogram values in the history table must
   include only production attributed to that completed shift.
-- Selecting `View` should replace the shift window's contents with the selected
-  shift's read-only production summary in the same format used immediately
-  after ending a shift. Do not stack a second modal window on top of the first.
-- The historical summary should provide a `Back` action that returns to the
+- Selecting `Преглед` should replace the shift window's contents with the
+  selected shift's read-only production summary in the same format used
+  immediately after ending a shift. Do not stack a second modal window on top
+  of the first.
+- The historical summary should provide a `Назад` action that returns to the
   completed-shift history without changing the active shift.
+- All visible labels, headings, table columns, links, and confirmation actions
+  in the shift interface should be in Bulgarian.
+- Visible shift timestamps should use a human-readable Bulgarian format such as
+  `26 юли 2026 г., 21:30`. They should not expose raw database timestamps or
+  seconds.
+- Gross-kilogram values in shift history and summary views should be displayed
+  with one decimal place.
+- Dialog widths should match their content: start and confirmation states
+  should be compact, while history and production-summary states may be wider
+  for their tables. The dialogs should use the terminal's existing accent
+  colors, typography, borders, and spacing rather than a separate visual theme.
 
 ### Correcting the active shift number
 
@@ -170,9 +227,9 @@ exploration.
   when the operator ends it.
 - Every completed shift is a distinct occurrence, even when the same shift
   number is used again on another day.
-- Example: if the shift starts at 22:00 with `Shift 2` selected, the operator
-  changes the selection to `Shift 3` at 23:00, and the shift ends at 08:00, the
-  completed record is `Shift 3` from 22:00 to 08:00.
+- Example: if the shift starts at 22:00 with `Смяна 2` selected, the operator
+  changes the selection to `Смяна 3` at 23:00, and the shift ends at 08:00, the
+  completed record is `Смяна 3` from 22:00 to 08:00.
 
 ### Recovery
 
@@ -182,38 +239,51 @@ exploration.
 ### No-open-shift gate and shift ending
 
 - When no shift is open, the terminal should be dimmed behind a blocking
-  `No active shift` window. The operator must not be able to use the normal
+  `Няма активна смяна` window. The operator must not be able to use the normal
   terminal controls or dismiss the gate without starting a shift.
+- The no-active-shift view should use the approved compact start layout with a
+  shift-number dropdown, live current-time preview, and `Започни смяна`
+  action. It should not contain a close control or an `Отказ` action.
+- Start and end confirmation states should share the same visual structure:
+  clear Bulgarian heading and explanation, compact shift details, `Назад`, and
+  a final confirmation action. Returning from start confirmation goes back to
+  the number-selection state; it does not dismiss the blocking gate.
 - Ending a shift should follow this terminal handoff flow:
-  1. The operator clicks `End shift`.
+  1. The operator clicks `Приключи смяната`.
   2. The terminal asks for confirmation.
   3. On confirmation, the current time is recorded as the shift end.
   4. The shift window is replaced by that shift's production summary while the
      rest of the terminal remains dimmed and unavailable.
-  5. The summary remains visible until the operator acknowledges or closes it.
-  6. The terminal then immediately shows the blocking `No active shift` window
+  5. The summary remains visible until the operator selects `Продължи`.
+  6. The terminal then immediately shows the blocking `Няма активна смяна`
+     window
      with the controls for starting the next shift.
   7. The next shift's start time is recorded only when its operator confirms the
      start action.
 - The just-completed summary should remain available later through the completed
-  shift history in the normal `Shift` window.
+  shift history in the normal shift-management window.
 
 ### End-of-shift summary
 
-- The end-of-shift summary should show the number of distinct items produced by
-  the shift.
+- The summary window should use the static Bulgarian title `Произведени
+  количества`, not a shift-number title.
+- Beneath the title, show the shift number and its human-readable start and end
+  timestamps once. Do not repeat the shift number in multiple headings.
+- The order rows themselves should show which distinct items were produced by
+  the shift. The summary should not show a separate distinct-item counter such
+  as `1 артикула`.
 - One distinct item means one production order with at least one roll recorded
   during the shift. The order does not need to have been completed during that
   shift.
 - The summary table should contain one row per distinct item/production order
-  and show:
-  - production order ID
-  - customer name
-  - product type
-  - number of rolls produced for that order during the shift
-  - gross kilograms produced for that order during the shift
+  and use these Bulgarian columns:
+  - `Производствена поръчка`
+  - `Клиент`
+  - `Вид изделие`
+  - `Брой ролки`
+  - `Бруто, кг`
 - A shift with no recorded rolls may still be ended normally. Its summary shows
-  zero distinct items and an empty order table.
+  an empty order table and a Bulgarian empty-state message.
 - The pilot requires this summary as an on-screen view. A separate downloadable
   or printable shift report is not part of the confirmed functionality.
 
@@ -245,18 +315,28 @@ exploration.
 
 ## Next technical work
 
-The prerequisite blocker work, implementation, and verification are complete.
-M002 provides the schema-only shift foundation, leaves historical rolls
-unattributed, and is covered by focused migration and workflow tests. The full
-temporary-database browser workflow and durable behavior record are in
+The shift backend, M002 schema foundation, attribution behavior, and initial
+functional UI are implemented. The July 26 terminal header and shift-interface
+redesign above is approved but not yet implemented. M002 leaves historical
+rolls unattributed and is covered by focused migration and workflow tests. The
+existing temporary-database browser workflow and durable behavior record are in
 `docs/implementation-notes/shift-management.md`.
 
 Next:
 
-1. Profile an immutable SQLite-safe production backup to resolve the older M001
+1. Review and execute
+   `docs/superpowers/plans/2026-07-26-shift-management-ui-redesign.md` for the
+   approved terminal header and shift-interface redesign.
+2. Implement the visual changes without changing the confirmed shift lifecycle
+   or persistence behavior, then complete automated, browser, and user visual
+   acceptance checks.
+3. Perform the migration assessment for the finished UI slice. A display-only
+   result should require no new migration, but the final diff remains the
+   authority.
+4. Profile an immutable SQLite-safe production backup to resolve the older M001
    legacy import-field deployment gate without guessing values.
-2. Rehearse the final release candidate and complete migration chain on a fresh
+5. Rehearse the final release candidate and complete migration chain on a fresh
    clone of a SQLite-safe production backup.
-3. Deploy the application and M002 together only after those gates, backup,
+6. Deploy the application and M002 together only after those gates, backup,
    integrity, foreign-key, application smoke, repeat-run, and rollback checks
    pass.
