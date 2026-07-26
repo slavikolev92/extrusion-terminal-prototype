@@ -3881,7 +3881,9 @@ def delete_admin_planning_card(card_id: int, loaded_version: int) -> RuleResult:
         connection.execute("BEGIN IMMEDIATE")
         card = connection.execute(
             """
-            SELECT id, order_number, status, version, machine_id, first_started_at
+            SELECT id, order_number, status, version, machine_id, first_started_at,
+                   tare_weight, actual_raw_material_used, raw_material_brand_grade,
+                   raw_material_batch_lot
             FROM cards
             WHERE id = ?
             """,
@@ -3908,6 +3910,8 @@ def delete_admin_planning_card(card_id: int, loaded_version: int) -> RuleResult:
         )
         if roll_count or segment_count or card["first_started_at"]:
             return RuleResult(False, ("Технологични карти с производствени данни не могат да се изтриват.",))
+        if card_has_entered_production_data(connection, card):
+            return RuleResult(False, ("Технологични карти с производствени данни не могат да се изтриват.",))
 
         old_machine_id = int(card["machine_id"]) if card["machine_id"] is not None else None
         connection.execute("DELETE FROM cards WHERE id = ?", (card_id,))
@@ -3919,6 +3923,37 @@ def delete_admin_planning_card(card_id: int, loaded_version: int) -> RuleResult:
 
 def delete_admin_imported_card(card_id: int, loaded_version: int) -> RuleResult:
     return delete_admin_planning_card(card_id, loaded_version)
+
+
+def card_has_entered_production_data(
+    connection: sqlite3.Connection,
+    card: sqlite3.Row,
+) -> bool:
+    if card["tare_weight"] is not None:
+        return True
+
+    material_fields = (
+        "actual_raw_material_used",
+        "raw_material_brand_grade",
+        "raw_material_batch_lot",
+    )
+    if any(str(card[field] or "").strip() for field in material_fields):
+        return True
+
+    actual_entry = connection.execute(
+        """
+        SELECT 1
+        FROM recipe_actual_entries
+        WHERE card_id = ?
+          AND (
+            TRIM(COALESCE(actual_material_used, '')) <> ''
+            OR TRIM(COALESCE(batch_lot, '')) <> ''
+          )
+        LIMIT 1
+        """,
+        (card["id"],),
+    ).fetchone()
+    return actual_entry is not None
 
 
 def update_terminal_material_fields(
@@ -4249,6 +4284,7 @@ def release_card(
     import_columns = ", ".join(IMPORT_FIELDS)
 
     with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
         card = connection.execute(
             f"""
             SELECT id, order_number, status, version, {import_columns}
@@ -4290,7 +4326,7 @@ def release_card(
 
         try:
             temporary_sequence = -int(card["id"])
-            connection.execute(
+            update_result = connection.execute(
                 """
                 UPDATE cards
                 SET status = ?,
@@ -4305,6 +4341,8 @@ def release_card(
                     card_id,
                 ),
             )
+            if update_result.rowcount != 1:
+                return RuleResult(False, (STALE_CARD_MESSAGE,))
             final_sequence = normalize_machine_queue(
                 connection,
                 machine_id=machine_id,
@@ -4331,6 +4369,7 @@ def update_card_planning(
     machine_sequence: int,
 ) -> RuleResult:
     with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
         card = connection.execute(
             """
             SELECT id, order_number, status, machine_id, machine_sequence, version,
@@ -4384,7 +4423,7 @@ def update_card_planning(
             assert card["machine_id"] is not None
             old_machine_id = int(card["machine_id"])
             temporary_sequence = -int(card["id"])
-            connection.execute(
+            update_result = connection.execute(
                 """
                 UPDATE cards
                 SET machine_id = ?,
@@ -4393,6 +4432,8 @@ def update_card_planning(
                 """,
                 (machine_id, temporary_sequence, card_id),
             )
+            if update_result.rowcount != 1:
+                return RuleResult(False, (STALE_CARD_MESSAGE,))
             if old_machine_id != machine_id:
                 normalize_machine_queue(connection, machine_id=old_machine_id)
             final_sequence = normalize_machine_queue(

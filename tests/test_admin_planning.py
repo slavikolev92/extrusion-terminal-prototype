@@ -415,6 +415,54 @@ def test_delete_pending_unstarted_card_removes_it_and_normalizes_queue(connectio
     assert machine_1_cards == [("25830", 1), ("25832", 2)]
 
 
+def test_delete_blocks_pending_card_with_tare_weight(connection):
+    card_id = release_ready_card("25837", machine_id=1, machine_sequence=1)
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.25").ok
+
+    result = db.delete_admin_planning_card(card_id, card_version(card_id))
+
+    assert not result.ok
+    assert result.messages == ("Технологични карти с производствени данни не могат да се изтриват.",)
+    assert db.fetch_admin_card_detail(card_id) is not None
+
+
+def test_delete_blocks_pending_card_with_legacy_actual_material_fields(connection):
+    card_id = release_ready_card("25838", machine_id=1, machine_sequence=1)
+    assert db.update_terminal_material_fields(
+        card_id,
+        card_version(card_id),
+        "Actual LDPE",
+        "Grade A",
+        "Batch 42",
+    ).ok
+
+    result = db.delete_admin_planning_card(card_id, card_version(card_id))
+
+    assert not result.ok
+    assert result.messages == ("Технологични карти с производствени данни не могат да се изтриват.",)
+    assert db.fetch_admin_card_detail(card_id) is not None
+
+
+def test_delete_blocks_pending_card_with_structured_recipe_actual_entries(connection):
+    card_id = release_ready_card("25839", machine_id=1, machine_sequence=1)
+    assert db.update_terminal_recipe_actual_entries(
+        card_id,
+        card_version(card_id),
+        {
+            "raw_material_b": {
+                "actual_material_used": "Actual B",
+                "batch_lot": "",
+            }
+        },
+    ).ok
+
+    result = db.delete_admin_planning_card(card_id, card_version(card_id))
+
+    assert not result.ok
+    assert result.messages == ("Технологични карти с производствени данни не могат да се изтриват.",)
+    assert db.fetch_admin_card_detail(card_id) is not None
+
+
 def test_delete_blocks_started_running_and_paused_cards(connection, active_test_shift):
     started_pending_id = release_ready_card("25833", machine_id=2, machine_sequence=1)
     running_id = release_ready_card("25834", machine_id=3, machine_sequence=1)
@@ -505,3 +553,107 @@ def test_delete_serializes_with_production_start_after_validation(
     assert delete_result["value"].ok
     assert not start_result["value"].ok
     assert db.fetch_admin_card_detail(card_id) is None
+
+
+def test_release_serializes_with_delete_after_validation(
+    connection,
+    monkeypatch,
+):
+    card_id = import_ready_card("25840")
+    loaded_version = card_version(card_id)
+    validation_started = threading.Event()
+    allow_release = threading.Event()
+    delete_done = threading.Event()
+    original_validate = db.validate_loaded_card_version
+
+    def blocked_release_validate(card, version):
+        result = original_validate(card, version)
+        if threading.current_thread().name == "release-card-thread":
+            validation_started.set()
+            assert allow_release.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(db, "validate_loaded_card_version", blocked_release_validate)
+    release_result = {}
+    delete_result = {}
+
+    def release_card():
+        release_result["value"] = db.release_card(card_id, 2, 1, loaded_version)
+
+    def delete_card():
+        try:
+            delete_result["value"] = db.delete_admin_planning_card(card_id, loaded_version)
+        finally:
+            delete_done.set()
+
+    release_thread = threading.Thread(target=release_card, name="release-card-thread")
+    delete_thread = threading.Thread(target=delete_card, name="delete-card-thread")
+    release_thread.start()
+    assert validation_started.wait(timeout=5)
+    delete_thread.start()
+    assert not delete_done.wait(timeout=0.2)
+    allow_release.set()
+    release_thread.join(timeout=5)
+    delete_thread.join(timeout=5)
+
+    assert not release_thread.is_alive()
+    assert not delete_thread.is_alive()
+    assert release_result["value"].ok
+    assert not delete_result["value"].ok
+    card = db.fetch_admin_card_detail(card_id)
+    assert card is not None
+    assert card["status"] == STATUS_PENDING
+    assert card["machine_id"] == 2
+    assert card["machine_sequence"] == 1
+
+
+def test_replanning_serializes_with_delete_after_validation(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("25841", machine_id=1, machine_sequence=1)
+    loaded_version = card_version(card_id)
+    validation_started = threading.Event()
+    allow_replan = threading.Event()
+    delete_done = threading.Event()
+    original_validate = db.validate_loaded_card_version
+
+    def blocked_replan_validate(card, version):
+        result = original_validate(card, version)
+        if threading.current_thread().name == "replan-card-thread":
+            validation_started.set()
+            assert allow_replan.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(db, "validate_loaded_card_version", blocked_replan_validate)
+    replan_result = {}
+    delete_result = {}
+
+    def replan_card():
+        replan_result["value"] = db.update_card_planning(card_id, loaded_version, 3, 1)
+
+    def delete_card():
+        try:
+            delete_result["value"] = db.delete_admin_planning_card(card_id, loaded_version)
+        finally:
+            delete_done.set()
+
+    replan_thread = threading.Thread(target=replan_card, name="replan-card-thread")
+    delete_thread = threading.Thread(target=delete_card, name="delete-card-thread")
+    replan_thread.start()
+    assert validation_started.wait(timeout=5)
+    delete_thread.start()
+    assert not delete_done.wait(timeout=0.2)
+    allow_replan.set()
+    replan_thread.join(timeout=5)
+    delete_thread.join(timeout=5)
+
+    assert not replan_thread.is_alive()
+    assert not delete_thread.is_alive()
+    assert replan_result["value"].ok
+    assert not delete_result["value"].ok
+    card = db.fetch_admin_card_detail(card_id)
+    assert card is not None
+    assert card["status"] == STATUS_PENDING
+    assert card["machine_id"] == 3
+    assert card["machine_sequence"] == 1
