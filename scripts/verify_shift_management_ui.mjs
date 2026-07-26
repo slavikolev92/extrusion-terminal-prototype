@@ -29,8 +29,12 @@ const orderTwo = "SHIFT-UI-002";
 
 const screenshotNames = [
   "admin-shift-count.png",
-  "no-active-shift-gate.png",
+  "terminal-header-no-active.png",
+  "start-shift-selection.png",
+  "start-shift-confirmation.png",
+  "terminal-header-active.png",
   "active-shift-window.png",
+  "full-shift-history.png",
   "ended-shift-summary.png",
   "historical-shift-summary.png",
 ];
@@ -83,6 +87,70 @@ function assertEqual(actual, expected, label) {
       `${label}: expected ${JSON.stringify(expected)}, found ${JSON.stringify(actual)}`,
     );
   }
+}
+
+async function verifyTerminalHeader(page, expectedLabel, expectedActive) {
+  const header = page.locator(".terminal-header");
+  const actions = page.locator(".terminal-header-action");
+  const centerNav = page.locator(".terminal-global-nav");
+  await header.waitFor({ state: "visible" });
+  assertEqual(await actions.count(), 3, "terminal header action count");
+
+  const widths = [];
+  for (let index = 0; index < await actions.count(); index += 1) {
+    const box = await actions.nth(index).boundingBox();
+    assert(box !== null, `Missing header action box ${index}`);
+    widths.push(box.width);
+    const fits = await actions.nth(index).evaluate((element) => ({
+      horizontal: element.scrollWidth <= element.clientWidth,
+      vertical: element.scrollHeight <= element.clientHeight,
+      whiteSpace: getComputedStyle(element).whiteSpace,
+    }));
+    assert(fits.horizontal, `Header action ${index} overflows horizontally`);
+    assert(fits.vertical, `Header action ${index} overflows vertically`);
+    assertEqual(fits.whiteSpace, "nowrap", `Header action ${index} wrapping`);
+  }
+  assert(Math.max(...widths) - Math.min(...widths) <= 1, "Header action widths differ");
+
+  const viewport = page.viewportSize();
+  const centerBox = await centerNav.boundingBox();
+  assert(viewport !== null && centerBox !== null, "Missing header center geometry");
+  assert(
+    Math.abs(centerBox.x + centerBox.width / 2 - viewport.width / 2) <= 2,
+    "Order actions are not centered against the viewport",
+  );
+
+  const shiftAction = page.locator('[data-terminal-action="shift"]');
+  assertEqual(normalizeText(await shiftAction.textContent()), expectedLabel, "shift header label");
+  assertEqual(
+    await shiftAction.locator(".shift-status-dot").evaluate((element) =>
+      element.classList.contains("is-active")
+    ),
+    expectedActive,
+    "shift header active-dot state",
+  );
+}
+
+async function verifyTerminalHeaderAtBothViewports(page, expectedLabel, expectedActive) {
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await verifyTerminalHeader(page, expectedLabel, expectedActive);
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await verifyTerminalHeader(page, expectedLabel, expectedActive);
+  await page.setViewportSize({ width: 1536, height: 1024 });
+}
+
+async function verifyLiveClock(clock) {
+  const before = await clock.getAttribute("datetime");
+  const visible = normalizeText(await clock.textContent());
+  const currentYear = String(new Date().getFullYear());
+  const visiblePattern = new RegExp(
+    `^\\d{1,2} [а-я]+ ${currentYear} г\\., \\d{2}:\\d{2}$`,
+  );
+  assert(visiblePattern.test(visible), `Bulgarian clock format: ${visible}`);
+  assert(!/\d{2}:\d{2}:\d{2}/.test(visible), "Visible clock must not show seconds");
+  await clock.page().waitForTimeout(1100);
+  const after = await clock.getAttribute("datetime");
+  assert(before !== after, "Live clock datetime did not advance");
 }
 
 function assertArtifactDatabaseSafety() {
@@ -361,17 +429,6 @@ function cardIdFromHref(href) {
   return Number(match[1]);
 }
 
-async function visibleExactTextCount(page, text) {
-  const matches = page.getByText(text, { exact: true });
-  let visible = 0;
-  for (let index = 0; index < await matches.count(); index += 1) {
-    if (await matches.nth(index).isVisible()) {
-      visible += 1;
-    }
-  }
-  return visible;
-}
-
 async function importAndReleaseOrders(page) {
   await page.goto(`${baseURL}/admin/import`, { waitUntil: "networkidle" });
   await page.locator('input[name="csv_file"]').setInputFiles(fixturePath);
@@ -449,20 +506,99 @@ async function verifyNoActiveShiftGate(page, expectedSuggestedNumber) {
   );
 }
 
-async function startShift(page, shiftNumber) {
+async function startShift(page, shiftNumber, captureEvidence = false) {
   const window = page.locator('[data-shift-window="true"]');
+  const before = databaseSnapshot();
+  assertEqual(before.active_shift, null, "active shift before start confirmation");
+  const occurrenceCountBefore = before.shift_count;
   await window.locator('[data-shift-start-number]').selectOption(shiftNumber);
-  await window.locator('[data-shift-confirm-open="start"]').click();
-  await window.locator('[data-shift-pane="start-confirm"]').waitFor({ state: "visible" });
-  assert(
-    normalizeText(await window.locator('[data-shift-pane="start-confirm"]').textContent()).includes(
-      `Стартиране на смяна ${shiftNumber}?`,
-    ),
-    `Start confirmation did not show shift ${shiftNumber}`,
+  await verifyLiveClock(
+    window.locator('[data-shift-pane="gate"] [data-shift-live-clock]'),
   );
+  if (captureEvidence) {
+    await page.screenshot({
+      path: path.join(artifactDir, "start-shift-selection.png"),
+      fullPage: true,
+    });
+  }
+  await window.locator('[data-shift-confirm-open="start"]').click();
+  const confirmation = window.locator('[data-shift-pane="start-confirm"]');
+  await confirmation.waitFor({ state: "visible" });
+  assertEqual(
+    normalizeText(await confirmation.locator("h3").textContent()),
+    "Потвърждение за начало",
+    "start confirmation heading",
+  );
+  assertEqual(
+    normalizeText(await confirmation.locator("[data-shift-start-selection]").textContent()),
+    shiftNumber,
+    "start confirmation shift number",
+  );
+  await verifyLiveClock(confirmation.locator("[data-shift-live-clock]"));
+
+  const pending = databaseSnapshot();
+  assertEqual(pending.active_shift, null, "active shift before final confirmation");
+  assertEqual(
+    pending.shift_count,
+    occurrenceCountBefore,
+    "occurrence count before final confirmation",
+  );
+  if (captureEvidence) {
+    await page.screenshot({
+      path: path.join(artifactDir, "start-shift-confirmation.png"),
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 1672, height: 941 });
+    await page.screenshot({
+      path: path.join(artifactDir, "qa-start-shift-confirmation-1672x941.png"),
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 1536, height: 1024 });
+  }
+
   await window.locator('[data-shift-confirm-submit="start"]').click();
   await page.waitForLoadState("networkidle");
   await window.waitFor({ state: "hidden" });
+
+  const after = databaseSnapshot();
+  assert(after.active_shift !== null, "Final confirmation did not create an active shift");
+  assertEqual(after.active_shift.shift_number, Number(shiftNumber), "started shift number");
+  assertEqual(after.shift_count, occurrenceCountBefore + 1, "occurrence count after confirmation");
+  assert(
+    normalizeText(after.active_shift.started_at) !== "",
+    "Server did not persist the active shift start time",
+  );
+  return after.active_shift;
+}
+
+async function endActiveShiftAndReturnToGate(page, expectedSuggestedNumber) {
+  await page.locator("#shift-open").click();
+  const window = page.locator('[data-shift-window="true"]');
+  await window.locator('[data-shift-pane="overview"]').waitFor({ state: "visible" });
+  await window.locator('[data-shift-confirm-open="end"]').click();
+  const confirmation = window.locator('[data-shift-pane="end-confirm"]');
+  await confirmation.waitFor({ state: "visible" });
+  await verifyLiveClock(confirmation.locator("[data-shift-live-clock]"));
+  await window.locator('[data-shift-confirm-submit="end"]').click();
+  await page.waitForURL((url) => (
+    url.searchParams.get("shift_view") === "summary"
+      && url.searchParams.get("handoff") === "1"
+  ), { waitUntil: "networkidle" });
+  assertEqual(
+    await page.locator('[data-shift-window="true"]').getAttribute("data-shift-blocking"),
+    "true",
+    "supplemental handoff summary blocking state",
+  );
+  assertEqual(
+    await page.locator('[data-shift-window="true"] [data-shift-close]').count(),
+    0,
+    "supplemental handoff close controls",
+  );
+  await page.locator("[data-shift-ack]").click();
+  await page.waitForURL((url) => !url.searchParams.has("shift_view"), {
+    waitUntil: "networkidle",
+  });
+  await verifyNoActiveShiftGate(page, expectedSuggestedNumber);
 }
 
 async function openCard(page, cardId) {
@@ -570,6 +706,22 @@ async function changeShiftNumberAndVerifyInvariants(page, cardId, before) {
     "2",
     "displayed corrected shift number",
   );
+  await verifyTerminalHeader(page, "Смяна 2", true);
+  assertEqual(
+    await reloadedWindow.locator('[data-shift-close]:visible').count(),
+    1,
+    "active overview close control",
+  );
+  assertEqual(
+    await reloadedWindow.locator("[data-shift-history-preview-id]").count(),
+    3,
+    "active overview three-row history preview",
+  );
+  assertEqual(
+    (await reloadedWindow.locator(".shift-history-table thead th").allTextContents()).map(normalizeText),
+    ["Смяна", "Начало", "Край", "Различни изделия", "Ролки", "Бруто, кг", "Преглед"],
+    "active overview history columns",
+  );
   await page.screenshot({
     path: path.join(artifactDir, "active-shift-window.png"),
     fullPage: true,
@@ -586,6 +738,7 @@ async function summaryRows(page) {
       customer: cells[1],
       product_type: cells[2],
       roll_count: Number(cells[3]),
+      gross_weight_display: cells[4],
       gross_weight: Number(cells[4]),
     };
   }
@@ -597,21 +750,26 @@ async function verifySummary(page, expected) {
   await window.locator('[data-shift-pane="summary"]').waitFor({ state: "visible" });
   assertEqual(
     (await window.locator(".shift-summary-table thead th").allTextContents()).map(normalizeText),
-    ["Production order ID", "Customer", "Product type", "Roll count", "Gross kg"],
+    ["Производствена поръчка", "Клиент", "Вид изделие", "Брой ролки", "Бруто, кг"],
     "shift summary columns",
-  );
-  assert(
-    normalizeText(await window.locator(".shift-summary-facts").textContent()).includes(
-      `${expected.distinctItems} артикула`,
-    ),
-    `Expected ${expected.distinctItems} distinct items in shift summary`,
   );
   const rows = await summaryRows(page);
   assertEqual(Object.keys(rows).sort(), [orderOne, orderTwo], "summary production orders");
+  assertEqual(Object.keys(rows).length, expected.distinctItems, "summary distinct order count");
   assertEqual(rows[orderOne].roll_count, expected.orderOneRolls, `${orderOne} roll total`);
   assertEqual(rows[orderOne].gross_weight, expected.orderOneGross, `${orderOne} gross total`);
+  assertEqual(
+    rows[orderOne].gross_weight_display,
+    expected.orderOneGross.toFixed(1),
+    `${orderOne} one-decimal gross display`,
+  );
   assertEqual(rows[orderTwo].roll_count, expected.orderTwoRolls, `${orderTwo} roll total`);
   assertEqual(rows[orderTwo].gross_weight, expected.orderTwoGross, `${orderTwo} gross total`);
+  assertEqual(
+    rows[orderTwo].gross_weight_display,
+    expected.orderTwoGross.toFixed(1),
+    `${orderTwo} one-decimal gross display`,
+  );
   assertEqual(
     Object.values(rows).reduce((total, row) => total + row.roll_count, 0),
     expected.totalRolls,
@@ -623,7 +781,7 @@ async function verifySummary(page, expected) {
     "summary total gross",
   );
   return normalizeText(
-    `${await window.locator(".shift-summary-facts").textContent()} ${await window.locator(".shift-summary-table").textContent()}`,
+    `${await window.locator(".shift-summary-metadata").textContent()} ${await window.locator(".shift-summary-table").textContent()}`,
   );
 }
 
@@ -633,10 +791,16 @@ async function endShiftAndVerifySummary(page, expectedOccurrenceId) {
   await window.locator('[data-shift-confirm-open="end"]').click();
   const confirmation = window.locator('[data-shift-pane="end-confirm"]');
   await confirmation.waitFor({ state: "visible" });
-  assert(
-    normalizeText(await confirmation.textContent()).includes("Приключване на Смяна 2?"),
-    "End-shift confirmation did not identify corrected Shift 2",
+  assertEqual(
+    normalizeText(await confirmation.locator("h3").textContent()),
+    "Потвърждение за приключване",
+    "end confirmation heading",
   );
+  assert(
+    normalizeText(await confirmation.textContent()).includes("Смяна 2"),
+    "End-shift confirmation did not identify corrected shift 2",
+  );
+  await verifyLiveClock(confirmation.locator("[data-shift-live-clock]"));
   await window.locator('[data-shift-confirm-submit="end"]').click();
   await page.waitForURL((url) => (
     url.searchParams.get("shift_view") === "summary"
@@ -649,6 +813,11 @@ async function endShiftAndVerifySummary(page, expectedOccurrenceId) {
     "true",
     "handoff summary blocking state",
   );
+  assertEqual(
+    await page.locator('[data-shift-window="true"] [data-shift-close]').count(),
+    0,
+    "handoff summary close controls",
+  );
   const text = await verifySummary(page, {
     distinctItems: 2,
     orderOneRolls: 2,
@@ -658,6 +827,7 @@ async function endShiftAndVerifySummary(page, expectedOccurrenceId) {
     totalRolls: 3,
     totalGross: 90,
   });
+  await verifyTerminalHeaderAtBothViewports(page, "Няма активна смяна", false);
   await page.screenshot({
     path: path.join(artifactDir, "ended-shift-summary.png"),
     fullPage: true,
@@ -673,7 +843,8 @@ async function openHistoricalSummary(page, completedId, expectedRolls, expectedG
   assertEqual(Number(cells[3]), 2, "history distinct items");
   assertEqual(Number(cells[4]), expectedRolls, "history roll total");
   assertEqual(Number(cells[5]), expectedGross, "history gross total");
-  await historyRow.getByRole("link", { name: "View" }).click();
+  assertEqual(cells[5], expectedGross.toFixed(1), "history one-decimal gross display");
+  await historyRow.getByRole("link", { name: "Преглед" }).click();
   await page.waitForURL((url) => (
     url.searchParams.get("shift_view") === "summary"
       && Number(url.searchParams.get("shift_id")) === completedId
@@ -682,6 +853,11 @@ async function openHistoricalSummary(page, completedId, expectedRolls, expectedG
     await page.locator('[data-shift-window="true"]').getAttribute("data-shift-blocking"),
     "false",
     "historical summary blocking state",
+  );
+  assertEqual(
+    await page.locator('[data-shift-window="true"] [data-shift-close]:visible').count(),
+    1,
+    "historical summary close control",
   );
 }
 
@@ -900,9 +1076,23 @@ async function main() {
   let browser;
   try {
     browser = await chromium.launch();
-    const context = await browser.newContext({ viewport: { width: 1440, height: 950 } });
+    const context = await browser.newContext({ viewport: { width: 1536, height: 1024 } });
+    const monitoredPages = new WeakSet();
+    const monitorBrowserErrors = (candidatePage) => {
+      if (monitoredPages.has(candidatePage)) {
+        return;
+      }
+      monitoredPages.add(candidatePage);
+      candidatePage.on("pageerror", (error) => browserErrors.push(`pageerror: ${error.message}`));
+      candidatePage.on("console", (message) => {
+        if (message.type() === "error") {
+          browserErrors.push(`console: ${message.text()}`);
+        }
+      });
+    };
+    context.on("page", monitorBrowserErrors);
     const page = await context.newPage();
-    page.on("pageerror", (error) => browserErrors.push(error.message));
+    monitorBrowserErrors(page);
 
     await verifyServerDatabaseIdentity(page, initial.configuration);
     writeCsvFixture();
@@ -911,14 +1101,32 @@ async function main() {
 
     await page.goto(`${baseURL}/terminal`, { waitUntil: "networkidle" });
     await verifyNoActiveShiftGate(page, "1");
+    await verifyTerminalHeaderAtBothViewports(page, "Няма активна смяна", false);
     await page.screenshot({
-      path: path.join(artifactDir, "no-active-shift-gate.png"),
+      path: path.join(artifactDir, "terminal-header-no-active.png"),
       fullPage: true,
     });
 
+    await startShift(page, "1", true);
+    await verifyTerminalHeaderAtBothViewports(page, "Смяна 1", true);
+    await page.screenshot({
+      path: path.join(artifactDir, "terminal-header-active.png"),
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 1077, height: 735 });
+    await page.screenshot({
+      path: path.join(artifactDir, "qa-terminal-header-1077x735.png"),
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 1536, height: 1024 });
+
+    await endActiveShiftAndReturnToGate(page, "2");
+    await startShift(page, "2");
+    await endActiveShiftAndReturnToGate(page, "3");
+    await startShift(page, "3");
+    await endActiveShiftAndReturnToGate(page, "1");
     await startShift(page, "1");
-    assertEqual(await visibleExactTextCount(page, "Shift"), 1, "visible global Shift labels");
-    assert(await page.locator("#shift-open").isVisible(), "Global Shift action is not visible");
+    await verifyTerminalHeader(page, "Смяна 1", true);
 
     await startCardAndSaveTare(page, cardIds[orderOne], "1.50");
     await addRoll(page, cardIds[orderOne], "20");
@@ -959,11 +1167,45 @@ async function main() {
     );
 
     await page.locator('[data-shift-ack]').click();
-    await page.waitForLoadState("networkidle");
+    await page.waitForURL((url) => !url.searchParams.has("shift_view"), {
+      waitUntil: "networkidle",
+    });
     await verifyNoActiveShiftGate(page, "3");
     await startShift(page, "3");
+    await verifyTerminalHeaderAtBothViewports(page, "Смяна 3", true);
 
     await page.locator("#shift-open").click();
+    const overviewWindow = page.locator('[data-shift-window="true"]');
+    await overviewWindow.locator('[data-shift-pane="overview"]').waitFor({ state: "visible" });
+    const completedBeforeCorrection = databaseSnapshot().completed_shifts;
+    assertEqual(completedBeforeCorrection.length, 4, "completed shifts before history review");
+    assertEqual(
+      await overviewWindow.locator("[data-shift-history-preview-id]").count(),
+      3,
+      "overview history preview row limit",
+    );
+    await overviewWindow.getByRole("link", { name: "Виж всички" }).click();
+    await page.waitForURL((url) => url.searchParams.get("shift_view") === "history", {
+      waitUntil: "networkidle",
+    });
+    const historyWindow = page.locator('[data-shift-window="true"]');
+    await historyWindow.locator('[data-shift-pane="history"]').waitFor({ state: "visible" });
+    assertEqual(await historyWindow.getAttribute("data-shift-blocking"), "false", "history blocking state");
+    assertEqual(
+      await historyWindow.locator("[data-shift-history-id]").count(),
+      completedBeforeCorrection.length,
+      "full history completed row count",
+    );
+    assertEqual(
+      await historyWindow.locator('[data-shift-close]:visible').count(),
+      1,
+      "full history close control",
+    );
+    await page.screenshot({
+      path: path.join(artifactDir, "full-shift-history.png"),
+      fullPage: true,
+    });
+
     await openHistoricalSummary(page, completedId, 3, 90);
     const initialHistoricalText = await verifySummary(page, {
       distinctItems: 2,
@@ -981,13 +1223,27 @@ async function main() {
       "historical summary Back action",
     );
     await page.locator('[data-shift-history-back]').click();
-    await page.waitForURL((url) => url.searchParams.get("shift_view") === "overview", {
+    await page.waitForURL((url) => url.searchParams.get("shift_view") === "history", {
       waitUntil: "networkidle",
     });
+    assertEqual(
+      await page.locator('[data-shift-window="true"]').getAttribute("data-shift-state"),
+      "history",
+      "historical Back destination",
+    );
     await page.locator('[data-shift-window="true"] [data-shift-close]').click();
 
     await correctFirstRoll(page, cardIds[orderOne], completedId);
     await page.locator("#shift-open").click();
+    await page.locator('[data-shift-window="true"] [data-shift-pane="overview"]').waitFor({
+      state: "visible",
+    });
+    await page.locator('[data-shift-window="true"]').getByRole("link", {
+      name: "Виж всички",
+    }).click();
+    await page.waitForURL((url) => url.searchParams.get("shift_view") === "history", {
+      waitUntil: "networkidle",
+    });
     await openHistoricalSummary(page, completedId, 3, 95);
     const correctedHistoricalText = await verifySummary(page, {
       distinctItems: 2,
@@ -1020,7 +1276,7 @@ async function main() {
     const finalSnapshot = databaseSnapshot();
     assertEqual(finalSnapshot.integrity_check, "ok", "final database integrity");
     assertEqual(finalSnapshot.foreign_key_errors, [], "final foreign key errors");
-    assertEqual(finalSnapshot.completed_shifts.length, 1, "completed shift occurrence count");
+    assertEqual(finalSnapshot.completed_shifts.length, 4, "completed shift occurrence count");
     assertEqual(finalSnapshot.active_shift.id, beforeSecondPageChange.active_shift.id, "open occurrence id");
     assertEqual(finalSnapshot.active_shift.shift_number, 1, "final active shift number");
 
