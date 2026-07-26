@@ -281,6 +281,7 @@ rehearsal.
 | 2026-07-25 | Admin terminal-configuration page | No migration | Routes, templates, navigation, and CSS now expose the existing M002 singleton configuration row; no schema, stored values, or data meaning changed |
 | 2026-07-25 | Terminal shift routes, state gate, and polling signature | No migration | Routes and read context use the existing M002 configuration/occurrence data; the mutation gate and polling signature change runtime behavior only, with no schema or stored-value transformation |
 | 2026-07-25 | Completed shift-management functionality and final migration maintenance | Schema-only M002; no additional migration | Final feature diff confirmed M002 covers every persistent change; legacy rolls remain `NULL`, no values are transformed, 145 focused affected tests and 547 full-suite tests passed; M001 production profiling and release-candidate rehearsal remain deployment gates |
+| 2026-07-26 | Shift UI redesign | No migration | Actual diff changes only presentation helpers, templates/CSS/JavaScript, browser verification, tests, and documentation. M002 schema and stored meanings are unchanged; 198 focused and 552 full-suite tests passed. M001 production profiling and the final release-candidate rehearsal remain deployment gates. |
 
 Append one row after every use of the trigger command, including when no
 migration is required.

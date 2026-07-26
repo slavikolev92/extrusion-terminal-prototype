@@ -46,18 +46,43 @@ deletion changes the next rendered summary.
 When no occurrence is open, the terminal is dimmed behind a non-dismissible
 start gate. Normal terminal mutation routes also enforce the active-shift rule
 on the backend. After a confirmed start, the normal terminal chrome shows only
-the global `Shift` action; occurrence details remain inside its window.
+the global shift action; occurrence details remain inside its window.
 
 Changing a shift number or ending a shift does not pause, finish, reassign, or
 otherwise change cards, machines, or production timing segments. Ending shows
 the just-completed live summary as a blocking handoff. After acknowledgement,
 the no-active gate immediately offers the suggested next configured number.
-Completed history uses the same summary pane with `View` and `Back`.
+Completed history uses the same Bulgarian summary pane with `Преглед` and
+`Назад`.
 
 Terminal polling includes a shift signature. If another browser page changes
 or ends the occurrence, the first page becomes inert behind a blocking reload
 pane and suspends dirty autosave. Backend occurrence/configuration and card
 versions remain the final protection against stale writes.
+
+## July 26 Shift UI Redesign
+
+The terminal now has a dedicated header: the Kolev logo is left aligned, the
+equal-width `Чакащи поръчки` and `Произведени поръчки` actions are centered to
+the viewport, and the nonwrapping right action shows either a gray-dot `Няма
+активна смяна` or a green-dot `Смяна N`. Machine cards remain in their separate
+row; the queue and produced-order overlays retain their prior behavior.
+
+The no-active gate is a compact, non-dismissible shift-number selection. Start
+and end use the same confirmation-card structure. Both show a live Bulgarian
+clock without visible seconds, but the occurrence is created only after the
+final `Потвърди`; the persisted server timestamp is the authoritative start or
+end time. The gate and just-ended handoff summary remain blocking, while the
+active overview, full history, and historical summary can be closed.
+
+The active overview contains the single editable shift-number control, active
+state, formatted start time, a separate end action, and at most the three most
+recent completed shifts. `Виж всички` replaces the modal contents with full
+history, and `Преглед` opens the corresponding live `Произведени количества`
+summary; `Назад` returns to history. All shift timestamps use Bulgarian month
+names in `D месец YYYY г., HH:MM` form. Summary gross kilograms use standard
+half-up rounding to exactly one decimal place; no distinct-item counter is
+shown in the summary.
 
 ## Migration And Deployment Gates
 
@@ -67,8 +92,9 @@ singleton configuration default and changes no historical production values.
 The application code and M002 must be deployed together after a SQLite-safe
 backup.
 
-Task 8 adds verification and documentation only, so it requires no additional
-migration. Deployment is still blocked by both of these gates:
+The July 26 shift UI redesign changes presentation and navigation only, so it
+requires no additional migration. Deployment is still blocked by both of these
+gates:
 
 1. The unresolved M001 production legacy-data profile must be performed on an
    immutable SQLite-safe backup. M001 deliberately did not guess how legacy
@@ -79,19 +105,44 @@ migration. Deployment is still blocked by both of these gates:
 
 ## Verification Record
 
-Development verification used only
-`artifacts/ui-checks/shift-management/shift-ui.sqlite3`; the runtime database
-was not opened or mutated. Focused suites passed 12, 18, 66, and 115 tests (211
-total), and the full suite passed 547 tests. `compileall`, SQLite
+Final redesign verification used only
+`artifacts/ui-checks/shift-redesign-6okG5l/shift-ui.sqlite3`; the runtime
+database was not opened or mutated. The focused redesign suite passed 198
+tests, and the full suite passed 552 tests. `compileall`, Node syntax, SQLite
 `integrity_check`, SQLite `foreign_key_check`, and `git diff --check` passed.
 
-The reusable browser workflow is `scripts/verify_shift_management_ui.mjs`.
-With the app started on port 8011 using the artifact database, it is run with:
+Design QA in `design-qa.md` recorded `final result: passed`: no actionable
+P0, P1, or P2 visual mismatch remains.
+
+The reusable browser workflow is `scripts/verify_shift_management_ui.mjs`. For
+the complete isolated run (including initialization and an isolated server on
+port 8011), use this exact single-shell workflow from the feature worktree:
 
 ```bash
+mkdir -p artifacts/ui-checks
+UI_REDESIGN_DIR="$(mktemp -d "$PWD/artifacts/ui-checks/shift-redesign-XXXXXX")"
+EXTRUSION_DATA_DIR="$UI_REDESIGN_DIR" \
+EXTRUSION_DB_PATH="$UI_REDESIGN_DIR/shift-ui.sqlite3" \
+  .venv/bin/python -c "from app.db import init_db; init_db()"
+EXTRUSION_DATA_DIR="$UI_REDESIGN_DIR" \
+EXTRUSION_DB_PATH="$UI_REDESIGN_DIR/shift-ui.sqlite3" \
+  .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8011 \
+  >"$UI_REDESIGN_DIR/server.log" 2>&1 &
+UI_REDESIGN_SERVER_PID=$!
+trap 'kill "$UI_REDESIGN_SERVER_PID" 2>/dev/null || true' EXIT
+for attempt in $(seq 1 100); do
+  if curl -fsS http://127.0.0.1:8011/health >/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+curl -fsS http://127.0.0.1:8011/health >/dev/null
 BASE_URL=http://127.0.0.1:8011 \
-ARTIFACT_DIR="$PWD/artifacts/ui-checks/shift-management" \
+ARTIFACT_DIR="$UI_REDESIGN_DIR" \
   node scripts/verify_shift_management_ui.mjs
+kill "$UI_REDESIGN_SERVER_PID"
+wait "$UI_REDESIGN_SERVER_PID" || true
+trap - EXIT
 ```
 
 `BASE_URL` and `ARTIFACT_DIR` are mandatory; the script has no server or
@@ -101,10 +152,10 @@ read-only `/admin/settings` response, restores the original configuration
 exactly, and verifies that the server observes the restoration. A server backed
 by any other database is rejected before import or release.
 
-The ignored evidence files are:
-
-- `artifacts/ui-checks/shift-management/admin-shift-count.png`
-- `artifacts/ui-checks/shift-management/no-active-shift-gate.png`
-- `artifacts/ui-checks/shift-management/active-shift-window.png`
-- `artifacts/ui-checks/shift-management/ended-shift-summary.png`
-- `artifacts/ui-checks/shift-management/historical-shift-summary.png`
+The 2026-07-26 evidence is in
+`artifacts/ui-checks/shift-redesign-6okG5l/`: `admin-shift-count.png`,
+`terminal-header-no-active.png`, `start-shift-selection.png`,
+`start-shift-confirmation.png`, `terminal-header-active.png`,
+`active-shift-window.png`, `full-shift-history.png`,
+`ended-shift-summary.png`, and `historical-shift-summary.png`. The durable
+result manifest is `shift-management-ui-summary.json` in that same directory.

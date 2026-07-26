@@ -16,11 +16,11 @@ are deployment gates only; both require an immutable SQLite-safe backup.
 
 Shift management is functionally implemented and its automated and browser
 workflow checks pass against the approved behavior in
-`v2-files/TASK-01-SHIFT-MANAGEMENT.md`. Task 01 is not yet complete: the current
-shift forms/modals are not visually acceptable. The replacement terminal
-header and shift-interface design are approved, and the executable plan is
-`docs/superpowers/plans/2026-07-26-shift-management-ui-redesign.md`.
-Implementation and live-browser acceptance remain. The separate M001
+`v2-files/TASK-01-SHIFT-MANAGEMENT.md`. The approved replacement terminal
+header and shift-interface design is implemented and verified. Task 01 remains
+open pending explicit live visual acceptance; passing automated and isolated
+browser checks does not replace that acceptance gate. The executable plan is
+`docs/superpowers/plans/2026-07-26-shift-management-ui-redesign.md`. The separate M001
 production legacy-data profile and final release-candidate rehearsal remain
 deployment gates.
 
@@ -62,16 +62,16 @@ production by numbered shift and time period.
 ### Current Status
 
 The shift-management backend behavior, M002 schema foundation, terminal
-workflow, and automated checks are implemented. M002 performs no historical
-backfill, focused and full automated suites pass, and the temporary-database
-Playwright workflow is recorded in
-`docs/implementation-notes/shift-management.md`.
+workflow, approved terminal header and shift-interface redesign, and automated
+checks are implemented. M002 performs no historical backfill; 198 focused and
+552 full automated tests pass, and the temporary-database Playwright workflow
+is recorded in `docs/implementation-notes/shift-management.md`.
 
-Task 01 remains open because the approved replacement terminal header and
-shift-interface design still need to be implemented and visually accepted.
-The executable plan is
+Task 01 remains open solely for explicit live visual acceptance of the
+implemented redesign. The executable plan is
 `docs/superpowers/plans/2026-07-26-shift-management-ui-redesign.md`. Passing
-functional tests does not by itself complete this UI acceptance work.
+automated and isolated browser checks does not by itself complete this UI
+acceptance work.
 
 ### Confirmed Data Relationships
 
@@ -179,9 +179,9 @@ This list combines the two existing production-tracking workstreams with the new
 1. **Shift management for extrusion production**
    - Surface: `/terminal`, `/admin`, database.
    - Complexity: large.
-   - Status: functional implementation and verification complete; replacement
-     header/shift UI design approved and implementation plan written. Task 01
-     remains open pending implementation and live-browser acceptance. M001
+   - Status: functional implementation and verification complete; the approved
+     replacement header/shift UI design is implemented and verified. Task 01
+     remains open pending explicit live visual acceptance. M001
      production profiling and the final release-candidate rehearsal remain
      separate deployment gates.
    - Goal: create one active extrusion shift at a time, require/open shift context for new production roll entry, and attach every new roll to the shift that produced it.
