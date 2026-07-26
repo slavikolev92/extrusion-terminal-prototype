@@ -3,9 +3,12 @@ from __future__ import annotations
 import csv
 import io
 
+import pytest
+
 from app import db
 from app.constants import (
     STATUS_ARCHIVED,
+    STATUS_AWAITING_REWINDING,
     STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_PENDING,
@@ -266,6 +269,9 @@ def test_finish_from_running_closes_active_segment_and_archives_card(
     assert result.ok
     assert card["status"] == STATUS_COMPLETED
     assert card["finished_at"] is not None
+    assert card["final_extrusion_shift_occurrence_id"] == active_test_shift["id"]
+    assert card["machine_id"] == 1
+    assert card["machine_sequence"] == 1
     assert card["version"] == loaded_version + 1
     assert segment["ended_at"] is not None
     assert segment["end_reason"] == "finish"
@@ -298,13 +304,42 @@ def test_finish_normalizes_active_machine_queue_after_removed_card(
     ]
 
 
-def test_finish_from_paused_succeeds_without_open_segment(connection, active_test_shift):
+@pytest.mark.parametrize(
+    ("rewinding_roll_count", "expected_status"),
+    [
+        (None, STATUS_COMPLETED),
+        (5, STATUS_AWAITING_REWINDING),
+    ],
+)
+def test_finish_from_paused_succeeds_without_open_segment_or_timing_mutation(
+    connection,
+    active_test_shift,
+    rewinding_roll_count,
+    expected_status,
+):
     card_id = prepare_running_finishable_card("25605")
     assert db.pause_production_timing(
         card_id,
         db.fetch_terminal_card_detail(card_id)["version"],
     ).ok
+    if rewinding_roll_count is not None:
+        paused = db.fetch_terminal_card_detail(card_id)
+        assert db.update_rewinding_roll_count(
+            card_id,
+            paused["version"],
+            rewinding_roll_count,
+        ).ok
     loaded_version = db.fetch_terminal_card_detail(card_id)["version"]
+    before_segments = connection.execute(
+        """
+        SELECT id, started_at, ended_at, end_reason, created_at, updated_at
+        FROM production_time_segments
+        WHERE card_id = ?
+        ORDER BY id
+        """,
+        (card_id,),
+    ).fetchall()
+    before_segments = [tuple(row) for row in before_segments]
 
     result = db.finish_card(card_id, loaded_version)
 
@@ -318,11 +353,21 @@ def test_finish_from_paused_succeeds_without_open_segment(connection, active_tes
         (card_id,),
     ).fetchone()[0]
     card = db.fetch_terminal_card_detail(card_id)
+    after_segments = connection.execute(
+        """
+        SELECT id, started_at, ended_at, end_reason, created_at, updated_at
+        FROM production_time_segments
+        WHERE card_id = ?
+        ORDER BY id
+        """,
+        (card_id,),
+    ).fetchall()
 
     assert result.ok
-    assert card["status"] == STATUS_COMPLETED
+    assert card["status"] == expected_status
     assert card["finished_at"] is not None
     assert open_segments == 0
+    assert [tuple(row) for row in after_segments] == before_segments
 
 
 def test_admin_can_mark_completed_card_as_archived(connection, active_test_shift):

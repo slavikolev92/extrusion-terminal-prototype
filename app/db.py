@@ -1618,31 +1618,100 @@ def finish_card(
     require_active_shift: bool = False,
 ) -> RuleResult:
     with connect() as connection:
-        if require_active_shift:
-            connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN IMMEDIATE")
+        card = fetch_finish_action_card(connection, card_id)
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+
         shift_result = validate_active_shift_for_terminal_write(
             connection,
             require_active_shift,
         )
         if not shift_result.ok:
             return shift_result
-        card = fetch_active_terminal_action_card(connection, card_id)
-        version_result = validate_loaded_card_version(card, loaded_version)
-        if not version_result.ok:
-            return version_result
 
-        finish_result = validate_card_ready_to_finish(connection, card_id, card)
+        status = str(card["status"])
+        is_waiting = status == STATUS_AWAITING_REWINDING
+        needs_rewinding = (
+            not is_waiting
+            and card["rewinding_roll_count"] is not None
+            and int(card["rewinding_roll_count"]) > 0
+        )
+
+        timing_result = validate_card_timing_started(connection, card_id)
+        if not timing_result.ok:
+            return timing_result
+        if not is_waiting and status not in (STATUS_RUNNING, STATUS_PAUSED):
+            return RuleResult(
+                False,
+                (
+                    "Само карти в изработване или паузирани карти могат да "
+                    "приключат екструдирането.",
+                ),
+            )
+
+        if is_waiting:
+            finish_result = validate_card_ready_to_finish(connection, card_id, card)
+        elif needs_rewinding:
+            finish_result = RuleResult(True)
+        else:
+            finish_result = validate_card_ready_to_finish(connection, card_id, card)
         if not finish_result.ok:
             return finish_result
 
-        now = current_database_timestamp(connection)
         open_segment = fetch_open_timing_segment(connection, card_id)
-        if open_segment:
-            if card["status"] != STATUS_RUNNING:
+        if is_waiting:
+            if open_segment:
                 return RuleResult(
                     False,
-                    ("Паузирани карти не трябва да имат активен времеви сегмент. Презаредете картата.",),
+                    (
+                        "Карта, изчакваща пренавиване, не трябва да има активен "
+                        "времеви сегмент. Презаредете картата.",
+                    ),
                 )
+            update_result = connection.execute(
+                """
+                UPDATE cards
+                SET status = ?,
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                  AND version = ?
+                  AND status = ?
+                """,
+                (
+                    STATUS_COMPLETED,
+                    card_id,
+                    loaded_version,
+                    STATUS_AWAITING_REWINDING,
+                ),
+            )
+            if update_result.rowcount != 1:
+                connection.rollback()
+                return RuleResult(False, (STALE_CARD_MESSAGE,))
+            return RuleResult(True, (f"Поръчка {card['order_number']} е приключена.",))
+
+        active_shift = fetch_active_shift_row(connection)
+        if active_shift is None:
+            return RuleResult(False, (NO_ACTIVE_SHIFT_MESSAGE,))
+
+        if status == STATUS_RUNNING and not open_segment:
+            return RuleResult(
+                False,
+                (
+                    "Картите в изработване трябва да имат активен времеви "
+                    "сегмент. Презаредете картата.",
+                ),
+            )
+        if status == STATUS_PAUSED and open_segment:
+            return RuleResult(
+                False,
+                ("Паузирани карти не трябва да имат активен времеви сегмент. Презаредете картата.",),
+            )
+
+        now = current_database_timestamp(connection)
+        if open_segment:
             connection.execute(
                 """
                 UPDATE production_time_segments
@@ -1654,17 +1723,31 @@ def finish_card(
                 (now, open_segment["id"]),
             )
 
-        connection.execute(
+        target_status = STATUS_AWAITING_REWINDING if needs_rewinding else STATUS_COMPLETED
+        update_result = connection.execute(
             """
             UPDATE cards
             SET status = ?,
                 finished_at = ?,
+                final_extrusion_shift_occurrence_id = ?,
                 version = version + 1,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
+              AND version = ?
+              AND status = ?
             """,
-            (STATUS_COMPLETED, now, card_id),
+            (
+                target_status,
+                now,
+                active_shift["id"],
+                card_id,
+                loaded_version,
+                status,
+            ),
         )
+        if update_result.rowcount != 1:
+            connection.rollback()
+            return RuleResult(False, (STALE_CARD_MESSAGE,))
         if card["machine_id"] is not None:
             normalize_machine_queue(connection, int(card["machine_id"]))
 
@@ -2511,14 +2594,29 @@ def fetch_active_terminal_action_card(
     ).fetchone()
 
 
-def validate_card_ready_to_finish(
+def fetch_finish_action_card(
     connection: sqlite3.Connection,
     card_id: int,
-    card: sqlite3.Row | None,
-) -> RuleResult:
-    if not card:
-        return RuleResult(False, ("Картата не е намерена в активната опашка на терминала.",))
+) -> sqlite3.Row | None:
+    finish_statuses = (*ACTIVE_TERMINAL_STATUSES, STATUS_AWAITING_REWINDING)
+    return connection.execute(
+        f"""
+        SELECT id, order_number, status, machine_id, machine_sequence,
+               tare_weight, rewinding_roll_count,
+               final_extrusion_shift_occurrence_id, first_started_at,
+               finished_at, version
+        FROM cards
+        WHERE id = ?
+          AND status IN ({", ".join("?" for _ in finish_statuses)})
+        """,
+        (card_id, *finish_statuses),
+    ).fetchone()
 
+
+def validate_card_timing_started(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> RuleResult:
     segment_count = connection.execute(
         """
         SELECT COUNT(*)
@@ -2529,6 +2627,20 @@ def validate_card_ready_to_finish(
     ).fetchone()[0]
     if int(segment_count or 0) == 0:
         return RuleResult(False, ("Времето трябва да бъде стартирано преди приключване.",))
+    return RuleResult(True)
+
+
+def validate_card_ready_to_finish(
+    connection: sqlite3.Connection,
+    card_id: int,
+    card: sqlite3.Row | None,
+) -> RuleResult:
+    if not card:
+        return RuleResult(False, ("Картата не е намерена в активната опашка на терминала.",))
+
+    timing_result = validate_card_timing_started(connection, card_id)
+    if not timing_result.ok:
+        return timing_result
 
     roll_rows = connection.execute(
         """

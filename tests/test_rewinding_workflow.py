@@ -98,6 +98,77 @@ def card_state(card_id: int) -> dict[str, object]:
         return dict(row)
 
 
+def set_rewinding_marker(card_id: int, value: int | None) -> None:
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.update_rewinding_roll_count(card_id, int(card["version"]), value).ok
+
+
+def timing_snapshot(card_id: int) -> list[dict[str, object]]:
+    with db.connect() as connection:
+        return [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT id, started_at, ended_at, end_reason, created_at, updated_at
+                FROM production_time_segments
+                WHERE card_id = ?
+                ORDER BY id
+                """,
+                (card_id,),
+            ).fetchall()
+        ]
+
+
+def stored_card(card_id: int) -> dict[str, object]:
+    with db.connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM cards WHERE id = ?",
+            (card_id,),
+        ).fetchone()
+        assert row is not None
+        return dict(row)
+
+
+def insert_roll(
+    card_id: int,
+    order_number: str,
+    roll_number: int,
+    gross_weight: object,
+    tare_weight: object,
+    net_weight: object,
+) -> None:
+    with db.connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO roll_entries (
+                card_id, order_number, roll_number,
+                gross_weight, tare_weight, net_weight
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                card_id,
+                order_number,
+                roll_number,
+                gross_weight,
+                tare_weight,
+                net_weight,
+            ),
+        )
+
+
+def enter_rewinding_wait(card_id: int) -> None:
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    set_rewinding_marker(card_id, 4)
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.finish_card(card_id, int(card["version"])).ok
+    assert db.fetch_terminal_card_detail(card_id)["status"] == STATUS_AWAITING_REWINDING
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
@@ -268,3 +339,458 @@ def test_reimport_preserves_rewinding_marker(connection):
     assert detail is not None
     assert detail["customer"] == "Replacement Customer"
     assert detail["rewinding_roll_count"] == 21
+
+
+def test_running_card_with_rewinding_marker_ends_extrusion_without_rolls_and_releases_machine(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("61701")
+    next_card_id = release_ready_card("61702")
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    set_rewinding_marker(card_id, 8)
+    before = db.fetch_terminal_card_detail(card_id)
+    assert before is not None
+    original_machine_id = before["machine_id"]
+    original_machine_sequence = before["machine_sequence"]
+
+    result = db.finish_card(card_id, int(before["version"]))
+
+    card = db.fetch_terminal_card_detail(card_id)
+    assert result.ok
+    assert card is not None
+    assert card["status"] == STATUS_AWAITING_REWINDING
+    assert card["finished_at"] is not None
+    assert card["final_extrusion_shift_occurrence_id"] == active_test_shift["id"]
+    assert card["machine_id"] == original_machine_id
+    assert card["machine_sequence"] == original_machine_sequence
+    with db.connect() as check_connection:
+        assert db.fetch_open_timing_segment(check_connection, card_id) is None
+        active_queue = check_connection.execute(
+            """
+            SELECT id, machine_sequence
+            FROM cards
+            WHERE machine_id = 1
+              AND status IN ('pending', 'running', 'paused')
+            ORDER BY machine_sequence
+            """
+        ).fetchall()
+    assert [(row["id"], row["machine_sequence"]) for row in active_queue] == [
+        (next_card_id, 1),
+    ]
+    assert card["roll_entries"] == []
+
+    next_card = db.fetch_terminal_card_detail(next_card_id)
+    assert next_card is not None
+    assert db.start_production_timing(next_card_id, int(next_card["version"])).ok
+
+
+def test_paused_card_with_rewinding_marker_ends_without_creating_or_moving_timing(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("61801")
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.pause_production_timing(card_id, int(card["version"])).ok
+    set_rewinding_marker(card_id, 6)
+    before_segments = timing_snapshot(card_id)
+    before = db.fetch_terminal_card_detail(card_id)
+    assert before is not None
+
+    result = db.finish_card(card_id, int(before["version"]))
+
+    after = db.fetch_terminal_card_detail(card_id)
+    assert result.ok
+    assert after is not None
+    assert after["status"] == STATUS_AWAITING_REWINDING
+    assert after["finished_at"] is not None
+    assert after["final_extrusion_shift_occurrence_id"] == active_test_shift["id"]
+    assert timing_snapshot(card_id) == before_segments
+
+
+@pytest.mark.parametrize("clear_marker", [False, True])
+def test_waiting_card_completion_changes_only_lifecycle_metadata(
+    connection,
+    active_test_shift,
+    clear_marker,
+):
+    card_id = release_ready_card(f"6190{int(clear_marker)}")
+    enter_rewinding_wait(card_id)
+    if clear_marker:
+        set_rewinding_marker(card_id, None)
+    insert_roll(card_id, f"6190{int(clear_marker)}", 1, 25, 1, 24)
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            "UPDATE cards SET updated_at = '2000-01-01 00:00:00' WHERE id = ?",
+            (card_id,),
+        )
+    before_card = stored_card(card_id)
+    before_segments = timing_snapshot(card_id)
+
+    result = db.finish_card(card_id, int(before_card["version"]))
+
+    after_card = stored_card(card_id)
+    after_segments = timing_snapshot(card_id)
+    changed_columns = {
+        key
+        for key in before_card
+        if before_card[key] != after_card[key]
+    }
+    assert result.ok
+    assert after_card["status"] == STATUS_COMPLETED
+    assert after_card["version"] == int(before_card["version"]) + 1
+    assert changed_columns == {"status", "version", "updated_at"}
+    assert after_segments == before_segments
+
+
+@pytest.mark.parametrize(
+    ("rolls", "expected_message"),
+    [
+        (
+            (),
+            "Поне едно бруто тегло на ролка е задължително преди приключване.",
+        ),
+        (
+            ((1, 25, None, None),),
+            "Всяка ролка с бруто тегло трябва да има шпула преди приключване.",
+        ),
+        (
+            ((1, 25, 1, None),),
+            "Всяка ролка с бруто тегло трябва да има шпула преди приключване.",
+        ),
+        (
+            ((1, None, None, None), (2, 25, 1, 24)),
+            "Празните редове между ролките трябва да бъдат коригирани преди приключване.",
+        ),
+    ],
+)
+def test_waiting_card_completion_rejects_incomplete_roll_ledger_without_side_effects(
+    connection,
+    active_test_shift,
+    rolls,
+    expected_message,
+):
+    order_number = f"6200{len(rolls)}{sum(1 for row in rolls if row[1] is None)}"
+    card_id = release_ready_card(order_number)
+    enter_rewinding_wait(card_id)
+    for roll_number, gross_weight, tare_weight, net_weight in rolls:
+        insert_roll(
+            card_id,
+            order_number,
+            roll_number,
+            gross_weight,
+            tare_weight,
+            net_weight,
+        )
+    before_card = stored_card(card_id)
+    before_segments = timing_snapshot(card_id)
+
+    result = db.finish_card(card_id, int(before_card["version"]))
+
+    assert not result.ok
+    assert result.messages == (expected_message,)
+    assert stored_card(card_id) == before_card
+    assert timing_snapshot(card_id) == before_segments
+
+
+@pytest.mark.parametrize(
+    ("transition", "expected_status"),
+    [
+        ("active_complete", STATUS_COMPLETED),
+        ("active_wait", STATUS_AWAITING_REWINDING),
+        ("waiting_complete", STATUS_COMPLETED),
+    ],
+)
+def test_finish_does_not_require_pallet_assignment_for_any_lifecycle_branch(
+    connection,
+    active_test_shift,
+    transition,
+    expected_status,
+):
+    order_number = {
+        "active_complete": "62101",
+        "active_wait": "62102",
+        "waiting_complete": "62103",
+    }[transition]
+    card_id = release_ready_card(order_number)
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    if transition == "active_complete":
+        insert_roll(card_id, order_number, 1, 25, 1, 24)
+    else:
+        set_rewinding_marker(card_id, 5)
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    first_result = db.finish_card(card_id, int(card["version"]))
+    assert first_result.ok
+    if transition == "waiting_complete":
+        insert_roll(card_id, order_number, 1, 25, 1, 24)
+        card = db.fetch_terminal_card_detail(card_id)
+        assert card is not None
+        assert db.finish_card(card_id, int(card["version"])).ok
+
+    final_card = db.fetch_terminal_card_detail(card_id)
+    assert final_card is not None
+    assert final_card["status"] == expected_status
+    assert final_card["current_pallet_number"] is None
+    assert all(roll["pallet_number"] is None for roll in final_card["roll_entries"])
+
+
+def test_active_to_waiting_requires_timing_to_have_started(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("62201")
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET status = ?, rewinding_roll_count = 3
+            WHERE id = ?
+            """,
+            (STATUS_RUNNING, card_id),
+        )
+    before = stored_card(card_id)
+
+    result = db.finish_card(card_id, int(before["version"]))
+
+    assert not result.ok
+    assert result.messages == ("Времето трябва да бъде стартирано преди приключване.",)
+    assert stored_card(card_id) == before
+    assert timing_snapshot(card_id) == []
+
+
+def test_stale_active_to_waiting_finish_preserves_open_segment_queue_and_status(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("62301")
+    next_card_id = release_ready_card("62302")
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    set_rewinding_marker(card_id, 4)
+    stale_version = int(db.fetch_terminal_card_detail(card_id)["version"])
+    set_rewinding_marker(card_id, 5)
+    before_card = stored_card(card_id)
+    before_segments = timing_snapshot(card_id)
+    with db.connect() as check_connection:
+        before_queue = [
+            tuple(row)
+            for row in check_connection.execute(
+                """
+                SELECT id, machine_sequence, version
+                FROM cards
+                WHERE machine_id = 1
+                  AND status IN ('pending', 'running', 'paused')
+                ORDER BY machine_sequence
+                """
+            ).fetchall()
+        ]
+
+    result = db.finish_card(card_id, stale_version)
+
+    with db.connect() as check_connection:
+        after_queue = [
+            tuple(row)
+            for row in check_connection.execute(
+                """
+                SELECT id, machine_sequence, version
+                FROM cards
+                WHERE machine_id = 1
+                  AND status IN ('pending', 'running', 'paused')
+                ORDER BY machine_sequence
+                """
+            ).fetchall()
+        ]
+        assert db.fetch_open_timing_segment(check_connection, card_id) is not None
+    assert next_card_id in {row[0] for row in after_queue}
+    assert not result.ok
+    assert result.messages == (db.STALE_CARD_MESSAGE,)
+    assert stored_card(card_id) == before_card
+    assert timing_snapshot(card_id) == before_segments
+    assert after_queue == before_queue
+
+
+def test_repeated_active_to_waiting_finish_cannot_reclose_timing_or_change_final_shift(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("62401")
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    set_rewinding_marker(card_id, 7)
+    loaded_version = int(db.fetch_terminal_card_detail(card_id)["version"])
+    assert db.finish_card(card_id, loaded_version).ok
+    before_card = stored_card(card_id)
+    before_segments = timing_snapshot(card_id)
+
+    repeated = db.finish_card(card_id, loaded_version)
+
+    assert not repeated.ok
+    assert repeated.messages == (db.STALE_CARD_MESSAGE,)
+    assert stored_card(card_id) == before_card
+    assert timing_snapshot(card_id) == before_segments
+    assert before_card["final_extrusion_shift_occurrence_id"] == active_test_shift["id"]
+
+
+def test_waiting_completion_rejects_malformed_open_timing_segment_as_corruption(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("62501")
+    enter_rewinding_wait(card_id)
+    insert_roll(card_id, "62501", 1, 25, 1, 24)
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            INSERT INTO production_time_segments (card_id, started_at)
+            VALUES (?, '2099-01-01 00:00:00')
+            """,
+            (card_id,),
+        )
+    before_card = stored_card(card_id)
+    before_segments = timing_snapshot(card_id)
+
+    result = db.finish_card(card_id, int(before_card["version"]))
+
+    assert not result.ok
+    assert result.messages == (
+        "Карта, изчакваща пренавиване, не трябва да има активен времеви сегмент. Презаредете картата.",
+    )
+    assert stored_card(card_id) == before_card
+    assert timing_snapshot(card_id) == before_segments
+
+
+def test_active_card_cannot_enter_rewinding_wait_without_active_shift(connection):
+    card_id = release_ready_card("62601")
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    set_rewinding_marker(card_id, 2)
+    before_card = stored_card(card_id)
+    before_segments = timing_snapshot(card_id)
+
+    result = db.finish_card(card_id, int(before_card["version"]))
+
+    assert not result.ok
+    assert result.messages == (db.NO_ACTIVE_SHIFT_MESSAGE,)
+    assert stored_card(card_id) == before_card
+    assert timing_snapshot(card_id) == before_segments
+
+
+@pytest.mark.parametrize("rewinding_roll_count", [None, 5])
+def test_running_finish_rejects_closed_only_timing_history_without_side_effects(
+    connection,
+    active_test_shift,
+    rewinding_roll_count,
+):
+    order_number = f"6270{int(rewinding_roll_count is not None)}"
+    card_id = release_ready_card(order_number)
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    if rewinding_roll_count is None:
+        insert_roll(card_id, order_number, 1, 25, 1, 24)
+    else:
+        set_rewinding_marker(card_id, rewinding_roll_count)
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET ended_at = started_at,
+                end_reason = 'correction'
+            WHERE card_id = ?
+              AND ended_at IS NULL
+            """,
+            (card_id,),
+        )
+    before_card = stored_card(card_id)
+    before_segments = timing_snapshot(card_id)
+
+    result = db.finish_card(card_id, int(before_card["version"]))
+
+    assert not result.ok
+    assert result.messages == (
+        "Картите в изработване трябва да имат активен времеви сегмент. Презаредете картата.",
+    )
+    assert stored_card(card_id) == before_card
+    assert timing_snapshot(card_id) == before_segments
+
+
+def test_pending_card_with_historical_timing_cannot_enter_an_unapproved_finish_branch(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("62801")
+    insert_roll(card_id, "62801", 1, 25, 1, 24)
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            INSERT INTO production_time_segments (
+                card_id, started_at, ended_at, end_reason
+            )
+            VALUES (
+                ?, '2026-07-26 10:00:00', '2026-07-26 10:05:00', 'correction'
+            )
+            """,
+            (card_id,),
+        )
+    before_card = stored_card(card_id)
+    before_segments = timing_snapshot(card_id)
+
+    result = db.finish_card(card_id, int(before_card["version"]))
+
+    assert not result.ok
+    assert result.messages == (
+        "Само карти в изработване или паузирани карти могат да приключат екструдирането.",
+    )
+    assert stored_card(card_id) == before_card
+    assert timing_snapshot(card_id) == before_segments
+
+
+@pytest.mark.parametrize("rewinding_roll_count", [None, 5])
+def test_paused_finish_rejects_malformed_open_segment_without_side_effects(
+    connection,
+    active_test_shift,
+    rewinding_roll_count,
+):
+    order_number = f"6290{int(rewinding_roll_count is not None)}"
+    card_id = release_ready_card(order_number)
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.pause_production_timing(card_id, int(card["version"])).ok
+    if rewinding_roll_count is None:
+        insert_roll(card_id, order_number, 1, 25, 1, 24)
+    else:
+        set_rewinding_marker(card_id, rewinding_roll_count)
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            INSERT INTO production_time_segments (card_id, started_at)
+            VALUES (?, '2099-01-01 00:00:00')
+            """,
+            (card_id,),
+        )
+    before_card = stored_card(card_id)
+    before_segments = timing_snapshot(card_id)
+
+    result = db.finish_card(card_id, int(before_card["version"]))
+
+    assert not result.ok
+    assert result.messages == (
+        "Паузирани карти не трябва да имат активен времеви сегмент. Презаредете картата.",
+    )
+    assert stored_card(card_id) == before_card
+    assert timing_snapshot(card_id) == before_segments
