@@ -179,6 +179,81 @@ def test_no_active_shift_context_is_blocking_gate(connection):
     assert context["shift_blocking"] is True
 
 
+def test_shift_display_helpers_format_bulgarian_values_without_raw_seconds():
+    assert main_module.format_shift_datetime("2026-07-26 21:30:59") == (
+        "26 юли 2026 г., 21:30"
+    )
+    assert main_module.format_shift_datetime(None) == "-"
+    assert main_module.format_shift_datetime("not-a-timestamp") == "-"
+
+    display = main_module.build_shift_display(
+        {
+            "id": 8,
+            "shift_number": 2,
+            "started_at": "2026-07-26 21:30:59",
+            "ended_at": "2026-07-27 06:05:02",
+            "total_gross_weight": "550.00",
+            "orders": [
+                {
+                    "card_id": 11,
+                    "order_number": "26001",
+                    "customer": "Клиент",
+                    "product_type": "Фолио",
+                    "roll_count": 2,
+                    "gross_weight": "550.00",
+                }
+            ],
+        }
+    )
+
+    assert display["started_at_display"] == "26 юли 2026 г., 21:30"
+    assert display["ended_at_display"] == "27 юли 2026 г., 06:05"
+    assert display["total_gross_weight_display"] == "550.0"
+    assert display["orders"][0]["gross_weight_display"] == "550.0"
+
+
+def test_shift_context_exposes_full_history_state_and_three_recent_rows():
+    completed = [
+        {
+            "id": shift_id,
+            "shift_number": shift_id,
+            "started_at": f"2026-07-{20 + shift_id:02d} 06:00:00",
+            "ended_at": f"2026-07-{20 + shift_id:02d} 14:00:00",
+            "distinct_item_count": 0,
+            "roll_count": 0,
+            "total_gross_weight": "0.00",
+        }
+        for shift_id in (4, 3, 2, 1)
+    ]
+    state = {
+        "configuration": {"shift_count": 4, "version": 1},
+        "active_shift": {
+            "id": 5,
+            "shift_number": 1,
+            "started_at": "2026-07-26 21:30:59",
+            "ended_at": None,
+            "version": 1,
+        },
+        "suggested_shift_number": 2,
+        "completed_shifts": completed,
+    }
+
+    context = main_module.build_terminal_shift_context(
+        "history",
+        None,
+        None,
+        state=state,
+    )
+
+    assert context["shift_window_state"] == "history"
+    assert context["shift_blocking"] is False
+    assert [row["id"] for row in context["recent_completed_shifts"]] == [4, 3, 2]
+    assert [row["id"] for row in context["completed_shifts"]] == [4, 3, 2, 1]
+    assert context["active_shift"]["started_at_display"] == (
+        "26 юли 2026 г., 21:30"
+    )
+
+
 def test_start_uses_configured_choice_and_explicit_confirmation(connection):
     configuration = db.fetch_terminal_configuration()
     assert db.update_shift_count(int(configuration["version"]), "3").ok
@@ -362,6 +437,7 @@ def test_history_summary_and_back_use_the_same_window_state(connection):
     assert db.start_shift("2", int(current_configuration["version"])).ok
 
     overview = terminal_context(shift_view="overview")
+    history = terminal_context(shift_view="history")
     summary = terminal_context(shift_view="summary", shift_id=str(completed["id"]))
     back = terminal_context(shift_view="overview")
     closed = terminal_context()
@@ -373,6 +449,9 @@ def test_history_summary_and_back_use_the_same_window_state(connection):
 
     assert overview["shift_window_state"] == "overview"
     assert overview["shift_blocking"] is False
+    assert history["shift_window_state"] == "history"
+    assert history["shift_blocking"] is False
+    assert history["recent_completed_shifts"] == history["completed_shifts"][:3]
     assert summary["shift_window_state"] == "summary"
     assert summary["shift_blocking"] is False
     assert summary["selected_shift_summary"]["id"] == completed["id"]

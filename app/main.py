@@ -2248,9 +2248,16 @@ def build_terminal_shift_context(
     if state is None:
         state = fetch_shift_window_state()
     configuration = state["configuration"]
-    active_shift = state["active_shift"]
-    completed_shifts = state["completed_shifts"]
-    normalized_view = shift_view if shift_view in {"overview", "summary"} else None
+    raw_active_shift = state["active_shift"]
+    active_shift = (
+        build_shift_display(raw_active_shift) if raw_active_shift is not None else None
+    )
+    completed_shifts = [
+        build_shift_display(shift) for shift in state["completed_shifts"]
+    ]
+    normalized_view = (
+        shift_view if shift_view in {"overview", "history", "summary"} else None
+    )
 
     parsed_shift_id: int | None = None
     if shift_id is not None:
@@ -2264,7 +2271,9 @@ def build_terminal_shift_context(
     completed_ids = {int(shift["id"]) for shift in completed_shifts}
     selected_shift_summary = None
     if normalized_view == "summary" and parsed_shift_id in completed_ids:
-        selected_shift_summary = fetch_shift_summary(parsed_shift_id)
+        raw_selected_shift_summary = fetch_shift_summary(parsed_shift_id)
+        if raw_selected_shift_summary is not None:
+            selected_shift_summary = build_shift_display(raw_selected_shift_summary)
 
     just_ended_handoff = selected_shift_summary is not None and handoff == "1"
     if reload_required:
@@ -2278,6 +2287,9 @@ def build_terminal_shift_context(
         shift_blocking = True
     elif normalized_view == "summary" and selected_shift_summary is not None:
         shift_window_state = "summary"
+        shift_blocking = False
+    elif normalized_view == "history":
+        shift_window_state = "history"
         shift_blocking = False
     elif normalized_view in {"overview", "summary"}:
         shift_window_state = "overview"
@@ -2302,6 +2314,7 @@ def build_terminal_shift_context(
         "shift_options": shift_options,
         "suggested_shift_number": int(state["suggested_shift_number"]),
         "completed_shifts": completed_shifts,
+        "recent_completed_shifts": completed_shifts[:3],
         "selected_shift_summary": selected_shift_summary,
         "shift_window_state": shift_window_state,
         "shift_blocking": shift_blocking,
@@ -2535,6 +2548,60 @@ def one_decimal_weight_display(value: Any, blank: str = "-") -> str:
     if decimal_value is None:
         return blank
     return format(decimal_value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP), "f")
+
+
+BULGARIAN_MONTH_NAMES = (
+    "",
+    "януари",
+    "февруари",
+    "март",
+    "април",
+    "май",
+    "юни",
+    "юли",
+    "август",
+    "септември",
+    "октомври",
+    "ноември",
+    "декември",
+)
+
+
+def format_shift_datetime(value: Any) -> str:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return "-"
+    try:
+        parsed = datetime.strptime(raw_value, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return "-"
+    return (
+        f"{parsed.day} {BULGARIAN_MONTH_NAMES[parsed.month]} "
+        f"{parsed.year} г., {parsed:%H:%M}"
+    )
+
+
+def build_shift_display(shift: dict[str, Any]) -> dict[str, Any]:
+    display = dict(shift)
+    display["started_at_display"] = format_shift_datetime(shift.get("started_at"))
+    display["ended_at_display"] = format_shift_datetime(shift.get("ended_at"))
+    if "total_gross_weight" in shift:
+        display["total_gross_weight_display"] = one_decimal_weight_display(
+            shift.get("total_gross_weight"),
+            "0.0",
+        )
+    if "orders" in shift:
+        display["orders"] = [
+            {
+                **order,
+                "gross_weight_display": one_decimal_weight_display(
+                    order.get("gross_weight"),
+                    "0.0",
+                ),
+            }
+            for order in shift["orders"]
+        ]
+    return display
 
 
 def rounded_weight_display(value: Any) -> str:
