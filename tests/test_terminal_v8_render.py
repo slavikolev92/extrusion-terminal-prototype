@@ -2440,24 +2440,38 @@ def test_terminal_v8_refresh_alert_hook_exists_and_old_sync_ui_is_absent(connect
     assert "Довършете текущото въвеждане" not in html
 
 
-def test_terminal_header_has_one_global_shift_button_without_inline_shift_details(
-    connection,
-):
+def test_terminal_header_has_centered_global_actions_and_active_shift_status(connection):
     active_shift = db.fetch_active_shift()
     assert active_shift is not None
 
     html = render_terminal()
-    header = re.search(
-        r'<header class="machine-nav".*?</header>',
-        html,
-        flags=re.S,
-    )
+    header = re.search(r'<header class="terminal-header".*?</header>', html, re.S)
 
     assert header is not None
-    assert header.group(0).count('id="shift-open"') == 1
-    assert header.group(0).count(">Shift<") == 1
-    assert str(active_shift["started_at"]) not in header.group(0)
-    assert f'Смяна {active_shift["shift_number"]}' not in header.group(0)
+    header_html = header.group(0)
+    assert "/static/images/kolev-logo.png" in header_html
+    assert header_html.count('class="terminal-header-action') == 3
+    assert ">Чакащи поръчки<" in header_html
+    assert ">Произведени поръчки<" in header_html
+    assert 'id="shift-open"' in header_html
+    assert 'class="shift-status-dot is-active"' in header_html
+    assert f'>Смяна {active_shift["shift_number"]}<' in header_html
+    assert str(active_shift["started_at"]) not in header_html
+    assert 'class="machine-nav-actions"' not in html
+
+
+def test_terminal_header_shows_nonwrapping_no_active_shift_status(connection):
+    end_active_test_shift()
+
+    html = render_terminal()
+    header = re.search(r'<header class="terminal-header".*?</header>', html, re.S)
+
+    assert header is not None
+    header_html = header.group(0)
+    assert 'class="shift-status-dot"' in header_html
+    assert 'class="shift-status-dot is-active"' not in header_html
+    assert ">Няма активна смяна<" in header_html
+    assert 'data-terminal-action="shift"' in header_html
 
 
 def test_no_active_shift_gate_has_no_close_or_escape_dismissal(connection):
