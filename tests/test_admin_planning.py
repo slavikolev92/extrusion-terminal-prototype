@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import threading
 
 from app import db
 from app.constants import STATUS_IMPORTED, STATUS_PAUSED, STATUS_PENDING, STATUS_RUNNING
@@ -442,3 +443,63 @@ def test_delete_blocks_started_running_and_paused_cards(connection, active_test_
     assert db.fetch_admin_card_detail(started_pending_id) is not None
     assert db.fetch_admin_card_detail(running_id) is not None
     assert db.fetch_admin_card_detail(paused_id) is not None
+
+
+def test_delete_serializes_with_production_start_after_validation(
+    connection,
+    active_test_shift,
+    monkeypatch,
+):
+    card_id = release_ready_card("25836", machine_id=3, machine_sequence=1)
+    loaded_version = card_version(card_id)
+    validation_started = threading.Event()
+    allow_delete = threading.Event()
+    start_read = threading.Event()
+    allow_start = threading.Event()
+    original_validate = db.validate_loaded_card_version
+    original_fetch_occupied = db.fetch_occupied_machine_card
+
+    def blocked_validate(card, version):
+        result = original_validate(card, version)
+        validation_started.set()
+        assert allow_delete.wait(timeout=5)
+        return result
+
+    def blocked_fetch_occupied(connection, current_card_id, machine_id):
+        result = original_fetch_occupied(connection, current_card_id, machine_id)
+        start_read.set()
+        assert allow_start.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(db, "validate_loaded_card_version", blocked_validate)
+    monkeypatch.setattr(db, "fetch_occupied_machine_card", blocked_fetch_occupied)
+    delete_result = {}
+    start_result = {}
+    start_done = threading.Event()
+
+    def delete_card():
+        delete_result["value"] = db.delete_admin_planning_card(card_id, loaded_version)
+
+    def start_card():
+        try:
+            start_result["value"] = db.start_production_timing(card_id, loaded_version)
+        finally:
+            start_done.set()
+
+    delete_thread = threading.Thread(target=delete_card)
+    start_thread = threading.Thread(target=start_card)
+    delete_thread.start()
+    assert validation_started.wait(timeout=5)
+    start_thread.start()
+    assert start_read.wait(timeout=5)
+    allow_start.set()
+    assert not start_done.wait(timeout=0.2)
+    allow_delete.set()
+    delete_thread.join(timeout=5)
+    start_thread.join(timeout=5)
+
+    assert not delete_thread.is_alive()
+    assert not start_thread.is_alive()
+    assert delete_result["value"].ok
+    assert not start_result["value"].ok
+    assert db.fetch_admin_card_detail(card_id) is None

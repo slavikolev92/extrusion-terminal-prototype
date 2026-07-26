@@ -3878,6 +3878,7 @@ def _update_admin_imported_fields(
 
 def delete_admin_planning_card(card_id: int, loaded_version: int) -> RuleResult:
     with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
         card = connection.execute(
             """
             SELECT id, order_number, status, version, machine_id, first_started_at
