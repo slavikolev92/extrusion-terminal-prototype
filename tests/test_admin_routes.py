@@ -550,6 +550,13 @@ def test_admin_planning_renders_compact_unreleased_release_table(connection):
     assert 'class="release-control release-control-machine"' not in html
     assert 'class="release-submit-button"' not in html
     assert '<span>Макс. тегло ролка, кг</span>' not in html
+    css = Path("app/static/css/app.css").read_text(encoding="utf-8")
+    assert ".planning-table {" in css
+    assert ".planning-table .col-size {" in css
+    assert ".planning-open-button {" in css
+    assert ".planning-overflow-menu {" in css
+    assert ".planning-modal {" in css
+    assert 'class="machine-grid"' not in html
 
 
 def test_admin_planning_renders_machine_queues_as_shared_tables_with_menus(connection):

@@ -394,192 +394,255 @@ select {
   font: inherit;
 }
 
-.unreleased-table {
-  table-layout: fixed;
+.planning-section {
+  overflow: visible;
 }
 
-.unreleased-table th {
+.planning-section-head {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 16px;
+}
+
+.planning-section-head h2 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.planning-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.planning-table th {
+  background: var(--surface-soft);
+  border-top: 0;
+  border-bottom: 2px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.2;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
-.unreleased-table .sort-link {
+.planning-table .sort-link {
+  align-items: center;
   color: inherit;
   display: inline-flex;
-  align-items: center;
   gap: 2px;
   text-decoration: none;
 }
 
-.unreleased-table .sort-link:hover,
-.unreleased-table .sort-link:focus {
+.planning-table .sort-link:hover,
+.planning-table .sort-link:focus {
   color: var(--blue);
   text-decoration: underline;
 }
 
-.unreleased-table .sort-link.active {
+.planning-table .sort-link.active {
   color: var(--text);
 }
 
-.unreleased-table td {
+.planning-table td {
   vertical-align: middle;
 }
 
-.unreleased-table .col-order {
-  width: 86px;
+.planning-table .col-sequence {
+  width: 56px;
+  text-align: center;
 }
 
-.unreleased-table .col-delivery {
-  width: 104px;
+.planning-table .col-order {
+  width: 105px;
 }
 
-.unreleased-table .col-customer {
-  width: 18%;
+.planning-table .col-delivery {
+  width: 116px;
 }
 
-.unreleased-table .col-product {
-  width: auto;
+.planning-table .col-customer {
+  width: 19%;
 }
 
-.unreleased-table .col-gross {
-  width: 168px;
+.planning-table .col-product {
+  width: 20%;
 }
 
-.unreleased-table .col-sequence {
-  width: 66px;
+.planning-table .col-size {
+  width: 135px;
 }
 
-.unreleased-table .col-machine {
-  width: 78px;
-}
-
-.unreleased-table .col-action {
-  width: 92px;
+.planning-table .col-gross {
+  width: 96px;
   text-align: right;
 }
 
-.unreleased-table .truncate-cell {
+.planning-table .col-action {
+  width: 106px;
+  text-align: right;
+}
+
+.planning-table .col-menu {
+  width: 48px;
+  text-align: right;
+}
+
+.planning-table .truncate-cell {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.release-control {
-  width: 100%;
+.planning-open-button,
+.planning-overflow summary {
   min-height: 34px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   background: var(--surface);
-  padding: 0 8px;
+  color: var(--text);
   font: inherit;
 }
 
-.release-control-sequence,
-.release-control-machine {
-  text-align: center;
-}
-
-.release-submit-button {
-  min-height: 34px;
-  width: auto;
-  padding: 0 10px;
+.planning-open-button {
+  padding: 0 12px;
   white-space: nowrap;
 }
 
-.release-form {
+.planning-overflow {
+  position: relative;
+}
+
+.planning-overflow summary {
+  align-items: center;
+  cursor: pointer;
+  display: inline-flex;
+  justify-content: center;
+  list-style: none;
+  width: 34px;
+}
+
+.planning-overflow summary::-webkit-details-marker {
+  display: none;
+}
+
+.planning-overflow-menu {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
   display: grid;
-  grid-template-columns: repeat(3, 170px) minmax(120px, 1fr);
-  gap: 8px;
-  align-items: end;
+  min-width: 190px;
+  padding: 6px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+}
+
+.planning-overflow-menu form {
+  margin: 0;
+}
+
+.planning-overflow-menu button {
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  min-height: 34px;
+  padding: 0 10px;
+  text-align: left;
+  white-space: nowrap;
   width: 100%;
 }
 
-.release-field {
+.planning-overflow-menu button:hover,
+.planning-overflow-menu button:focus {
+  background: var(--surface-soft);
+}
+
+.planning-modal {
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25);
+  max-width: 440px;
+  padding: 0;
+  width: min(440px, calc(100vw - 32px));
+}
+
+.planning-modal::backdrop {
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.planning-modal form {
   display: grid;
-  gap: 4px;
+  gap: 14px;
+  margin: 0;
+  padding: 16px;
+}
+
+.planning-modal-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.planning-modal-head h2 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.planning-modal-close {
+  min-height: 32px;
+  width: 32px;
+}
+
+.planning-modal-context {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.planning-modal-context div {
+  display: grid;
+  gap: 2px;
+}
+
+.planning-modal-context dt,
+.planning-modal-fields span {
   color: var(--muted);
   font-size: 11px;
   font-weight: 850;
   text-transform: uppercase;
 }
 
-.release-field input,
-.release-field select {
-  width: 100%;
-}
-
-.release-form button {
-  justify-self: end;
-  width: 180px;
-}
-
-.required-marker {
-  color: var(--red);
-  font-weight: 900;
-}
-
-.release-form input {
-  min-height: 38px;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  padding: 0 9px;
-}
-
-.planning-form {
-  display: grid;
-  grid-template-columns: minmax(72px, 0.8fr) minmax(72px, 1fr) auto;
-  gap: 7px;
-  align-items: end;
-  margin-top: 8px;
-}
-
-.planning-field {
-  display: grid;
-  gap: 3px;
-}
-
-.planning-field-label {
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 850;
-  line-height: 1;
-  text-transform: uppercase;
-}
-
-.planning-form select,
-.planning-form input {
-  width: 100%;
-  min-height: 38px;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  padding: 0 9px;
-}
-
-.planning-form button {
-  min-height: 38px;
-  padding: 0 10px;
-}
-
-.queue-card-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  justify-content: space-between;
-}
-
-.queue-return-form {
+.planning-modal-context dd {
   margin: 0;
 }
 
-.queue-return-button {
-  min-height: 28px;
-  padding: 0 7px;
-  white-space: nowrap;
+.planning-modal-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
-.queue-card-main {
+.planning-modal-fields label {
   display: grid;
   gap: 4px;
-  margin-top: 4px;
+}
+
+.planning-modal-fields input,
+.planning-modal-fields select {
+  width: 100%;
+}
+
+.planning-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .filter-form {
@@ -1318,20 +1381,6 @@ thead th {
   color: var(--red);
 }
 
-.machine-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.machine-column {
-  min-height: 180px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--surface-soft);
-  padding: 12px;
-}
-
 .terminal-shell {
   display: grid;
   grid-template-columns: 340px 1fr;
@@ -1580,7 +1629,6 @@ thead th {
   .roll-controls,
   .tare-form,
   .total-grid,
-  .machine-grid,
   .filter-form,
   .admin-detail-grid,
   .admin-card-form,
@@ -1655,6 +1703,14 @@ thead th {
     min-width: 124px;
     height: 38px;
     padding: 0 14px;
+  }
+
+  .planning-section {
+    overflow-x: auto;
+  }
+
+  .planning-table {
+    min-width: 920px;
   }
 }
 
@@ -1765,11 +1821,4 @@ thead th {
     min-width: 720px;
   }
 
-  .unreleased-table {
-    min-width: 1080px;
-  }
-
-  #unreleased-queue {
-    overflow-x: auto;
-  }
 }

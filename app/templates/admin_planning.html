@@ -43,8 +43,8 @@
     </section>
   {% endif %}
 
-  <section class="section" id="unreleased-queue">
-    <div class="section-head">
+  <section class="section planning-section" id="unreleased-queue">
+    <div class="section-head planning-section-head">
       <h2>Неизпратени технологични карти</h2>
       <span>{{ draft_cards|length }} карти</span>
     </div>
@@ -106,13 +106,13 @@
     {% endif %}
   </section>
 
-  <section class="section">
-    <div class="section-head">
+  <section class="section planning-section">
+    <div class="section-head planning-section-head">
       <h2>Опашки по машини</h2>
     </div>
-    <div class="machine-grid">
+    <div>
       {% for queue in machine_queues %}
-        <article class="machine-column">
+        <article>
           <h3>Машина {{ queue.machine.id }}</h3>
           {% if queue.cards %}
             <table class="planning-table">
