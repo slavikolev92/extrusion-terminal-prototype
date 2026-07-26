@@ -37,7 +37,7 @@ from .db import (
     database_summary,
     delete_timing_segment,
     delete_roll_entry,
-    delete_admin_imported_card,
+    delete_admin_planning_card,
     end_shift,
     fetch_active_shift,
     fetch_cards_by_status,
@@ -1128,13 +1128,23 @@ async def delete_admin_card(
     request: Request,
     card_id: int,
     loaded_version: str = Form(...),
+    return_to: str = Form("detail"),
 ):
     parsed_version, delete_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        delete_result = delete_admin_imported_card(card_id, parsed_version)
+        delete_result = delete_admin_planning_card(card_id, parsed_version)
 
     if delete_result.ok:
+        if return_to == "planning":
+            return RedirectResponse(url="/admin/planning", status_code=303)
         return RedirectResponse(url="/admin/cards", status_code=303)
+
+    if return_to == "planning":
+        return templates.TemplateResponse(
+            request,
+            "admin_planning.html",
+            admin_planning_context(planning_result=delete_result),
+        )
 
     context = admin_card_detail_context(card_id, delete_result=delete_result)
     if context is None:

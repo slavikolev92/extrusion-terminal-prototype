@@ -3,7 +3,13 @@
 {% block title %}Планиране - Терминал Екструдиране{% endblock %}
 
 {% block body %}
-<main class="page admin-page">
+{% macro sortable_header(key, class_name) -%}
+  <th class="{{ class_name }}" aria-sort="{{ draft_sort_links[key].aria_sort }}">
+    <a class="sort-link {% if draft_sort == key %}active{% endif %}" href="{{ draft_sort_links[key].href }}">{{ draft_sort_links[key].label }}{% if draft_sort == key %}<span aria-hidden="true">{% if draft_dir == "asc" %}↑{% else %}↓{% endif %}</span>{% endif %}</a>
+  </th>
+{%- endmacro %}
+
+<main class="page wide-page admin-page">
   {% include "_admin_nav.html" %}
   <h1 class="visually-hidden">Планиране</h1>
 
@@ -44,70 +50,52 @@
     </div>
 
     {% if draft_cards %}
-      <table class="unreleased-table compact-table">
+      <table class="planning-table">
         <thead>
           <tr>
-            <th class="col-order" aria-sort="{{ draft_sort_links.order_number.aria_sort }}">
-              <a class="sort-link {% if draft_sort == 'order_number' %}active{% endif %}" href="{{ draft_sort_links.order_number.href }}">{{ draft_sort_links.order_number.label }}
-                {% if draft_sort == "order_number" %}
-                  <span aria-hidden="true">{% if draft_dir == "asc" %}↑{% else %}↓{% endif %}</span>
-                {% endif %}
-              </a>
-            </th>
-            <th class="col-delivery" aria-sort="{{ draft_sort_links.delivery_date.aria_sort }}">
-              <a class="sort-link {% if draft_sort == 'delivery_date' %}active{% endif %}" href="{{ draft_sort_links.delivery_date.href }}">{{ draft_sort_links.delivery_date.label }}
-                {% if draft_sort == "delivery_date" %}
-                  <span aria-hidden="true">{% if draft_dir == "asc" %}↑{% else %}↓{% endif %}</span>
-                {% endif %}
-              </a>
-            </th>
-            <th class="col-customer" aria-sort="{{ draft_sort_links.customer.aria_sort }}">
-              <a class="sort-link {% if draft_sort == 'customer' %}active{% endif %}" href="{{ draft_sort_links.customer.href }}">{{ draft_sort_links.customer.label }}
-                {% if draft_sort == "customer" %}
-                  <span aria-hidden="true">{% if draft_dir == "asc" %}↑{% else %}↓{% endif %}</span>
-                {% endif %}
-              </a>
-            </th>
-            <th class="col-product" aria-sort="{{ draft_sort_links.product_type.aria_sort }}">
-              <a class="sort-link {% if draft_sort == 'product_type' %}active{% endif %}" href="{{ draft_sort_links.product_type.href }}">{{ draft_sort_links.product_type.label }}
-                {% if draft_sort == "product_type" %}
-                  <span aria-hidden="true">{% if draft_dir == "asc" %}↑{% else %}↓{% endif %}</span>
-                {% endif %}
-              </a>
-            </th>
-            <th class="col-gross">Поръчано бруто, кг</th>
             <th class="col-sequence">Ред</th>
-            <th class="col-machine">Машина</th>
+            {{ sortable_header("order_number", "col-order") }}
+            {{ sortable_header("delivery_date", "col-delivery") }}
+            {{ sortable_header("customer", "col-customer") }}
+            {{ sortable_header("product_type", "col-product") }}
+            {{ sortable_header("size_thickness", "col-size") }}
+            {{ sortable_header("ordered_gross_kg", "col-gross") }}
             <th class="col-action">Действие</th>
+            <th class="col-menu"><span class="visually-hidden">Още</span></th>
           </tr>
         </thead>
         <tbody>
           {% for card in draft_cards %}
-            {% set next_card = draft_cards[loop.index] if not loop.last else none %}
-            {% set return_anchor = 'draft-card-' ~ next_card.id if next_card else 'unreleased-queue' %}
             <tr id="draft-card-{{ card.id }}">
-              <td class="col-order"><a href="/admin/cards/{{ card.id }}">{{ card.order_number }}</a></td>
-              <td class="col-delivery">{{ card.delivery_date or "-" }}</td>
+              <td class="col-sequence">-</td>
+              <td class="col-order"><a href="/admin/cards/{{ card.id }}">№ {{ card.order_number }}</a></td>
+              <td class="col-delivery">{{ card.planning_delivery_date }}</td>
               <td class="col-customer truncate-cell" title="{{ card.customer or '' }}">{{ card.customer or "-" }}</td>
               <td class="col-product truncate-cell" title="{{ card.product_type or '' }}">{{ card.product_type or "-" }}</td>
-              <td class="col-gross">{% if card.ordered_gross_kg %}{{ card.ordered_gross_kg }}{% else %}-{% endif %}</td>
-              <td class="col-sequence">
-                <form id="release-card-{{ card.id }}" action="/admin/cards/{{ card.id }}/release" method="post">
-                  <input type="hidden" name="loaded_version" value="{{ card.version }}">
-                  <input type="hidden" name="return_anchor" value="{{ return_anchor }}">
-                </form>
-                <input class="release-control release-control-sequence" form="release-card-{{ card.id }}" name="machine_sequence" inputmode="numeric" pattern="[0-9]*" value="{{ card.machine_sequence or '' }}" aria-label="Ред за поръчка {{ card.order_number }}" required>
-              </td>
-              <td class="col-machine">
-                <select class="release-control release-control-machine" form="release-card-{{ card.id }}" name="machine_id" aria-label="Машина за поръчка {{ card.order_number }}" required>
-                  <option value="">-</option>
-                  {% for machine in machines %}
-                    <option value="{{ machine.id }}" {% if card.machine_id == machine.id %}selected{% endif %}>{{ machine.id }}</option>
-                  {% endfor %}
-                </select>
-              </td>
+              <td class="col-size truncate-cell" title="{{ card.planning_size }}">{{ card.planning_size }}</td>
+              <td class="col-gross">{{ card.planning_gross_kg }}</td>
               <td class="col-action">
-                <button class="release-submit-button" type="submit" form="release-card-{{ card.id }}">Изпрати</button>
+                <button class="planning-open-button" type="button"
+                        data-planning-action="/admin/cards/{{ card.id }}/release"
+                        data-loaded-version="{{ card.version }}"
+                        data-order-number="{{ card.order_number }}"
+                        data-customer="{{ card.customer or '-' }}"
+                        data-machine-id="{{ card.machine_id or '' }}"
+                        data-machine-sequence="{{ card.machine_sequence or '' }}">
+                  Планирай
+                </button>
+              </td>
+              <td class="col-menu">
+                <details class="planning-overflow">
+                  <summary aria-label="Още действия за поръчка {{ card.order_number }}">⋮</summary>
+                  <div class="planning-overflow-menu">
+                    <form action="/admin/cards/{{ card.id }}/delete" method="post" onsubmit="return confirm('Изтриване на поръчка {{ card.order_number }}?');">
+                      <input type="hidden" name="loaded_version" value="{{ card.version }}">
+                      <input type="hidden" name="return_to" value="planning">
+                      <button type="submit">Изтрий карта</button>
+                    </form>
+                  </div>
+                </details>
               </td>
             </tr>
           {% endfor %}
@@ -127,42 +115,64 @@
         <article class="machine-column">
           <h3>Машина {{ queue.machine.id }}</h3>
           {% if queue.cards %}
-            {% for card in queue.cards %}
-              <div class="queue-card {{ card.status }}">
-                <div class="queue-card-header">
-                  <strong>{{ card.machine_sequence }}. <a href="/admin/cards/{{ card.id }}">№ {{ card.order_number }}</a></strong>
-                  {% if card.status == "pending" %}
-                    <form class="queue-return-form" action="/admin/cards/{{ card.id }}/unrelease" method="post">
-                      <input type="hidden" name="loaded_version" value="{{ card.version }}">
-                      <input type="hidden" name="return_to" value="planning">
-                      <button class="queue-return-button" type="submit" aria-label="Върни поръчка {{ card.order_number }} в неизпратени">↩ Върни</button>
-                    </form>
-                  {% endif %}
-                </div>
-                <div class="queue-card-main">
-                  <span>{{ card.customer or "Без клиент" }}</span>
-                  <small>{{ card.product_type or "Без изделие" }}</small>
-                  <small class="queue-card-gross">Поръчано бруто: {% if card.ordered_gross_kg %}{{ card.ordered_gross_kg }} кг{% else %}-{% endif %}</small>
-                  <span class="pill status-{{ card.status }}">{{ status_labels.get(card.status, card.status) }}</span>
-                </div>
-                <form class="planning-form" action="/admin/cards/{{ card.id }}/planning" method="post">
-                  <input type="hidden" name="loaded_version" value="{{ card.version }}">
-                  <label class="planning-field">
-                    <span class="planning-field-label">Машина</span>
-                    <select name="machine_id" aria-label="Нова машина за поръчка {{ card.order_number }}">
-                      {% for machine in machines %}
-                        <option value="{{ machine.id }}" {% if card.machine_id == machine.id %}selected{% endif %}>{{ machine.id }}</option>
-                      {% endfor %}
-                    </select>
-                  </label>
-                  <label class="planning-field">
-                    <span class="planning-field-label">Ред</span>
-                    <input name="machine_sequence" inputmode="numeric" pattern="[0-9]*" value="{{ card.machine_sequence or '' }}" aria-label="Нов ред за поръчка {{ card.order_number }}">
-                  </label>
-                  <button type="submit">Запази</button>
-                </form>
-              </div>
-            {% endfor %}
+            <table class="planning-table">
+              <thead>
+                <tr>
+                  <th class="col-sequence">Ред</th>
+                  <th class="col-order">Поръчка</th>
+                  <th class="col-delivery">Доставка</th>
+                  <th class="col-customer">Клиент</th>
+                  <th class="col-product">Изделие</th>
+                  <th class="col-size">Размер</th>
+                  <th class="col-gross">Бруто кг</th>
+                  <th class="col-action">Действие</th>
+                  <th class="col-menu"><span class="visually-hidden">Още</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for card in queue.cards %}
+                  <tr>
+                    <td class="col-sequence">{{ card.machine_sequence or "-" }}</td>
+                    <td class="col-order"><a href="/admin/cards/{{ card.id }}">№ {{ card.order_number }}</a></td>
+                    <td class="col-delivery">{{ card.planning_delivery_date }}</td>
+                    <td class="col-customer truncate-cell" title="{{ card.customer or '' }}">{{ card.customer or "-" }}</td>
+                    <td class="col-product truncate-cell" title="{{ card.product_type or '' }}">{{ card.product_type or "-" }}</td>
+                    <td class="col-size truncate-cell" title="{{ card.planning_size }}">{{ card.planning_size }}</td>
+                    <td class="col-gross">{{ card.planning_gross_kg }}</td>
+                    <td class="col-action">
+                      <button class="planning-open-button" type="button"
+                              data-planning-action="/admin/cards/{{ card.id }}/planning"
+                              data-loaded-version="{{ card.version }}"
+                              data-order-number="{{ card.order_number }}"
+                              data-customer="{{ card.customer or '-' }}"
+                              data-machine-id="{{ card.machine_id or '' }}"
+                              data-machine-sequence="{{ card.machine_sequence or '' }}">
+                        Планирай
+                      </button>
+                    </td>
+                    <td class="col-menu">
+                      <details class="planning-overflow">
+                        <summary aria-label="Още действия за поръчка {{ card.order_number }}">⋮</summary>
+                        <div class="planning-overflow-menu">
+                          {% if card.status == "pending" %}
+                            <form action="/admin/cards/{{ card.id }}/unrelease" method="post">
+                              <input type="hidden" name="loaded_version" value="{{ card.version }}">
+                              <input type="hidden" name="return_to" value="planning">
+                              <button type="submit">Върни в неизпратени</button>
+                            </form>
+                          {% endif %}
+                          <form action="/admin/cards/{{ card.id }}/delete" method="post" onsubmit="return confirm('Изтриване на поръчка {{ card.order_number }}?');">
+                            <input type="hidden" name="loaded_version" value="{{ card.version }}">
+                            <input type="hidden" name="return_to" value="planning">
+                            <button type="submit">Изтрий карта</button>
+                          </form>
+                        </div>
+                      </details>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
           {% else %}
             <p class="empty">Няма активни технологични карти.</p>
           {% endif %}
@@ -170,5 +180,65 @@
       {% endfor %}
     </div>
   </section>
+
+  <dialog class="planning-modal" id="planning-modal">
+    <form id="planning-modal-form" method="post">
+      <div class="planning-modal-head">
+        <h2>Планирай карта</h2>
+        <button class="planning-modal-close" type="button" aria-label="Затвори">×</button>
+      </div>
+      <dl class="planning-modal-context">
+        <div><dt>Поръчка</dt><dd id="planning-modal-order">-</dd></div>
+        <div><dt>Клиент</dt><dd id="planning-modal-customer">-</dd></div>
+      </dl>
+      <input id="planning-modal-version" type="hidden" name="loaded_version" value="">
+      <div class="planning-modal-fields">
+        <label>
+          <span>Машина</span>
+          <select id="planning-modal-machine" name="machine_id" required>
+            {% for machine in machines %}
+              <option value="{{ machine.id }}">{{ machine.id }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          <span>Ред</span>
+          <input id="planning-modal-sequence" name="machine_sequence" inputmode="numeric" pattern="[0-9]*" required>
+        </label>
+      </div>
+      <div class="planning-modal-actions">
+        <button class="secondary-button" type="button" data-planning-cancel>Отказ</button>
+        <button class="primary-button" type="submit">Запази</button>
+      </div>
+    </form>
+  </dialog>
+  <script>
+    (() => {
+      const modal = document.getElementById("planning-modal");
+      const form = document.getElementById("planning-modal-form");
+      const order = document.getElementById("planning-modal-order");
+      const customer = document.getElementById("planning-modal-customer");
+      const version = document.getElementById("planning-modal-version");
+      const machine = document.getElementById("planning-modal-machine");
+      const sequence = document.getElementById("planning-modal-sequence");
+      if (!modal || !form || !order || !customer || !version || !machine || !sequence) return;
+
+      document.querySelectorAll(".planning-open-button").forEach((button) => {
+        button.addEventListener("click", () => {
+          form.setAttribute("action", button.dataset.planningAction || "");
+          version.value = button.dataset.loadedVersion || "";
+          order.textContent = button.dataset.orderNumber || "-";
+          customer.textContent = button.dataset.customer || "-";
+          machine.value = button.dataset.machineId || "";
+          sequence.value = button.dataset.machineSequence || "";
+          modal.showModal();
+        });
+      });
+
+      document.querySelectorAll(".planning-modal-close, [data-planning-cancel]").forEach((button) => {
+        button.addEventListener("click", () => modal.close());
+      });
+    })();
+  </script>
 </main>
 {% endblock %}

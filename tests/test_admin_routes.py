@@ -552,6 +552,54 @@ def test_admin_planning_renders_compact_unreleased_release_table(connection):
     assert '<span>Макс. тегло ролка, кг</span>' not in html
 
 
+def test_admin_planning_renders_machine_queues_as_shared_tables_with_menus(connection):
+    pending_id = import_route_card(
+        "25971",
+        delivery_date="2026-07-30",
+        customer="Machine Customer",
+        product_type="Machine Product",
+        size_thickness="800/0.045",
+        ordered_gross_kg="650",
+    )
+    assert db.release_card(pending_id, 1, 1, card_version(pending_id)).ok
+
+    response = asyncio.run(admin_planning(make_request("/admin/planning", method="GET")))
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert "Машина 1" in html
+    assert "30.07.2026" in html
+    assert "800/0.045" in html
+    assert "650" in html
+    assert 'action="/admin/cards/' in html
+    assert 'name="return_to" value="planning"' in html
+    assert "Върни в неизпратени" in html
+    assert "Изтрий карта" in html
+    assert 'id="planning-modal"' in html
+    assert ">Планирай карта<" in html
+    assert 'id="planning-modal-form"' in html
+    assert 'class="queue-card' not in html
+    assert 'class="planning-form"' not in html
+    assert 'class="queue-return-button"' not in html
+
+
+def test_admin_delete_redirects_back_to_planning_when_requested(connection):
+    card_id = import_route_card("25972")
+
+    response = asyncio.run(
+        admin_route_endpoint("/admin/cards/{card_id}/delete")(
+            make_request(f"/admin/cards/{card_id}/delete"),
+            card_id=card_id,
+            loaded_version=str(card_version(card_id)),
+            return_to="planning",
+        )
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/planning"
+    assert db.fetch_admin_card_detail(card_id) is None
+
+
 def test_admin_planning_sorts_unreleased_cards_with_header_links(connection):
     result = import_cards_from_csv(
         "planning-sort-route.csv",
@@ -999,18 +1047,15 @@ def test_admin_planning_renders_unrelease_form_for_pending_queue_cards_only(conn
     assert f'action="/admin/cards/{pending_id}/unrelease"' in html
     assert f'action="/admin/cards/{running_id}/unrelease"' not in html
     assert '<input type="hidden" name="return_to" value="planning">' in html
-    assert 'class="queue-card-header"' in html
-    assert 'class="queue-return-form"' in html
-    assert 'class="queue-return-button"' in html
-    assert 'aria-label="Върни поръчка 25924 в неизпратени"' in html
-    assert ">↩ Върни</button>" in html
-    assert "Върни в неизпратени" not in html
+    assert '<table class="planning-table">' in html
+    assert 'class="planning-overflow"' in html
+    assert 'aria-label="Още действия за поръчка 25924"' in html
+    assert ">Върни в неизпратени</button>" in html
     assert "4 машини в системата" not in html
-    assert '<span class="planning-field-label">Машина</span>' in html
-    assert '<span class="planning-field-label">Ред</span>' in html
-    assert '<small class="queue-card-gross">Поръчано бруто: 640.25 кг</small>' in html
-    assert '<small class="queue-card-gross">Поръчано бруто: -</small>' in html
-    assert "Поръчано бруто: - кг" not in html
+    assert '<td class="col-gross">640.25</td>' in html
+    assert '<td class="col-gross">-</td>' in html
+    assert 'class="queue-card' not in html
+    assert 'class="planning-form"' not in html
 
 
 def test_admin_detail_renders_unrelease_form_for_pending_card_only(connection):
