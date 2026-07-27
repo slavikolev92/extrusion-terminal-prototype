@@ -1,0 +1,175 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  STORAGE_KEY_PREFIX,
+  advanceSchedule,
+  buildSchedule,
+  calculateNextExpected,
+  countdownView,
+  decodeSchedule,
+  formatNextExpected,
+  formatRemaining,
+  loadSchedule,
+  parseIntervalMinutes,
+  parseOperatorLocalMinute,
+  reconcileCardStatus,
+  saveSchedule,
+  storageKey,
+  toLocalDateTimeInputValue,
+  validateEditorValues,
+} from "../../app/static/js/roll_change_countdown_core.mjs";
+
+const minute = 60_000;
+const localAt = (year, month, day, hour, minutes, seconds = 0) =>
+  new Date(year, month - 1, day, hour, minutes, seconds, 0).getTime();
+
+class MemoryStorage {
+  constructor() { this.values = new Map(); }
+  getItem(key) { return this.values.has(key) ? this.values.get(key) : null; }
+  setItem(key, value) { this.values.set(key, String(value)); }
+  removeItem(key) { this.values.delete(key); }
+}
+
+const runningSchedule = () => buildSchedule({
+  machineId: 2,
+  cardId: 22,
+  previousChangeAtMs: localAt(2026, 7, 27, 12, 0),
+  intervalMinutes: 120,
+  nextExpectedAtMs: localAt(2026, 7, 27, 14, 0),
+  status: "running",
+  nowMs: localAt(2026, 7, 27, 12, 0),
+});
+
+test("initial schedule calculation uses the entered two-hour interval", () => {
+  assert.equal(calculateNextExpected(localAt(2026, 7, 27, 12, 0), 120), localAt(2026, 7, 27, 14, 0));
+});
+
+test("initial schedule calculation crosses midnight with absolute local time", () => {
+  assert.equal(calculateNextExpected(localAt(2026, 7, 27, 23, 30), 120), localAt(2026, 7, 28, 1, 30));
+});
+
+test("early, on-time, and late acknowledgement all use the same anchor", () => {
+  for (const clickedAt of [
+    localAt(2026, 7, 27, 13, 50),
+    localAt(2026, 7, 27, 14, 0),
+    localAt(2026, 7, 27, 14, 20),
+  ]) {
+    assert.equal(advanceSchedule(runningSchedule(), "running", clickedAt).nextExpectedAtMs, localAt(2026, 7, 27, 16, 0));
+  }
+});
+
+test("late acknowledgement advances from expected time exactly once", () => {
+  const advanced = advanceSchedule(runningSchedule(), "running", localAt(2026, 7, 27, 14, 20));
+  assert.equal(advanced.previousChangeAtMs, localAt(2026, 7, 27, 14, 0));
+  assert.equal(advanced.nextExpectedAtMs, localAt(2026, 7, 27, 16, 0));
+});
+
+test("warning boundaries and rounded display use exact milliseconds", () => {
+  const schedule = runningSchedule();
+  assert.equal(countdownView(schedule, "running", schedule.nextExpectedAtMs - 5 * minute - 1).tone, "normal");
+  assert.equal(countdownView(schedule, "running", schedule.nextExpectedAtMs - 5 * minute).tone, "warning");
+  assert.equal(countdownView(schedule, "running", schedule.nextExpectedAtMs - minute - 1).tone, "warning");
+  assert.equal(countdownView(schedule, "running", schedule.nextExpectedAtMs - minute).tone, "urgent");
+  assert.equal(countdownView(schedule, "running", schedule.nextExpectedAtMs - 1).display, "00:01");
+  assert.deepEqual(
+    { display: countdownView(schedule, "running", schedule.nextExpectedAtMs + minute).display, due: countdownView(schedule, "running", schedule.nextExpectedAtMs + minute).due },
+    { display: "00:00", due: true },
+  );
+});
+
+test("pause, unresolved resume, and acknowledgement preserve the approved state machine", () => {
+  const pausedAt = localAt(2026, 7, 27, 13, 50);
+  const paused = reconcileCardStatus(runningSchedule(), "paused", pausedAt);
+  assert.equal(paused.frozenRemainingMs, 10 * minute);
+  assert.equal(paused.pauseNeedsResolution, true);
+  assert.equal(countdownView(paused, "paused", pausedAt + 30 * minute).display, "00:10");
+  assert.equal(countdownView(paused, "paused", pausedAt + 30 * minute).tone, "paused");
+
+  const resumed = reconcileCardStatus(paused, "running", pausedAt + 30 * minute);
+  assert.equal(countdownView(resumed, "running", pausedAt + 90 * minute).display, "00:10");
+  assert.equal(countdownView(resumed, "running", pausedAt + 90 * minute).tone, "resync");
+
+  const resolved = advanceSchedule(resumed, "running", pausedAt + 90 * minute);
+  assert.equal(resolved.nextExpectedAtMs, localAt(2026, 7, 27, 16, 0));
+  assert.equal(resolved.pauseNeedsResolution, false);
+  assert.equal(resolved.frozenRemainingMs, null);
+});
+
+test("paused due suppresses red but resumed unresolved due restores red", () => {
+  const schedule = runningSchedule();
+  const paused = reconcileCardStatus(schedule, "paused", schedule.nextExpectedAtMs);
+  assert.equal(countdownView(paused, "paused", schedule.nextExpectedAtMs + minute).tone, "paused");
+  assert.equal(countdownView(paused, "paused", schedule.nextExpectedAtMs + minute).display, "00:00");
+  const resumed = reconcileCardStatus(paused, "running", schedule.nextExpectedAtMs + 10 * minute);
+  assert.equal(countdownView(resumed, "running", schedule.nextExpectedAtMs + 20 * minute).tone, "urgent");
+});
+
+test("manual next override becomes the following acknowledgement anchor", () => {
+  const values = validateEditorValues({
+    previousValue: "2026-07-27T14:00", hoursValue: "2", minutesValue: "0", nextValue: "2026-07-27T16:30",
+  }, localAt(2026, 7, 27, 14, 20));
+  assert.equal(values.ok, true);
+  const schedule = buildSchedule({ machineId: 2, cardId: 22, ...values.value, status: "running", nowMs: localAt(2026, 7, 27, 14, 20) });
+  assert.equal(advanceSchedule(schedule, "running", localAt(2026, 7, 27, 16, 50)).nextExpectedAtMs, localAt(2026, 7, 27, 18, 30));
+});
+
+test("time-only values resolve to the most recent non-future local occurrence", () => {
+  const now = localAt(2026, 7, 28, 0, 10);
+  assert.equal(parseOperatorLocalMinute("23:55", now), localAt(2026, 7, 27, 23, 55));
+  assert.equal(parseOperatorLocalMinute("00:05", now), localAt(2026, 7, 28, 0, 5));
+});
+
+test("local input and labels preserve local calendar boundaries", () => {
+  const midnight = localAt(2026, 7, 28, 0, 5);
+  assert.equal(toLocalDateTimeInputValue(midnight), "2026-07-28T00:05");
+  assert.equal(formatNextExpected(localAt(2026, 7, 27, 23, 55), midnight), "27.07 23:55");
+  assert.equal(formatNextExpected(localAt(2026, 7, 28, 1, 30), midnight), "01:30");
+});
+
+test("editor rejects interval bounds, zero combined interval, impossible times, and reversed dates", () => {
+  assert.deepEqual(parseIntervalMinutes("24", "0"), { ok: false, errors: { hours: "Часовете трябва да са цяло число от 0 до 23." } });
+  assert.deepEqual(parseIntervalMinutes("2", "60"), { ok: false, errors: { minutes: "Минутите трябва да са цяло число от 0 до 59." } });
+  assert.deepEqual(parseIntervalMinutes("0", "0"), { ok: false, errors: { form: "Изберете интервал поне 1 минута." } });
+  assert.equal(parseOperatorLocalMinute("2026-02-30T12:00", localAt(2026, 2, 1, 0, 0)), null);
+  assert.deepEqual(
+    validateEditorValues({ previousValue: "2026-07-27T14:00", hoursValue: "2", minutesValue: "0", nextValue: "2026-07-27T14:00" }, localAt(2026, 7, 27, 14, 0)),
+    { ok: false, errors: { next: "Следващата смяна трябва да е след предишната." } },
+  );
+});
+
+test("paused acknowledgement retains a fresh frozen countdown and editor replacement resets pause resolution", () => {
+  const paused = reconcileCardStatus(runningSchedule(), "paused", localAt(2026, 7, 27, 13, 50));
+  const advanced = advanceSchedule(paused, "paused", localAt(2026, 7, 27, 14, 5));
+  assert.equal(advanced.frozenRemainingMs, 115 * minute);
+  assert.equal(advanced.pauseNeedsResolution, false);
+  const replacement = buildSchedule({
+    machineId: 2, cardId: 22, previousChangeAtMs: localAt(2026, 7, 27, 13, 0), intervalMinutes: 120,
+    nextExpectedAtMs: localAt(2026, 7, 27, 15, 0), status: "paused", nowMs: localAt(2026, 7, 27, 13, 30),
+  });
+  assert.equal(replacement.frozenRemainingMs, 90 * minute);
+  assert.equal(replacement.pauseNeedsResolution, false);
+});
+
+test("untrackable status clears a schedule and positive displays can exceed a day", () => {
+  assert.equal(reconcileCardStatus(runningSchedule(), "completed", localAt(2026, 7, 27, 12, 0)), null);
+  assert.equal(formatRemaining(25 * 60 * minute), "25:00");
+});
+
+test("storage rejects malformed, unsupported, wrong-card, and invalid intervals", () => {
+  const storage = new MemoryStorage();
+  const key = storageKey(2);
+  assert.equal(key, `${STORAGE_KEY_PREFIX}2`);
+  for (const raw of [
+    "not-json",
+    JSON.stringify({ ...runningSchedule(), schemaVersion: 2 }),
+    JSON.stringify({ ...runningSchedule(), cardId: 99 }),
+    JSON.stringify({ ...runningSchedule(), intervalMinutes: 0 }),
+  ]) {
+    storage.setItem(key, raw);
+    assert.equal(loadSchedule(storage, 2, 22), null);
+    assert.equal(storage.getItem(key), null);
+  }
+  saveSchedule(storage, runningSchedule());
+  assert.deepEqual(decodeSchedule(storage.getItem(key), 2, 22), runningSchedule());
+});
