@@ -112,7 +112,7 @@ const { chromium } = require("@playwright/test");
 const storagePrefix = "extrusion-terminal.roll-change.v1.machine.";
 const summaryPath = path.join(artifactDir, "verification-summary.json");
 const viewports = [
-  { width: 1536, height: 1024 },
+  { width: 1920, height: 768 },
   { width: 1366, height: 768 },
 ];
 const summary = {
