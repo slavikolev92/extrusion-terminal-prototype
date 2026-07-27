@@ -668,6 +668,10 @@ def test_terminal_normal_posts_are_blocked_without_active_shift(connection):
                 "confirm_roll_number": "1",
             },
         ),
+        (
+            f"/terminal/cards/{card_id}/rewinding-count",
+            {"loaded_version": str(version), "rewinding_roll_count": "4"},
+        ),
         (f"/terminal/cards/{card_id}/timing/start", {"loaded_version": str(version)}),
         (f"/terminal/cards/{card_id}/timing/pause", {"loaded_version": str(version)}),
         (f"/terminal/cards/{card_id}/timing/resume", {"loaded_version": str(version)}),

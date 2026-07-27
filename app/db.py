@@ -916,6 +916,32 @@ def fetch_cards_by_status(statuses: tuple[str, ...]) -> list[dict[str, Any]]:
         return rows_to_dicts(rows)
 
 
+def fetch_waiting_rewinding_cards() -> list[dict[str, Any]]:
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, order_number, delivery_date, status, machine_id, machine_sequence,
+                   customer, product_type, ordered_gross_kg, ordered_rolls,
+                   ordered_meters, ordered_units,
+                   product_form, material, size_thickness,
+                   tare_weight, rewinding_roll_count,
+                   final_extrusion_shift_occurrence_id,
+                   finished_at, version, updated_at,
+                   COALESCE((
+                       SELECT SUM(CAST(gross_weight AS NUMERIC))
+                       FROM roll_entries
+                       WHERE roll_entries.card_id = cards.id
+                         AND gross_weight IS NOT NULL
+                   ), 0) AS total_gross_weight
+            FROM cards
+            WHERE status = ?
+            ORDER BY finished_at DESC, id DESC
+            """,
+            (STATUS_AWAITING_REWINDING,),
+        ).fetchall()
+        return rows_to_dicts(rows)
+
+
 def terminal_snapshot(
     selected_card_id: int | None = None,
     *,

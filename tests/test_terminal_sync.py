@@ -7,7 +7,7 @@ import io
 from app import db
 from app.constants import STATUS_AWAITING_REWINDING, STATUS_COMPLETED, STATUS_IMPORTED
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
-from app.main import app, terminal_snapshot_route
+from app.main import app, terminal_context, terminal_snapshot_route
 
 
 def csv_bytes(*rows: dict[str, str]) -> bytes:
@@ -309,3 +309,70 @@ def test_terminal_snapshot_tracks_waiting_cards_and_roll_writes(connection, star
 
     assert cleared["signature"] != completed["signature"]
     assert completed["waiting_cards"] == []
+
+
+def test_waiting_rewinding_query_and_terminal_context_use_deterministic_display_rows(
+    connection,
+):
+    first_id = release_ready_card("25911", machine_id=1, machine_sequence=1)
+    second_id = release_ready_card("25912", machine_id=2, machine_sequence=1)
+    latest_id = release_ready_card("25913", machine_id=3, machine_sequence=1)
+    with db.connect() as setup_connection:
+        setup_connection.executemany(
+            """
+            UPDATE cards
+            SET status = ?,
+                finished_at = ?,
+                rewinding_roll_count = ?,
+                version = version + 1,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                (
+                    STATUS_AWAITING_REWINDING,
+                    "2026-07-26 10:00:00",
+                    None,
+                    "2026-07-26 10:00:00",
+                    first_id,
+                ),
+                (
+                    STATUS_AWAITING_REWINDING,
+                    "2026-07-26 10:00:00",
+                    4,
+                    "2026-07-26 10:00:00",
+                    second_id,
+                ),
+                (
+                    STATUS_AWAITING_REWINDING,
+                    "2026-07-26 11:00:00",
+                    7,
+                    "2026-07-26 11:00:00",
+                    latest_id,
+                ),
+            ),
+        )
+
+    waiting_rows = db.fetch_waiting_rewinding_cards()
+    context = terminal_context(selected_card_id=second_id)
+
+    assert [row["id"] for row in waiting_rows] == [latest_id, second_id, first_id]
+    assert waiting_rows[1]["customer"] == "Sync Customer"
+    assert waiting_rows[1]["product_type"] == "PE film"
+    assert waiting_rows[1]["size_thickness"] == "600/0.050"
+    assert waiting_rows[1]["material"] == "LDPE"
+    assert context["waiting_rewinding_count"] == 3
+    assert [row["id"] for row in context["waiting_rewinding_cards"]] == [
+        latest_id,
+        second_id,
+        first_id,
+    ]
+    assert [
+        row["rewinding_roll_count_label"]
+        for row in context["waiting_rewinding_cards"]
+    ] == ["7 ролки", "4 ролки", "0 ролки"]
+    selected_waiting = next(
+        row for row in context["waiting_rewinding_cards"] if row["id"] == second_id
+    )
+    assert selected_waiting["is_selected"] is True
+    assert selected_waiting["status_label"] == "Изчаква пренавиване"

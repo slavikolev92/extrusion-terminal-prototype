@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 
 import pytest
+from starlette.requests import Request
 
 from app import db
 from app.constants import (
@@ -17,6 +19,7 @@ from app.constants import (
     STATUS_RUNNING,
 )
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
+from app.main import app, finish_terminal_card, terminal_context
 
 
 REWINDING_COUNT_ERROR = (
@@ -167,6 +170,47 @@ def enter_rewinding_wait(card_id: int) -> None:
     assert card is not None
     assert db.finish_card(card_id, int(card["version"])).ok
     assert db.fetch_terminal_card_detail(card_id)["status"] == STATUS_AWAITING_REWINDING
+
+
+def make_test_request(path: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": path,
+            "headers": [],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 50000),
+            "app": app,
+        }
+    )
+
+
+def rewinding_count_endpoint():
+    route = next(
+        (
+            route
+            for route in app.routes
+            if getattr(route, "path", None)
+            == "/terminal/cards/{card_id}/rewinding-count"
+        ),
+        None,
+    )
+    assert route is not None, "rewinding-count route must be registered"
+    return route.endpoint
+
+
+def save_rewinding_count(card_id: int, loaded_version: str, raw_count: str):
+    return asyncio.run(
+        rewinding_count_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/rewinding-count"),
+            card_id,
+            loaded_version,
+            raw_count,
+        )
+    )
 
 
 @pytest.mark.parametrize(
@@ -901,3 +945,239 @@ def test_waiting_card_rejects_lifecycle_and_queue_actions(connection, active_tes
 
     assert all(not result.ok for result in results)
     assert stored_card(card_id) == before
+
+
+def test_terminal_rewinding_count_route_saves_positive_marker_and_redirects_to_selected_card(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("63101")
+    assert db.start_production_timing(card_id, int(card_state(card_id)["version"])).ok
+    loaded_version = int(card_state(card_id)["version"])
+
+    response = save_rewinding_count(card_id, str(loaded_version), " 12 ")
+    saved = card_state(card_id)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=rewinding_saved"
+    )
+    assert saved["rewinding_roll_count"] == 12
+    assert saved["version"] == loaded_version + 1
+
+
+@pytest.mark.parametrize("raw_count", ["", "   ", "0", "000"])
+def test_terminal_rewinding_count_route_clears_blank_or_zero_marker(
+    connection,
+    active_test_shift,
+    raw_count,
+):
+    card_id = release_ready_card(f"63102-{raw_count!r}")
+    assert db.start_production_timing(card_id, int(card_state(card_id)["version"])).ok
+    assert db.update_rewinding_roll_count(
+        card_id,
+        int(card_state(card_id)["version"]),
+        9,
+    ).ok
+
+    response = save_rewinding_count(
+        card_id,
+        str(card_state(card_id)["version"]),
+        raw_count,
+    )
+
+    assert response.status_code == 303
+    assert card_state(card_id)["rewinding_roll_count"] is None
+
+
+def test_terminal_rewinding_count_route_preserves_invalid_text_and_reopens_only_dialog(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("63103")
+    assert db.start_production_timing(card_id, int(card_state(card_id)["version"])).ok
+    before = card_state(card_id)
+
+    response = save_rewinding_count(card_id, str(before["version"]), " 12x ")
+    feedback = response.context["terminal_feedback"]
+
+    assert response.status_code == 200
+    assert response.context["selected_card"]["id"] == card_id
+    assert response.context["rewinding_result_value"] == " 12x "
+    assert feedback["errors"]["rewinding"] == (REWINDING_COUNT_ERROR,)
+    assert feedback["open_rewinding_dialog"] is True
+    assert feedback["refresh_required"] is False
+    assert card_state(card_id) == before
+
+
+@pytest.mark.parametrize("loaded_version", ["", "not-a-version"])
+def test_terminal_rewinding_count_route_treats_missing_or_invalid_version_as_reload(
+    connection,
+    active_test_shift,
+    loaded_version,
+):
+    card_id = release_ready_card(f"63104-{loaded_version or 'missing'}")
+    assert db.start_production_timing(card_id, int(card_state(card_id)["version"])).ok
+    before = card_state(card_id)
+
+    response = save_rewinding_count(card_id, loaded_version, "invalid-count")
+    feedback = response.context["terminal_feedback"]
+
+    assert response.status_code == 200
+    assert feedback["refresh_required"] is True
+    assert feedback["open_rewinding_dialog"] is False
+    assert feedback["errors"]["rewinding"] == ()
+    assert card_state(card_id) == before
+
+
+def test_terminal_rewinding_count_route_blocks_stale_write_with_reload_feedback(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("63105")
+    assert db.start_production_timing(card_id, int(card_state(card_id)["version"])).ok
+    loaded_version = int(card_state(card_id)["version"])
+    assert db.update_rewinding_roll_count(card_id, loaded_version, 3).ok
+
+    response = save_rewinding_count(card_id, str(loaded_version), "8")
+    feedback = response.context["terminal_feedback"]
+
+    assert response.status_code == 200
+    assert feedback["refresh_required"] is True
+    assert feedback["open_rewinding_dialog"] is False
+    assert card_state(card_id)["rewinding_roll_count"] == 3
+
+
+def test_terminal_rewinding_count_route_checks_active_shift_before_marker_parser(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("63106")
+    assert db.start_production_timing(card_id, int(card_state(card_id)["version"])).ok
+    before = card_state(card_id)
+    assert db.end_shift(
+        int(active_test_shift["id"]),
+        int(active_test_shift["version"]),
+    ).ok
+
+    response = save_rewinding_count(card_id, str(before["version"]), "invalid-count")
+    feedback = response.context["terminal_feedback"]
+
+    assert response.status_code == 200
+    assert feedback["errors"]["topbar"] == (db.NO_ACTIVE_SHIFT_MESSAGE,)
+    assert feedback["errors"]["rewinding"] == ()
+    assert feedback["open_rewinding_dialog"] is False
+    assert card_state(card_id) == before
+
+
+def test_terminal_rewinding_count_route_checks_terminal_availability_before_parser(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("63107")
+    assert db.cancel_card(card_id, int(card_state(card_id)["version"])).ok
+    before = stored_card(card_id)
+
+    response = save_rewinding_count(card_id, str(before["version"]), "invalid-count")
+
+    assert response.status_code == 200
+    assert response.context["terminal_feedback"]["refresh_required"] is True
+    assert response.context["terminal_feedback"]["open_rewinding_dialog"] is False
+    assert stored_card(card_id) == before
+
+
+def test_terminal_rewinding_count_route_rejects_completed_card_status(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("63108")
+    set_card_status(card_id, STATUS_COMPLETED)
+    before = card_state(card_id)
+
+    response = save_rewinding_count(card_id, str(before["version"]), "7")
+    feedback = response.context["terminal_feedback"]
+
+    assert response.status_code == 200
+    assert feedback["errors"]["rewinding"] == ("Картата не е намерена.",)
+    assert feedback["open_rewinding_dialog"] is True
+    assert card_state(card_id) == before
+
+
+def test_terminal_rewinding_saved_notice_is_concise_bulgarian_message(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("63109")
+
+    feedback = terminal_context(
+        card_id,
+        terminal_notice="rewinding_saved",
+    )["terminal_feedback"]
+
+    assert feedback["toast"] == {
+        "messages": ("Ролките за пренавиване са записани.",)
+    }
+
+
+def test_terminal_finish_active_rewinding_card_keeps_selection_and_uses_waiting_notice(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("63110")
+    assert db.start_production_timing(card_id, int(card_state(card_id)["version"])).ok
+    set_rewinding_marker(card_id, 4)
+
+    response = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            str(card_state(card_id)["version"]),
+        )
+    )
+    context = terminal_context(card_id, terminal_notice="card_awaiting_rewinding")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=card_awaiting_rewinding"
+    )
+    assert card_state(card_id)["status"] == STATUS_AWAITING_REWINDING
+    assert context["selected_card"]["id"] == card_id
+    assert context["terminal_feedback"]["toast"] == {
+        "messages": (
+            "Екструдирането е приключено. Картата изчаква пренавиване.",
+        )
+    }
+
+
+def test_terminal_finish_waiting_card_keeps_selection_in_produced_orders(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("63111")
+    assert db.start_production_timing(card_id, int(card_state(card_id)["version"])).ok
+    set_rewinding_marker(card_id, 4)
+    assert db.finish_card(card_id, int(card_state(card_id)["version"])).ok
+    assert db.update_tare_weight(card_id, int(card_state(card_id)["version"]), "1.00").ok
+    assert db.add_roll_gross_weight(card_id, int(card_state(card_id)["version"]), "20.00").ok
+
+    response = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            str(card_state(card_id)["version"]),
+        )
+    )
+    context = terminal_context(card_id, terminal_notice="card_finished")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=card_finished"
+    )
+    assert card_state(card_id)["status"] == STATUS_COMPLETED
+    assert context["selected_card"]["id"] == card_id
+    assert next(card for card in context["archive_cards"] if card["id"] == card_id)[
+        "is_selected"
+    ] is True
+    assert context["terminal_feedback"]["toast"] == {
+        "messages": ("Картата е приключена.",)
+    }

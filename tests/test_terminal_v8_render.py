@@ -1576,6 +1576,118 @@ def test_terminal_finish_confirmation_warns_only_for_mixed_saved_gross_roll_pall
         assert f'data-finish-confirm-message="{expected_question}"' in finish_form
 
 
+def test_terminal_finish_confirmation_keeps_mixed_pallet_warning_in_all_finish_contexts(
+    connection,
+):
+    direct_completion_id = release_ready_card(
+        "FINISH-CONTEXT-DIRECT",
+        machine_id=1,
+        sequence=1,
+    )
+    entering_wait_id = release_ready_card(
+        "FINISH-CONTEXT-ENTER-WAIT",
+        machine_id=2,
+        sequence=1,
+    )
+    completing_wait_id = release_ready_card(
+        "FINISH-CONTEXT-COMPLETE-WAIT",
+        machine_id=3,
+        sequence=1,
+    )
+    with db.connect() as db_connection:
+        db_connection.execute(
+            "UPDATE cards SET status = 'running' WHERE id = ?",
+            (direct_completion_id,),
+        )
+        db_connection.execute(
+            """
+            UPDATE cards
+            SET status = 'paused', rewinding_roll_count = 4
+            WHERE id = ?
+            """,
+            (entering_wait_id,),
+        )
+        db_connection.execute(
+            """
+            UPDATE cards
+            SET status = 'awaiting_rewinding', rewinding_roll_count = 4,
+                finished_at = '2026-07-26 10:00:00'
+            WHERE id = ?
+            """,
+            (completing_wait_id,),
+        )
+        for card_id, order_number in (
+            (direct_completion_id, "FINISH-CONTEXT-DIRECT"),
+            (entering_wait_id, "FINISH-CONTEXT-ENTER-WAIT"),
+            (completing_wait_id, "FINISH-CONTEXT-COMPLETE-WAIT"),
+        ):
+            db_connection.executemany(
+                """
+                INSERT INTO roll_entries (
+                    card_id, order_number, roll_number, gross_weight, pallet_number
+                )
+                VALUES (?, ?, ?, '50.00', ?)
+                """,
+                (
+                    (card_id, order_number, 1, None),
+                    (card_id, order_number, 2, 7),
+                ),
+            )
+
+    expected = (
+        "В поръчката има 1 ролка без палет. "
+        "Искате ли да приключите поръчката?"
+    )
+    contexts = {
+        "direct completion": terminal_context(direct_completion_id),
+        "enter rewinding wait": terminal_context(entering_wait_id),
+        "complete rewinding wait": terminal_context(completing_wait_id),
+    }
+
+    assert {
+        name: context["selected_card"]["finish_confirmation_message"]
+        for name, context in contexts.items()
+    } == {name: expected for name in contexts}
+
+
+def test_terminal_finish_confirmation_is_generic_for_no_all_blank_or_all_assigned_rolls(
+    connection,
+):
+    card_id = release_ready_card(
+        "FINISH-CONTEXT-GENERIC",
+        machine_id=1,
+        sequence=1,
+    )
+    with db.connect() as db_connection:
+        db_connection.execute(
+            "UPDATE cards SET status = 'paused' WHERE id = ?",
+            (card_id,),
+        )
+    no_rolls = terminal_context(card_id)["selected_card"]["finish_confirmation_message"]
+
+    with db.connect() as db_connection:
+        db_connection.executemany(
+            """
+            INSERT INTO roll_entries (
+                card_id, order_number, roll_number, gross_weight, pallet_number
+            )
+            VALUES (?, 'FINISH-CONTEXT-GENERIC', ?, '50.00', NULL)
+            """,
+            ((card_id, 1), (card_id, 2)),
+        )
+    all_blank = terminal_context(card_id)["selected_card"]["finish_confirmation_message"]
+
+    with db.connect() as db_connection:
+        db_connection.execute(
+            "UPDATE roll_entries SET pallet_number = 7 WHERE card_id = ?",
+            (card_id,),
+        )
+    all_assigned = terminal_context(card_id)["selected_card"]["finish_confirmation_message"]
+
+    expected = "Сигурни ли сте, че искате да приключите тази поръчка?"
+    assert (no_rolls, all_blank, all_assigned) == (expected, expected, expected)
+
+
 def test_terminal_finish_pallet_confirmation_script_uses_selected_message_and_simple_actions(
     connection,
 ):

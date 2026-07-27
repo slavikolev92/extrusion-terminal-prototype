@@ -18,6 +18,7 @@ from .constants import (
     ACTIVE_TERMINAL_STATUSES,
     CARD_STATUSES,
     STATUS_LABELS,
+    STATUS_AWAITING_REWINDING,
     STATUS_IMPORTED,
     STATUS_PENDING,
     TERMINAL_ARCHIVE_STATUSES,
@@ -48,6 +49,7 @@ from .db import (
     fetch_terminal_configuration,
     fetch_terminal_shift_page_state,
     fetch_terminal_card_detail,
+    fetch_waiting_rewinding_cards,
     fetch_machine_queues,
     fetch_machines,
     fetch_recent_import_batches,
@@ -56,6 +58,7 @@ from .db import (
     finish_card,
     init_db,
     pause_production_timing,
+    parse_rewinding_roll_count,
     release_card,
     resume_production_timing,
     restore_cancelled_card,
@@ -69,6 +72,7 @@ from .db import (
     update_admin_timing_ledger,
     update_card_planning,
     update_current_pallet_number,
+    update_rewinding_roll_count,
     update_roll_defaults,
     update_roll_gross_weight,
     update_roll_weight,
@@ -110,6 +114,7 @@ TERMINAL_NOTICE_MESSAGES = {
     "tare_saved": ("Шпула е записана.",),
     "roll_defaults_saved": ("Данните са записани.",),
     "pallet_saved": ("Палетът е записан.",),
+    "rewinding_saved": ("Ролките за пренавиване са записани.",),
     "roll_saved": ("Ролката е записана.",),
     "rolls_saved": ("Ролките са записани.",),
     "roll_updated": ("Ролката е коригирана.",),
@@ -118,6 +123,9 @@ TERMINAL_NOTICE_MESSAGES = {
     "timing_paused": ("Времето е паузирано.",),
     "timing_resumed": ("Времето е продължено.",),
     "card_finished": ("Картата е приключена.",),
+    "card_awaiting_rewinding": (
+        "Екструдирането е приключено. Картата изчаква пренавиване.",
+    ),
     "shift_changed": ("Номерът на смяната е коригиран.",),
 }
 
@@ -1923,6 +1931,41 @@ async def save_current_pallet_number(
     )
 
 
+@app.post("/terminal/cards/{card_id}/rewinding-count")
+async def save_rewinding_roll_count(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(""),
+    rewinding_roll_count: str = Form(""),
+):
+    parsed_version, rewinding_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        rewinding_result = validate_terminal_card_available_for_post(card_id)
+        if rewinding_result.ok:
+            parsed_count, parse_error = parse_rewinding_roll_count(
+                rewinding_roll_count
+            )
+            if parse_error:
+                rewinding_result = RuleResult(False, (parse_error,))
+            else:
+                rewinding_result = update_rewinding_roll_count(
+                    card_id,
+                    parsed_version,
+                    parsed_count,
+                    require_active_shift=True,
+                )
+
+    return terminal_post_response(
+        request,
+        card_id,
+        "rewinding_result",
+        rewinding_result,
+        notice_code="rewinding_saved",
+        rewinding_result_value=rewinding_roll_count,
+        rewinding_dialog_open=True,
+    )
+
+
 @app.post("/terminal/cards/{card_id}/rolls")
 async def add_roll_weight(
     request: Request,
@@ -2184,6 +2227,7 @@ async def finish_terminal_card(
     card_id: int,
     loaded_version: str = Form(...),
 ):
+    notice_code = "card_finished"
     parsed_version, workflow_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
         workflow_result = validate_terminal_card_available_for_post(card_id)
@@ -2193,13 +2237,20 @@ async def finish_terminal_card(
                 parsed_version,
                 require_active_shift=True,
             )
+            if workflow_result.ok:
+                updated_card = fetch_terminal_card_detail(card_id)
+                if (
+                    updated_card is not None
+                    and updated_card["status"] == STATUS_AWAITING_REWINDING
+                ):
+                    notice_code = "card_awaiting_rewinding"
 
     return terminal_post_response(
         request,
         card_id,
         "workflow_result",
         workflow_result,
-        notice_code="card_finished",
+        notice_code=notice_code,
     )
 
 
@@ -2405,6 +2456,14 @@ def terminal_context(
             fetch_cards_by_status(TERMINAL_ARCHIVE_STATUSES),
         )
     ]
+    waiting_rewinding_cards = [
+        enrich_terminal_list_card(card, selected_card)
+        for card in fetch_waiting_rewinding_cards()
+    ]
+    for card in waiting_rewinding_cards:
+        card["rewinding_roll_count_label"] = (
+            f"{card.get('rewinding_roll_count') or 0} ролки"
+        )
     try:
         requested_shift_page = int(shift_page or 1)
     except (TypeError, ValueError):
@@ -2432,6 +2491,8 @@ def terminal_context(
         "machine_queues": enriched_queues,
         "active_cards": active_cards,
         "archive_cards": archive_cards,
+        "waiting_rewinding_cards": waiting_rewinding_cards,
+        "waiting_rewinding_count": len(waiting_rewinding_cards),
         "selected_card": selected_card,
         "selected_machine_id": selected_machine_id,
         "terminal_snapshot": terminal_snapshot,
@@ -2589,7 +2650,9 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
         "toast": None,
         "scroll_rolls_to_bottom": False,
         "open_roll_corrections": False,
+        "open_rewinding_dialog": False,
         "refresh_required": False,
+        "rewinding_result_value": results.get("rewinding_result_value", ""),
         "roll_delete_selected_roll_id": results.get("roll_delete_selected_roll_id"),
         "errors": {
             "tare": (),
@@ -2597,6 +2660,7 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
             "new_roll": (),
             "roll_corrections": (),
             "roll_delete": (),
+            "rewinding": (),
             "roll_rows": {},
             "material": (),
             "topbar": (),
@@ -2613,6 +2677,7 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
         ("workflow_result", "topbar"),
         ("timing_result", "topbar"),
         ("material_result", "material"),
+        ("rewinding_result", "rewinding"),
         ("roll_result", terminal_roll_feedback_target(results)),
     ):
         result = results.get(result_name)
@@ -2639,6 +2704,10 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
 
         if target == "roll_corrections":
             feedback["open_roll_corrections"] = True
+        if target == "rewinding":
+            feedback["open_rewinding_dialog"] = bool(
+                results.get("rewinding_dialog_open", True)
+            )
 
         if target == "roll_row":
             roll_id = results.get("roll_result_roll_id")
