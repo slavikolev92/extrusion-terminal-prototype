@@ -6,6 +6,7 @@ import {
   clearMismatchedSchedules,
   clearSchedule,
   countdownView,
+  decodeSchedule,
   joinLocalDateTimeParts,
   parseIntervalMinutes,
   parseOperatorLocalMinute,
@@ -20,6 +21,8 @@ import {
 
 const TRACKABLE = new Set(["running", "paused"]);
 const TONE_CLASSES = ["normal", "warning", "urgent", "paused", "resync"];
+const LIFECYCLE_STORAGE_VERSION = 1;
+const LIFECYCLE_STORAGE_KEY_PREFIX = "extrusion-terminal.roll-change-lifecycle.v1.machine.";
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "input:not([disabled])",
@@ -56,6 +59,9 @@ export function bootstrapRollChangeCountdown({
   const openControl = controls?.querySelector("[data-roll-change-open]") ?? null;
   const controlValue = controls?.querySelector("[data-roll-change-control-value]") ?? null;
   const advanceControl = controls?.querySelector("[data-roll-change-advance]") ?? null;
+  const reloadAlert = documentObject.querySelector("[data-roll-change-reload-alert]");
+  const reloadStatus = reloadAlert?.querySelector("[data-roll-change-reload-status]") ?? null;
+  const reloadControl = reloadAlert?.querySelector("[data-roll-change-reload]") ?? null;
 
   const overlay = documentObject.querySelector("[data-roll-change-overlay]");
   const dialog = overlay?.querySelector("[data-roll-change-dialog]") ?? null;
@@ -102,6 +108,65 @@ export function bootstrapRollChangeCountdown({
     return readSchedule(storage, machineId, cardId);
   }
 
+  function lifecycleStorageKey(machineId) {
+    return `${LIFECYCLE_STORAGE_KEY_PREFIX}${machineId}`;
+  }
+
+  function decodeLifecycleRecord(raw, machineId) {
+    if (typeof raw !== "string") return null;
+    try {
+      const record = JSON.parse(raw);
+      if (
+        record?.schemaVersion !== LIFECYCLE_STORAGE_VERSION
+        || record.machineId !== machineId
+        || !(record.cardId === null || (Number.isSafeInteger(record.cardId) && record.cardId > 0))
+        || typeof record.status !== "string"
+      ) return null;
+      return record;
+    } catch {
+      return null;
+    }
+  }
+
+  function publishLifecycleContexts() {
+    for (const [machineId, context] of contexts) {
+      const record = {
+        schemaVersion: LIFECYCLE_STORAGE_VERSION,
+        machineId,
+        cardId: Number.isSafeInteger(context.cardId) && context.cardId > 0
+          ? context.cardId
+          : null,
+        status: context.status,
+      };
+      const key = lifecycleStorageKey(machineId);
+      const serialized = JSON.stringify(record);
+      if (storage.getItem(key) !== serialized) storage.setItem(key, serialized);
+    }
+  }
+
+  function requireLifecycleReload(status) {
+    const alreadyRequired = lifecycleReloadRequired;
+    lifecycleReloadRequired = true;
+    synchronizedSelectedStatus = TRACKABLE.has(status) ? status : null;
+    closeEditor({ restoreFocus: false });
+    if (openControl) openControl.disabled = true;
+    if (advanceControl) advanceControl.disabled = true;
+    if (reloadAlert) {
+      reloadAlert.hidden = false;
+      reloadAlert.dataset.synchronizedStatus = synchronizedSelectedStatus ?? "ended";
+    }
+    if (reloadStatus) {
+      if (synchronizedSelectedStatus === "paused") {
+        reloadStatus.textContent = "Текущото състояние е пауза. Презаредете картата, преди да продължите.";
+      } else if (synchronizedSelectedStatus === "running") {
+        reloadStatus.textContent = "Текущото състояние е работа. Презаредете картата, преди да продължите.";
+      } else {
+        reloadStatus.textContent = "Картата вече не е активна на машината. Презаредете, преди да продължите.";
+      }
+    }
+    if (!alreadyRequired) reloadControl?.focus();
+  }
+
   function hasNonMatchingStoredRecord(machineId, cardId) {
     if (!Number.isSafeInteger(machineId) || machineId <= 0) return false;
     return (
@@ -145,6 +210,9 @@ export function bootstrapRollChangeCountdown({
       controlValue.textContent = "Смяна на ролка";
       advanceControl.hidden = true;
       openControl.classList.remove(...TONE_CLASSES);
+      if (lifecycleReloadRequired && renderedStatus === "paused") {
+        openControl.classList.add("paused");
+      }
       openControl.setAttribute("aria-label", `Настрой смяна на ролките за машина ${selectedMachineId}`);
       return;
     }
@@ -427,18 +495,37 @@ export function bootstrapRollChangeCountdown({
   }
 
   function handleStorage(event) {
+    if (event.key === lifecycleStorageKey(selectedMachineId)) {
+      const lifecycle = decodeLifecycleRecord(event.newValue, selectedMachineId);
+      if (!lifecycle) return;
+      if (
+        lifecycleReloadRequired
+        || lifecycle.cardId !== selectedCardId
+        || lifecycle.status !== selectedStatus
+      ) {
+        requireLifecycleReload(
+          lifecycle.cardId === selectedCardId ? lifecycle.status : null,
+        );
+      }
+      renderAll();
+      return;
+    }
     if (!event.key?.startsWith(STORAGE_KEY_PREFIX)) return;
     if (event.key === `${STORAGE_KEY_PREFIX}${selectedMachineId}`) {
+      if (
+        event.newValue === null
+        && decodeSchedule(event.oldValue, selectedMachineId, selectedCardId)
+      ) {
+        requireLifecycleReload(null);
+        renderAll();
+        return;
+      }
       const schedule = matchingSchedule(selectedMachineId, selectedCardId);
       if (
         schedule
         && (lifecycleReloadRequired || schedule.observedStatus !== selectedStatus)
       ) {
-        lifecycleReloadRequired = true;
-        synchronizedSelectedStatus = schedule.observedStatus;
-        closeEditor({ restoreFocus: false });
-        if (openControl) openControl.disabled = true;
-        if (advanceControl) advanceControl.disabled = true;
+        requireLifecycleReload(schedule.observedStatus);
       }
     }
     renderAll();
@@ -449,6 +536,7 @@ export function bootstrapRollChangeCountdown({
   for (const [machineId, context] of contexts) {
     reconcileAndPersist(machineId, context, bootstrapMs);
   }
+  publishLifecycleContexts();
   renderAll();
 
   listen(openControl, "click", openEditor);

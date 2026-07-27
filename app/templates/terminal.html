@@ -878,6 +878,8 @@
       box-shadow: 0 1px 2px rgba(16, 24, 40, .05);
     }
 
+    .refresh-alert[hidden] { display: none; }
+
     .refresh-alert-text {
       min-width: 0;
       display: grid;
@@ -4132,6 +4134,20 @@
                 {% endfor %}
               </div>
             </div>
+          </div>
+        {% endif %}
+
+        {% if selected_card and selected_card_is_machine_focus and selected_card.status in ["running", "paused"] %}
+          <div class="refresh-alert" data-roll-change-reload-alert role="alert"
+               aria-live="assertive" aria-atomic="true" hidden>
+            <div class="refresh-alert-text">
+              <div class="refresh-alert-title">Данните са променени</div>
+              <div class="refresh-alert-body" data-roll-change-reload-status>
+                Състоянието на картата се промени в друг прозорец. Презаредете, преди да продължите.
+              </div>
+            </div>
+            <a class="refresh-link" href="/terminal/cards/{{ selected_card.id }}"
+               data-roll-change-reload>Презареди</a>
           </div>
         {% endif %}
 

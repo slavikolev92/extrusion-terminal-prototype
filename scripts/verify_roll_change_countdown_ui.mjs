@@ -446,7 +446,8 @@ async function assertRollValueVerticalCenters(page) {
 
 
 async function assertLayoutAndInactiveState(page, viewport) {
-  await removeSchedule(page, 1);
+  await removeSchedule(page, 1, false);
+  await navigate(page, fixture.cards.machine_1_running);
   const open = page.locator("[data-roll-change-open]");
   const quick = page.locator("[data-roll-change-advance]");
   assertEqual(normalized(await page.locator("[data-roll-change-control-value]").textContent()), "Смяна на ролка", "inactive selected control label");
@@ -1116,17 +1117,34 @@ async function capturedStorageEvents(page) {
 }
 
 
+async function captureScheduleRemovalState(page, machineId) {
+  await page.evaluate((key) => {
+    window.__rollChangeRemovalStates = [];
+    window.addEventListener("storage", (event) => {
+      if (event.key !== key || event.newValue !== null || event.oldValue === null) return;
+      const alert = document.querySelector("[data-roll-change-reload-alert]");
+      const reload = document.querySelector("[data-roll-change-reload]");
+      window.__rollChangeRemovalStates.push({
+        alertVisible: Boolean(alert && !alert.hidden),
+        editorHidden: Boolean(document.querySelector("[data-roll-change-overlay]")?.hidden),
+        openDisabled: Boolean(document.querySelector("[data-roll-change-open]")?.disabled),
+        quickDisabled: Boolean(document.querySelector("[data-roll-change-advance]")?.disabled),
+        reloadFocused: document.activeElement === reload,
+      });
+    });
+  }, storageKey(machineId));
+}
+
+
+async function capturedScheduleRemovalStates(page) {
+  return page.evaluate(() => window.__rollChangeRemovalStates || []);
+}
+
+
 async function assertTwoTabLifecycleAndReplacementStorage(context, page, mutationRequests, viewport) {
   await navigate(page, fixture.cards.machine_3_running);
-  const initial = schedule({
-    machineId: 3,
-    cardId: fixture.cards.machine_3_running,
-    previousChangeAtMs: Date.now() - 20 * 60_000,
-    intervalMinutes: 30,
-    nextExpectedAtMs: Date.now() + 10 * 60_000,
-    status: "running",
-  });
-  await writeSchedule(page, initial);
+  await removeSchedule(page, 3, false);
+  assertEqual(await rawSchedule(page, 3), null, "schedule-free lifecycle precondition");
 
   const stale = await context.newPage();
   instrumentPage(stale, mutationRequests);
@@ -1134,36 +1152,56 @@ async function assertTwoTabLifecycleAndReplacementStorage(context, page, mutatio
   await captureStorageEvents(stale, 3);
   await stale.locator("[data-roll-change-open]").click();
   assert(await stale.locator("[data-roll-change-overlay]").isVisible(), "Stale-tab editor precondition did not open.");
+  const staleMinute = Math.floor(Date.now() / 60_000) * 60_000;
+  await setDateTimeControl(stale, "previous", staleMinute - 5 * 60_000);
+  await setIntervalControl(stale, 0, 30);
+  await setDateTimeControl(stale, "next", staleMinute + 25 * 60_000);
 
   await submitFormAndWait(page, 'form[action$="/timing/pause"]');
-  const paused = await readSchedule(page, 3);
-  assertEqual(paused.observedStatus, "paused", "fresh paused tab stored status");
-  await stale.waitForFunction(() => document.querySelector("[data-roll-change-open]")?.disabled === true);
+  assertEqual(await rawSchedule(page, 3), null, "schedule-free remote pause storage");
+  await stale.waitForFunction(
+    () => document.querySelector("[data-roll-change-reload-alert]")?.hidden === false,
+    null,
+    { timeout: 3_000 },
+  );
+  const reloadAlert = stale.locator("[data-roll-change-reload-alert]");
+  const reloadAction = stale.locator("[data-roll-change-reload]");
   assert(await stale.locator("[data-roll-change-overlay]").isHidden(), "Remote pause did not close the stale-tab editor.");
   assert(await stale.locator("[data-roll-change-open]").isDisabled(), "Remote pause did not disable the stale-tab editor action.");
   assert(await stale.locator("[data-roll-change-advance]").isDisabled(), "Remote pause did not disable stale-tab quick acknowledgement.");
-  assert(await stale.locator("[data-roll-change-open]").evaluate((element) => element.classList.contains("paused")), "Stale tab did not render the remotely observed paused state.");
-  assertEqual(
-    normalized(await stale.locator("[data-roll-change-control-value]").textContent()),
-    normalized(await page.locator("[data-roll-change-control-value]").textContent()),
-    "stale-tab synchronized paused countdown",
-  );
-  await assertStableSchedule(page, 3, paused, "stale running tab after pause", 1_250);
-  assertEqual((await capturedStorageEvents(stale)).length, 1, "pause storage-event write count");
+  assert(await stale.locator("[data-roll-change-open]").evaluate((element) => element.classList.contains("paused")), "Schedule-free stale tab did not expose the remotely observed paused state.");
+  assert(await reloadAlert.isVisible(), "Remote pause did not expose the reload-required notice.");
+  assertEqual(await reloadAlert.getAttribute("role"), "alert", "reload-required notice role");
+  assertEqual(await reloadAlert.getAttribute("aria-live"), "assertive", "reload-required notice live priority");
+  assert(normalized(await reloadAlert.textContent()).includes("пауза"), "Reload-required notice omitted synchronized paused state.");
+  assert(await reloadAction.isEnabled(), "Reload-required action is not enabled.");
+  assert(await reloadAction.evaluate((element) => document.activeElement === element), "Remote pause did not move focus to the reload action.");
+  await stale.locator("[data-roll-change-form]").evaluate((form) => form.requestSubmit());
+  assertEqual(await rawSchedule(stale, 3), null, "stale schedule-free editor recreation after pause");
+  assertEqual((await capturedStorageEvents(stale)).length, 0, "schedule-free pause schedule-event count");
 
   await submitFormAndWait(page, 'form[action$="/timing/resume"]');
-  const resumed = await readSchedule(page, 3);
-  assertEqual(resumed.observedStatus, "running", "fresh resumed tab stored status");
+  await stale.waitForFunction(
+    () => document.querySelector("[data-roll-change-reload-alert]")?.dataset.synchronizedStatus === "running",
+  );
+  assertEqual(await rawSchedule(page, 3), null, "schedule-free remote resume storage");
   assert(await stale.locator("[data-roll-change-open]").isDisabled(), "Stale-tab editor action was re-enabled before reload.");
   assert(await stale.locator("[data-roll-change-advance]").isDisabled(), "Stale-tab quick acknowledgement was re-enabled before reload.");
-  await assertStableSchedule(page, 3, resumed, "stale running tab after resume", 1_250);
-  assertEqual((await capturedStorageEvents(stale)).length, 2, "pause/resume storage-event write count");
+  assert(normalized(await reloadAlert.textContent()).includes("работа"), "Reload-required notice omitted synchronized running state.");
+  assertEqual((await capturedStorageEvents(stale)).length, 0, "schedule-free pause/resume schedule-event count");
 
   await navigate(page, fixture.cards.machine_1_running);
   await navigate(stale, fixture.cards.machine_1_running);
   const now = Date.now();
   await writeSchedule(page, schedule({ machineId: 1, cardId: fixture.cards.machine_1_running, previousChangeAtMs: now - 20 * 60_000, intervalMinutes: 30, nextExpectedAtMs: now + 10 * 60_000, status: "running" }));
   await captureStorageEvents(stale, 1);
+  await captureScheduleRemovalState(stale, 1);
+  await stale.locator("[data-roll-change-open]").click();
+  assert(await stale.locator("[data-roll-change-overlay]").isVisible(), "Finish stale-editor precondition did not open.");
+  const finishMinute = Math.floor(Date.now() / 60_000) * 60_000;
+  await setDateTimeControl(stale, "previous", finishMinute - 5 * 60_000);
+  await setIntervalControl(stale, 0, 30);
+  await setDateTimeControl(stale, "next", finishMinute + 25 * 60_000);
   await page.locator('form[data-lifecycle-slot="finish"] button[type="submit"]').click();
   assert(await page.locator("[data-finish-confirm-modal]").isVisible(), "Finish confirmation did not open.");
   await Promise.all([
@@ -1171,6 +1209,22 @@ async function assertTwoTabLifecycleAndReplacementStorage(context, page, mutatio
     page.locator("[data-finish-confirm-submit]").click(),
   ]);
   assertEqual(await rawSchedule(page, 1), null, "finish storage cleanup");
+  await stale.waitForFunction(() => (window.__rollChangeRemovalStates || []).length > 0);
+  const [removalState] = await capturedScheduleRemovalStates(stale);
+  assert(removalState.alertVisible, "Selected-card schedule removal did not expose reload notice immediately.");
+  assert(removalState.editorHidden, "Selected-card schedule removal did not close the stale editor immediately.");
+  assert(removalState.openDisabled, "Selected-card schedule removal did not disable stale editor action immediately.");
+  assert(removalState.quickDisabled, "Selected-card schedule removal did not disable stale quick action immediately.");
+  assert(removalState.reloadFocused, "Selected-card schedule removal did not focus reload action immediately.");
+  assertEqual(
+    await stale.locator("[data-roll-change-reload-alert]").getAttribute("data-synchronized-status"),
+    "ended",
+    "finished stale-tab synchronized status",
+  );
+  await stale.locator("[data-roll-change-form]").evaluate((form) => form.requestSubmit());
+  await stale.locator("[data-roll-change-clear]").evaluate((control) => control.click());
+  await stale.locator("[data-roll-change-advance]").evaluate((control) => control.click());
+  assertEqual(await rawSchedule(stale, 1), null, "finished stale editor recreated old schedule key");
   const machineOne = page.locator('[data-roll-change-machine][data-machine-id="1"]');
   assertEqual(Number(await machineOne.getAttribute("data-card-id")), fixture.cards.machine_1_follow_up, "replacement machine focus");
   assertEqual(await machineOne.getAttribute("data-card-status"), "pending", "replacement machine status");
@@ -1198,20 +1252,14 @@ async function assertTwoTabLifecycleAndReplacementStorage(context, page, mutatio
   await stale.locator("[data-roll-change-advance]").evaluate((control) => control.click());
   await assertStableSchedule(page, 1, nextOrder, "stale old-card quick acknowledgement");
 
-  await stale.locator("[data-roll-change-open]").click();
-  const staleMinute = Math.floor(Date.now() / 60_000) * 60_000;
-  await setDateTimeControl(stale, "previous", staleMinute - 5 * 60_000);
-  await setIntervalControl(stale, 0, 30);
-  await setDateTimeControl(stale, "next", staleMinute + 25 * 60_000);
-  await stale.locator("[data-roll-change-form] button[type='submit']").click();
+  await stale.locator("[data-roll-change-form]").evaluate((form) => form.requestSubmit());
   await assertStableSchedule(page, 1, nextOrder, "stale old-card editor save");
 
-  await stale.locator("[data-roll-change-open]").click();
-  await stale.locator("[data-roll-change-clear]").click();
+  await stale.locator("[data-roll-change-clear]").evaluate((control) => control.click());
   await assertStableSchedule(page, 1, nextOrder, "stale old-card clear action");
   assertEqual((await capturedStorageEvents(stale)).length, 4, "replacement storage-event count");
   await stale.close();
-  passed(`${viewport.width}x${viewport.height}: stale-tab pause/resume stability, finish cleanup, and next-card ownership`);
+  passed(`${viewport.width}x${viewport.height}: schedule-free lifecycle latch, finish-removal focus, and next-card ownership`);
 }
 
 
