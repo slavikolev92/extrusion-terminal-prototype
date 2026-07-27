@@ -1943,6 +1943,14 @@ def add_timing_segment(
         if not version_result.ok:
             return version_result
 
+        final_state_result = validate_individual_timing_final_state(
+            connection,
+            card,
+            appended_ended_at=(parsed["ended_at"],),
+        )
+        if not final_state_result.ok:
+            return final_state_result
+
         invariant_result = validate_timing_segment_change(
             connection=connection,
             card=card,
@@ -2006,6 +2014,15 @@ def update_timing_segment(
         if not segment:
             return RuleResult(False, ("Времевият сегмент не е намерен.",))
 
+        final_state_result = validate_individual_timing_final_state(
+            connection,
+            card,
+            exclude_segment_id=segment_id,
+            appended_ended_at=(parsed["ended_at"],),
+        )
+        if not final_state_result.ok:
+            return final_state_result
+
         invariant_result = validate_timing_segment_change(
             connection=connection,
             card=card,
@@ -2065,26 +2082,17 @@ def delete_timing_segment(card_id: int, segment_id: int, loaded_version: int) ->
         if not segment:
             return RuleResult(False, ("Времевият сегмент не е намерен.",))
 
+        final_state_result = validate_individual_timing_final_state(
+            connection,
+            card,
+            exclude_segment_id=segment_id,
+        )
+        if not final_state_result.ok:
+            return final_state_result
+
         delete_result = validate_timing_segment_delete(connection, card, segment_id)
         if not delete_result.ok:
             return delete_result
-
-        if card["status"] in EXTRUSION_ENDED_STATUSES:
-            segment_count = int(
-                connection.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM production_time_segments
-                    WHERE card_id = ?
-                    """,
-                    (card_id,),
-                ).fetchone()[0]
-            )
-            if segment_count <= 1:
-                return RuleResult(
-                    False,
-                    ("Завършените карти трябва да запазят поне един времеви сегмент.",),
-                )
 
         connection.execute(
             """
@@ -2481,6 +2489,41 @@ def validate_timing_segment_change(
         if overlap:
             return RuleResult(False, ("Времевите сегменти не могат да се застъпват.",))
 
+    return RuleResult(True)
+
+
+def validate_individual_timing_final_state(
+    connection: sqlite3.Connection,
+    card: sqlite3.Row,
+    *,
+    exclude_segment_id: int | None = None,
+    appended_ended_at: tuple[str | None, ...] = (),
+) -> RuleResult:
+    if str(card["status"]) not in EXTRUSION_ENDED_STATUSES:
+        return RuleResult(True)
+
+    query = """
+        SELECT ended_at
+        FROM production_time_segments
+        WHERE card_id = ?
+    """
+    values: list[Any] = [int(card["id"])]
+    if exclude_segment_id is not None:
+        query += " AND id <> ?"
+        values.append(exclude_segment_id)
+    final_ended_at = [row["ended_at"] for row in connection.execute(query, values)]
+    final_ended_at.extend(appended_ended_at)
+
+    if any(ended_at is None for ended_at in final_ended_at):
+        return RuleResult(
+            False,
+            ("Само карти в изработване могат да имат отворен времеви сегмент.",),
+        )
+    if not final_ended_at:
+        return RuleResult(
+            False,
+            ("Завършените карти трябва да запазят поне един времеви сегмент.",),
+        )
     return RuleResult(True)
 
 

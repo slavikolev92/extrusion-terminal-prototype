@@ -1385,6 +1385,88 @@ def test_waiting_individual_timing_corrections_recompute_finished_at(connection)
     assert after_delete["status"] == STATUS_AWAITING_REWINDING
 
 
+def prepare_waiting_card_with_malformed_open_timing(connection, order_number: str) -> int:
+    card_id = prepare_waiting_timing_card(connection, order_number)
+    segments = db.fetch_admin_card_detail(card_id)["timing_segments"]
+    connection.execute(
+        "DELETE FROM production_time_segments WHERE id = ?",
+        (segments[1]["id"],),
+    )
+    connection.execute(
+        """
+        INSERT INTO production_time_segments (card_id, started_at)
+        VALUES (?, '2026-07-26 12:00:00')
+        """,
+        (card_id,),
+    )
+    connection.commit()
+    return card_id
+
+
+def waiting_timing_state(card_id: int) -> tuple[object, ...]:
+    card = db.fetch_admin_card_detail(card_id)
+    return (
+        card["status"],
+        card["version"],
+        card["first_started_at"],
+        card["finished_at"],
+        card["timing_segments"],
+    )
+
+
+def test_waiting_individual_timing_add_rejects_an_existing_open_segment(connection):
+    card_id = prepare_waiting_card_with_malformed_open_timing(connection, "26063")
+    before = waiting_timing_state(card_id)
+
+    result = db.add_timing_segment(
+        card_id,
+        db.fetch_admin_card_detail(card_id)["version"],
+        "2026-07-26 14:00:00",
+        "2026-07-26 15:00:00",
+        "correction",
+    )
+
+    assert not result.ok
+    assert waiting_timing_state(card_id) == before
+
+
+def test_waiting_individual_timing_edit_rejects_an_existing_open_segment(connection):
+    card_id = prepare_waiting_card_with_malformed_open_timing(connection, "26064")
+    card = db.fetch_admin_card_detail(card_id)
+    closed_segment = card["timing_segments"][0]
+    before = waiting_timing_state(card_id)
+
+    result = db.update_timing_segment(
+        card_id,
+        closed_segment["id"],
+        card["version"],
+        closed_segment["started_at"],
+        "2026-07-26 10:00:00",
+        "correction",
+    )
+
+    assert not result.ok
+    assert waiting_timing_state(card_id) == before
+
+
+def test_waiting_individual_timing_delete_preserves_a_closed_segment_when_open_exists(
+    connection,
+):
+    card_id = prepare_waiting_card_with_malformed_open_timing(connection, "26065")
+    card = db.fetch_admin_card_detail(card_id)
+    closed_segment = card["timing_segments"][0]
+    before = waiting_timing_state(card_id)
+
+    result = db.delete_timing_segment(
+        card_id,
+        closed_segment["id"],
+        card["version"],
+    )
+
+    assert not result.ok
+    assert waiting_timing_state(card_id) == before
+
+
 def test_completed_admin_detail_uses_explicit_delete_controls(
     connection,
     active_test_shift,
