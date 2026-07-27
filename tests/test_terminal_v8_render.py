@@ -327,7 +327,6 @@ def test_terminal_v8_renders_four_machine_navigation_controls(connection):
     empty_machine_html = render_terminal(machine_id=2)
 
     assert len(re.findall(r'<a class="machine-tab', html)) == 4
-    assert "/static/assets/machine-icon.png" in html
     assert 'href="/terminal/cards/' in html
     assert 'href="/terminal?machine_id=2"' in html
     assert "Машина 1" in html
@@ -337,9 +336,33 @@ def test_terminal_v8_renders_four_machine_navigation_controls(connection):
     assert "Машина 2" in empty_machine_html
     assert "Няма активна поръчка за Машина 2." in empty_machine_html
     assert re.search(
-        r'<a class="machine-tab idle selected" href="/terminal\?machine_id=2">',
+        r'<a class="machine-tab idle selected"[^>]*href="/terminal\?machine_id=2"',
         empty_machine_html,
     )
+
+
+def test_terminal_v8_machine_navigation_renders_roll_change_timer_hosts(connection):
+    running_id = release_ready_card("26101", machine_id=1, sequence=1)
+    paused_id = release_ready_card("26102", machine_id=2, sequence=1)
+    release_ready_card("26104", machine_id=3, sequence=1)
+    assert db.start_production_timing(running_id, card_version(running_id)).ok
+    assert db.start_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.pause_production_timing(paused_id, card_version(paused_id)).ok
+
+    html = render_terminal()
+
+    assert len(re.findall(r'data-roll-change-machine(?:\s|=)', html)) == 4
+    for machine_tab_top in re.findall(
+        r'<span class="machine-tab-top">.*?</span>\s*<span class="machine-tab-meta">',
+        html,
+        re.S,
+    ):
+        assert 'class="status ' not in machine_tab_top
+    assert re.search(r'class="machine-state-dot running".*>.*Машина 1: работи', html, re.S)
+    assert re.search(r'class="machine-state-dot paused".*>.*Машина 2: пауза', html, re.S)
+    assert re.search(r'class="machine-state-dot idle".*>.*Машина 3: чака старт', html, re.S)
+    assert re.search(r'class="machine-state-dot idle".*>.*Машина 4: свободна', html, re.S)
+    assert len(re.findall(r'data-roll-change-machine-timer', html)) == 4
 
 
 def test_terminal_v8_selected_machine_navigation_does_not_use_heavy_focus_ring(connection):
@@ -527,13 +550,14 @@ def test_terminal_v8_machine_card_and_machine_default_prefer_running_over_paused
     assert f'href="/terminal/cards/{running_id}"' in html
     assert "Машина 2: №26147" in html
     machine_tab_match = re.search(
-        rf'<a class="machine-tab running selected" href="/terminal/cards/{running_id}">.*?</a>',
+        r'<a class="machine-tab running selected"[^>]*>.*?</a>',
         html,
         flags=re.S,
     )
     assert machine_tab_match is not None
     machine_tab = machine_tab_match.group(0)
-    assert "Изработване" in machine_tab
+    assert f'href="/terminal/cards/{running_id}"' in machine_tab
+    assert "Машина 2: работи" in machine_tab
     assert "V8 Customer 26147" in machine_tab
 
 
@@ -1269,27 +1293,52 @@ def test_terminal_v8_hides_zero_waiting_badge_and_never_opens_pane_from_notice(
     assert 'aria-hidden="true"' in waiting_overlay.group(0)
 
 
-def test_terminal_v8_renders_rewinding_marker_and_inert_roll_change_controls(connection):
-    card_id = release_ready_card("26192", machine_id=1, sequence=1)
-    assert db.start_production_timing(card_id, card_version(card_id)).ok
+def test_terminal_v8_renders_rewinding_and_roll_change_hosts_in_separate_action_areas(connection):
+    running_id = release_ready_card("26192", machine_id=1, sequence=1)
+    paused_id = release_ready_card("26193", machine_id=2, sequence=1)
+    pending_id = release_ready_card("26194", machine_id=3, sequence=1)
+    waiting_id = release_ready_card("26195", machine_id=4, sequence=1)
+    assert db.start_production_timing(running_id, card_version(running_id)).ok
+    assert db.start_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.pause_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.start_production_timing(waiting_id, card_version(waiting_id)).ok
+    assert db.update_rewinding_roll_count(waiting_id, card_version(waiting_id), 1).ok
+    assert db.finish_card(waiting_id, card_version(waiting_id)).ok
+    completed_id = release_ready_card("26196", machine_id=4, sequence=1)
+    assert db.start_production_timing(completed_id, card_version(completed_id)).ok
+    assert db.update_tare_weight(completed_id, card_version(completed_id), "1.25").ok
+    assert db.add_roll_gross_weight(completed_id, card_version(completed_id), "60.35").ok
+    assert db.finish_card(completed_id, card_version(completed_id)).ok
 
-    clear_html = render_terminal(card_id)
+    running_html = render_terminal(running_id)
     clear_button = re.search(
         r'<button[^>]+data-rewinding-open[^>]*>.*?</button>',
-        clear_html,
+        running_html,
         re.S,
     )
     assert clear_button
     assert "Пренавиване" in clear_button.group(0)
     assert "Пренавиване:" not in clear_button.group(0)
     assert "is-marked" not in clear_button.group(0)
-    assert re.search(
-        r'<button class="roll-secondary-button" type="button" data-roll-change>\s*Смяна на ролка\s*</button>',
-        clear_html,
+    assert 'data-rewinding-open' in running_html
+    assert not re.search(
+        r'<div class="roll-secondary-actions"[^>]*>.*data-roll-change-open',
+        running_html,
+        re.S,
     )
+    assert re.search(
+        rf'<div class="roll-change-controls"[^>]+data-machine-id="1"'
+        rf'[^>]+data-card-id="{running_id}"[^>]+data-card-status="running"',
+        running_html,
+    )
+    assert 'data-roll-change-open' in running_html
+    assert 'data-roll-change-advance' in running_html
+    assert 'aria-label="Потвърди смяна на ролките"' in running_html
+    assert 'data-roll-change-overlay' in running_html
+    assert 'src="/static/js/roll_change_countdown.mjs"' in running_html
 
-    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 8).ok
-    marked_html = render_terminal(card_id)
+    assert db.update_rewinding_roll_count(running_id, card_version(running_id), 8).ok
+    marked_html = render_terminal(running_id)
     marked_button = re.search(
         r'<button[^>]+data-rewinding-open[^>]*>.*?</button>',
         marked_html,
@@ -1299,17 +1348,15 @@ def test_terminal_v8_renders_rewinding_marker_and_inert_roll_change_controls(con
     assert "Пренавиване: 8" in marked_button.group(0)
     assert "is-marked" in marked_button.group(0)
 
-    connection.execute("UPDATE cards SET status = 'paused' WHERE id = ?", (card_id,))
-    connection.commit()
-    paused_html = render_terminal(card_id)
+    paused_html = render_terminal(paused_id)
+    assert 'data-card-status="paused"' in paused_html
+    assert 'data-roll-change-controls' in paused_html
     assert re.search(r'<button[^>]+data-rewinding-open', paused_html)
-    assert re.search(r'<button[^>]+data-roll-change', paused_html)
 
-    connection.execute("UPDATE cards SET status = 'completed' WHERE id = ?", (card_id,))
-    connection.commit()
-    completed_html = render_terminal(card_id)
-    assert not re.search(r'<button[^>]+data-rewinding-open', completed_html)
-    assert not re.search(r'<button[^>]+data-roll-change', completed_html)
+    for unavailable_id in (pending_id, waiting_id, completed_id):
+        unavailable_html = render_terminal(unavailable_id)
+        assert 'data-roll-change-controls' not in unavailable_html
+        assert 'data-roll-change-overlay' not in unavailable_html
 
 
 def test_terminal_v8_rewinding_dialog_posts_version_and_reopens_only_for_errors(
@@ -2238,6 +2285,15 @@ def test_terminal_active_lifecycle_slots_are_equal_and_waiting_has_only_finish(c
     running_actions = re.search(r'<div class="actions">(?P<body>.*?)</div>\s*</div>', running_html, re.S)
     assert running_actions is not None
     assert running_actions.group("body").count('data-lifecycle-slot') == 3
+    assert len(re.findall(r'data-lifecycle-slot=', running_html)) == 3
+    assert re.search(r'<div class="roll-change-controls"', running_html)
+    timer_group = re.search(
+        r'<div class="roll-change-controls"[^>]*>.*?</div>\s*</div>',
+        running_html,
+        re.S,
+    )
+    assert timer_group is not None
+    assert 'data-lifecycle-slot' not in timer_group.group(0)
     lifecycle_rules = css_rules(running_html, r"(?m)^    \.actions > \.action-button,\s*\.actions > form")
     assert "width: 150px;" in lifecycle_rules
     assert "flex: 0 0 150px;" in lifecycle_rules

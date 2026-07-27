@@ -24,6 +24,11 @@
         <path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20Z"></path>
         <path d="m14 7 3 3"></path>
       </svg>
+    {%- elif name == "refresh-cw" -%}
+      <svg viewBox="0 0 24 24" focusable="false">
+        <path d="M20 11a8 8 0 1 0-2.34 5.66"></path>
+        <path d="M20 4v7h-7"></path>
+      </svg>
     {%- endif %}
   </span>
 {%- endmacro %}
@@ -342,12 +347,41 @@
       gap: 7px;
     }
 
-    .machine-tab-icon {
-      width: 17px;
-      height: 17px;
-      flex: 0 0 auto;
-      object-fit: contain;
+    .machine-state-dot {
+      width: 14px;
+      height: 14px;
+      flex: 0 0 14px;
+      border: 2px solid rgba(255, 255, 255, .9);
+      border-radius: 50%;
+      box-shadow: 0 0 0 1px #9aa6b2;
     }
+
+    .machine-state-dot.running { background: var(--green); }
+    .machine-state-dot.paused { background: #d39b16; }
+    .machine-state-dot.idle { background: #87929e; }
+
+    .machine-countdown {
+      min-width: 72px;
+      min-height: 28px;
+      padding: 0 9px;
+      border: 1px solid #b8c4d1;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #0b355f;
+      background: #f5f8fb;
+      font-size: 15px;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .machine-countdown.warning,
+    .machine-countdown.paused,
+    .machine-countdown.resync { color: #704100; background: #fff2bd; border-color: #d7a13f; }
+    .machine-countdown.urgent { color: #fff; background: var(--red); border-color: var(--red); }
+    .machine-countdown[hidden] { display: none; }
 
     .machine-tab-meta {
       min-width: 0;
@@ -659,6 +693,63 @@
       min-height: 38px;
       align-items: center;
       line-height: 1;
+    }
+
+    .roll-change-controls {
+      min-width: 0;
+      margin-left: 4px;
+      padding-left: 12px;
+      border-left: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .roll-change-open {
+      width: 150px;
+      min-height: 38px;
+      padding: 4px 10px;
+      display: inline-flex;
+      flex: 0 0 150px;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1px;
+      border-color: #b8c4d1;
+      color: #0b355f;
+      background: #fff;
+      font-size: 13px;
+      line-height: 1.1;
+    }
+
+    .roll-change-control-value,
+    .roll-change-control-next {
+      display: block;
+    }
+
+    .roll-change-control-next {
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .roll-change-advance {
+      width: 38px;
+      min-width: 38px;
+      min-height: 38px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-color: #0b355f;
+      color: #fff;
+      background: #0b355f;
+    }
+
+    .roll-change-open:focus-visible,
+    .roll-change-advance:focus-visible,
+    .roll-change-editor-actions button:focus-visible {
+      outline: 3px solid var(--blue);
+      outline-offset: 2px;
     }
 
     .action-primary,
@@ -2059,6 +2150,20 @@
         font-size: 12px;
       }
 
+      .roll-change-overlay {
+        padding: 12px;
+      }
+
+      .roll-change-dialog {
+        max-height: calc(100vh - 24px);
+        overflow: auto;
+        padding: 14px;
+      }
+
+      .roll-change-editor-actions {
+        gap: 6px;
+      }
+
       .workspace {
         padding: 5px 18px 7px;
       }
@@ -2383,6 +2488,77 @@
       border-color: #b8c4d1;
       background: #fff;
       color: #0b355f;
+    }
+
+    .roll-change-overlay {
+      position: fixed;
+      z-index: 85;
+      inset: 0;
+      padding: 24px;
+      display: grid;
+      place-items: center;
+      background: rgba(31, 41, 51, .4);
+    }
+
+    .roll-change-overlay[hidden] { display: none; }
+
+    .roll-change-dialog {
+      width: min(520px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+
+    .roll-change-dialog h2 {
+      margin: 0 0 14px;
+      color: var(--primary-text);
+      font-size: 22px;
+      line-height: 1.15;
+      font-weight: 900;
+    }
+
+    .roll-change-dialog form,
+    .roll-change-dialog label {
+      display: grid;
+      gap: 6px;
+    }
+
+    .roll-change-dialog form { gap: 12px; }
+
+    .roll-change-dialog label > span,
+    .roll-change-interval legend {
+      color: var(--secondary-text);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .roll-change-interval {
+      min-width: 0;
+      margin: 0;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .roll-change-interval legend { padding: 0 4px; }
+    .roll-change-interval .field-error-slot { min-height: 0; }
+
+    .roll-change-editor-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .roll-change-clear {
+      border-color: #c96b6b;
+      color: #9d2525;
+      background: #fff;
     }
 
     .shift-window-overlay {
@@ -3362,17 +3538,32 @@
         <div class="machine-nav-list">
           {% for queue in machine_queues %}
             {% set focus_card = queue.focus_card %}
-            <a class="machine-tab {% if focus_card %}{{ focus_card.status_display_class }}{% else %}idle{% endif %} {% if queue.is_selected %}selected{% endif %}" href="{% if focus_card %}/terminal/cards/{{ focus_card.id }}{% else %}/terminal?machine_id={{ queue.machine.id }}{% endif %}">
+            {% if focus_card and focus_card.status == "running" %}
+              {% set machine_dot_class = "running" %}
+              {% set machine_dot_label = "работи" %}
+            {% elif focus_card and focus_card.status == "paused" %}
+              {% set machine_dot_class = "paused" %}
+              {% set machine_dot_label = "пауза" %}
+            {% elif focus_card %}
+              {% set machine_dot_class = "idle" %}
+              {% set machine_dot_label = "чака старт" %}
+            {% else %}
+              {% set machine_dot_class = "idle" %}
+              {% set machine_dot_label = "свободна" %}
+            {% endif %}
+            <a class="machine-tab {% if focus_card %}{{ focus_card.status_display_class }}{% else %}idle{% endif %} {% if queue.is_selected %}selected{% endif %}"
+               href="{% if focus_card %}/terminal/cards/{{ focus_card.id }}{% else %}/terminal?machine_id={{ queue.machine.id }}{% endif %}"
+               data-roll-change-machine
+               data-machine-id="{{ queue.machine.id }}"
+               data-card-id="{{ focus_card.id if focus_card else '' }}"
+               data-card-status="{{ focus_card.status if focus_card else 'free' }}">
               <span class="machine-tab-top">
                 <span class="machine-tab-title">
-                  <img class="machine-tab-icon" src="{{ url_for('static', path='/assets/machine-icon.png') }}" alt="" aria-hidden="true">
+                  <span class="machine-state-dot {{ machine_dot_class }}" aria-hidden="true"></span>
+                  <span class="visually-hidden">Машина {{ queue.machine.id }}: {{ machine_dot_label }}</span>
                   <span class="machine-tab-name">Машина {{ queue.machine.id }}</span>
                 </span>
-                {% if focus_card %}
-                  <span class="status {{ focus_card.status_display_class }}">{{ focus_card.status_label }}</span>
-                {% else %}
-                  <span class="status idle">Свободна</span>
-                {% endif %}
+                <span class="machine-countdown" data-roll-change-machine-timer hidden></span>
               </span>
               <span class="machine-tab-meta">
                 <span class="machine-tab-customer">{{ focus_card.customer if focus_card else "-" }}</span>
@@ -3547,6 +3738,23 @@
                 <button class="action-button" type="button" data-lifecycle-slot="finish" disabled>{{ button_icon("check-circle") }}<span>Приключи</span></button>
               {% endif %}
               {% endif %}
+              {% if selected_card and selected_card.status in ["running", "paused"] %}
+                <div class="roll-change-controls"
+                     data-roll-change-controls
+                     data-machine-id="{{ selected_card.machine_id }}"
+                     data-card-id="{{ selected_card.id }}"
+                     data-card-status="{{ selected_card.status }}">
+                  <button class="roll-change-open" type="button" data-roll-change-open
+                          aria-controls="roll-change-overlay" aria-expanded="false">
+                    <span class="roll-change-control-value" data-roll-change-control-value>Смяна на ролка</span>
+                    <span class="roll-change-control-next" data-roll-change-control-next hidden></span>
+                  </button>
+                  <button class="roll-change-advance" type="button" data-roll-change-advance hidden
+                          aria-label="Потвърди смяна на ролките">
+                    {{ button_icon("refresh-cw") }}
+                  </button>
+                </div>
+              {% endif %}
             </div>
           </div>
         </header>
@@ -3681,7 +3889,6 @@
                             aria-controls="rewinding-overlay" aria-expanded="false">
                       Пренавиване{% if selected_card.rewinding_roll_count %}: {{ selected_card.rewinding_roll_count }}{% endif %}
                     </button>
-                    <button class="roll-secondary-button" type="button" data-roll-change>Смяна на ролка</button>
                   </div>
                 {% endif %}
               </div>
@@ -3937,6 +4144,40 @@
           <div class="rewinding-actions">
             <button class="rewinding-cancel" type="button" data-rewinding-cancel>Отказ</button>
             <button class="rewinding-save" type="submit">Запиши</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  {% endif %}
+  {% if selected_card and selected_card.status in ["running", "paused"] %}
+    <div class="roll-change-overlay" id="roll-change-overlay" data-roll-change-overlay hidden aria-hidden="true">
+      <section class="roll-change-dialog" role="dialog" aria-modal="true"
+               aria-labelledby="roll-change-title" tabindex="-1" data-roll-change-dialog>
+        <h2 id="roll-change-title">Смяна на ролки</h2>
+        <form data-roll-change-form novalidate>
+          <label>
+            <span>Предишна смяна / начален час</span>
+            <input type="datetime-local" step="60" data-roll-change-previous>
+            <span class="field-error-slot" data-roll-change-error-for="previous"></span>
+          </label>
+          <fieldset class="roll-change-interval">
+            <legend>Интервал</legend>
+            <label><span>Часове</span><input type="number" min="0" max="23" step="1" inputmode="numeric" data-roll-change-hours></label>
+            <label><span>Минути</span><input type="number" min="0" max="59" step="1" inputmode="numeric" data-roll-change-minutes></label>
+            <span class="field-error-slot" data-roll-change-error-for="hours"></span>
+            <span class="field-error-slot" data-roll-change-error-for="minutes"></span>
+          </fieldset>
+          <label>
+            <span>Следваща смяна</span>
+            <input type="datetime-local" step="60" data-roll-change-next>
+            <span class="field-error-slot" data-roll-change-error-for="next"></span>
+          </label>
+          <span class="field-error-slot" data-roll-change-error-for="form" role="alert"></span>
+          <div class="roll-change-editor-actions">
+            <button type="button" class="roll-change-clear" data-roll-change-clear>Изчисти</button>
+            <button type="button" data-roll-change-restart>Започни от сега</button>
+            <button type="button" data-roll-change-cancel>Отказ</button>
+            <button type="submit" class="action-primary">Запиши</button>
           </div>
         </form>
       </section>
@@ -5060,5 +5301,6 @@
       }
     })();
   </script>
+  <script type="module" src="{{ url_for('static', path='/js/roll_change_countdown.mjs') }}"></script>
 </body>
 </html>
