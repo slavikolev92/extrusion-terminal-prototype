@@ -312,6 +312,7 @@ payload = {
     "rolls": rows(f"SELECT * FROM roll_entries WHERE card_id IN ({placeholders}) ORDER BY card_id, id", card_ids),
     "timing": rows(f"SELECT * FROM production_time_segments WHERE card_id IN ({placeholders}) ORDER BY card_id, id", card_ids),
     "recipe": rows(f"SELECT * FROM recipe_components WHERE card_id IN ({placeholders}) ORDER BY card_id, id", card_ids),
+    "recipe_actuals": rows(f"SELECT * FROM recipe_actual_entries WHERE card_id IN ({placeholders}) ORDER BY card_id, id", card_ids),
     "shifts": rows("SELECT * FROM shift_occurrences ORDER BY id"),
     "configuration": rows("SELECT * FROM terminal_configuration ORDER BY id"),
 }
@@ -764,6 +765,7 @@ async function assertPauseResumeLifecycle(page, viewport) {
   assert(paused.pauseNeedsResolution && paused.frozenRemainingMs > 0, "Pause did not freeze a positive unresolved value.");
   const pausedDisplay = normalized(await page.locator("[data-roll-change-control-value]").textContent());
   assert(await page.locator('[data-machine-id="2"] [data-roll-change-machine-timer]').evaluate((element) => element.classList.contains("paused")), "Positive paused timer is not yellow.");
+  assert(await page.locator("[data-roll-change-open]").evaluate((element) => element.classList.contains("paused")), "Selected positive paused timer is not yellow.");
   await page.waitForTimeout(1_300);
   assertEqual(normalized(await page.locator("[data-roll-change-control-value]").textContent()), pausedDisplay, "paused display wait");
   await page.reload({ waitUntil: "networkidle" });
@@ -775,6 +777,7 @@ async function assertPauseResumeLifecycle(page, viewport) {
   assert(unresolved.pauseNeedsResolution && unresolved.frozenRemainingMs === paused.frozenRemainingMs, "Resume did not retain unresolved positive freeze.");
   const unresolvedDisplay = normalized(await page.locator("[data-roll-change-control-value]").textContent());
   assert(await page.locator('[data-machine-id="2"] [data-roll-change-machine-timer]').evaluate((element) => element.classList.contains("resync")), "Unresolved positive resume is not yellow.");
+  assert(await page.locator("[data-roll-change-open]").evaluate((element) => element.classList.contains("resync")), "Selected unresolved positive resume is not yellow.");
   await page.waitForTimeout(1_300);
   assertEqual(normalized(await page.locator("[data-roll-change-control-value]").textContent()), unresolvedDisplay, "unresolved resume tick suppression");
 
@@ -786,8 +789,16 @@ async function assertPauseResumeLifecycle(page, viewport) {
   assertEqual(afterPausedAdvance.nextExpectedAtMs, beforePausedAdvance.nextExpectedAtMs + beforePausedAdvance.intervalMinutes * 60_000, "paused acknowledgement next");
   assertEqual(afterPausedAdvance.pauseNeedsResolution, false, "paused acknowledgement resolution");
   assert(await page.locator('[data-machine-id="2"] [data-roll-change-machine-timer]').evaluate((element) => element.classList.contains("paused")), "Acknowledged paused timer lost paused styling.");
+  assert(await page.locator("[data-roll-change-open]").evaluate((element) => element.classList.contains("paused")), "Selected acknowledged paused timer lost paused styling.");
 
   const editorMinute = Math.floor(Date.now() / 60_000) * 60_000;
+  await writeSchedule(page, {
+    ...afterPausedAdvance,
+    observedStatus: "paused",
+    frozenRemainingMs: Math.max(0, afterPausedAdvance.nextExpectedAtMs - Date.now()),
+    pauseNeedsResolution: true,
+  });
+  assertEqual((await readSchedule(page, 2)).pauseNeedsResolution, true, "paused editor unresolved precondition");
   await page.locator("[data-roll-change-open]").click();
   await page.locator("[data-roll-change-previous]").fill(localMinuteValue(editorMinute - 5 * 60_000));
   await page.locator("[data-roll-change-hours]").fill("0");
@@ -813,6 +824,7 @@ async function assertPauseResumeLifecycle(page, viewport) {
   await writeSchedule(page, duePaused);
   assertEqual(normalized(await page.locator("[data-roll-change-control-value]").textContent()), "00:00", "paused due display");
   assert(await page.locator('[data-machine-id="4"] [data-roll-change-machine-timer]').evaluate((element) => element.classList.contains("paused")), "Paused due is not yellow.");
+  assert(await page.locator("[data-roll-change-open]").evaluate((element) => element.classList.contains("paused")), "Selected paused due is not yellow.");
   assert(normalized(await page.locator('[data-lifecycle-slot="pause"]').textContent()).includes("Продължи"), "Paused state lacks its visible resume text.");
   if (viewport.width === 1920) {
     const target = screenshotPath("paused-due.png");
@@ -821,6 +833,7 @@ async function assertPauseResumeLifecycle(page, viewport) {
   await submitFormAndWait(page, 'form[action$="/timing/resume"]');
   assertEqual(normalized(await page.locator("[data-roll-change-control-value]").textContent()), "00:00", "unresolved zero resume display");
   assert(await page.locator('[data-machine-id="4"] [data-roll-change-machine-timer]').evaluate((element) => element.classList.contains("urgent")), "Unresolved zero resume is not red.");
+  assert(await page.locator("[data-roll-change-open]").evaluate((element) => element.classList.contains("urgent")), "Selected unresolved zero resume is not red.");
   passed(`${viewport.width}x${viewport.height}: pause freeze, unresolved resume, paused resolution, and resumed ticking`);
 }
 
@@ -859,6 +872,13 @@ async function runViewport(browser, viewport) {
   try {
     await seedSchedules(page);
     const timerSnapshotBefore = databaseSnapshot();
+    assert(timerSnapshotBefore.recipe_actuals.length > 0, "Guarded fixture has no recipe actual row to preserve.");
+    assert(timerSnapshotBefore.recipe_actuals.some((row) => (
+      row.card_id === fixture.cards.machine_1_running
+      && row.component_key === "raw_material_a"
+      && row.actual_material_used === "Fixture actual LDPE"
+      && row.batch_lot === "ROLL-CHANGE-ACTUAL-01"
+    )), "Guarded fixture recipe actual row is not meaningful and deterministic.");
     await assertLayoutAndInactiveState(page, viewport);
     await assertEditorAndScheduleMath(page, viewport);
     await assertStorageEventsDueAndCorrection(context, page, mutationRequests, viewport);

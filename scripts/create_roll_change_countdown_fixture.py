@@ -202,6 +202,19 @@ def create_fixture(database_path: Path) -> dict[str, object]:
         start(cards[scenario])
     set_defaults(cards["machine_1_running"], tare="1.0")
     add_roll(cards["machine_1_running"], "25.0")
+    require_ok(
+        db.update_terminal_recipe_actual_entries(
+            cards["machine_1_running"],
+            card_version(cards["machine_1_running"]),
+            {
+                "raw_material_a": {
+                    "actual_material_used": "Fixture actual LDPE",
+                    "batch_lot": "ROLL-CHANGE-ACTUAL-01",
+                }
+            },
+        ),
+        "set recipe actual for machine 1",
+    )
     pause(cards["machine_4_paused"])
 
     active_shift_id = int(db.fetch_active_shift()["id"])

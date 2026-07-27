@@ -1371,6 +1371,23 @@ def test_terminal_v8_renders_rewinding_and_roll_change_hosts_in_separate_action_
     assert 'data-roll-change-cancel>Отказ</button>' in editor
     assert '<button type="submit" class="action-primary">Запиши</button>' in editor
 
+    paused_tone_rules = css_rules(
+        running_html,
+        r"\.roll-change-open\.warning,\s*"
+        r"\.roll-change-open\.paused,\s*"
+        r"\.roll-change-open\.resync",
+    )
+    urgent_tone_rules = css_rules(
+        running_html,
+        r"\.roll-change-open\.urgent",
+    )
+    assert "color: #704100;" in paused_tone_rules
+    assert "background: #fff2bd;" in paused_tone_rules
+    assert "border-color: #d7a13f;" in paused_tone_rules
+    assert "color: #fff;" in urgent_tone_rules
+    assert "background: var(--red);" in urgent_tone_rules
+    assert "border-color: var(--red);" in urgent_tone_rules
+
     machine_links = re.findall(
         r'<a class="machine-tab .*?</a>',
         running_html,

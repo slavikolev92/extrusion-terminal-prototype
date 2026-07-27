@@ -119,6 +119,7 @@ export function bootstrapRollChangeCountdown({
       controlNext.textContent = "";
       controlNext.hidden = true;
       advanceControl.hidden = true;
+      openControl.classList.remove(...TONE_CLASSES);
       openControl.setAttribute("aria-label", `Настрой смяна на ролките за машина ${selectedMachineId}`);
       return;
     }
@@ -127,6 +128,8 @@ export function bootstrapRollChangeCountdown({
     controlNext.textContent = `Следваща ${view.nextExpectedLabel}`;
     controlNext.hidden = false;
     advanceControl.hidden = false;
+    openControl.classList.remove(...TONE_CLASSES);
+    openControl.classList.add(view.tone);
     openControl.setAttribute(
       "aria-label",
       view.due
