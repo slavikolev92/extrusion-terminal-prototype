@@ -6,6 +6,7 @@ import {
   advanceSchedule,
   buildSchedule,
   calculateNextExpected,
+  clearMismatchedSchedules,
   countdownView,
   decodeSchedule,
   formatNextExpected,
@@ -26,6 +27,8 @@ const localAt = (year, month, day, hour, minutes, seconds = 0) =>
 
 class MemoryStorage {
   constructor() { this.values = new Map(); }
+  get length() { return this.values.size; }
+  key(index) { return Array.from(this.values.keys())[index] ?? null; }
   getItem(key) { return this.values.has(key) ? this.values.get(key) : null; }
   setItem(key, value) { this.values.set(key, String(value)); }
   removeItem(key) { this.values.delete(key); }
@@ -172,4 +175,26 @@ test("storage rejects malformed, unsupported, wrong-card, and invalid intervals"
   }
   saveSchedule(storage, runningSchedule());
   assert.deepEqual(decodeSchedule(storage.getItem(key), 2, 22), runningSchedule());
+});
+
+test("context cleanup removes ended and replaced cards but preserves unrelated storage", () => {
+  const storage = new MemoryStorage();
+  storage.setItem("unrelated", "keep");
+  saveSchedule(storage, runningSchedule());
+  saveSchedule(storage, buildSchedule({
+    machineId: 3,
+    cardId: 33,
+    previousChangeAtMs: localAt(2026, 7, 27, 12, 0),
+    intervalMinutes: 60,
+    nextExpectedAtMs: localAt(2026, 7, 27, 13, 0),
+    status: "running",
+    nowMs: localAt(2026, 7, 27, 12, 0),
+  }));
+  clearMismatchedSchedules(storage, new Map([
+    [2, { cardId: 99, status: "running" }],
+    [3, { cardId: 33, status: "completed" }],
+  ]));
+  assert.equal(storage.getItem(storageKey(2)), null);
+  assert.equal(storage.getItem(storageKey(3)), null);
+  assert.equal(storage.getItem("unrelated"), "keep");
 });

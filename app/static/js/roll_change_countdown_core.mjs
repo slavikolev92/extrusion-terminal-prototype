@@ -223,6 +223,20 @@ export function clearSchedule(storage, machineId) {
   storage.removeItem(storageKey(machineId));
 }
 
+export function clearMismatchedSchedules(storage, contexts) {
+  const keys = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(STORAGE_KEY_PREFIX)) keys.push(key);
+  }
+  for (const key of keys) {
+    const machineId = Number(key.slice(STORAGE_KEY_PREFIX.length));
+    const context = contexts.get(machineId);
+    const schedule = context ? loadSchedule(storage, machineId, context.cardId) : null;
+    if (!context || !TRACKABLE.has(context.status) || !schedule) storage.removeItem(key);
+  }
+}
+
 function isBoundedBaseTenInteger(value, maximum) {
   return typeof value === "string" && DIGITS_PATTERN.test(value) && Number.isSafeInteger(Number(value)) && Number(value) <= maximum;
 }
