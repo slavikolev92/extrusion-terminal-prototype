@@ -3,7 +3,6 @@ import {
   advanceSchedule,
   buildSchedule,
   calculateNextExpected,
-  clearMismatchedSchedules,
   clearSchedule,
   countdownView,
   decodeSchedule,
@@ -21,7 +20,7 @@ import {
 
 const TRACKABLE = new Set(["running", "paused"]);
 const TONE_CLASSES = ["normal", "warning", "urgent", "paused", "resync"];
-const LIFECYCLE_STORAGE_VERSION = 1;
+const LIFECYCLE_STORAGE_VERSION = 2;
 const LIFECYCLE_STORAGE_KEY_PREFIX = "extrusion-terminal.roll-change-lifecycle.v1.machine.";
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
@@ -44,9 +43,14 @@ export function bootstrapRollChangeCountdown({
   for (const host of documentObject.querySelectorAll("[data-roll-change-machine]")) {
     const machineId = Number(host.dataset.machineId);
     const cardId = Number(host.dataset.cardId);
+    const cardVersion = Number(host.dataset.cardVersion);
     if (!Number.isSafeInteger(machineId) || machineId <= 0) continue;
+    const hasCard = Number.isSafeInteger(cardId) && cardId > 0;
     contexts.set(machineId, {
-      cardId,
+      cardId: hasCard ? cardId : null,
+      cardVersion: hasCard && Number.isSafeInteger(cardVersion) && cardVersion >= 0
+        ? cardVersion
+        : null,
       status: host.dataset.cardStatus || "",
       host,
     });
@@ -55,6 +59,7 @@ export function bootstrapRollChangeCountdown({
   const controls = documentObject.querySelector("[data-roll-change-controls]");
   const selectedMachineId = Number(controls?.dataset.machineId);
   const selectedCardId = Number(controls?.dataset.cardId);
+  const selectedCardVersion = Number(controls?.dataset.cardVersion);
   const selectedStatus = controls?.dataset.cardStatus || "";
   const openControl = controls?.querySelector("[data-roll-change-open]") ?? null;
   const controlValue = controls?.querySelector("[data-roll-change-control-value]") ?? null;
@@ -93,6 +98,7 @@ export function bootstrapRollChangeCountdown({
   let backdropPressStarted = false;
   let backdropPressEnded = false;
   let lifecycleReloadRequired = false;
+  let lifecycleInitializationPending = false;
   let synchronizedSelectedStatus = null;
   const listeners = [];
 
@@ -120,6 +126,8 @@ export function bootstrapRollChangeCountdown({
         record?.schemaVersion !== LIFECYCLE_STORAGE_VERSION
         || record.machineId !== machineId
         || !(record.cardId === null || (Number.isSafeInteger(record.cardId) && record.cardId > 0))
+        || !(record.cardVersion === null || (Number.isSafeInteger(record.cardVersion) && record.cardVersion >= 0))
+        || ((record.cardId === null) !== (record.cardVersion === null))
         || typeof record.status !== "string"
       ) return null;
       return record;
@@ -128,19 +136,44 @@ export function bootstrapRollChangeCountdown({
     }
   }
 
-  function publishLifecycleContexts() {
-    for (const [machineId, context] of contexts) {
-      const record = {
-        schemaVersion: LIFECYCLE_STORAGE_VERSION,
-        machineId,
-        cardId: Number.isSafeInteger(context.cardId) && context.cardId > 0
-          ? context.cardId
-          : null,
-        status: context.status,
-      };
-      const key = lifecycleStorageKey(machineId);
-      const serialized = JSON.stringify(record);
-      if (storage.getItem(key) !== serialized) storage.setItem(key, serialized);
+  function lifecycleRecord(machineId, context) {
+    return {
+      schemaVersion: LIFECYCLE_STORAGE_VERSION,
+      machineId,
+      cardId: context.cardId,
+      cardVersion: context.cardVersion,
+      status: context.status,
+    };
+  }
+
+  function isValidLifecycleContext(context) {
+    return Boolean(
+      context
+      && (
+        (context.cardId === null && context.cardVersion === null)
+        || (
+          Number.isSafeInteger(context.cardId)
+          && context.cardId > 0
+          && Number.isSafeInteger(context.cardVersion)
+          && context.cardVersion >= 0
+        )
+      ),
+    );
+  }
+
+  function setLifecycleInitializationPending(pending) {
+    lifecycleInitializationPending = pending;
+    if (pending) {
+      if (openControl) openControl.disabled = true;
+      if (advanceControl) advanceControl.disabled = true;
+      return;
+    }
+    if (lifecycleReloadRequired) return;
+    if (openControl) {
+      openControl.disabled = openControl.dataset.correctionInitiallyDisabled === "true";
+    }
+    if (advanceControl) {
+      advanceControl.disabled = advanceControl.dataset.correctionInitiallyDisabled === "true";
     }
   }
 
@@ -352,7 +385,7 @@ export function bootstrapRollChangeCountdown({
   }
 
   function openEditor(event) {
-    if (lifecycleReloadRequired) return;
+    if (lifecycleReloadRequired || lifecycleInitializationPending) return;
     if (hasOpenRollCorrection()) return;
     if (!overlay || !previousInput || !previousDateInput || !hoursInput || !minutesInput || !nextInput) return;
     returnFocus = event?.currentTarget ?? openControl;
@@ -388,7 +421,7 @@ export function bootstrapRollChangeCountdown({
 
   function submitEditor(event) {
     event.preventDefault();
-    if (lifecycleReloadRequired) return;
+    if (lifecycleReloadRequired || lifecycleInitializationPending) return;
     if (!previousInput || !hoursInput || !minutesInput || !nextInput) return;
     if (hasNonMatchingStoredRecord(selectedMachineId, selectedCardId)) {
       closeEditor();
@@ -427,7 +460,7 @@ export function bootstrapRollChangeCountdown({
   }
 
   function clearEditorSchedule() {
-    if (lifecycleReloadRequired) return;
+    if (lifecycleReloadRequired || lifecycleInitializationPending) return;
     if (matchingSchedule(selectedMachineId, selectedCardId)) {
       clearSchedule(storage, selectedMachineId);
     }
@@ -437,7 +470,7 @@ export function bootstrapRollChangeCountdown({
   }
 
   function advance() {
-    if (lifecycleReloadRequired) return;
+    if (lifecycleReloadRequired || lifecycleInitializationPending) return;
     if (hasOpenRollCorrection()) return;
     const current = readSchedule(storage, selectedMachineId, selectedCardId);
     if (!current) return;
@@ -501,6 +534,7 @@ export function bootstrapRollChangeCountdown({
       if (
         lifecycleReloadRequired
         || lifecycle.cardId !== selectedCardId
+        || lifecycle.cardVersion !== selectedCardVersion
         || lifecycle.status !== selectedStatus
       ) {
         requireLifecycleReload(
@@ -530,14 +564,6 @@ export function bootstrapRollChangeCountdown({
     }
     renderAll();
   }
-
-  clearMismatchedSchedules(storage, contexts);
-  const bootstrapMs = now();
-  for (const [machineId, context] of contexts) {
-    reconcileAndPersist(machineId, context, bootstrapMs);
-  }
-  publishLifecycleContexts();
-  renderAll();
 
   listen(openControl, "click", openEditor);
   listen(previousDateInput, "input", recalculateDraft);
@@ -571,6 +597,176 @@ export function bootstrapRollChangeCountdown({
   listen(overlay, "click", handleOverlayClick);
   listen(documentObject, "keydown", handleDialogKeydown);
   listen(windowObject, "storage", handleStorage);
+
+  function reconcileVerifiedContext(machineId, context, currentMs) {
+    const key = `${STORAGE_KEY_PREFIX}${machineId}`;
+    const raw = storage.getItem(key);
+    if (!TRACKABLE.has(context.status)) {
+      if (raw !== null) storage.removeItem(key);
+      return;
+    }
+    const record = matchingSchedule(machineId, context.cardId);
+    if (!record) {
+      if (raw !== null) storage.removeItem(key);
+      return;
+    }
+    reconcileAndPersist(machineId, context, currentMs);
+  }
+
+  function clearUnknownScheduleKeys() {
+    const keys = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key?.startsWith(STORAGE_KEY_PREFIX)) keys.push(key);
+    }
+    for (const key of keys) {
+      const machineId = Number(key.slice(STORAGE_KEY_PREFIX.length));
+      if (!contexts.has(machineId)) storage.removeItem(key);
+    }
+  }
+
+  function authoritativeLifecycleContexts(snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.active_cards)) {
+      throw new Error("Invalid terminal lifecycle snapshot.");
+    }
+    const cards = snapshot.active_cards.map((card) => {
+      if (
+        !Number.isSafeInteger(card?.id)
+        || card.id <= 0
+        || !Number.isSafeInteger(card.machine_id)
+        || card.machine_id <= 0
+        || !Number.isSafeInteger(card.version)
+        || card.version < 0
+        || !["running", "paused", "pending"].includes(card.status)
+      ) throw new Error("Invalid active card in terminal lifecycle snapshot.");
+      return card;
+    });
+    const authoritative = new Map();
+    for (const machineId of contexts.keys()) {
+      let focus = null;
+      for (const status of ["running", "paused", "pending"]) {
+        focus = cards.find((card) => card.machine_id === machineId && card.status === status);
+        if (focus) break;
+      }
+      authoritative.set(machineId, focus ? {
+        cardId: focus.id,
+        cardVersion: focus.version,
+        status: focus.status,
+      } : {
+        cardId: null,
+        cardVersion: null,
+        status: "free",
+      });
+    }
+    return authoritative;
+  }
+
+  function lifecycleContextsMatch(first, second) {
+    return Boolean(
+      first
+      && second
+      && first.cardId === second.cardId
+      && first.cardVersion === second.cardVersion
+      && first.status === second.status,
+    );
+  }
+
+  function publishVerifiedContext(machineId, context, observedRaw, bootstrapMs) {
+    const key = lifecycleStorageKey(machineId);
+    const serialized = JSON.stringify(lifecycleRecord(machineId, context));
+    const currentRaw = storage.getItem(key);
+    if (currentRaw !== observedRaw && currentRaw !== serialized) return false;
+    if (currentRaw !== serialized) storage.setItem(key, serialized);
+    reconcileVerifiedContext(machineId, context, bootstrapMs);
+    return true;
+  }
+
+  async function initializeLifecycleContexts() {
+    const candidates = new Map();
+    const observedRaw = new Map();
+    const divergent = [];
+    for (const [machineId, context] of contexts) {
+      const selectedMarkupMismatch = Boolean(
+        controls
+        && machineId === selectedMachineId
+        && (
+          context.cardId !== selectedCardId
+          || context.cardVersion !== selectedCardVersion
+          || context.status !== selectedStatus
+        )
+      );
+      if (!isValidLifecycleContext(context) || selectedMarkupMismatch) {
+        if (machineId === selectedMachineId) requireLifecycleReload(null);
+        continue;
+      }
+      const serialized = JSON.stringify(lifecycleRecord(machineId, context));
+      const raw = storage.getItem(lifecycleStorageKey(machineId));
+      candidates.set(machineId, serialized);
+      observedRaw.set(machineId, raw);
+      if (raw !== null && raw !== serialized) divergent.push(machineId);
+    }
+
+    const bootstrapMs = now();
+    if (divergent.length === 0) {
+      let verifiedCount = 0;
+      for (const [machineId, context] of contexts) {
+        if (!candidates.has(machineId)) continue;
+        if (publishVerifiedContext(machineId, context, observedRaw.get(machineId), bootstrapMs)) {
+          verifiedCount += 1;
+        }
+      }
+      if (verifiedCount === contexts.size) clearUnknownScheduleKeys();
+      renderAll();
+      return;
+    }
+
+    setLifecycleInitializationPending(true);
+    renderAll();
+    try {
+      const response = await windowObject.fetch(
+        new URL("/terminal/snapshot", windowObject.location.origin),
+        { headers: { "Accept": "application/json" }, cache: "no-store" },
+      );
+      if (!response.ok) throw new Error("Terminal lifecycle snapshot request failed.");
+      const authoritative = authoritativeLifecycleContexts(await response.json());
+      let verifiedCount = 0;
+      for (const [machineId, context] of contexts) {
+        if (!candidates.has(machineId)) continue;
+        if (!lifecycleContextsMatch(context, authoritative.get(machineId))) continue;
+        if (publishVerifiedContext(machineId, context, observedRaw.get(machineId), bootstrapMs)) {
+          verifiedCount += 1;
+        }
+      }
+      if (verifiedCount === contexts.size) clearUnknownScheduleKeys();
+
+      const selectedAuthoritative = authoritative.get(selectedMachineId);
+      const selectedContext = contexts.get(selectedMachineId);
+      const selectedRaw = storage.getItem(lifecycleStorageKey(selectedMachineId));
+      if (
+        controls
+        && (
+          !lifecycleContextsMatch(selectedContext, selectedAuthoritative)
+          || (
+            selectedRaw !== observedRaw.get(selectedMachineId)
+            && selectedRaw !== candidates.get(selectedMachineId)
+          )
+        )
+      ) {
+        requireLifecycleReload(
+          selectedAuthoritative?.cardId === selectedCardId
+            ? selectedAuthoritative.status
+            : null,
+        );
+      }
+    } catch {
+      if (controls) requireLifecycleReload(null);
+    } finally {
+      setLifecycleInitializationPending(false);
+      renderAll();
+    }
+  }
+
+  void initializeLifecycleContexts();
 
   const displayInterval = intervalFactory(renderAll);
   return {

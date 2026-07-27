@@ -3913,6 +3913,7 @@
                data-roll-change-machine
                data-machine-id="{{ queue.machine.id }}"
                data-card-id="{{ focus_card.id if focus_card else '' }}"
+               data-card-version="{{ focus_card.version if focus_card else '' }}"
                data-card-status="{{ focus_card.status if focus_card else 'free' }}">
               <span class="machine-tab-top">
                 <span class="machine-tab-title">
@@ -4062,6 +4063,7 @@
                      data-roll-change-controls
                      data-machine-id="{{ selected_card.machine_id }}"
                      data-card-id="{{ selected_card.id }}"
+                     data-card-version="{{ selected_card.version }}"
                      data-card-status="{{ selected_card.status }}">
                   <button class="roll-change-open" type="button" data-roll-change-open
                           aria-controls="roll-change-overlay" aria-expanded="false">

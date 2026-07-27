@@ -117,11 +117,18 @@ assert(
 );
 
 const storagePrefix = "extrusion-terminal.roll-change.v1.machine.";
+const lifecycleStoragePrefix = "extrusion-terminal.roll-change-lifecycle.v1.machine.";
+const bootstrapCaseFilter = process.env.TASK7_BOOTSTRAP_CASE?.trim() || null;
+const bootstrapViewportFilter = process.env.TASK7_BOOTSTRAP_VIEWPORT?.trim() || null;
 const summaryPath = path.join(artifactDir, "verification-summary.json");
-const viewports = [
+const configuredViewports = [
   { width: 1920, height: 768 },
   { width: 1366, height: 768 },
 ];
+const viewports = bootstrapViewportFilter
+  ? configuredViewports.filter(({ width, height }) => `${width}x${height}` === bootstrapViewportFilter)
+  : configuredViewports;
+assert(viewports.length > 0, `Unknown TASK7_BOOTSTRAP_VIEWPORT: ${bootstrapViewportFilter}`);
 const summary = {
   url: baseURL,
   databaseIdentity: databasePath,
@@ -195,6 +202,11 @@ function storageKey(machineId) {
 }
 
 
+function lifecycleStorageKey(machineId) {
+  return `${lifecycleStoragePrefix}${machineId}`;
+}
+
+
 function schedule({ machineId, cardId, previousChangeAtMs, intervalMinutes,
   nextExpectedAtMs, status, frozenRemainingMs = null, pauseNeedsResolution = false }) {
   return {
@@ -246,6 +258,28 @@ async function rawSchedule(page, machineId) {
 }
 
 
+async function rawLifecycle(page, machineId) {
+  return page.evaluate((key) => localStorage.getItem(key), lifecycleStorageKey(machineId));
+}
+
+
+async function setRawLifecycle(page, machineId, raw) {
+  await page.evaluate(({ key, value }) => {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  }, { key: lifecycleStorageKey(machineId), value: raw });
+}
+
+
+async function waitForLifecycle(page, machineId, expected) {
+  await page.waitForFunction(
+    ({ key, value }) => localStorage.getItem(key) === value,
+    { key: lifecycleStorageKey(machineId), value: JSON.stringify(expected) },
+    { timeout: 3_000 },
+  );
+}
+
+
 async function writeSchedule(page, record, dispatch = true) {
   await page.evaluate(({ key, value, shouldDispatch }) => {
     const oldValue = localStorage.getItem(key);
@@ -281,10 +315,13 @@ async function removeSchedule(page, machineId, dispatch = true) {
 }
 
 
-function instrumentPage(page, mutationRequests) {
+function instrumentPage(page, mutationRequests, { expectedConsoleErrors = [] } = {}) {
   page.on("pageerror", (error) => summary.pageErrors.push(error.message));
   page.on("console", (message) => {
-    if (message.type() === "error") summary.consoleErrors.push(message.text());
+    if (
+      message.type() === "error"
+      && !expectedConsoleErrors.some((expected) => message.text().includes(expected))
+    ) summary.consoleErrors.push(message.text());
   });
   page.on("request", (request) => {
     if (!["GET", "HEAD"].includes(request.method())) {
@@ -1141,6 +1178,348 @@ async function capturedScheduleRemovalStates(page) {
 }
 
 
+async function captureLifecycleStorageEvents(page, machineId) {
+  await page.evaluate((key) => {
+    window.__rollChangeLifecycleEvents = [];
+    window.addEventListener("storage", (event) => {
+      if (event.key === key) {
+        window.__rollChangeLifecycleEvents.push({
+          oldValue: event.oldValue,
+          newValue: event.newValue,
+        });
+      }
+    });
+  }, lifecycleStorageKey(machineId));
+}
+
+
+async function capturedLifecycleStorageEvents(page) {
+  return page.evaluate(() => window.__rollChangeLifecycleEvents || []);
+}
+
+
+async function captureTerminalHtml(context, cardId) {
+  const response = await context.request.get(`${baseURL}/terminal/cards/${cardId}`);
+  assert(response.ok(), `Captured terminal document returned HTTP ${response.status()}.`);
+  return response.text();
+}
+
+
+async function installCapturedTerminalRoute(page, cardId, html) {
+  await page.route(`${baseURL}/terminal/cards/${cardId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/html; charset=utf-8",
+      body: html,
+    });
+  });
+}
+
+
+async function navigateCapturedTerminal(page, cardId) {
+  const response = await page.goto(`${baseURL}/terminal/cards/${cardId}`, {
+    waitUntil: "domcontentloaded",
+  });
+  assert(response?.ok(), `Captured terminal navigation returned HTTP ${response?.status() || "unknown"}.`);
+}
+
+
+async function waitForLifecycleState(page, machineId, { cardId, status }) {
+  await page.waitForFunction(
+    ({ key, expectedCardId, expectedStatus }) => {
+      try {
+        const value = JSON.parse(localStorage.getItem(key));
+        return value.cardId === expectedCardId && value.status === expectedStatus;
+      } catch {
+        return false;
+      }
+    },
+    {
+      key: lifecycleStorageKey(machineId),
+      expectedCardId: cardId,
+      expectedStatus: status,
+    },
+    { timeout: 3_000 },
+  );
+}
+
+
+async function lifecycleCandidateFromMarkup(page, machineId) {
+  return page.locator(`[data-roll-change-machine][data-machine-id="${machineId}"]`).evaluate((host) => {
+    const cardId = Number(host.dataset.cardId);
+    const cardVersion = Number(host.dataset.cardVersion);
+    const hasCard = Number.isSafeInteger(cardId) && cardId > 0;
+    return {
+      schemaVersion: 2,
+      machineId: Number(host.dataset.machineId),
+      cardId: hasCard ? cardId : null,
+      cardVersion: hasCard && Number.isSafeInteger(cardVersion) && cardVersion >= 0
+        ? cardVersion
+        : null,
+      status: host.dataset.cardStatus || "",
+    };
+  });
+}
+
+
+async function forceCountdownMutationPaths(page) {
+  await page.evaluate(() => {
+    const dispatchClick = (target) => target?.dispatchEvent(new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+    }));
+    dispatchClick(document.querySelector("[data-roll-change-open]"));
+
+    const now = new Date();
+    now.setSeconds(0, 0);
+    const previous = new Date(now.getTime() - 5 * 60_000);
+    const next = new Date(now.getTime() + 25 * 60_000);
+    const pad = (value) => String(value).padStart(2, "0");
+    const setParts = (prefix, value) => {
+      const date = document.querySelector(`[data-roll-change-${prefix}-date]`);
+      const hour = document.querySelector(`[data-roll-change-${prefix}-hour]`);
+      const minute = document.querySelector(`[data-roll-change-${prefix}-minute]`);
+      if (date) date.value = `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+      if (hour) hour.value = pad(value.getHours());
+      if (minute) minute.value = pad(value.getMinutes());
+    };
+    setParts("previous", previous);
+    setParts("next", next);
+    const hours = document.querySelector("[data-roll-change-hours]");
+    const minutes = document.querySelector("[data-roll-change-minutes]");
+    if (hours) hours.value = "00";
+    if (minutes) minutes.value = "30";
+    document.querySelector("[data-roll-change-form]")?.requestSubmit();
+    dispatchClick(document.querySelector("[data-roll-change-clear]"));
+    dispatchClick(document.querySelector("[data-roll-change-advance]"));
+  });
+}
+
+
+async function assertSelectedLifecycleLocked(
+  page,
+  machineId,
+  expectedLifecycleRaw,
+  label,
+  expectedScheduleRaw = null,
+) {
+  await page.waitForFunction(
+    () => document.querySelector("[data-roll-change-reload-alert]")?.hidden === false,
+    null,
+    { timeout: 3_000 },
+  );
+  assert(await page.locator("[data-roll-change-reload-alert]").isVisible(), `${label} omitted reload alert.`);
+  assert(await page.locator("[data-roll-change-open]").isDisabled(), `${label} left editor action enabled.`);
+  assert(await page.locator("[data-roll-change-advance]").isDisabled(), `${label} left quick acknowledgement enabled.`);
+  assert(await page.locator("[data-roll-change-overlay]").isHidden(), `${label} left editor open.`);
+  assert(await page.locator("[data-roll-change-reload]").evaluate((element) => document.activeElement === element), `${label} did not focus reload action.`);
+  await forceCountdownMutationPaths(page);
+  assertEqual(await rawLifecycle(page, machineId), expectedLifecycleRaw, `${label} lifecycle preservation`);
+  assertEqual(await rawSchedule(page, machineId), expectedScheduleRaw, `${label} schedule mutation guard`);
+  assert(await page.locator("[data-roll-change-overlay]").isHidden(), `${label} force-opened editor after latch.`);
+}
+
+
+async function finishSelectedCard(page) {
+  await page.locator('form[data-lifecycle-slot="finish"] button[type="submit"]').click();
+  assert(await page.locator("[data-finish-confirm-modal]").isVisible(), "Bootstrap case finish confirmation did not open.");
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: "networkidle" }),
+    page.locator("[data-finish-confirm-submit]").click(),
+  ]);
+}
+
+
+async function assertDelayedSameCardBootstrap(context, current, late, viewport) {
+  const machineId = 3;
+  const cardId = fixture.cards.machine_3_running;
+  await navigate(current, cardId);
+  await removeSchedule(current, machineId, false);
+  const staleHtml = await captureTerminalHtml(context, cardId);
+  await submitFormAndWait(current, 'form[action$="/timing/pause"]');
+  await waitForLifecycleState(current, machineId, { cardId, status: "paused" });
+  const newerLifecycleRaw = await rawLifecycle(current, machineId);
+
+  let snapshotRequested;
+  let releaseSnapshot;
+  const snapshotSeen = new Promise((resolve) => { snapshotRequested = resolve; });
+  const snapshotRelease = new Promise((resolve) => { releaseSnapshot = resolve; });
+  await late.route("**/terminal/snapshot*", async (route) => {
+    snapshotRequested();
+    await snapshotRelease;
+    await route.continue();
+  });
+  await installCapturedTerminalRoute(late, cardId, staleHtml);
+  await navigateCapturedTerminal(late, cardId);
+  await Promise.race([
+    snapshotSeen,
+    late.waitForTimeout(3_000).then(() => { throw new Error("Delayed same-card bootstrap did not request authoritative snapshot."); }),
+  ]);
+
+  assert(await late.locator("[data-roll-change-open]").isDisabled(), "Same-card bootstrap did not lock editor while authority was pending.");
+  assert(await late.locator("[data-roll-change-advance]").isDisabled(), "Same-card bootstrap did not lock quick acknowledgement while authority was pending.");
+  await forceCountdownMutationPaths(late);
+  assertEqual(await rawLifecycle(late, machineId), newerLifecycleRaw, "same-card pending lifecycle preservation");
+  assertEqual(await rawSchedule(late, machineId), null, "same-card pending schedule guard");
+
+  releaseSnapshot();
+  await assertSelectedLifecycleLocked(late, machineId, newerLifecycleRaw, "same-card stale bootstrap");
+  if (viewport.width === 1920) {
+    await late.screenshot({ path: screenshotPath("delayed-same-card-lifecycle-alert.png"), fullPage: true });
+  }
+}
+
+
+async function assertDelayedReplacementBootstrap(context, current, late) {
+  const machineId = 1;
+  const cardId = fixture.cards.machine_1_running;
+  await navigate(current, cardId);
+  await removeSchedule(current, machineId, false);
+  const staleHtml = await captureTerminalHtml(context, cardId);
+  await finishSelectedCard(current);
+  await navigate(current, fixture.cards.machine_1_follow_up);
+  await submitFormAndWait(current, 'form[action$="/timing/start"]');
+  await waitForLifecycleState(current, machineId, {
+    cardId: fixture.cards.machine_1_follow_up,
+    status: "running",
+  });
+  const replacementSchedule = schedule({
+    machineId,
+    cardId: fixture.cards.machine_1_follow_up,
+    previousChangeAtMs: Date.now() - 5 * 60_000,
+    intervalMinutes: 30,
+    nextExpectedAtMs: Date.now() + 25 * 60_000,
+    status: "running",
+  });
+  await writeSchedule(current, replacementSchedule, false);
+  const newerLifecycleRaw = await rawLifecycle(current, machineId);
+  const newerScheduleRaw = await rawSchedule(current, machineId);
+  await installCapturedTerminalRoute(late, cardId, staleHtml);
+  await navigateCapturedTerminal(late, cardId);
+  await assertSelectedLifecycleLocked(
+    late,
+    machineId,
+    newerLifecycleRaw,
+    "replacement-card stale bootstrap",
+    newerScheduleRaw,
+  );
+}
+
+
+async function assertDelayedEmptyMachineBootstrap(context, current, late) {
+  const machineId = 3;
+  const cardId = fixture.cards.machine_3_running;
+  await navigate(current, cardId);
+  await removeSchedule(current, machineId, false);
+  await current.locator(".roll-defaults-form input[name='tare_weight']").fill("1.00");
+  await submitFormAndWait(current, ".roll-defaults-form");
+  await current.locator(".add-roll-form input[name='gross_weight']").fill("20.00");
+  await submitFormAndWait(current, ".add-roll-form");
+  const staleHtml = await captureTerminalHtml(context, cardId);
+  await finishSelectedCard(current);
+  await waitForLifecycleState(current, machineId, { cardId: null, status: "free" });
+  const newerLifecycleRaw = await rawLifecycle(current, machineId);
+  await installCapturedTerminalRoute(late, cardId, staleHtml);
+  await navigateCapturedTerminal(late, cardId);
+  await assertSelectedLifecycleLocked(late, machineId, newerLifecycleRaw, "empty-machine stale bootstrap");
+}
+
+
+async function assertLifecycleSchemaTolerance(context, current, late, rawValue, label) {
+  const machineId = 3;
+  const cardId = fixture.cards.machine_3_running;
+  await navigate(current, cardId);
+  await removeSchedule(current, machineId, false);
+  const staleHtml = await captureTerminalHtml(context, cardId);
+  const expected = await lifecycleCandidateFromMarkup(current, machineId);
+  assert(Number.isSafeInteger(expected.cardVersion), `${label} markup omitted card version.`);
+  await captureLifecycleStorageEvents(current, machineId);
+  await setRawLifecycle(current, machineId, rawValue(expected));
+  await installCapturedTerminalRoute(late, cardId, staleHtml);
+  await navigateCapturedTerminal(late, cardId);
+  await waitForLifecycle(late, machineId, expected);
+  assert(await late.locator("[data-roll-change-reload-alert]").isHidden(), `${label} incorrectly latched an authoritative current page.`);
+  assert(await late.locator("[data-roll-change-open]").isEnabled(), `${label} did not unlock the authoritative current editor.`);
+  await late.waitForTimeout(750);
+  const lifecycleEvents = await capturedLifecycleStorageEvents(current);
+  assertEqual(lifecycleEvents.length, 1, `${label} lifecycle storage event count`);
+  assertEqual(lifecycleEvents[0].newValue, JSON.stringify(expected), `${label} repaired lifecycle bytes`);
+}
+
+
+async function assertLifecycleRequestFailure(context, current, late) {
+  const machineId = 3;
+  const cardId = fixture.cards.machine_3_running;
+  await navigate(current, cardId);
+  await removeSchedule(current, machineId, false);
+  const staleHtml = await captureTerminalHtml(context, cardId);
+  const divergent = JSON.stringify({
+    schemaVersion: 2,
+    machineId,
+    cardId,
+    cardVersion: 999_999,
+    status: "running",
+  });
+  await setRawLifecycle(current, machineId, divergent);
+  await late.route("**/terminal/snapshot*", (route) => route.fulfill({
+    status: 503,
+    contentType: "application/json",
+    body: JSON.stringify({ detail: "deterministic authority failure" }),
+  }));
+  await installCapturedTerminalRoute(late, cardId, staleHtml);
+  await navigateCapturedTerminal(late, cardId);
+  await assertSelectedLifecycleLocked(late, machineId, divergent, "authority-request failure");
+}
+
+
+const bootstrapCases = {
+  "same-card": assertDelayedSameCardBootstrap,
+  replacement: assertDelayedReplacementBootstrap,
+  empty: assertDelayedEmptyMachineBootstrap,
+  malformed: (context, current, late) => assertLifecycleSchemaTolerance(
+    context,
+    current,
+    late,
+    () => "{not-json",
+    "malformed lifecycle tolerance",
+  ),
+  "schema-v1": (context, current, late) => assertLifecycleSchemaTolerance(
+    context,
+    current,
+    late,
+    (expected) => JSON.stringify({
+      schemaVersion: 1,
+      machineId: expected.machineId,
+      cardId: expected.cardId,
+      status: expected.status,
+    }),
+    "schema-v1 lifecycle tolerance",
+  ),
+  "request-failure": assertLifecycleRequestFailure,
+};
+
+
+async function runBootstrapCase(browser, viewport, name) {
+  const assertion = bootstrapCases[name];
+  assert(assertion, `Unknown TASK7_BOOTSTRAP_CASE: ${name}`);
+  resetFixture();
+  const context = await browser.newContext({ viewport });
+  const current = await context.newPage();
+  const late = await context.newPage();
+  const mutationRequests = [];
+  instrumentPage(current, mutationRequests);
+  instrumentPage(late, mutationRequests, {
+    expectedConsoleErrors: name === "request-failure" ? ["status of 503"] : [],
+  });
+  try {
+    await assertion(context, current, late, viewport);
+    passed(`${viewport.width}x${viewport.height}: delayed-bootstrap ${name} regression`);
+  } finally {
+    await context.close();
+  }
+}
+
+
 async function assertTwoTabLifecycleAndReplacementStorage(context, page, mutationRequests, viewport) {
   await navigate(page, fixture.cards.machine_3_running);
   await removeSchedule(page, 3, false);
@@ -1264,6 +1643,14 @@ async function assertTwoTabLifecycleAndReplacementStorage(context, page, mutatio
 
 
 async function runViewport(browser, viewport) {
+  if (bootstrapCaseFilter) {
+    await runBootstrapCase(browser, viewport, bootstrapCaseFilter);
+    summary.viewports.push({ ...viewport, status: "passed" });
+    return;
+  }
+  for (const name of Object.keys(bootstrapCases)) {
+    await runBootstrapCase(browser, viewport, name);
+  }
   resetFixture();
   const context = await browser.newContext({ viewport });
   const page = await context.newPage();

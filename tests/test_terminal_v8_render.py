@@ -344,7 +344,7 @@ def test_terminal_v8_renders_four_machine_navigation_controls(connection):
 def test_terminal_v8_machine_navigation_renders_roll_change_timer_hosts(connection):
     running_id = release_ready_card("26101", machine_id=1, sequence=1)
     paused_id = release_ready_card("26102", machine_id=2, sequence=1)
-    release_ready_card("26104", machine_id=3, sequence=1)
+    pending_id = release_ready_card("26104", machine_id=3, sequence=1)
     assert db.start_production_timing(running_id, card_version(running_id)).ok
     assert db.start_production_timing(paused_id, card_version(paused_id)).ok
     assert db.pause_production_timing(paused_id, card_version(paused_id)).ok
@@ -363,6 +363,18 @@ def test_terminal_v8_machine_navigation_renders_roll_change_timer_hosts(connecti
     assert re.search(r'class="machine-state-dot idle".*>.*Машина 3: чака старт', html, re.S)
     assert re.search(r'class="machine-state-dot idle".*>.*Машина 4: свободна', html, re.S)
     assert len(re.findall(r'data-roll-change-machine-timer', html)) == 4
+    for card_id in (running_id, paused_id, pending_id):
+        assert re.search(
+            rf'data-card-id="{card_id}"\s+data-card-version="{card_version(card_id)}"',
+            html,
+        )
+    assert re.search(r'data-card-id=""\s+data-card-version=""\s+data-card-status="free"', html)
+    assert re.search(
+        rf'data-roll-change-controls\s+data-machine-id="1"\s+'
+        rf'data-card-id="{running_id}"\s+data-card-version="{card_version(running_id)}"\s+'
+        r'data-card-status="running"',
+        html,
+    )
 
 
 def test_terminal_v8_selected_machine_navigation_does_not_use_heavy_focus_ring(connection):
