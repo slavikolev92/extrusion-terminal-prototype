@@ -794,3 +794,110 @@ def test_paused_finish_rejects_malformed_open_segment_without_side_effects(
     )
     assert stored_card(card_id) == before_card
     assert timing_snapshot(card_id) == before_segments
+
+
+def test_returned_rolls_all_count_toward_the_shift_that_ended_extrusion(
+    connection,
+    start_test_shift,
+):
+    shift_one = start_test_shift("1")
+    card_id = release_ready_card("63001")
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    assert db.end_shift(int(shift_one["id"]), int(shift_one["version"])).ok
+
+    shift_two = start_test_shift("2")
+    set_rewinding_marker(card_id, 2)
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.finish_card(card_id, int(card["version"])).ok
+    waiting = db.fetch_terminal_card_detail(card_id)
+    assert waiting is not None
+    assert waiting["final_extrusion_shift_occurrence_id"] == shift_two["id"]
+    assert db.end_shift(int(shift_two["id"]), int(shift_two["version"])).ok
+
+    shift_three = start_test_shift("3")
+    assert db.add_roll_gross_weight(
+        card_id,
+        waiting["version"],
+        "20.00",
+        tare_weight="1.00",
+        require_active_shift=True,
+    ).ok
+    after_first = db.fetch_terminal_card_detail(card_id)
+    assert after_first is not None
+    assert db.add_roll_gross_weight(
+        card_id,
+        after_first["version"],
+        "30.00",
+        require_active_shift=True,
+    ).ok
+
+    rolls = db.fetch_terminal_card_detail(card_id)["roll_entries"]
+    shift_two_summary = db.fetch_shift_summary(int(shift_two["id"]))
+    shift_three_summary = db.fetch_shift_summary(int(shift_three["id"]))
+    assert [roll["shift_occurrence_id"] for roll in rolls] == [
+        shift_two["id"],
+        shift_two["id"],
+    ]
+    assert shift_two_summary is not None
+    assert shift_two_summary["roll_count"] == 2
+    assert shift_two_summary["total_gross_weight"] == "50.00"
+    assert shift_three_summary is not None
+    assert shift_three_summary["roll_count"] == 0
+
+
+def test_waiting_material_and_batch_correction_preserves_lifecycle_and_marker(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("63002")
+    set_card_status(card_id, STATUS_AWAITING_REWINDING)
+    assert db.update_rewinding_roll_count(
+        card_id,
+        int(card_state(card_id)["version"]),
+        6,
+    ).ok
+    before = stored_card(card_id)
+
+    result = db.update_terminal_recipe_actual_entries(
+        card_id,
+        int(before["version"]),
+        {
+            "raw_material_a": {
+                "actual_material_used": "Corrected LDPE",
+                "batch_lot": "WAIT-42",
+            }
+        },
+        raw_material_brand_grade="Grade W",
+        require_active_shift=True,
+    )
+    after = db.fetch_terminal_card_detail(card_id)
+
+    assert result.ok
+    assert after is not None
+    assert after["status"] == STATUS_AWAITING_REWINDING
+    assert after["rewinding_roll_count"] == 6
+    assert after["actual_raw_material_used"] == "Corrected LDPE"
+    assert after["raw_material_brand_grade"] == "Grade W"
+    assert after["raw_material_batch_lot"] == "WAIT-42"
+    assert after["recipe_actual_entries"]["raw_material_a"]["batch_lot"] == "WAIT-42"
+
+
+def test_waiting_card_rejects_lifecycle_and_queue_actions(connection, active_test_shift):
+    card_id = release_ready_card("63003")
+    set_card_status(card_id, STATUS_AWAITING_REWINDING)
+    before = stored_card(card_id)
+
+    results = (
+        db.start_production_timing(card_id, int(before["version"])),
+        db.pause_production_timing(card_id, int(before["version"])),
+        db.resume_production_timing(card_id, int(before["version"])),
+        db.cancel_card(card_id, int(before["version"])),
+        db.archive_completed_card(card_id, int(before["version"])),
+        db.update_card_planning(card_id, int(before["version"]), 2, 1),
+    )
+
+    assert all(not result.ok for result in results)
+    assert stored_card(card_id) == before

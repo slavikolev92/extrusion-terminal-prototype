@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import csv
 import io
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 
 from app import db
-from app.constants import STATUS_COMPLETED, STATUS_PAUSED, STATUS_PENDING, STATUS_RUNNING
+from app.constants import (
+    STATUS_ARCHIVED,
+    STATUS_AWAITING_REWINDING,
+    STATUS_COMPLETED,
+    STATUS_PAUSED,
+    STATUS_PENDING,
+    STATUS_RUNNING,
+)
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 
 
@@ -247,6 +256,316 @@ def test_late_roll_without_known_order_shift_remains_unattributed(connection):
     assert result.ok
     assert roll["shift_occurrence_id"] is None
     assert db.fetch_active_shift()["id"] == active_id
+
+
+@pytest.mark.parametrize(
+    "status",
+    [STATUS_AWAITING_REWINDING, STATUS_COMPLETED, STATUS_ARCHIVED],
+)
+def test_late_roll_uses_stored_final_shift_before_linked_roll_or_active_shift(
+    connection,
+    status,
+):
+    card_id = import_and_release_card(f"2561{len(status)}")
+    linked_id = insert_shift_occurrence(
+        connection,
+        1,
+        "2026-07-25 06:00:00",
+        "2026-07-25 14:00:00",
+    )
+    final_id = insert_shift_occurrence(
+        connection,
+        2,
+        "2026-07-25 14:00:00",
+        "2026-07-25 22:00:00",
+    )
+    active_id = insert_shift_occurrence(connection, 3, "2026-07-25 22:00:00", None)
+    connection.execute(
+        """
+        UPDATE cards
+        SET status = ?, tare_weight = '1.00',
+            final_extrusion_shift_occurrence_id = ?
+        WHERE id = ?
+        """,
+        (status, final_id, card_id),
+    )
+    connection.execute(
+        """
+        INSERT INTO roll_entries (
+            card_id, order_number, roll_number, gross_weight, tare_weight,
+            net_weight, shift_occurrence_id
+        )
+        VALUES (?, ?, 1, '20.00', '1.00', '19.00', ?)
+        """,
+        (card_id, f"2561{len(status)}", linked_id),
+    )
+    connection.commit()
+
+    result = db.add_roll_gross_weight(
+        card_id,
+        db.fetch_admin_card_detail(card_id)["version"],
+        "22.00",
+        require_active_shift=True,
+    )
+    rolls = db.fetch_admin_card_detail(card_id)["roll_entries"]
+
+    assert result.ok
+    assert rolls[-1]["shift_occurrence_id"] == final_id
+    assert rolls[-1]["shift_occurrence_id"] not in (linked_id, active_id)
+
+
+def test_waiting_roll_add_and_row_correction_are_atomic_snapshots(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("25620")
+    connection.execute(
+        """
+        UPDATE cards
+        SET status = ?, tare_weight = '1.25', current_pallet_number = 4,
+            final_extrusion_shift_occurrence_id = ?
+        WHERE id = ?
+        """,
+        (STATUS_AWAITING_REWINDING, active_test_shift["id"], card_id),
+    )
+    connection.commit()
+    before = db.fetch_terminal_card_detail(card_id)
+
+    added = db.add_roll_gross_weight(
+        card_id,
+        before["version"],
+        "25.50",
+        require_active_shift=True,
+    )
+    added_card = db.fetch_terminal_card_detail(card_id)
+    roll = added_card["roll_entries"][0]
+
+    assert added.ok
+    assert added_card["version"] == before["version"] + 1
+    assert (
+        roll["roll_number"],
+        roll["gross_weight"],
+        roll["tare_weight"],
+        roll["pallet_number"],
+        roll["net_weight"],
+        roll["shift_occurrence_id"],
+    ) == (1, 25.5, 1.25, 4, 24.25, active_test_shift["id"])
+
+    rejected = db.update_roll_weight(
+        card_id,
+        roll["id"],
+        added_card["version"],
+        "30.00",
+        "2.00",
+        "1000",
+        require_active_shift=True,
+    )
+    unchanged = db.fetch_terminal_card_detail(card_id)
+    assert not rejected.ok
+    assert unchanged == added_card
+
+    corrected = db.update_roll_weight(
+        card_id,
+        roll["id"],
+        added_card["version"],
+        "30.00",
+        "2.00",
+        "9",
+        require_active_shift=True,
+    )
+    corrected_card = db.fetch_terminal_card_detail(card_id)
+    assert corrected.ok
+    assert corrected_card["version"] == added_card["version"] + 1
+    assert (
+        corrected_card["roll_entries"][0]["gross_weight"],
+        corrected_card["roll_entries"][0]["tare_weight"],
+        corrected_card["roll_entries"][0]["pallet_number"],
+        corrected_card["roll_entries"][0]["net_weight"],
+    ) == (30, 2, 9, 28)
+    assert corrected_card["tare_weight"] == 1.25
+    assert corrected_card["current_pallet_number"] == 4
+
+    preserved_pallet = db.update_roll_weight(
+        card_id,
+        roll["id"],
+        corrected_card["version"],
+        "31.00",
+        "2.00",
+        require_active_shift=True,
+    )
+    preserved_card = db.fetch_terminal_card_detail(card_id)
+    assert preserved_pallet.ok
+    assert preserved_card["roll_entries"][0]["pallet_number"] == 9
+
+
+def test_waiting_roll_terminal_write_requires_active_shift_before_historical_attribution(
+    connection,
+):
+    final_id = insert_shift_occurrence(
+        connection,
+        2,
+        "2026-07-25 14:00:00",
+        "2026-07-25 22:00:00",
+    )
+    card_id = import_and_release_card("25622")
+    connection.execute(
+        """
+        UPDATE cards
+        SET status = ?, tare_weight = '1.00',
+            final_extrusion_shift_occurrence_id = ?
+        WHERE id = ?
+        """,
+        (STATUS_AWAITING_REWINDING, final_id, card_id),
+    )
+    connection.commit()
+    before = db.fetch_terminal_card_detail(card_id)
+
+    result = db.add_roll_gross_weight(
+        card_id,
+        before["version"],
+        "20.00",
+        require_active_shift=True,
+    )
+    after = db.fetch_terminal_card_detail(card_id)
+
+    assert not result.ok
+    assert result.messages == (db.NO_ACTIVE_SHIFT_MESSAGE,)
+    assert after == before
+
+
+def test_waiting_defaults_do_not_rewrite_roll_snapshots_and_final_roll_can_be_deleted(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("25621")
+    connection.execute(
+        """
+        UPDATE cards
+        SET status = ?, tare_weight = '1.00', current_pallet_number = 2,
+            final_extrusion_shift_occurrence_id = ?
+        WHERE id = ?
+        """,
+        (STATUS_AWAITING_REWINDING, active_test_shift["id"], card_id),
+    )
+    connection.commit()
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "20.00",
+        require_active_shift=True,
+    ).ok
+    with_roll = db.fetch_terminal_card_detail(card_id)
+
+    assert db.update_tare_weight(
+        card_id,
+        with_roll["version"],
+        "3.00",
+        require_active_shift=True,
+    ).ok
+    after_tare = db.fetch_terminal_card_detail(card_id)
+    assert db.update_current_pallet_number(
+        card_id,
+        after_tare["version"],
+        "7",
+        require_active_shift=True,
+    ).ok
+    after_defaults = db.fetch_terminal_card_detail(card_id)
+    roll = after_defaults["roll_entries"][0]
+
+    assert after_defaults["tare_weight"] == 3
+    assert after_defaults["current_pallet_number"] == 7
+    assert (roll["tare_weight"], roll["pallet_number"], roll["net_weight"]) == (1, 2, 19)
+
+    deleted = db.delete_roll_entry(
+        card_id,
+        roll["id"],
+        after_defaults["version"],
+        require_active_shift=True,
+    )
+    final_card = db.fetch_terminal_card_detail(card_id)
+    assert deleted.ok
+    assert final_card["status"] == STATUS_AWAITING_REWINDING
+    assert final_card["roll_entries"] == []
+
+
+def test_waiting_roll_correction_cannot_overwrite_a_concurrent_committed_version(
+    connection,
+    active_test_shift,
+    monkeypatch,
+):
+    card_id = import_and_release_card("25623")
+    connection.execute(
+        """
+        UPDATE cards
+        SET status = ?, tare_weight = '1.00',
+            final_extrusion_shift_occurrence_id = ?
+        WHERE id = ?
+        """,
+        (STATUS_AWAITING_REWINDING, active_test_shift["id"], card_id),
+    )
+    connection.commit()
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "20.00",
+    ).ok
+    loaded = db.fetch_terminal_card_detail(card_id)
+    roll_id = int(loaded["roll_entries"][0]["id"])
+
+    writer = db.connect()
+    writer.execute("BEGIN IMMEDIATE")
+    writer.execute(
+        """
+        UPDATE roll_entries
+        SET gross_weight = '27.00', tare_weight = '2.00', net_weight = '25.00'
+        WHERE id = ?
+        """,
+        (roll_id,),
+    )
+    writer.execute(
+        "UPDATE cards SET version = version + 1 WHERE id = ?",
+        (card_id,),
+    )
+
+    stale_read_reached = Event()
+    release_stale_reader = Event()
+    original_validate = db.validate_loaded_card_version
+
+    def synchronize_stale_read(card, loaded_version):
+        result = original_validate(card, loaded_version)
+        if result.ok:
+            stale_read_reached.set()
+            assert release_stale_reader.wait(timeout=2)
+        return result
+
+    monkeypatch.setattr(db, "validate_loaded_card_version", synchronize_stale_read)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            db.update_roll_weight,
+            card_id,
+            roll_id,
+            loaded["version"],
+            "30.00",
+            "3.00",
+            "8",
+        )
+        stale_read_reached.wait(timeout=0.2)
+        writer.commit()
+        writer.close()
+        release_stale_reader.set()
+        result = future.result(timeout=2)
+
+    final_card = db.fetch_terminal_card_detail(card_id)
+    final_roll = final_card["roll_entries"][0]
+    assert not result.ok
+    assert result.messages == (db.STALE_CARD_MESSAGE,)
+    assert final_card["version"] == loaded["version"] + 1
+    assert (
+        final_roll["gross_weight"],
+        final_roll["tare_weight"],
+        final_roll["pallet_number"],
+        final_roll["net_weight"],
+    ) == (27, 2, None, 25)
 
 
 def test_tare_update_persists_and_checks_loaded_version(connection):

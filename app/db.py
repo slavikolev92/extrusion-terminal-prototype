@@ -10,6 +10,7 @@ from typing import Any
 from .constants import (
     ACTIVE_TERMINAL_STATUSES,
     ARCHIVE_STATUSES,
+    EXTRUSION_ENDED_STATUSES,
     PRODUCTION_COMPLETE_STATUSES,
     STATUS_ARCHIVED,
     STATUS_AWAITING_REWINDING,
@@ -50,7 +51,11 @@ TIMING_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv("EXTRUSION_DATA_DIR", BASE_DIR / "data"))
 DB_PATH = Path(os.getenv("EXTRUSION_DB_PATH", DATA_DIR / "extrusion_terminal.sqlite3"))
-TERMINAL_ACTION_STATUSES = (*ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES)
+TERMINAL_ACTION_STATUSES = (
+    *ACTIVE_TERMINAL_STATUSES,
+    *WAITING_REWINDING_STATUSES,
+    *ARCHIVE_STATUSES,
+)
 TERMINAL_ACTION_STATUS_PLACEHOLDERS = ", ".join("?" for _ in TERMINAL_ACTION_STATUSES)
 REWINDING_MARKER_STATUSES = (
     STATUS_RUNNING,
@@ -1932,6 +1937,7 @@ def add_timing_segment(
         return parse_result
 
     with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
         card = fetch_admin_production_action_card(connection, card_id)
         version_result = validate_loaded_card_version(card, loaded_version)
         if not version_result.ok:
@@ -1960,6 +1966,7 @@ def add_timing_segment(
                 ),
             )
             refresh_card_timing_markers(connection, card_id)
+            refresh_extrusion_ended_finished_at(connection, card_id)
             touch_card(connection, card_id)
         except sqlite3.IntegrityError:
             connection.rollback()
@@ -1981,6 +1988,7 @@ def update_timing_segment(
         return parse_result
 
     with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
         card = fetch_admin_production_action_card(connection, card_id)
         version_result = validate_loaded_card_version(card, loaded_version)
         if not version_result.ok:
@@ -2028,6 +2036,7 @@ def update_timing_segment(
                 ),
             )
             refresh_card_timing_markers(connection, card_id)
+            refresh_extrusion_ended_finished_at(connection, card_id)
             touch_card(connection, card_id)
         except sqlite3.IntegrityError:
             connection.rollback()
@@ -2038,6 +2047,7 @@ def update_timing_segment(
 
 def delete_timing_segment(card_id: int, segment_id: int, loaded_version: int) -> RuleResult:
     with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
         card = fetch_admin_production_action_card(connection, card_id)
         version_result = validate_loaded_card_version(card, loaded_version)
         if not version_result.ok:
@@ -2059,7 +2069,7 @@ def delete_timing_segment(card_id: int, segment_id: int, loaded_version: int) ->
         if not delete_result.ok:
             return delete_result
 
-        if card["status"] in PRODUCTION_COMPLETE_STATUSES:
+        if card["status"] in EXTRUSION_ENDED_STATUSES:
             segment_count = int(
                 connection.execute(
                     """
@@ -2085,6 +2095,7 @@ def delete_timing_segment(card_id: int, segment_id: int, loaded_version: int) ->
             (segment_id, card_id),
         )
         refresh_card_timing_markers(connection, card_id)
+        refresh_extrusion_ended_finished_at(connection, card_id)
         touch_card(connection, card_id)
 
     return RuleResult(True, ("Времевият сегмент е изтрит.",))
@@ -2128,6 +2139,8 @@ def _update_admin_timing_ledger(
     delete_segment_ids: set[int],
     new_segments: list[dict[str, str]],
 ) -> RuleResult:
+    if not connection.in_transaction:
+        connection.execute("BEGIN IMMEDIATE")
     card = fetch_admin_production_action_card(connection, card_id)
     version_result = validate_loaded_card_version(card, loaded_version)
     if not version_result.ok:
@@ -2195,7 +2208,7 @@ def _update_admin_timing_ledger(
             final_open_count += 1
     final_open_count += sum(1 for segment in parsed_new if segment["ended_at"] is None)
 
-    if str(card["status"]) in PRODUCTION_COMPLETE_STATUSES and final_segment_count < 1:
+    if str(card["status"]) in EXTRUSION_ENDED_STATUSES and final_segment_count < 1:
         return RuleResult(False, ("Завършена карта трябва да има поне един времеви сегмент.",))
 
     if str(card["status"]) != STATUS_RUNNING and final_open_count > 0:
@@ -2333,22 +2346,7 @@ def _update_admin_timing_ledger(
                 ),
             )
 
-        connection.execute(
-            """
-            UPDATE cards
-            SET finished_at = CASE
-                    WHEN status IN (?, ?)
-                    THEN (
-                        SELECT MAX(ended_at)
-                        FROM production_time_segments
-                        WHERE card_id = ? AND ended_at IS NOT NULL
-                    )
-                    ELSE finished_at
-                END
-            WHERE id = ?
-            """,
-            (*PRODUCTION_COMPLETE_STATUSES, card_id, card_id),
-        )
+        refresh_extrusion_ended_finished_at(connection, card_id)
         refresh_card_timing_markers(connection, card_id)
         touch_card(connection, card_id)
     except sqlite3.IntegrityError:
@@ -2535,7 +2533,11 @@ def fetch_admin_production_action_card(
     connection: sqlite3.Connection,
     card_id: int,
 ) -> sqlite3.Row | None:
-    terminal_visible_statuses = (*ACTIVE_TERMINAL_STATUSES, *ARCHIVE_STATUSES)
+    terminal_visible_statuses = (
+        *ACTIVE_TERMINAL_STATUSES,
+        *WAITING_REWINDING_STATUSES,
+        *ARCHIVE_STATUSES,
+    )
     return connection.execute(
         f"""
         SELECT id, order_number, status, rewinding_roll_count,
@@ -2564,6 +2566,25 @@ def refresh_card_timing_markers(connection: sqlite3.Connection, card_id: int) ->
         WHERE id = ?
         """,
         (first_started_at, card_id),
+    )
+
+
+def refresh_extrusion_ended_finished_at(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> None:
+    connection.execute(
+        f"""
+        UPDATE cards
+        SET finished_at = (
+            SELECT MAX(ended_at)
+            FROM production_time_segments
+            WHERE card_id = ? AND ended_at IS NOT NULL
+        )
+        WHERE id = ?
+          AND status IN ({", ".join("?" for _ in EXTRUSION_ENDED_STATUSES)})
+        """,
+        (card_id, card_id, *EXTRUSION_ENDED_STATUSES),
     )
 
 
@@ -2980,8 +3001,7 @@ def update_roll_defaults(
         update_values.append(parsed_pallet)
 
     with connect() as connection:
-        if require_active_shift:
-            connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN IMMEDIATE")
         shift_result = validate_active_shift_for_terminal_write(
             connection,
             require_active_shift,
@@ -3166,6 +3186,7 @@ def update_roll_weight(
     loaded_version: int,
     gross_weight: str,
     tare_weight: str,
+    pallet_number: str | None = None,
     *,
     require_active_shift: bool = False,
 ) -> RuleResult:
@@ -3185,9 +3206,14 @@ def update_roll_weight(
     if tare_parse_error:
         return RuleResult(False, (tare_parse_error,))
 
+    parsed_pallet: int | None = None
+    if pallet_number is not None:
+        parsed_pallet, pallet_parse_error = parse_pallet_number(pallet_number)
+        if pallet_parse_error:
+            return RuleResult(False, (pallet_parse_error,))
+
     with connect() as connection:
-        if require_active_shift:
-            connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN IMMEDIATE")
         shift_result = validate_active_shift_for_terminal_write(
             connection,
             require_active_shift,
@@ -3205,7 +3231,7 @@ def update_roll_weight(
 
         roll = connection.execute(
             """
-            SELECT id, roll_number, gross_weight, tare_weight
+            SELECT id, roll_number, gross_weight, tare_weight, pallet_number
             FROM roll_entries
             WHERE id = ?
               AND card_id = ?
@@ -3214,6 +3240,13 @@ def update_roll_weight(
         ).fetchone()
         if not roll:
             return RuleResult(False, ("Ролката не е намерена.",))
+
+        if pallet_number is None:
+            parsed_pallet = (
+                int(roll["pallet_number"])
+                if roll["pallet_number"] is not None
+                else None
+            )
 
         if (
             card["status"] in PRODUCTION_COMPLETE_STATUSES
@@ -3247,13 +3280,15 @@ def update_roll_weight(
         connection.execute(
             """
             UPDATE roll_entries
-            SET gross_weight = ?,
+            SET pallet_number = ?,
+                gross_weight = ?,
                 tare_weight = ?,
                 net_weight = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (
+                parsed_pallet,
                 decimal_to_storage(parsed_gross) if parsed_gross is not None else None,
                 decimal_to_storage(parsed_tare) if parsed_tare is not None else None,
                 decimal_to_storage(net) if net is not None else None,
@@ -3281,8 +3316,7 @@ def update_terminal_roll_corrections(
     require_active_shift: bool = False,
 ) -> RuleResult:
     with connect() as connection:
-        if require_active_shift:
-            connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN IMMEDIATE")
         shift_result = validate_active_shift_for_terminal_write(
             connection,
             require_active_shift,
@@ -3454,8 +3488,7 @@ def delete_roll_entry(
     require_active_shift: bool = False,
 ) -> RuleResult:
     with connect() as connection:
-        if require_active_shift:
-            connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN IMMEDIATE")
         shift_result = validate_active_shift_for_terminal_write(
             connection,
             require_active_shift,
@@ -3610,7 +3643,8 @@ def _update_admin_roll_ledger(
 
     card = connection.execute(
         f"""
-        SELECT id, order_number, status, tare_weight, current_pallet_number, version
+        SELECT id, order_number, status, tare_weight, current_pallet_number,
+               final_extrusion_shift_occurrence_id, version
         FROM cards
         WHERE id = ?
           AND status IN ({TERMINAL_ACTION_STATUS_PLACEHOLDERS})
@@ -3899,10 +3933,15 @@ def fetch_roll_action_card(
     connection: sqlite3.Connection,
     card_id: int,
 ) -> sqlite3.Row | None:
-    roll_edit_statuses = (*ACTIVE_TERMINAL_STATUSES, *PRODUCTION_COMPLETE_STATUSES)
+    roll_edit_statuses = (
+        *ACTIVE_TERMINAL_STATUSES,
+        *WAITING_REWINDING_STATUSES,
+        *PRODUCTION_COMPLETE_STATUSES,
+    )
     return connection.execute(
         f"""
-        SELECT id, order_number, status, tare_weight, current_pallet_number, version
+        SELECT id, order_number, status, tare_weight, current_pallet_number,
+               final_extrusion_shift_occurrence_id, version
         FROM cards
         WHERE id = ?
           AND status IN ({", ".join("?" for _ in roll_edit_statuses)})
@@ -3915,7 +3954,11 @@ def validate_card_allows_roll_entry(card: sqlite3.Row | None) -> RuleResult:
     if not card:
         return RuleResult(False, ("Картата не е намерена за въвеждане на ролка.",))
 
-    if card["status"] not in (STATUS_RUNNING, *PRODUCTION_COMPLETE_STATUSES):
+    if card["status"] not in (
+        STATUS_RUNNING,
+        *WAITING_REWINDING_STATUSES,
+        *PRODUCTION_COMPLETE_STATUSES,
+    ):
         return RuleResult(
             False,
             ("Теглата на ролките могат да се променят само когато картата е в изработване, произведена или завършена.",),
@@ -3937,27 +3980,46 @@ def resolve_new_roll_shift_occurrence_id(
             )
         return int(active_shift["id"]), RuleResult(True)
 
-    if card["status"] in PRODUCTION_COMPLETE_STATUSES:
-        inherited = connection.execute(
-            """
-            SELECT shift_occurrences.id
-            FROM roll_entries
-            JOIN shift_occurrences
-              ON shift_occurrences.id = roll_entries.shift_occurrence_id
-            WHERE roll_entries.card_id = ?
-            ORDER BY shift_occurrences.started_at DESC,
-                     shift_occurrences.id DESC
-            LIMIT 1
-            """,
-            (int(card["id"]),),
-        ).fetchone()
-        inherited_id = int(inherited["id"]) if inherited is not None else None
+    if card["status"] in (
+        STATUS_AWAITING_REWINDING,
+        STATUS_COMPLETED,
+        STATUS_ARCHIVED,
+    ):
+        if card["final_extrusion_shift_occurrence_id"] is not None:
+            return (
+                int(card["final_extrusion_shift_occurrence_id"]),
+                RuleResult(True),
+            )
+        inherited_id = fetch_latest_linked_roll_shift_occurrence_id(
+            connection,
+            int(card["id"]),
+        )
         return inherited_id, RuleResult(True)
 
     return None, RuleResult(
         False,
         ("Картата не позволява добавяне на ролка.",),
     )
+
+
+def fetch_latest_linked_roll_shift_occurrence_id(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> int | None:
+    inherited = connection.execute(
+        """
+        SELECT shift_occurrences.id
+        FROM roll_entries
+        JOIN shift_occurrences
+          ON shift_occurrences.id = roll_entries.shift_occurrence_id
+        WHERE roll_entries.card_id = ?
+        ORDER BY shift_occurrences.started_at DESC,
+                 shift_occurrences.id DESC
+        LIMIT 1
+        """,
+        (card_id,),
+    ).fetchone()
+    return int(inherited["id"]) if inherited is not None else None
 
 
 def validate_recipe_source_write_fields(source_fields: dict[str, str]) -> RuleResult:
@@ -4167,6 +4229,7 @@ def update_terminal_material_fields(
     raw_material_batch_lot: str,
 ) -> RuleResult:
     with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
         card = connection.execute(
             f"""
             SELECT id, version, raw_material_a
@@ -4264,8 +4327,7 @@ def update_terminal_recipe_actual_entries(
 
     import_columns = ", ".join(component_labels)
     with connect() as connection:
-        if require_active_shift:
-            connection.execute("BEGIN IMMEDIATE")
+        connection.execute("BEGIN IMMEDIATE")
         shift_result = validate_active_shift_for_terminal_write(
             connection,
             require_active_shift,
@@ -4381,6 +4443,9 @@ def _update_admin_material_ledger(
     unknown_keys = sorted((set(planned_materials) | set(actual_entries)) - set(component_labels))
     if unknown_keys:
         return RuleResult(False, ("Формата съдържа непознат ред от рецептата.",))
+
+    if not connection.in_transaction:
+        connection.execute("BEGIN IMMEDIATE")
 
     import_columns = ", ".join(ADMIN_MATERIAL_FIELDS)
     card = connection.execute(

@@ -10,6 +10,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from app import db
 from app.constants import (
     STATUS_ARCHIVED,
+    STATUS_AWAITING_REWINDING,
     STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_PENDING,
@@ -1207,6 +1208,181 @@ def test_admin_timing_correction_blocks_stale_loaded_version(connection):
     assert stale_result.messages == (
         "Картата е променена след зареждането на страницата. Презаредете и опитайте отново.",
     )
+
+
+def prepare_waiting_timing_card(connection, order_number: str) -> int:
+    shift_id = insert_shift_occurrence(
+        connection,
+        2,
+        "2026-07-26 06:00:00",
+        "2026-07-26 14:00:00",
+    )
+    card_id = release_ready_card(order_number)
+    connection.execute(
+        """
+        UPDATE cards
+        SET status = ?, rewinding_roll_count = 4,
+            final_extrusion_shift_occurrence_id = ?,
+            tare_weight = '1.00', current_pallet_number = 3,
+            first_started_at = '2026-07-26 08:00:00',
+            finished_at = '2026-07-26 11:00:00'
+        WHERE id = ?
+        """,
+        (STATUS_AWAITING_REWINDING, shift_id, card_id),
+    )
+    connection.executemany(
+        """
+        INSERT INTO production_time_segments (
+            card_id, started_at, ended_at, end_reason
+        )
+        VALUES (?, ?, ?, 'correction')
+        """,
+        (
+            (card_id, "2026-07-26 08:00:00", "2026-07-26 09:00:00"),
+            (card_id, "2026-07-26 10:00:00", "2026-07-26 11:00:00"),
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO roll_entries (
+            card_id, order_number, roll_number, gross_weight, tare_weight,
+            net_weight, pallet_number, shift_occurrence_id
+        )
+        VALUES (?, ?, 1, '25.00', '1.00', '24.00', 3, ?)
+        """,
+        (card_id, order_number, shift_id),
+    )
+    connection.commit()
+    return card_id
+
+
+def test_waiting_timing_ledger_add_edit_delete_recomputes_ended_markers_only(
+    connection,
+):
+    card_id = prepare_waiting_timing_card(connection, "26060")
+    before = db.fetch_admin_card_detail(card_id)
+    first_id = int(before["timing_segments"][0]["id"])
+    second_id = int(before["timing_segments"][1]["id"])
+    preserved = {
+        key: before[key]
+        for key in (
+            "status",
+            "final_extrusion_shift_occurrence_id",
+            "rewinding_roll_count",
+            "machine_id",
+            "machine_sequence",
+            "tare_weight",
+            "current_pallet_number",
+            "roll_entries",
+        )
+    }
+
+    result = db.update_admin_timing_ledger(
+        card_id,
+        before["version"],
+        {
+            first_id: {
+                "started_at": "2026-07-26 08:00:00",
+                "ended_at": "2026-07-26 10:00:00",
+                "end_reason": "correction",
+            }
+        },
+        {second_id},
+        [
+            {
+                "started_at": "2026-07-26 10:00:00",
+                "ended_at": "2026-07-26 12:00:00",
+                "end_reason": "correction",
+            }
+        ],
+    )
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert result.ok
+    assert after["version"] == before["version"] + 1
+    assert after["total_production_seconds"] == 14400
+    assert after["first_started_at"] == "2026-07-26 08:00:00"
+    assert after["finished_at"] == "2026-07-26 12:00:00"
+    assert [
+        (segment["started_at"], segment["ended_at"])
+        for segment in after["timing_segments"]
+    ] == [
+        ("2026-07-26 08:00:00", "2026-07-26 10:00:00"),
+        ("2026-07-26 10:00:00", "2026-07-26 12:00:00"),
+    ]
+    assert {key: after[key] for key in preserved} == preserved
+
+
+def test_waiting_timing_ledger_requires_one_closed_segment_and_rejects_open_segment(
+    connection,
+):
+    card_id = prepare_waiting_timing_card(connection, "26061")
+    card = db.fetch_admin_card_detail(card_id)
+    segment_ids = {int(segment["id"]) for segment in card["timing_segments"]}
+
+    delete_all = db.update_admin_timing_ledger(
+        card_id,
+        card["version"],
+        {},
+        segment_ids,
+        [],
+    )
+    open_segment = db.update_admin_timing_ledger(
+        card_id,
+        card["version"],
+        {},
+        set(),
+        [
+            {
+                "started_at": "2026-07-26 12:00:00",
+                "ended_at": "",
+                "end_reason": "",
+            }
+        ],
+    )
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert not delete_all.ok
+    assert not open_segment.ok
+    assert after == card
+
+
+def test_waiting_individual_timing_corrections_recompute_finished_at(connection):
+    card_id = prepare_waiting_timing_card(connection, "26062")
+    card = db.fetch_admin_card_detail(card_id)
+
+    added = db.add_timing_segment(
+        card_id,
+        card["version"],
+        "2026-07-26 12:00:00",
+        "2026-07-26 13:00:00",
+        "correction",
+    )
+    after_add = db.fetch_admin_card_detail(card_id)
+    added_id = int(after_add["timing_segments"][-1]["id"])
+    updated = db.update_timing_segment(
+        card_id,
+        added_id,
+        after_add["version"],
+        "2026-07-26 12:00:00",
+        "2026-07-26 14:00:00",
+        "correction",
+    )
+    after_update = db.fetch_admin_card_detail(card_id)
+    deleted = db.delete_timing_segment(
+        card_id,
+        added_id,
+        after_update["version"],
+    )
+    after_delete = db.fetch_admin_card_detail(card_id)
+
+    assert added.ok
+    assert after_add["finished_at"] == "2026-07-26 13:00:00"
+    assert updated.ok
+    assert after_update["finished_at"] == "2026-07-26 14:00:00"
+    assert deleted.ok
+    assert after_delete["finished_at"] == "2026-07-26 11:00:00"
+    assert after_delete["status"] == STATUS_AWAITING_REWINDING
 
 
 def test_completed_admin_detail_uses_explicit_delete_controls(
