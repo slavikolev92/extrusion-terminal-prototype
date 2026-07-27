@@ -190,6 +190,7 @@ Every migration test set must cover, where applicable:
 | M001 | `shift_manager_import_fields` | Add the eight final ordered/route columns without guessing legacy values | 9 focused tests passed | Not run | Not run |
 | M002 | `shift_management` | Add shift configuration, durable occurrences, and nullable roll attribution without historical backfill | 14 focused migration tests and 560 full-suite tests passed | Not run | Not run |
 | M003 | `roll_pallet_assignment` | Add nullable constrained current-card and per-roll pallet numbers without historical backfill | 28 focused migration, 78 focused print/verifier-safety, and 686 full-suite tests passed | Not needed for M003 itself; final release rehearsal still required | Not run |
+| M004 | `rewinding_return_workflow` | Rebuild `cards` for the waiting status, constrained nullable marker, and nullable final-shift foreign key without historical inference | 42 migration, 611 focused affected-workflow, and 814 full-suite tests passed | Not needed for M004 itself; final release rehearsal still required | Not run |
 
 ### M001: Shift Manager Import Fields
 
@@ -324,6 +325,102 @@ deploy together after a SQLite-safe backup. The unresolved M001 legacy-data
 production profile and the final release-candidate rehearsal remain separate
 deployment gates.
 
+### M004: Rewinding Return Workflow
+
+M004, `rewinding_return_workflow`, is implemented in `app/migrations.py` using
+the canonical `cards` definition and rebuild helpers in `app/schema.py`; status
+membership is defined in `app/constants.py`. It rebuilds `cards` so the status
+constraint accepts `awaiting_rewinding`, then adds these nullable, defaultless
+fields:
+
+```text
+cards.rewinding_roll_count INTEGER
+    CHECK NULL or SQLite integer from 1 through 999
+cards.final_extrusion_shift_occurrence_id INTEGER
+    REFERENCES shift_occurrences(id) ON DELETE RESTRICT
+```
+
+M004 is schema-only. It transforms no existing value and infers no historical
+waiting status, rewinding count, or final extrusion shift. A recorded-M003
+upgrade preserves status, assignment, queue, versions, timestamps, tare,
+current/per-roll pallets, roll gross/tare/net and shift links, timing,
+recipe/material actuals, import-source data, legacy extension columns, and the
+`cards` autoincrement high-water mark. Existing rows receive `NULL` only when a
+new field was absent. A valid partial schema preserves valid non-null marker and
+final-shift values.
+
+Fresh-schema and direct-constraint tests prove every canonical status is
+accepted, unknown status is rejected, the marker accepts only its exact
+nullable integer range, and dangling final-shift references are rejected.
+Upgrade fixtures cover recorded M003 and a sparse oldest accepted `cards`
+shape. Partial fixtures cover valid values and preservation. Malformed fixtures
+cover invalid partial counts, dangling shifts, a recorded M004 missing a field,
+missing count constraint, missing foreign key, and a status constraint missing
+either waiting or other canonical statuses. Integrity is `ok`, foreign-key
+checks are empty, and repeat initialization records M004 once.
+
+The table rebuild, copied data, recreated indexes, and migration record share
+the migration runner's caller-owned transaction/savepoint. An injected failure
+after the card copy proves the original schema, data, legacy extension, and M003
+record are restored, the temporary rebuild table is absent, and foreign-key
+enforcement is re-enabled. No runtime or production database was opened or
+changed; all migration fixtures used temporary SQLite files.
+
+Development evidence from July 27, 2026:
+
+```bash
+source .venv/bin/activate
+python -m compileall -q app scripts tests
+# exited 0
+
+python -m pytest tests/test_migrations.py -q
+# 42 passed in 3.18s
+
+python -m pytest \
+  tests/test_migrations.py \
+  tests/test_rewinding_workflow.py \
+  tests/test_finish_cancel_history.py \
+  tests/test_roll_entry.py \
+  tests/test_terminal_sync.py \
+  tests/test_terminal_v8_render.py \
+  tests/test_admin_production_corrections.py \
+  tests/test_admin_card_detail_redesign.py \
+  tests/test_print_output.py \
+  tests/test_baseline.py \
+  tests/test_shift_routes.py \
+  tests/test_production_timing.py \
+  tests/test_rewinding_ui_script_safety.py \
+  -q
+# 611 passed in 48.39s
+
+python -m pytest -q
+# 814 passed in 61.92s
+```
+
+The unchanged prototype verifier and guarded live Playwright verifier both
+exited `0`. The live verifier used only
+`.test-runtime/rewinding-ui.sqlite3`, passed at `1920x768` and `1366x768`,
+reported no overflow, console errors, or page errors, and recorded evidence
+under `artifacts/ui-checks/rewinding-return-workflow/`.
+
+Migration assessment
+- Decision: Schema-only
+- Why: `cards.status` must accept `awaiting_rewinding`, and `cards` needs the
+  constrained nullable marker plus nullable final-shift foreign key.
+- Existing production data affected: none; every existing stored value is
+  copied unchanged and absent new fields remain `NULL`.
+- Proposed migration: M004 `rewinding_return_workflow` (implemented).
+- Transformation: no values changed.
+- Unknowns or ambiguous rows: none known; historical rewinding state, count,
+  and final shift are deliberately not inferred.
+- Required tests: fresh, recorded-M003/oldest upgrade, valid partial, malformed
+  partial/recorded, direct constraints, preservation, idempotence, integrity,
+  foreign keys, and injected rollback on temporary databases; all pass.
+- Production snapshot needed now: No.
+- Deployment constraint: deploy the application and M004 together only after a
+  SQLite-safe backup; retain the unresolved M001 production profile and final
+  release-candidate rehearsal as independent release gates.
+
 ## Migration Assessment Log
 
 | Date | Feature/change | Decision | Result |
@@ -344,6 +441,7 @@ deployment gates.
 | 2026-07-26 | Repeated admin planning migration maintenance check | No migration | Re-read the migration procedure and re-inspected the merged admin-planning diff, `app/migrations.py`, `app/db.py` schema/init ordering, and migration tests. The feature still only changes UI/planning behavior and guarded writes over existing columns/tables; no new migration version or production data profile is required for this feature. |
 | 2026-07-26 | Per-roll pallet attribution and operational-card summary | Schema-only M003 | Added constrained nullable current-card and per-roll pallet columns; historical values deliberately remain `NULL` and no values are transformed. 28 migration, 78 print/verifier-safety, and 686 full-suite tests pass; integrity is `ok`, foreign-key checks are empty, and live browser/PDF acceptance passed at both supported viewports. No M003 snapshot is needed now; M001 profiling and the final release-candidate rehearsal remain deployment gates. |
 | 2026-07-26 | Repeated pallet-assignment migration maintenance after user acceptance | Schema-only M003; no additional migration | Re-inspected the accepted feature diff, schema/init ordering, M003 registry entry, startup validation, and synthetic legacy/partial-schema tests. M003 remains the only required persistent change; historical card and roll pallet values remain `NULL`, no stored values are transformed, and no production snapshot is needed for M003. The M001 production profile and final release-candidate rehearsal remain deployment gates. |
+| 2026-07-27 | Rewinding return workflow and final Task 11 migration assessment | Schema-only M004 | Rebuilt `cards` for `awaiting_rewinding`, constrained nullable marker, and nullable final-shift foreign key; no existing value or historical state was inferred. Fresh, recorded-M003/oldest upgrade, valid partial, malformed partial/recorded, idempotence, integrity/foreign-key, preservation, and injected rollback cases pass on temporary databases. 42 migration, 611 focused affected-workflow, and 814 full-suite tests pass; guarded live browser verification passed at both viewports. No M004 production snapshot is needed now; deploy app+M004 together after SQLite-safe backup while retaining the M001 profile and final release rehearsal gates. |
 
 Append one row after every use of the trigger command, including when no
 migration is required.

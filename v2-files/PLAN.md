@@ -268,11 +268,23 @@ This list combines the two existing production-tracking workstreams with the new
 11. **Track cards awaiting ripped rolls returned from rewinding/setting**
    - Surface: `/terminal`, `/admin`, database, production timing, and finalization/print eligibility.
    - Complexity: medium to large.
-   - Status: newly identified; discussion/design pending.
+   - Status: complete locally on July 27, 2026. The approved lifecycle,
+     schema-only M004, terminal/Admin integration, roll-control prototype,
+     migration/adversarial review, durable documentation, and guarded browser
+     workflow are implemented and verified. The exact focused matrix passed
+     611 tests, the migration suite passed 42, the full suite passed 814, and
+     the unchanged prototype plus live `1920x768`/`1366x768` verifiers exited
+     zero without overflow, console errors, or page errors.
    - Current process: ripped rolls are sent to an additional rewinding/setting operation and are not entered on the extrusion terminal until they return. Extrusion has already ended, so operators record the stop time, note the number of outstanding rolls on the paper operational card, and keep the card visible near the machine until those rolls return.
-   - Goal: make cards waiting for returned rolls easy to identify without treating extrusion as still running, then allow operators to enter the returned roll weights and finalize the card.
-   - Desired direction: introduce an explicit waiting-for-rewound-rolls workflow/status, preserve the actual extrusion stop time, record the number of outstanding rolls, and make these cards easy to find from the produced-card area or another focused terminal view.
-   - Needs design: the exact status and Bulgarian label; whether the card immediately releases its machine; how outstanding and returned roll counts are stored and corrected; where waiting cards appear; which roll edits are allowed while waiting; the transition to produced/completed; admin correction and visibility; print eligibility; and safe migration behavior.
+   - Implemented behavior: `awaiting_rewinding` records the real extrusion stop
+     and final extrusion shift, frees and normalizes the machine queue, remains
+     separate from active and Produced Orders, accepts actual returned-roll and
+     permitted correction work, and requires deliberate terminal finalization.
+     The informational `1..999` marker is editable but never count-matched;
+     pallet remains optional; waiting is not printable, cancellable, deletable,
+     archivable, startable, pausable, resumable, or resequencable.
+   - Durable references: `v2-files/TASK-11-REWINDING.md` and
+     `docs/implementation-notes/rewinding-return-workflow.md`.
 
 ### Packaging / Pallets
 
@@ -291,11 +303,10 @@ This list combines the two existing production-tracking workstreams with the new
 3. Design terminal workflow additions before calculator or roll-change timing
    work.
 4. Implement the remaining larger production-data workstreams in the order the
-   user confirms. Worker recipe editing, roll-change timing, waiting-for-
-   rewound-rolls, and any future package/label/shipping lifecycle remain
-   separate future work. Task 12's bounded per-roll pallet attribution and
-   operational-card summary are complete and user-approved for repository
-   integration. Production deployment remains a separate, explicitly gated
-   operation.
+   user confirms. Worker recipe editing, roll-change timing, and any future
+   package/label/shipping lifecycle remain separate future work. Task 11's
+   waiting-for-rewound-rolls workflow and Task 12's bounded per-roll pallet
+   attribution/operational-card summary are complete locally. Production
+   deployment remains a separate, explicitly gated operation.
 
 This order is only a first cut. The larger items need short design passes before implementation because they change workflow, database shape, and future ERP/costing assumptions.

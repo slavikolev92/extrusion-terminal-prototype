@@ -47,7 +47,15 @@ Confirmed workflow facts:
 - The app calculates net weight per roll from that roll's gross weight and stored tare weight.
 - The app calculates total net weight for the order from the roll net weights.
 - A mixed assigned/unassigned card shows a finish confirmation warning with the number of gross rolls lacking a pallet; pallet assignment is not a finish blocker.
-- At the end of the order, operators click `Finished` to mark the card as produced.
+- Operators may record an informational count from `1` through `999` for rolls
+  sent to rewinding while a card is running or paused. Blank or `0` clears the
+  marker; the marker does not create roll placeholders and is never compared
+  with the number of rolls that return.
+- At the end of extrusion, operators click `Приключи`. A running or paused card
+  with a rewinding marker stops extrusion into `awaiting_rewinding`; a card
+  without the marker follows the normal produced path. A waiting card is
+  completed only by a later deliberate `Приключи` after returned rolls are
+  entered.
 - After production is finished, shift-manager/admin reviews and prints/reprints from the admin operational card detail.
 - Printing should print the whole front and back.
 - Completed-card print output derives pallet roll counts plus gross and net totals from current saved rolls, in numeric pallet order, with a final `Без палет` group only when numbered and blank assignments are mixed.
@@ -63,7 +71,9 @@ Confirmed model:
 - The shift manager decides which machine should produce each released card and the sequence within that machine queue.
 - Operators use the terminal to execute loaded operational cards.
 - The app should provide the simplest possible way to visualize several orders/cards.
-- The terminal should have a main active queue/list and a separate produced cards section/list.
+- The terminal should have a main active queue/list, a separate centered list
+  for cards awaiting returned rewound rolls, and a separate produced cards
+  section/list.
 - The main terminal queue/list should make it clear which cards are pending, running, or paused.
 - The terminal should have a fixed four-machine quick navigation strip.
 - Each machine tile should show only key information: machine number, current or next order, customer, progress, and status color.
@@ -71,7 +81,9 @@ Confirmed model:
 - The produced section lets operators view previously produced cards and fix mistakes when needed.
 - Users should be able to click an order/card from the list to view it.
 - `Produced` means the order/card is closed for workstation production workflow/status purposes, not locked for editing.
-- Finishing/completing an order moves it out of the active terminal queue/list and into the terminal produced section.
+- Normal completion moves an order out of the active terminal queue/list and
+  into the terminal produced section. Ending marked extrusion moves it instead
+  into the waiting-for-rewinding list until operators deliberately finalize it.
 - Produced/finished cards may still be changed, similar to how paper cards can be scratched out and overwritten.
 - The pilot should avoid lock/reopen exception logic.
 - The terminal may have multiple running cards at the same time.
@@ -80,6 +92,14 @@ Confirmed model:
 - A running card occupies its machine.
 - A paused card remains active and visible, but it does not occupy the physical machine for starting another pending card.
 - Resuming a paused card must be blocked if another card is currently running on that machine.
+- A card awaiting rewinding is neither active nor produced. Extrusion timing is
+  closed, the machine is free for the next queued card, the historical machine
+  assignment is retained, and the waiting card is excluded from active queue
+  sequencing and Produced Orders.
+- Every normal or rewinding-path extrusion End records the active shift as the
+  final extrusion shift. Rolls added later to a waiting, completed, or archived
+  card use that recorded shift; an older card without it falls back to its
+  chronologically latest linked roll shift or remains unattributed.
 - Operators should see machine queues in the shift-manager sequence. The app should keep corrections possible if real production changes.
 - Running cards should be visually obvious, for example highlighted green, so operators do not forget that time is being tracked.
 - There are no named users or logins for the pilot.
@@ -95,6 +115,7 @@ Lifecycle states:
 | `pending` | Order/card has been released by the shift manager and is visible in the terminal queue, but production timing has not started. A pending card can be returned to the unreleased planning pool by the shift manager. |
 | `running` | Operators started production timing for the card. Multiple cards may be running across the workstation, but a machine can have only one running card. |
 | `paused` | Production timing was paused for the card. |
+| `awaiting_rewinding` | Extrusion has ended and `finished_at` records the real stop, but one or more returned rolls still need to be entered before deliberate terminal finalization. The card is not active, produced, printable, cancellable, archivable, or eligible for start/pause/resume/resequencing. |
 | `completed` / produced | Operators have manufactured the order/card. It moves from the active terminal queue to the terminal produced section and remains available to workstation operators for review/correction, but print/final archive approval is handled by shift-manager/admin. |
 | `archived` / finished | Shift-manager/admin has reviewed the produced card, printed/reprinted as needed, and marked the paper operational card as filed/done. It remains visible, editable, correctable, and reprintable in admin. |
 | `cancelled` | Shift manager/admin cancelled the card. It is no longer active, remains visible in admin review, and can be toggled back to `pending` from admin. |
@@ -107,6 +128,7 @@ Canonical Bulgarian status labels:
 | `pending` | Изчакване |
 | `running` | Изработване |
 | `paused` | Паузирана |
+| `awaiting_rewinding` | Изчаква пренавиване |
 | `completed` | Произведена |
 | `archived` | Завършена |
 | `cancelled` | Анулирана |
@@ -174,11 +196,19 @@ Confirmed workstation screen structure:
 - `Cancel/Restore` does not belong on the workstation. Operators should not cancel or restore cards; shift-manager/admin handles cancellation from the admin page.
 - `Произведени поръчки` belongs with the global top navigation because produced-card lookup is not specific to one active order.
 - `Произведени поръчки` should open a produced-orders drawer/panel, separate from `Опашка`.
+- `Изчакващи пренавиване` is the centered header action between `Чакащи
+  поръчки` and `Произведени поръчки`. Its badge counts waiting cards, and its
+  centered pane shows those cards newest `finished_at` first with the current
+  informational sent-roll count.
 - Produced orders should be searchable/filterable by `Фирма`, `Изделие`, `Размер / дебелина`, and `Материал`.
 - Produced-order rows should be compact result rows, not machine cards.
 - Produced-order rows should show customer + order ID, product/type, size/thickness, material, total kilograms, and production completion date/time.
 - Clicking a produced-order row loads/displays that produced card on screen only. It must not restart the order or change production state.
 - When a produced card is displayed, production actions such as `Старт`, `Пауза`, and `Приключи` should be disabled; print/reprint remains available only from admin.
+- When a waiting card is displayed, Start and Pause are unavailable. The
+  `Пренавиване` marker, permitted material/default/roll corrections, and the
+  primary `Приключи` finalization action remain available. Adding, correcting,
+  or deleting a returned roll never finalizes the card automatically.
 - The roll panel should stay focused on core/tare weight, new gross roll entry, roll correction, and gross/net totals.
 - `Шпула, кг` should sit immediately before the `Нова ролка, кг` input in the roll-entry controls.
 - New roll entry controls should sit directly above the roll list so the roll table can extend upward.
@@ -303,6 +333,9 @@ Admin page behavior:
 - The shift manager can cancel and restore terminal-visible cards from the admin card detail page.
 - The shift manager can return a `pending` card to the unreleased planning pool. This clears machine assignment and queue position, removes the card from the terminal queue, and is only allowed before production has started. `running`, `paused`, `completed`, and `cancelled` cards cannot be returned to the pool.
 - The shift manager can correct terminal-side material fields, tare weight, roll gross weights, and timing segments from the admin card detail page.
+- Admin can see `Изчаква пренавиване` and its current marker while the card is
+  waiting and can use the existing permitted production corrections. Admin
+  cannot finalize, cancel, delete, archive, or print a waiting card.
 - Admin production corrections use the same loaded-version conflict checks as terminal edits, so stale correction forms are blocked and require reload.
 - Admin deletion is allowed only before production starts: imported cards and pending cards with no timing segments, no roll entries, and no first-start timestamp may be deleted. Running, paused, completed, cancelled, or production-data-bearing cards cannot be deleted.
 - The admin planning page should show one stacked table for unreleased technology cards and one stacked table per machine.
@@ -318,7 +351,10 @@ Admin page behavior:
 ## Explicitly Out Of Scope For Now
 
 - Printing / flexo operation workflow.
-- Rewinding and slitting workflow.
+- Rewinding-department scheduling, processing, timing, work queues, roll
+  identity/lineage, and batch history. The bounded extrusion-card workflow for
+  recording rolls sent away, waiting for their return, and entering their
+  returned weights is included.
 - Confection workflow.
 - Detailed machine-level tracking beyond simple machine assignment, sequencing, and quick navigation.
 - Writing terminal-entered data back into the Excel workbook.
@@ -486,9 +522,16 @@ Confirmed date/shift behavior:
 
 - Keep the existing `Дата / смяна` columns on the printed back page.
 - Do not require date/shift entry in the terminal UI.
-- Do not build shift tracking for the current prototype.
-- Date/shift columns are print-layout compatibility fields only for now.
-- If shift tracking becomes necessary during testing, the likely shape would be a simple `Change Shift` button that records a timestamp and short text marker, but this is explicitly not current scope.
+- The terminal maintains one active extrusion shift occurrence across all four
+  machines. Normal new rolls use the active shift.
+- Ending extrusion records the active occurrence as the card's final extrusion
+  shift. Returned or forgotten late rolls use that recorded occurrence even
+  when another shift later weighs or enters them.
+- Historical cards without a recorded final shift use the latest occurrence
+  already linked to one of their rolls; if none exists, attribution stays
+  unknown rather than being guessed.
+- The printed `Дата / смяна` cells remain layout-compatibility cells and are not
+  manually entered on the terminal.
 
 ## App Data Model
 
@@ -501,7 +544,7 @@ Recommended conceptual schema:
 
 | Entity | Purpose |
 | --- | --- |
-| `orders` / `cards` | One row per imported extrusion operational card/order. Stores the structured fields imported from Excel, current status, current/default tare and current pallet number for future rolls, and print/workflow timestamps. |
+| `orders` / `cards` | One row per imported extrusion operational card/order. Stores the structured fields imported from Excel, current status, current/default tare and pallet number for future rolls, optional rewinding count, final extrusion shift reference, and print/workflow timestamps. |
 | `recipe_material_entries` | One row per recipe material line for a card. Stores the row type, imported/source material, operator-entered actual used material, and operator-entered batch/lot. |
 | `roll_entries` | One row per produced roll. Linked to the parent order/card by internal ID and order number. Stores roll number, gross weight, copied roll tare and pallet snapshots, and calculated net weight. |
 | `production_time_segments` | One row per production run segment. Stores each start/resume and pause/finish interval so total production time can exclude pauses. |
@@ -557,7 +600,11 @@ Confirmed production timing behavior:
 - Operators need a button to record the start of production for an order.
 - Operators need pause functionality.
 - After pause, operators need to restart/resume production.
-- Finishing an order closes any active production time segment and completes the card. There is no separate stop button in the terminal workflow.
+- Finishing a running card closes its active production time segment. A paused
+  card already has a closed ledger and finishing it does not add or move timing.
+  With a positive rewinding marker, Finish records the extrusion stop and moves
+  the card to `awaiting_rewinding`; otherwise it completes the card. There is no
+  separate stop button in the terminal workflow.
 - Total production time should be calculated from the sum of each start/resume to pause/finish interval.
 - Do not calculate total time as one naive `finish time - start time` if pauses exist.
 - Start, pause, resume, and finish actions must persist immediately when clicked.
@@ -566,11 +613,20 @@ Confirmed production timing behavior:
 
 Finish validation:
 
-- `Finished` should be blocked unless tare weight is entered.
-- `Finished` should be blocked unless the timer was started at least once.
-- `Finished` should be blocked unless at least one gross roll weight exists.
-- The app should not allow final finish when there are empty roll gaps between filled roll entries.
-- If `Finished` is clicked while the card is running, the app should close the active time segment and complete the card.
+- Every End/Finish requires production timing to have been started and an
+  active terminal shift.
+- A running or paused card with a positive rewinding marker may end extrusion
+  without a current/default tare and without any roll entry; this supports the
+  case where every physical roll leaves for rewinding.
+- Normal completion and finalization from `awaiting_rewinding` require at least
+  one gross roll, a valid per-roll tare and calculated net for every gross roll,
+  and no empty roll gaps between filled rows.
+- Finalization from `awaiting_rewinding` changes only lifecycle/version/update
+  metadata: it does not reopen timing, change timing segments, overwrite
+  `finished_at`, or create another business timestamp.
+- Pallet assignment is optional in every finish context. The same mixed-pallet
+  confirmation warning is shown for normal completion, entry into waiting, and
+  waiting finalization when numbered and blank gross-roll assignments are mixed.
 
 Cancellation behavior:
 
@@ -727,6 +783,9 @@ Confirmed print requirements:
 - Printing/reprinting is an admin/shift-manager action from the operational card detail.
 - Workstation operators do not print from `/terminal`.
 - Printing is allowed for produced (`completed`) and finished/archived (`archived`) cards.
+- Cards in `awaiting_rewinding` are not printable. Their original extrusion
+  `finished_at` becomes the printed stop time only after deliberate finalization
+  moves them to `completed`.
 - Opening or executing print does not change card status.
 - Shift-manager/admin manually marks a produced card as finished/archived after review and paper handling.
 - Completion closes timing before print is allowed.
@@ -929,6 +988,9 @@ Conflict handling:
 - Do not assume terminal results must be synchronized back to Excel.
 - Keep confirmed facts separate from open decisions in future edits.
 - Treat this app as a bounded pilot/prototype, not as a foundation for future feature expansion.
+- Keep extrusion-card rewinding return tracking in scope, but do not expand it
+  into rewinding-department scheduling/processing, roll lineage, or batch/event
+  history.
 
 ## Inspection Notes
 

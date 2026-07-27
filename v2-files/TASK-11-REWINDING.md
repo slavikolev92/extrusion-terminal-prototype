@@ -1,10 +1,10 @@
 # Task 11: Rewinding Return Workflow Specification
 
-Status: functional design approved during the July 26, 2026 brainstorming
-session. This document is the consolidated design record. The detailed
-implementation plan is now written at
-`docs/superpowers/plans/2026-07-26-rewinding-return-workflow.md` and is ready for
-user review before implementation.
+Status: implemented and verified locally on July 27, 2026. This document remains
+the approved functional design record. The executed implementation plan is at
+`docs/superpowers/plans/2026-07-26-rewinding-return-workflow.md`; the durable
+shipped-behavior, migration, recovery, and verification record is at
+`docs/implementation-notes/rewinding-return-workflow.md`.
 
 ## Purpose
 
@@ -20,10 +20,10 @@ timestamp:
 2. the returned rolls are later entered and the card is deliberately moved to
    the existing produced/completed state.
 
-This is the functionality specification and source for the implementation plan.
-It records the approved business behavior, UI, existing roll semantics,
-data contract, safeguards, prototype reference, and scope boundary. It does not
-authorize implementation, deployment, staging, or a commit.
+This is the functionality specification that governed implementation. It
+records the approved business behavior, UI, existing roll semantics, data
+contract, safeguards, prototype reference, and scope boundary. It does not
+authorize deployment or mutation of a runtime/production database.
 
 ## Existing Physical Process
 
@@ -493,12 +493,13 @@ supersedes its prototype-only interactions where later business decisions differ
 - persistence, validation, state transitions, conflicts, and migration are
   server responsibilities.
 
-Before implementation, compare the prototype against the then-current terminal
-so intervening work is preserved. The post-pallet comparison and the standalone
-prototype verifier passed on July 26, 2026. Do not regenerate or replace the
-approved visual artifact merely to create another companion. Do not copy the
-generated full-page HTML into the Jinja template. Transfer the approved focused
-markup/styles and implement the server behavior separately.
+Implementation compared the prototype against the then-current terminal so
+intervening work was preserved. The post-pallet comparison and the standalone
+prototype verifier passed on July 26, 2026, and the final implementation
+re-ran the unchanged verifier. Do not regenerate or replace the approved visual
+artifact merely to create another companion. The shipped Jinja/CSS transfers
+the focused treatment without copying the generated full-page prototype; the
+server owns persistence, validation, conflicts, and state transitions.
 
 ## Acceptance Scenarios For The Implementation Plan
 
@@ -603,9 +604,9 @@ must pass before completion can be claimed.
 
 ## Migration Direction
 
-Persistent structure and status meaning change. The later implementation will
-therefore need a migration assessment under `v2-files/AGENTS.md` after the
-feature diff exists.
+Persistent structure and status meaning changed. The implemented feature was
+therefore assessed under `v2-files/AGENTS.md` and uses schema-only M004,
+`rewinding_return_workflow`.
 
 The approved data rule for existing rows is deterministic:
 
@@ -615,11 +616,11 @@ The approved data rule for existing rows is deterministic:
 - use the existing latest-linked-roll fallback only when a future late roll is
   actually added to an older card.
 
-The implementation plan assigns this change to M004 and defines the DDL,
-startup validation, rollback guarantees, and fixture matrix. The later
-migration-maintenance record must document the verified implementation. No
-runtime or production database may be opened or changed merely to plan the
-feature.
+M004 rebuilds `cards` to add the accepted status constraint and nullable
+rewinding/final-shift columns with their constraints and foreign key. Startup
+validation, rollback guarantees, and the synthetic fixture matrix are recorded
+in `v2-files/AGENTS.md` and the implementation note. No runtime or production
+database was opened or changed during implementation or verification.
 
 ## Out Of Scope
 
@@ -645,8 +646,9 @@ validation, shift attribution, forgotten-marker behavior, roll semantics,
 permissions, timestamps, sorting, print eligibility, migration direction, and
 Task 10 boundary are decided.
 
-The backend-first implementation plan is:
+The completed backend-first implementation plan is:
 
 - `docs/superpowers/plans/2026-07-26-rewinding-return-workflow.md`
 
-No implementation should begin before that plan is reviewed.
+Implementation followed that reviewed plan; any later behavior change requires
+a separately approved specification update rather than silent drift here.

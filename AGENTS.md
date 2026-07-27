@@ -21,14 +21,23 @@ Confirmed scope:
 - Terminal execution of released extrusion operational cards.
 - Roll gross-weight entry, order-level tare weight, calculated net totals.
 - Production timing with start, pause, resume, and finish segments.
-- Completed cards remain available on the workstation for review, correction, and reprint. Cancelled cards remain available to shift-manager/admin, not to workstation operators.
-- HTML/CSS print output for completed cards, matching the existing Excel front/back operational card as closely as possible.
+- Bounded extrusion-card return tracking for rolls sent to rewinding: a marker,
+  explicit waiting state after extrusion ends, returned-roll entry, and
+  deliberate terminal finalization.
+- Completed cards remain available on the workstation for review and correction.
+  Printing/reprinting is shift-manager/admin only. Cancelled cards remain
+  available to shift-manager/admin, not to workstation operators.
+- HTML/CSS print output for completed and archived cards, matching the existing
+  Excel front/back operational card as closely as possible.
 - SQLite-safe backups and documented recovery before pilot use.
 
 Explicitly out of scope unless the user confirms otherwise:
 
 - Users, roles, login, or permissions.
 - Non-extrusion workflows.
+- Rewinding-department scheduling, processing, timing, work queues, roll
+  lineage, or batch/event history. The bounded extrusion-card return workflow
+  above remains in scope.
 - Detailed machine performance or downtime tracking.
 - Writing terminal-entered data back to Excel.
 - Public internet exposure.
@@ -62,7 +71,7 @@ For each feature slice:
 
 Do not leave large uncommitted feature piles. Do not mix unrelated refactors into a feature slice.
 
-Use `docs/implementation-notes/` for durable implementation notes that future prototype or ERP work may need to understand why a feature was built a certain way. Current contents include `print-output-reference.md`, which preserves the accepted print-output requirements, field mapping, validation/formatting rules, and the note that the remaining two-sheet print issue is local workstation/printer setup rather than an app defect.
+Use `docs/implementation-notes/` for durable implementation notes that future prototype or ERP work may need to understand why a feature was built a certain way. Current contents include `print-output-reference.md`, which preserves the accepted print-output requirements, field mapping, validation/formatting rules, and the note that the remaining two-sheet print issue is local workstation/printer setup rather than an app defect, and `rewinding-return-workflow.md`, which preserves the bounded waiting/return lifecycle and M004 safety record.
 
 ## Validation Rules
 
@@ -82,9 +91,24 @@ Important rules must be enforced in backend code and, where practical, SQLite co
 - Roll numbers are assigned per card starting at `1`.
 - Roll gross weights support up to two decimal places.
 - Net weight is gross weight minus order tare weight.
-- Finish must be blocked unless tare weight exists, the timer was started at least once, and at least one gross roll exists.
-- Finish must close any active timing segment.
-- Printing is allowed only for completed cards.
+- Every finish must be blocked unless timing was started and the terminal has an
+  active shift.
+- A running or paused card with a positive rewinding marker may end extrusion
+  into `awaiting_rewinding` without tare or roll entries. Normal completion and
+  waiting-card finalization require at least one gross roll plus valid per-roll
+  tare/net data and a gap-free roll sequence.
+- Finish from running must close its active timing segment. Finish from paused
+  must preserve the already closed timing ledger. Finalization from
+  `awaiting_rewinding` must not mutate timing or `finished_at`.
+- End from running or paused must record the active shift as the final extrusion
+  shift. Later rolls on waiting/completed/archived cards use that shift; legacy
+  cards fall back to the latest linked roll shift or unknown.
+- Waiting cards must be excluded from active queues, Produced Orders, archive,
+  cancel, delete, start, pause, resume, resequencing, and printing. Their
+  machine is immediately reusable and the remaining active queue is normalized.
+- Pallet assignment remains optional; the mixed-pallet warning must be
+  consistent for normal completion, entry into waiting, and waiting finalization.
+- Printing is allowed only for completed and archived cards.
 
 ## Testing Expectations
 
@@ -108,6 +132,8 @@ As new slices are implemented, add tests for:
 - tare and roll entry
 - roll correction
 - finish validation
+- rewinding marker validation, active/paused-to-waiting transitions, returned
+  roll correction/finalization, final-shift attribution, and waiting exclusions
 - completed workstation queue behavior and admin cancelled-card behavior
 - backup and restore behavior
 - print eligibility
