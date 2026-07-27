@@ -1337,6 +1337,48 @@ def test_terminal_v8_renders_rewinding_and_roll_change_hosts_in_separate_action_
     assert 'data-roll-change-overlay' in running_html
     assert 'src="/static/js/roll_change_countdown.mjs"' in running_html
 
+    editor = html_between_ids(
+        running_html,
+        "roll-change-overlay",
+        "finish-confirm-modal",
+    )
+    assert 'role="dialog"' in editor
+    assert 'aria-modal="true"' in editor
+    assert 'aria-labelledby="roll-change-title"' in editor
+    assert 'data-roll-change-dialog' in editor
+    assert 'data-roll-change-form novalidate' in editor
+    assert re.search(
+        r'<input type="datetime-local" step="60" data-roll-change-previous>',
+        editor,
+    )
+    assert re.search(
+        r'<input type="number" min="0" max="23" step="1" inputmode="numeric" data-roll-change-hours>',
+        editor,
+    )
+    assert re.search(
+        r'<input type="number" min="0" max="59" step="1" inputmode="numeric" data-roll-change-minutes>',
+        editor,
+    )
+    assert re.search(
+        r'<input type="datetime-local" step="60" data-roll-change-next>',
+        editor,
+    )
+    for error_name in ("previous", "hours", "minutes", "next", "form"):
+        assert f'data-roll-change-error-for="{error_name}"' in editor
+    assert 'data-roll-change-error-for="form" role="alert"' in editor
+    assert 'data-roll-change-clear>Изчисти</button>' in editor
+    assert 'data-roll-change-restart>Започни от сега</button>' in editor
+    assert 'data-roll-change-cancel>Отказ</button>' in editor
+    assert '<button type="submit" class="action-primary">Запиши</button>' in editor
+
+    machine_links = re.findall(
+        r'<a class="machine-tab .*?</a>',
+        running_html,
+        re.S,
+    )
+    assert len(machine_links) == 4
+    assert all("<button" not in machine_link for machine_link in machine_links)
+
     assert db.update_rewinding_roll_count(running_id, card_version(running_id), 8).ok
     marked_html = render_terminal(running_id)
     marked_button = re.search(
