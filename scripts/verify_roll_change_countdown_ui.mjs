@@ -746,12 +746,21 @@ async function assertEditorAndScheduleMath(page, viewport) {
   assertEqual(await rawSchedule(page, 1), restartBefore, "current-time action preserved storage");
   await page.locator("[data-roll-change-cancel]").click();
   await open.click();
+  await setDateTimeControl(page, "next", Math.floor(Date.now() / 60_000) * 60_000 + 2 * 60 * 60_000);
   const restartNextBefore = await page.locator("[data-roll-change-next]").inputValue();
   const restartStarted = Date.now();
   await page.locator("[data-roll-change-restart]").click();
   const restartPrevious = await page.locator("[data-roll-change-previous]").inputValue();
   assert([localMinuteValue(restartStarted), localMinuteValue(Date.now())].includes(restartPrevious), "Restart did not use the current minute.");
-  assertEqual(await page.locator("[data-roll-change-next]").inputValue(), restartNextBefore, "current-time action left expected timestamp unchanged");
+  assertEqual(
+    await page.locator("[data-roll-change-next]").inputValue(),
+    localMinuteValue(new Date(restartPrevious).getTime() + 30 * 60_000),
+    "current-time action recalculated expected timestamp from the valid interval",
+  );
+  assert(
+    await page.locator("[data-roll-change-next]").inputValue() !== restartNextBefore,
+    "Current-time action did not replace the previous expected timestamp.",
+  );
   await page.locator("[data-roll-change-cancel]").click();
   assertEqual(await rawSchedule(page, 1), restartBefore, "restart then cancel storage bytes");
 
@@ -1123,16 +1132,30 @@ async function assertTwoTabLifecycleAndReplacementStorage(context, page, mutatio
   instrumentPage(stale, mutationRequests);
   await navigate(stale, fixture.cards.machine_3_running);
   await captureStorageEvents(stale, 3);
+  await stale.locator("[data-roll-change-open]").click();
+  assert(await stale.locator("[data-roll-change-overlay]").isVisible(), "Stale-tab editor precondition did not open.");
 
   await submitFormAndWait(page, 'form[action$="/timing/pause"]');
   const paused = await readSchedule(page, 3);
   assertEqual(paused.observedStatus, "paused", "fresh paused tab stored status");
+  await stale.waitForFunction(() => document.querySelector("[data-roll-change-open]")?.disabled === true);
+  assert(await stale.locator("[data-roll-change-overlay]").isHidden(), "Remote pause did not close the stale-tab editor.");
+  assert(await stale.locator("[data-roll-change-open]").isDisabled(), "Remote pause did not disable the stale-tab editor action.");
+  assert(await stale.locator("[data-roll-change-advance]").isDisabled(), "Remote pause did not disable stale-tab quick acknowledgement.");
+  assert(await stale.locator("[data-roll-change-open]").evaluate((element) => element.classList.contains("paused")), "Stale tab did not render the remotely observed paused state.");
+  assertEqual(
+    normalized(await stale.locator("[data-roll-change-control-value]").textContent()),
+    normalized(await page.locator("[data-roll-change-control-value]").textContent()),
+    "stale-tab synchronized paused countdown",
+  );
   await assertStableSchedule(page, 3, paused, "stale running tab after pause", 1_250);
   assertEqual((await capturedStorageEvents(stale)).length, 1, "pause storage-event write count");
 
   await submitFormAndWait(page, 'form[action$="/timing/resume"]');
   const resumed = await readSchedule(page, 3);
   assertEqual(resumed.observedStatus, "running", "fresh resumed tab stored status");
+  assert(await stale.locator("[data-roll-change-open]").isDisabled(), "Stale-tab editor action was re-enabled before reload.");
+  assert(await stale.locator("[data-roll-change-advance]").isDisabled(), "Stale-tab quick acknowledgement was re-enabled before reload.");
   await assertStableSchedule(page, 3, resumed, "stale running tab after resume", 1_250);
   assertEqual((await capturedStorageEvents(stale)).length, 2, "pause/resume storage-event write count");
 

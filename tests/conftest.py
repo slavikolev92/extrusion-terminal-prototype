@@ -3,7 +3,10 @@ from __future__ import annotations
 import sqlite3
 import shutil
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
+from typing import Callable
 from uuid import uuid4
 
 import pytest
@@ -46,3 +49,54 @@ def start_test_shift(connection: sqlite3.Connection):
 @pytest.fixture
 def active_test_shift(start_test_shift) -> dict[str, object]:
     return start_test_shift()
+
+
+@pytest.fixture
+def interleave_committed_card_version(monkeypatch: pytest.MonkeyPatch):
+    def run(
+        card_id: int,
+        loaded_version: int,
+        action: Callable[[], db.RuleResult],
+    ) -> db.RuleResult:
+        writer = db.connect()
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute(
+            """
+            UPDATE cards
+            SET customer = 'Concurrent writer',
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+
+        stale_read_reached = Event()
+        release_stale_reader = Event()
+        original_validate = db.validate_loaded_card_version
+
+        def synchronize_stale_read(card, candidate_version):
+            result = original_validate(card, candidate_version)
+            if (
+                result.ok
+                and card is not None
+                and int(card["id"]) == card_id
+                and candidate_version == loaded_version
+            ):
+                stale_read_reached.set()
+                assert release_stale_reader.wait(timeout=2)
+            return result
+
+        monkeypatch.setattr(db, "validate_loaded_card_version", synchronize_stale_read)
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(action)
+                assert stale_read_reached.wait(timeout=2)
+                writer.commit()
+                release_stale_reader.set()
+                return future.result(timeout=2)
+        finally:
+            release_stale_reader.set()
+            writer.close()
+
+    return run

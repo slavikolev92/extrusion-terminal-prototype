@@ -1805,16 +1805,20 @@ def archive_completed_card(card_id: int, loaded_version: int) -> RuleResult:
                 ("Само произведени карти могат да се маркират като завършени.",),
             )
 
-        connection.execute(
+        updated = connection.execute(
             """
             UPDATE cards
             SET status = ?,
                 version = version + 1,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
+              AND version = ?
+              AND status = ?
             """,
-            (STATUS_ARCHIVED, card_id),
+            (STATUS_ARCHIVED, card_id, loaded_version, STATUS_COMPLETED),
         )
+        if updated.rowcount != 1:
+            return RuleResult(False, (STALE_CARD_MESSAGE,))
 
     return RuleResult(True, (f"Поръчка {card['order_number']} е маркирана като завършена.",))
 
@@ -1827,6 +1831,22 @@ def cancel_card(card_id: int, loaded_version: int) -> RuleResult:
             return version_result
 
         now = current_database_timestamp(connection)
+        updated = connection.execute(
+            """
+            UPDATE cards
+            SET status = ?,
+                cancelled_at = ?,
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND version = ?
+              AND status = ?
+            """,
+            (STATUS_CANCELLED, now, card_id, loaded_version, card["status"]),
+        )
+        if updated.rowcount != 1:
+            return RuleResult(False, (STALE_CARD_MESSAGE,))
+
         open_segment = fetch_open_timing_segment(connection, card_id)
         if open_segment:
             connection.execute(
@@ -1839,18 +1859,6 @@ def cancel_card(card_id: int, loaded_version: int) -> RuleResult:
                 """,
                 (now, open_segment["id"]),
             )
-
-        connection.execute(
-            """
-            UPDATE cards
-            SET status = ?,
-                cancelled_at = ?,
-                version = version + 1,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (STATUS_CANCELLED, now, card_id),
-        )
         if card["machine_id"] is not None:
             normalize_machine_queue(connection, int(card["machine_id"]))
 
@@ -1874,7 +1882,7 @@ def restore_cancelled_card(card_id: int, loaded_version: int) -> RuleResult:
 
         try:
             temporary_sequence = -int(card["id"])
-            connection.execute(
+            updated = connection.execute(
                 """
                 UPDATE cards
                 SET status = ?,
@@ -1882,9 +1890,19 @@ def restore_cancelled_card(card_id: int, loaded_version: int) -> RuleResult:
                     cancelled_at = NULL,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
+                  AND version = ?
+                  AND status = ?
                 """,
-                (STATUS_PENDING, temporary_sequence, card_id),
+                (
+                    STATUS_PENDING,
+                    temporary_sequence,
+                    card_id,
+                    loaded_version,
+                    STATUS_CANCELLED,
+                ),
             )
+            if updated.rowcount != 1:
+                return RuleResult(False, (STALE_CARD_MESSAGE,))
             if card["machine_id"] is not None and card["machine_sequence"] is not None:
                 normalize_machine_queue(
                     connection,
@@ -4197,14 +4215,17 @@ def _update_admin_imported_fields(
     ]
 
     try:
-        connection.execute(
+        updated = connection.execute(
             f"""
             UPDATE cards
             SET {", ".join(assignments)}
             WHERE id = ?
+              AND version = ?
             """,
-            values,
+            (*values, loaded_version),
         )
+        if updated.rowcount != 1:
+            return RuleResult(False, (STALE_CARD_MESSAGE,))
         if cleaned_fields["order_number"] != card["order_number"]:
             connection.execute(
                 """

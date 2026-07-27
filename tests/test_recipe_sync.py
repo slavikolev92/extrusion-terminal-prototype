@@ -367,6 +367,51 @@ def test_stale_admin_imported_field_correction_does_not_refresh_components(conne
     ]
 
 
+def test_admin_imported_fields_reject_version_committed_between_read_and_write_atomically(
+    connection,
+    interleave_committed_card_version,
+):
+    card_id = import_card("RS-SYNC-RACE")
+    connection.execute(
+        """
+        INSERT INTO roll_entries (
+            card_id, order_number, roll_number, gross_weight, tare_weight, net_weight
+        )
+        VALUES (?, 'RS-SYNC-RACE', 1, '20.00', '1.00', '19.00')
+        """,
+        (card_id,),
+    )
+    connection.commit()
+    loaded_version = int(db.fetch_admin_card_detail(card_id)["version"])
+    fields = current_import_fields(card_id)
+    fields["order_number"] = "RS-SYNC-STALE-RENAME"
+    fields["customer"] = "Stale admin editor"
+    fields["raw_material_a"] = "LDPE; Stale Source | 100%"
+    fields["linear_pe"] = ""
+
+    result = interleave_committed_card_version(
+        card_id,
+        loaded_version,
+        lambda: db.update_admin_imported_fields(card_id, loaded_version, fields),
+    )
+
+    card = db.fetch_admin_card_detail(card_id)
+    roll = connection.execute(
+        "SELECT order_number FROM roll_entries WHERE card_id = ?",
+        (card_id,),
+    ).fetchone()
+    assert not result.ok
+    assert result.messages == (db.STALE_CARD_MESSAGE,)
+    assert card["order_number"] == "RS-SYNC-RACE"
+    assert card["customer"] == "Concurrent writer"
+    assert card["version"] == loaded_version + 1
+    assert roll["order_number"] == "RS-SYNC-RACE"
+    assert component_summary(connection, card_id) == [
+        ("raw_material_a", "LDPE; Rompetrol B20/03 | 80%", "LDPE", "Rompetrol B20/03"),
+        ("linear_pe", "LLDPE; SABIC 119ZJ | 20%", "LLDPE", "SABIC 119ZJ"),
+    ]
+
+
 def test_admin_material_ledger_refreshes_components_without_touching_actual_values(connection):
     card_id = import_card("RS-SYNC-008")
     assert db.release_card(card_id, machine_id=1, machine_sequence=1).ok

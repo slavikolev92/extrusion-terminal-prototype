@@ -331,8 +331,16 @@ async function verifyLayout(page, viewport) {
   );
 
   const secondary = page.locator("[data-roll-secondary-actions] button");
-  assertEqual(await secondary.count(), 2, "roll secondary action count");
-  assert((await secondary.allTextContents()).some((text) => normalized(text) === "Смяна на ролка"), "Roll-change action is missing.");
+  assertEqual(await secondary.count(), 1, "rewinding secondary action count");
+  assert(
+    normalized(await secondary.textContent()).startsWith("Пренавиване"),
+    "Rewinding action is missing.",
+  );
+  assertEqual(
+    normalized(await page.locator("[data-roll-change-open]").textContent()),
+    "Смяна на ролка",
+    "roll-change topbar action",
+  );
 
   const headingCells = page.locator(".roll-head > div");
   const widths = [];
@@ -575,10 +583,12 @@ async function verifyRollEditingAndDirtyNavigation(page) {
   await navigate(page, fixture.cards.running_mixed);
   const snapshot = databaseSnapshot(fixture.cards.running_mixed);
   const url = page.url();
-  await page.locator("[data-roll-change]").click();
-  assertEqual(page.url(), url, "roll-change URL no-op");
+  await page.locator("[data-roll-change-open]").click();
+  assert(await page.locator("[data-roll-change-overlay]").isVisible(), "Roll-change editor did not open.");
+  assertEqual(page.url(), url, "roll-change URL unchanged");
   assertEqual(databaseSnapshot(fixture.cards.running_mixed), snapshot, "roll-change database no-op");
-  passed("roll-change action has no effect");
+  await page.locator("[data-roll-change-cancel]").click();
+  passed("roll-change editor stays client-local and leaves rewinding data unchanged");
 }
 
 

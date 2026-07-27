@@ -408,6 +408,29 @@ def test_archive_action_blocks_stale_version(connection, active_test_shift):
     assert db.fetch_admin_card_detail(card_id)["status"] == STATUS_COMPLETED
 
 
+def test_archive_rejects_version_committed_between_read_and_write(
+    connection,
+    active_test_shift,
+    interleave_committed_card_version,
+):
+    card_id = prepare_running_finishable_card("25632-race")
+    assert db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"]).ok
+    loaded_version = int(db.fetch_admin_card_detail(card_id)["version"])
+
+    result = interleave_committed_card_version(
+        card_id,
+        loaded_version,
+        lambda: db.archive_completed_card(card_id, loaded_version),
+    )
+
+    card = db.fetch_admin_card_detail(card_id)
+    assert not result.ok
+    assert result.messages == (db.STALE_CARD_MESSAGE,)
+    assert card["status"] == STATUS_COMPLETED
+    assert card["customer"] == "Concurrent writer"
+    assert card["version"] == loaded_version + 1
+
+
 def test_completed_card_roll_weights_remain_editable(connection, active_test_shift):
     card_id = prepare_running_finishable_card("25614")
     assert db.finish_card(card_id, db.fetch_terminal_card_detail(card_id)["version"]).ok
@@ -499,6 +522,51 @@ def test_cancel_running_card_closes_open_segment(connection):
     assert segment["end_reason"] == "correction"
 
 
+def test_cancel_rejects_version_committed_between_read_and_write_without_side_effects(
+    connection,
+    interleave_committed_card_version,
+):
+    card_id = import_and_release_card("25607-race", machine_id=1, machine_sequence=1)
+    next_card_id = import_and_release_card("25607-next", machine_id=1, machine_sequence=2)
+    start_card(card_id)
+    loaded_version = int(db.fetch_terminal_card_detail(card_id)["version"])
+
+    result = interleave_committed_card_version(
+        card_id,
+        loaded_version,
+        lambda: db.cancel_card(card_id, loaded_version),
+    )
+
+    card = db.fetch_admin_card_detail(card_id)
+    segment = connection.execute(
+        """
+        SELECT ended_at, end_reason
+        FROM production_time_segments
+        WHERE card_id = ?
+        """,
+        (card_id,),
+    ).fetchone()
+    queue = connection.execute(
+        """
+        SELECT id, machine_sequence
+        FROM cards
+        WHERE machine_id = 1 AND status IN ('pending', 'running', 'paused')
+        ORDER BY machine_sequence
+        """
+    ).fetchall()
+
+    assert not result.ok
+    assert result.messages == (db.STALE_CARD_MESSAGE,)
+    assert card["status"] == STATUS_RUNNING
+    assert card["customer"] == "Concurrent writer"
+    assert card["version"] == loaded_version + 1
+    assert (segment["ended_at"], segment["end_reason"]) == (None, None)
+    assert [(row["id"], row["machine_sequence"]) for row in queue] == [
+        (card_id, 1),
+        (next_card_id, 2),
+    ]
+
+
 def test_restore_cancelled_card_returns_to_pending(connection):
     card_id = import_and_release_card("25608")
     assert db.cancel_card(card_id, db.fetch_terminal_card_detail(card_id)["version"]).ok
@@ -543,6 +611,51 @@ def test_restore_inserts_at_original_sequence_and_shifts_active_queue(connection
         (other_card_id, 2),
     ]
     assert db.fetch_terminal_card_detail(cancelled_card_id)["status"] == STATUS_PENDING
+
+
+def test_restore_rejects_version_committed_between_read_and_write_without_resequencing(
+    connection,
+    interleave_committed_card_version,
+):
+    cancelled_card_id = import_and_release_card(
+        "25610-race",
+        machine_id=2,
+        machine_sequence=1,
+    )
+    assert db.cancel_card(
+        cancelled_card_id,
+        db.fetch_terminal_card_detail(cancelled_card_id)["version"],
+    ).ok
+    active_card_id = import_and_release_card(
+        "25610-active",
+        machine_id=2,
+        machine_sequence=1,
+    )
+    loaded_version = int(db.fetch_admin_card_detail(cancelled_card_id)["version"])
+
+    result = interleave_committed_card_version(
+        cancelled_card_id,
+        loaded_version,
+        lambda: db.restore_cancelled_card(cancelled_card_id, loaded_version),
+    )
+
+    card = db.fetch_admin_card_detail(cancelled_card_id)
+    active_queue = connection.execute(
+        """
+        SELECT id, machine_sequence
+        FROM cards
+        WHERE machine_id = 2 AND status IN ('pending', 'running', 'paused')
+        ORDER BY machine_sequence
+        """
+    ).fetchall()
+    assert not result.ok
+    assert result.messages == (db.STALE_CARD_MESSAGE,)
+    assert card["status"] == STATUS_CANCELLED
+    assert card["customer"] == "Concurrent writer"
+    assert card["version"] == loaded_version + 1
+    assert [(row["id"], row["machine_sequence"]) for row in active_queue] == [
+        (active_card_id, 1),
+    ]
 
 
 def test_stale_finish_cancel_and_restore_edits_are_blocked(

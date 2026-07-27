@@ -86,6 +86,8 @@ export function bootstrapRollChangeCountdown({
   let returnFocus = null;
   let backdropPressStarted = false;
   let backdropPressEnded = false;
+  let lifecycleReloadRequired = false;
+  let synchronizedSelectedStatus = null;
   const listeners = [];
 
   function listen(target, type, callback) {
@@ -111,14 +113,19 @@ export function bootstrapRollChangeCountdown({
   function renderMachine(context, schedule, currentMs) {
     const timer = context.host.querySelector("[data-roll-change-machine-timer]");
     if (!timer) return;
-    if (!schedule || !TRACKABLE.has(context.status)) {
+    const renderedStatus = (
+      lifecycleReloadRequired
+      && context.cardId === selectedCardId
+      && synchronizedSelectedStatus
+    ) ? synchronizedSelectedStatus : context.status;
+    if (!schedule || !TRACKABLE.has(renderedStatus)) {
       timer.hidden = true;
       timer.textContent = "";
       timer.removeAttribute("aria-label");
       timer.classList.remove(...TONE_CLASSES);
       return;
     }
-    const view = countdownView(schedule, context.status, currentMs);
+    const view = countdownView(schedule, renderedStatus, currentMs);
     timer.hidden = false;
     timer.textContent = view.display;
     timer.classList.remove(...TONE_CLASSES);
@@ -133,14 +140,15 @@ export function bootstrapRollChangeCountdown({
 
   function renderSelected(schedule, currentMs) {
     if (!openControl || !controlValue || !advanceControl) return;
-    if (!schedule || !TRACKABLE.has(selectedStatus)) {
+    const renderedStatus = synchronizedSelectedStatus ?? selectedStatus;
+    if (!schedule || !TRACKABLE.has(renderedStatus)) {
       controlValue.textContent = "Смяна на ролка";
       advanceControl.hidden = true;
       openControl.classList.remove(...TONE_CLASSES);
       openControl.setAttribute("aria-label", `Настрой смяна на ролките за машина ${selectedMachineId}`);
       return;
     }
-    const view = countdownView(schedule, selectedStatus, currentMs);
+    const view = countdownView(schedule, renderedStatus, currentMs);
     controlValue.textContent = view.display;
     advanceControl.hidden = false;
     openControl.classList.remove(...TONE_CLASSES);
@@ -276,6 +284,7 @@ export function bootstrapRollChangeCountdown({
   }
 
   function openEditor(event) {
+    if (lifecycleReloadRequired) return;
     if (hasOpenRollCorrection()) return;
     if (!overlay || !previousInput || !previousDateInput || !hoursInput || !minutesInput || !nextInput) return;
     returnFocus = event?.currentTarget ?? openControl;
@@ -311,6 +320,7 @@ export function bootstrapRollChangeCountdown({
 
   function submitEditor(event) {
     event.preventDefault();
+    if (lifecycleReloadRequired) return;
     if (!previousInput || !hoursInput || !minutesInput || !nextInput) return;
     if (hasNonMatchingStoredRecord(selectedMachineId, selectedCardId)) {
       closeEditor();
@@ -345,9 +355,11 @@ export function bootstrapRollChangeCountdown({
   function restartDraft() {
     if (!previousInput) return;
     writeDateTimeParts(previousInput, previousDateInput, previousHourInput, previousMinuteInput, now());
+    recalculateDraft();
   }
 
   function clearEditorSchedule() {
+    if (lifecycleReloadRequired) return;
     if (matchingSchedule(selectedMachineId, selectedCardId)) {
       clearSchedule(storage, selectedMachineId);
     }
@@ -357,6 +369,7 @@ export function bootstrapRollChangeCountdown({
   }
 
   function advance() {
+    if (lifecycleReloadRequired) return;
     if (hasOpenRollCorrection()) return;
     const current = readSchedule(storage, selectedMachineId, selectedCardId);
     if (!current) return;
@@ -415,6 +428,19 @@ export function bootstrapRollChangeCountdown({
 
   function handleStorage(event) {
     if (!event.key?.startsWith(STORAGE_KEY_PREFIX)) return;
+    if (event.key === `${STORAGE_KEY_PREFIX}${selectedMachineId}`) {
+      const schedule = matchingSchedule(selectedMachineId, selectedCardId);
+      if (
+        schedule
+        && (lifecycleReloadRequired || schedule.observedStatus !== selectedStatus)
+      ) {
+        lifecycleReloadRequired = true;
+        synchronizedSelectedStatus = schedule.observedStatus;
+        closeEditor({ restoreFocus: false });
+        if (openControl) openControl.disabled = true;
+        if (advanceControl) advanceControl.disabled = true;
+      }
+    }
     renderAll();
   }
 

@@ -941,6 +941,9 @@ def test_waiting_card_rejects_lifecycle_and_queue_actions(connection, active_tes
         db.cancel_card(card_id, int(before["version"])),
         db.archive_completed_card(card_id, int(before["version"])),
         db.update_card_planning(card_id, int(before["version"]), 2, 1),
+        db.release_card(card_id, 2, 1, int(before["version"])),
+        db.unrelease_pending_card(card_id, int(before["version"])),
+        db.delete_admin_planning_card(card_id, int(before["version"])),
     )
 
     assert all(not result.ok for result in results)
