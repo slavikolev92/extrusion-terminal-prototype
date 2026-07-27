@@ -1147,6 +1147,7 @@ def test_terminal_finish_active_rewinding_card_keeps_selection_and_uses_waiting_
             "Екструдирането е приключено. Картата изчаква пренавиване.",
         )
     }
+    assert context["terminal_feedback"]["open_rewinding_dialog"] is False
 
 
 def test_terminal_finish_waiting_card_keeps_selection_in_produced_orders(
@@ -1181,3 +1182,4 @@ def test_terminal_finish_waiting_card_keeps_selection_in_produced_orders(
     assert context["terminal_feedback"]["toast"] == {
         "messages": ("Картата е приключена.",)
     }
+    assert context["terminal_feedback"]["open_rewinding_dialog"] is False

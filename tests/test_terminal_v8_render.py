@@ -150,6 +150,14 @@ def data_block(html: str, attribute: str, value: str) -> str:
     return match.group(0)
 
 
+def html_between_ids(html: str, start_id: str, end_id: str) -> str:
+    start = html.find(f'id="{start_id}"')
+    assert start != -1
+    end = html.find(f'id="{end_id}"', start)
+    assert end != -1
+    return html[start:end]
+
+
 def shift_window_block(html: str) -> str:
     start = html.find('<div class="shift-window-overlay"')
     assert start != -1
@@ -1146,6 +1154,233 @@ def test_terminal_v8_sorts_produced_lookup_by_finished_at_descending(connection)
     html = render_terminal(newer_id)
 
     assert html.index("Newer Produced") < html.index("Older Produced")
+
+
+def test_terminal_v8_renders_waiting_rewinding_header_badge_and_separate_rows(
+    connection,
+):
+    queued_id = release_ready_card(
+        "26187",
+        machine_id=1,
+        sequence=1,
+        customer="Queued Customer",
+    )
+    older_waiting_id = release_ready_card(
+        "26188",
+        machine_id=2,
+        sequence=1,
+        customer="Older Waiting",
+    )
+    newer_waiting_id = release_ready_card(
+        "26189",
+        machine_id=3,
+        sequence=1,
+        customer="Newer Waiting",
+    )
+    completed_id = release_ready_card(
+        "26190",
+        machine_id=4,
+        sequence=1,
+        customer="Completed Customer",
+    )
+    for card_id, count in ((older_waiting_id, 4), (newer_waiting_id, 12)):
+        assert db.start_production_timing(card_id, card_version(card_id)).ok
+        assert db.update_rewinding_roll_count(card_id, card_version(card_id), count).ok
+        assert db.finish_card(card_id, card_version(card_id)).ok
+    complete_card(completed_id)
+    connection.execute(
+        "UPDATE cards SET finished_at = ? WHERE id = ?",
+        ("2026-07-24 09:00:00", older_waiting_id),
+    )
+    connection.execute(
+        "UPDATE cards SET finished_at = ? WHERE id = ?",
+        ("2026-07-24 10:00:00", newer_waiting_id),
+    )
+
+    html = render_terminal(newer_waiting_id)
+
+    queue_button = re.search(r'<button[^>]+id="queue-open".*?</button>', html, re.S)
+    waiting_button = re.search(r'<button[^>]+id="waiting-open".*?</button>', html, re.S)
+    history_button = re.search(r'<button[^>]+id="history-open".*?</button>', html, re.S)
+    assert queue_button and waiting_button and history_button
+    assert queue_button.start() < waiting_button.start() < history_button.start()
+    assert 'aria-label="Изчакващи пренавиване"' in waiting_button.group(0)
+    assert 'data-waiting-count="2"' in waiting_button.group(0)
+    assert re.search(r'<span class="waiting-badge"[^>]*>2</span>', waiting_button.group(0))
+
+    waiting_pane = html_between_ids(html, "waiting-overlay", "history-overlay")
+    assert 'role="dialog"' in waiting_pane
+    assert 'aria-modal="true"' in waiting_pane
+    assert 'aria-labelledby="waiting-title"' in waiting_pane
+    assert '<h2 id="waiting-title">Изчакващи пренавиване</h2>' in waiting_pane
+    assert 'aria-label="Затвори изчакващите пренавиване"' in waiting_pane
+    assert waiting_pane.index("Newer Waiting") < waiting_pane.index("Older Waiting")
+    assert f'href="/terminal/cards/{newer_waiting_id}"' in waiting_pane
+    assert f'href="/terminal/cards/{older_waiting_id}"' in waiting_pane
+    assert "12 ролки" in waiting_pane
+    assert "4 ролки" in waiting_pane
+
+    assert not re.search(
+        rf'class="queue-card[^"]*"[^>]+href="/terminal/cards/{older_waiting_id}"',
+        html,
+    )
+    history_start = html.index('id="history-overlay"')
+    history_end = html.index('<section class="main">', history_start)
+    history_pane = html[history_start:history_end]
+    assert f'href="/terminal/cards/{older_waiting_id}"' not in history_pane
+    assert re.search(
+        rf'class="queue-card[^"]*"[^>]+href="/terminal/cards/{queued_id}"',
+        html,
+    )
+    assert re.search(
+        rf'class="history-row[^"]*"[^>]+href="/terminal/cards/{completed_id}"',
+        html,
+    )
+    assert f'href="/terminal/cards/{completed_id}"' not in waiting_pane
+
+
+@pytest.mark.parametrize(
+    "terminal_notice",
+    ["rewinding_saved", "card_awaiting_rewinding", "card_finished"],
+)
+def test_terminal_v8_hides_zero_waiting_badge_and_never_opens_pane_from_notice(
+    connection,
+    terminal_notice,
+):
+    card_id = release_ready_card("26191", machine_id=1, sequence=1)
+
+    html = render_terminal(card_id, terminal_notice=terminal_notice)
+
+    waiting_button = re.search(r'<button[^>]+id="waiting-open".*?</button>', html, re.S)
+    assert waiting_button
+    assert 'data-waiting-count="0"' in waiting_button.group(0)
+    assert 'class="waiting-badge"' not in waiting_button.group(0)
+    waiting_overlay = re.search(r'<div[^>]+id="waiting-overlay"[^>]*>', html)
+    assert waiting_overlay
+    assert "hidden" in waiting_overlay.group(0)
+    assert 'aria-hidden="true"' in waiting_overlay.group(0)
+
+
+def test_terminal_v8_renders_rewinding_marker_and_inert_roll_change_controls(connection):
+    card_id = release_ready_card("26192", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+
+    clear_html = render_terminal(card_id)
+    clear_button = re.search(
+        r'<button[^>]+data-rewinding-open[^>]*>.*?</button>',
+        clear_html,
+        re.S,
+    )
+    assert clear_button
+    assert "Пренавиване" in clear_button.group(0)
+    assert "Пренавиване:" not in clear_button.group(0)
+    assert "is-marked" not in clear_button.group(0)
+    assert re.search(
+        r'<button class="roll-secondary-button" type="button" data-roll-change>\s*Смяна на ролка\s*</button>',
+        clear_html,
+    )
+
+    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 8).ok
+    marked_html = render_terminal(card_id)
+    marked_button = re.search(
+        r'<button[^>]+data-rewinding-open[^>]*>.*?</button>',
+        marked_html,
+        re.S,
+    )
+    assert marked_button
+    assert "Пренавиване: 8" in marked_button.group(0)
+    assert "is-marked" in marked_button.group(0)
+
+    connection.execute("UPDATE cards SET status = 'paused' WHERE id = ?", (card_id,))
+    connection.commit()
+    paused_html = render_terminal(card_id)
+    assert re.search(r'<button[^>]+data-rewinding-open', paused_html)
+    assert re.search(r'<button[^>]+data-roll-change', paused_html)
+
+    connection.execute("UPDATE cards SET status = 'completed' WHERE id = ?", (card_id,))
+    connection.commit()
+    completed_html = render_terminal(card_id)
+    assert not re.search(r'<button[^>]+data-rewinding-open', completed_html)
+    assert not re.search(r'<button[^>]+data-roll-change', completed_html)
+
+
+def test_terminal_v8_rewinding_dialog_posts_version_and_reopens_only_for_errors(
+    connection,
+):
+    card_id = release_ready_card("26193", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+
+    html = render_terminal(
+        card_id,
+        rewinding_result=RuleResult(
+            False,
+            ("Броят за пренавиване трябва да бъде цяло число от 1 до 999.",),
+        ),
+        rewinding_result_value=" 12x ",
+        rewinding_dialog_open=True,
+    )
+
+    dialog = html_between_ids(html, "rewinding-overlay", "finish-confirm-modal")
+    assert 'role="dialog"' in dialog
+    assert 'aria-modal="true"' in dialog
+    assert 'aria-labelledby="rewinding-title"' in dialog
+    assert '<h2 class="rewinding-title" id="rewinding-title">Ролки за пренавиване</h2>' in dialog
+    form = form_block(html, f"/terminal/cards/{card_id}/rewinding-count")
+    assert f'name="loaded_version" value="{card_version(card_id)}"' in form
+    assert 'type="text"' in form
+    assert 'inputmode="numeric"' in form
+    assert 'pattern="[0-9]{0,3}"' in form
+    assert 'maxlength="3"' in form
+    assert 'name="rewinding_roll_count"' in form
+    assert 'value=" 12x "' in form
+    assert "Оставете празно или въведете 0, за да изчистите." in form
+    assert ">Запиши</button>" in form
+    assert ">Отказ</button>" in dialog
+    assert 'data-feedback-target="rewinding"' in form
+    assert 'role="alert"' in form
+    assert "Броят за пренавиване трябва да бъде цяло число от 1 до 999." in form
+    assert 'id="rewinding-overlay"' in html
+    rewinding_overlay = re.search(r'<div[^>]+id="rewinding-overlay"[^>]*>', html)
+    assert rewinding_overlay
+    assert not re.search(r"\shidden(?:\s|>)", rewinding_overlay.group(0))
+    assert re.search(r'<div[^>]+id="waiting-overlay"[^>]*hidden', html)
+
+
+def test_terminal_v8_waiting_and_rewinding_scripts_coordinate_modal_lifecycle(connection):
+    card_id = release_ready_card("26194", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+
+    html = render_terminal(card_id)
+
+    assert "const openWaiting = () =>" in html
+    assert "const closeWaiting = (restoreFocus = true) =>" in html
+    assert "const openRewinding = () =>" in html
+    assert "const closeRewinding = (restoreFocus = true) =>" in html
+    assert "closeQueue(false);" in html
+    assert "closeHistory(false);" in html
+    assert "closeWaiting(false);" in html
+    assert "closeRewinding(false);" in html
+    assert 'event.key === "Escape"' in html
+    assert "event.target === waitingOverlay" in html
+    assert "event.target === rewindingOverlay" in html
+    assert "(waitingReturnFocus || waitingOpenButton)?.focus" in html
+    assert "(rewindingReturnFocus || rewindingOpenButton)?.focus" in html
+    assert "focusableModalElements" in html
+    assert "trapModalFocus" in html
+    trap_start = html.index("const trapModalFocus")
+    trap_end = html.index("const setCorrectionMode", trap_start)
+    trap_script = html[trap_start:trap_end]
+    assert "!dialog?.contains(document.activeElement)" in trap_script
+    shift_start = html.index("const shiftWindow")
+    shift_end = html.index("const finishConfirmModal", shift_start)
+    assert "!dialog?.contains(document.activeElement)" not in html[shift_start:shift_end]
+    assert 'if (overlay.classList.contains("open")) {' in html
+    assert 'if (historyOverlay.classList.contains("open")) {' in html
+    assert "waitingRows.forEach" in html
+    assert "correctionModeOpen" in html
+    assert "#waiting-open" in html
+    assert "[data-rewinding-open]" in html
+    assert "[data-waiting-row]" in html
 
 
 def test_terminal_v8_recipe_inputs_are_named_for_all_rows(connection):
@@ -3146,8 +3381,9 @@ def test_terminal_header_has_centered_global_actions_and_active_shift_status(con
     assert header is not None
     header_html = header.group(0)
     assert "/static/images/kolev-logo.png" in header_html
-    assert header_html.count('class="terminal-header-action') == 3
+    assert header_html.count('class="terminal-header-action') == 4
     assert ">Чакащи поръчки<" in header_html
+    assert "Изчакващи пренавиване" in header_html
     assert ">Произведени поръчки<" in header_html
     assert 'id="shift-open"' in header_html
     assert 'class="shift-status-dot is-active"' in header_html

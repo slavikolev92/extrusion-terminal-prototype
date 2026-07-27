@@ -182,7 +182,7 @@
     .terminal-global-nav {
       justify-self: center;
       display: grid;
-      grid-template-columns: repeat(2, var(--terminal-header-action-width));
+      grid-template-columns: repeat(3, var(--terminal-header-action-width));
       gap: 10px;
     }
 
@@ -210,6 +210,31 @@
 
     .terminal-header-action:hover {
       border-color: #0b355f;
+    }
+
+    .terminal-waiting-action {
+      position: relative;
+      overflow: visible;
+    }
+
+    .waiting-badge {
+      position: absolute;
+      right: -7px;
+      bottom: -7px;
+      min-width: 24px;
+      height: 24px;
+      border: 2px solid #fff;
+      border-radius: 999px;
+      background: #b87900;
+      color: #fff;
+      padding: 0 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
     }
 
     .terminal-shift-action {
@@ -1374,6 +1399,80 @@
       display: block;
     }
 
+    .waiting-overlay {
+      position: absolute;
+      z-index: 30;
+      inset: 0;
+      padding: 28px;
+      display: grid;
+      place-items: center;
+      background: rgba(31, 41, 51, .38);
+    }
+
+    .waiting-pane {
+      width: min(920px, calc(100vw - 56px));
+      max-height: min(680px, calc(100vh - 56px));
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: 0 24px 60px rgba(16, 24, 40, .24);
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .waiting-pane-head {
+      min-height: 62px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .waiting-pane-head h2 {
+      margin: 0;
+      font-size: 21px;
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .waiting-close {
+      width: 38px;
+      padding: 0;
+      font-size: 21px;
+    }
+
+    .waiting-results {
+      min-height: 140px;
+      padding: 12px 16px;
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      overflow: auto;
+    }
+
+    .waiting-row-count {
+      min-width: 78px;
+      border: 1px solid #e0b45e;
+      border-radius: 999px;
+      background: #fff7e2;
+      color: #704100;
+      padding: 3px 8px;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .waiting-empty {
+      color: var(--muted);
+      font-size: 17px;
+      font-weight: 700;
+      padding: 18px 4px;
+    }
+
     .queue-drawer {
       height: 100%;
       width: min(900px, 82%);
@@ -1607,7 +1706,8 @@
       overflow: auto;
     }
 
-    .history-row {
+    .history-row,
+    .waiting-row {
       min-width: 0;
       border: 1px solid #d8e0e8;
       border-radius: 8px;
@@ -1618,7 +1718,44 @@
       text-align: left;
     }
 
-    .history-row.selected {
+    .roll-secondary-actions {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 7px;
+    }
+
+    .roll-secondary-button {
+      min-height: 34px;
+      padding: 0 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 1px solid #b8c4d1;
+      border-radius: 8px;
+      background: #fff;
+      color: #0b355f;
+      font-size: 13px;
+      line-height: 1;
+      font-weight: 800;
+    }
+
+    .roll-secondary-button:hover,
+    .roll-secondary-button:focus-visible {
+      border-color: #7692ae;
+      background: #f6f9fc;
+    }
+
+    .roll-secondary-button.is-marked {
+      border-color: #d7a13f;
+      background: #fff7e2;
+      color: #704100;
+    }
+
+    .history-row.selected,
+    .waiting-row.selected {
       border-color: rgba(11, 107, 203, .58);
       background: var(--blue-soft);
     }
@@ -1973,7 +2110,8 @@
 
     a.machine-tab,
     a.queue-card,
-    a.history-row {
+    a.history-row,
+    a.waiting-row {
       color: inherit;
       text-decoration: none;
     }
@@ -2117,6 +2255,82 @@
     .finish-confirm-secondary {
       background: #fff;
       border-color: #b8c4d1;
+      color: #0b355f;
+    }
+
+    .rewinding-overlay {
+      position: fixed;
+      z-index: 85;
+      inset: 0;
+      padding: 24px;
+      display: grid;
+      place-items: center;
+      background: rgba(31, 41, 51, .4);
+    }
+
+    .rewinding-dialog {
+      width: min(440px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .rewinding-title {
+      margin: 0;
+      color: var(--primary-text);
+      font-size: 22px;
+      line-height: 1.15;
+      font-weight: 900;
+    }
+
+    .rewinding-form {
+      display: grid;
+      gap: 12px;
+    }
+
+    .rewinding-field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .rewinding-field > span {
+      color: var(--secondary-text);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .rewinding-field input {
+      min-height: 42px;
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .rewinding-hint {
+      margin: -4px 0 0;
+      color: var(--secondary-text);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .rewinding-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .rewinding-save {
+      border-color: #0b355f;
+      background: #0b355f;
+      color: #fff;
+    }
+
+    .rewinding-cancel {
+      border-color: #b8c4d1;
+      background: #fff;
       color: #0b355f;
     }
 
@@ -3070,6 +3284,16 @@
           <button class="terminal-header-action" id="queue-open" type="button"
                   data-terminal-action="waiting" aria-controls="queue-overlay"
                   aria-expanded="false">Чакащи поръчки</button>
+          <button class="terminal-header-action terminal-waiting-action" id="waiting-open"
+                  type="button" data-terminal-action="rewinding-waiting"
+                  data-waiting-count="{{ waiting_rewinding_count }}"
+                  aria-label="Изчакващи пренавиване"
+                  aria-controls="waiting-overlay" aria-expanded="false">
+            <span>Изчакващи пренавиване</span>
+            {% if waiting_rewinding_count %}
+              <span class="waiting-badge" aria-hidden="true">{{ waiting_rewinding_count }}</span>
+            {% endif %}
+          </button>
           <button class="terminal-header-action" id="history-open" type="button"
                   data-terminal-action="produced" aria-controls="history-overlay"
                   aria-expanded="false">Произведени поръчки</button>
@@ -3150,6 +3374,38 @@
             {% endfor %}
           </div>
         </aside>
+      </div>
+
+      <div class="waiting-overlay" id="waiting-overlay" hidden aria-hidden="true">
+        <section class="waiting-pane" role="dialog" aria-modal="true"
+                 aria-labelledby="waiting-title" tabindex="-1" data-waiting-pane="true">
+          <div class="waiting-pane-head">
+            <h2 id="waiting-title">Изчакващи пренавиване</h2>
+            <button class="waiting-close" id="waiting-close" type="button"
+                    aria-label="Затвори изчакващите пренавиване">×</button>
+          </div>
+          <div class="waiting-results">
+            {% if waiting_rewinding_cards %}
+              {% for card in waiting_rewinding_cards %}
+                <a class="waiting-row {% if card.is_selected %}selected{% endif %}"
+                   href="/terminal/cards/{{ card.id }}" data-waiting-row>
+                  <span class="history-row-top">
+                    <span class="history-row-title">{{ card.customer or "-" }} (№{{ card.order_number }})</span>
+                    <span class="waiting-row-count">{{ card.rewinding_roll_count_label }}</span>
+                  </span>
+                  <span class="history-row-product">{{ card.product_type or "-" }}</span>
+                  <span class="history-row-details">
+                    <span>{{ card.size_thickness or "-" }}</span>
+                    <span>{{ card.material or "-" }}</span>
+                    <span>{{ card.finished_at or "-" }}</span>
+                  </span>
+                </a>
+              {% endfor %}
+            {% else %}
+              <div class="waiting-empty">Няма поръчки, изчакващи пренавиване.</div>
+            {% endif %}
+          </div>
+        </section>
       </div>
 
       <div class="history-overlay" id="history-overlay" aria-hidden="true">
@@ -3370,6 +3626,16 @@
             <section class="panel input-panel">
               <div class="panel-head">
                 <span>Ролки</span>
+                {% if selected_card.status in ["running", "paused", "awaiting_rewinding"] %}
+                  <div class="roll-secondary-actions" data-roll-secondary-actions>
+                    <button class="roll-secondary-button{% if selected_card.rewinding_roll_count %} is-marked{% endif %}"
+                            type="button" data-rewinding-open
+                            aria-controls="rewinding-overlay" aria-expanded="false">
+                      Пренавиване{% if selected_card.rewinding_roll_count %}: {{ selected_card.rewinding_roll_count }}{% endif %}
+                    </button>
+                    <button class="roll-secondary-button" type="button" data-roll-change>Смяна на ролка</button>
+                  </div>
+                {% endif %}
               </div>
               <div class="panel-body roll-body{% if terminal_feedback.open_roll_corrections %} roll-correction-mode{% endif %}" data-roll-body>
                 <div class="roll-entry">
@@ -3595,6 +3861,42 @@
     </div>
   </main>
   {% include "_terminal_shift_window.html" %}
+  {% if selected_card and selected_card.status in ["running", "paused", "awaiting_rewinding"] %}
+    <div class="rewinding-overlay" id="rewinding-overlay" data-rewinding-overlay
+         {% if not terminal_feedback.open_rewinding_dialog %}hidden{% endif %}
+         aria-hidden="{{ 'false' if terminal_feedback.open_rewinding_dialog else 'true' }}">
+      <section class="rewinding-dialog" role="dialog" aria-modal="true"
+               aria-labelledby="rewinding-title" tabindex="-1" data-rewinding-dialog="true">
+        <h2 class="rewinding-title" id="rewinding-title">Ролки за пренавиване</h2>
+        <form class="rewinding-form" action="/terminal/cards/{{ selected_card.id }}/rewinding-count" method="post">
+          <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+          <label class="rewinding-field">
+            <span>Брой ролки</span>
+            <input type="text" inputmode="numeric" pattern="[0-9]{0,3}" maxlength="3"
+                   name="rewinding_roll_count"
+                   value="{% if terminal_feedback.open_rewinding_dialog %}{{ terminal_feedback.rewinding_result_value }}{% elif selected_card.rewinding_roll_count %}{{ selected_card.rewinding_roll_count }}{% endif %}"
+                   data-rewinding-saved-value="{{ selected_card.rewinding_roll_count or '' }}"
+                   {% if terminal_feedback.open_rewinding_dialog %}autofocus{% endif %}
+                   data-rewinding-input>
+          </label>
+          <p class="rewinding-hint">Оставете празно или въведете 0, за да изчистите.</p>
+          <div class="field-error-slot" data-feedback-target="rewinding">
+            {% if terminal_feedback.errors.rewinding %}
+              <div class="inline-error" role="alert">
+                {% for message in terminal_feedback.errors.rewinding %}
+                  <p>{{ message }}</p>
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+          <div class="rewinding-actions">
+            <button class="rewinding-cancel" type="button" data-rewinding-cancel>Отказ</button>
+            <button class="rewinding-save" type="submit">Запиши</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  {% endif %}
   <div class="finish-confirm-modal" id="finish-confirm-modal" data-finish-confirm-modal hidden aria-hidden="true">
     <div class="finish-confirm-panel" role="dialog" aria-modal="true" aria-labelledby="finish-confirm-title" aria-describedby="finish-confirm-body">
       <h2 class="finish-confirm-title" id="finish-confirm-title">Приключване на поръчка</h2>
@@ -4254,6 +4556,16 @@
       const historyRows = document.querySelectorAll(".history-row");
       const historyResults = document.getElementById("history-results");
       const historyEmpty = document.getElementById("history-empty");
+      const waitingOverlay = document.getElementById("waiting-overlay");
+      const waitingPane = waitingOverlay?.querySelector("[data-waiting-pane]");
+      const waitingOpenButton = document.getElementById("waiting-open");
+      const waitingCloseButton = document.getElementById("waiting-close");
+      const waitingRows = document.querySelectorAll("[data-waiting-row]");
+      const rewindingOverlay = document.getElementById("rewinding-overlay");
+      const rewindingDialog = rewindingOverlay?.querySelector("[data-rewinding-dialog]");
+      const rewindingOpenButton = document.querySelector("[data-rewinding-open]");
+      const rewindingDismissButton = rewindingOverlay?.querySelector("[data-rewinding-cancel]");
+      const rewindingInput = rewindingOverlay?.querySelector("[data-rewinding-input]");
       const rollCorrectionRoot = document.querySelector("[data-roll-correction-root]");
       const rollCorrectionOpen = document.querySelector("[data-roll-correction-open]");
       const rollCorrectionBack = document.querySelector("[data-roll-correction-cancel]");
@@ -4265,14 +4577,18 @@
       const rollDeleteClose = document.getElementById("roll-delete-close");
       const rollBody = document.querySelector("[data-roll-body]");
       const correctionBlockedControls = document.querySelectorAll(
-        ".actions form button, .menu-btn, [data-roll-correction-open], .roll-add-button, .add-roll-form input, .tare-form input, .pallet-form input, .recipe-table input, #queue-open, #history-open, [data-roll-delete-open]"
+        ".actions form button, .menu-btn, [data-roll-correction-open], .roll-add-button, .add-roll-form input, .tare-form input, .pallet-form input, .recipe-table input, #queue-open, #waiting-open, #history-open, [data-rewinding-open], [data-roll-change], [data-roll-delete-open]"
       );
       const correctionBlockedLinks = document.querySelectorAll(
-        ".machine-tab, .queue-card, .history-row"
+        ".machine-tab, .queue-card, .history-row, [data-waiting-row]"
       );
       const correctionStartsOpen = rollCorrectionRoot && rollCorrectionRoot.dataset.correctionOpen === "true";
       let correctionModeOpen = false;
       let skipCorrectionBeforeUnload = false;
+      let queueReturnFocus = null;
+      let historyReturnFocus = null;
+      let waitingReturnFocus = null;
+      let rewindingReturnFocus = null;
 
       rollCorrectionInputs.forEach((input) => {
         input.dataset.correctionLocked = correctionStartsOpen && input.disabled ? "true" : "false";
@@ -4295,8 +4611,41 @@
         return actionUrl.pathname.replace(/\/rolls\/corrections$/, "") || "/terminal";
       };
 
+      const focusableModalElements = (dialog) => Array.from(
+        dialog?.querySelectorAll(
+          'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+        ) || [],
+      ).filter((element) => !element.hidden && !element.closest("[hidden]"));
+
+      const trapModalFocus = (event, dialog) => {
+        const focusable = focusableModalElements(dialog);
+        if (focusable.length === 0) {
+          event.preventDefault();
+          dialog?.focus();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (!dialog?.contains(document.activeElement)) {
+          event.preventDefault();
+          first.focus();
+        } else if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      };
+
       const setCorrectionMode = (open) => {
         correctionModeOpen = open;
+        if (open) {
+          closeQueue(false);
+          closeHistory(false);
+          closeWaiting(false);
+          closeRewinding(false);
+        }
         if (rollCorrectionRoot) {
           rollCorrectionRoot.dataset.correctionOpen = open ? "true" : "false";
         }
@@ -4341,37 +4690,119 @@
       };
 
       const openQueue = () => {
-        closeHistory();
+        if (correctionModeOpen) {
+          return;
+        }
+        closeHistory(false);
+        closeWaiting(false);
+        closeRewinding(false);
+        queueReturnFocus = document.activeElement;
         overlay.classList.add("open");
         overlay.setAttribute("aria-hidden", "false");
         if (openButton) {
           openButton.setAttribute("aria-expanded", "true");
         }
+        closeButton?.focus();
       };
 
-      const closeQueue = () => {
+      const closeQueue = (restoreFocus = true) => {
         overlay.classList.remove("open");
         overlay.setAttribute("aria-hidden", "true");
         if (openButton) {
           openButton.setAttribute("aria-expanded", "false");
         }
+        if (restoreFocus) {
+          (queueReturnFocus || openButton)?.focus({ preventScroll: true });
+        }
+        queueReturnFocus = null;
       };
 
       const openHistory = () => {
-        closeQueue();
+        if (correctionModeOpen) {
+          return;
+        }
+        closeQueue(false);
+        closeWaiting(false);
+        closeRewinding(false);
+        historyReturnFocus = document.activeElement;
         historyOverlay.classList.add("open");
         historyOverlay.setAttribute("aria-hidden", "false");
         if (historyOpenButton) {
           historyOpenButton.setAttribute("aria-expanded", "true");
         }
+        historyCloseButton?.focus();
       };
 
-      const closeHistory = () => {
+      const closeHistory = (restoreFocus = true) => {
         historyOverlay.classList.remove("open");
         historyOverlay.setAttribute("aria-hidden", "true");
         if (historyOpenButton) {
           historyOpenButton.setAttribute("aria-expanded", "false");
         }
+        if (restoreFocus) {
+          (historyReturnFocus || historyOpenButton)?.focus({ preventScroll: true });
+        }
+        historyReturnFocus = null;
+      };
+
+      const openWaiting = () => {
+        if (!waitingOverlay || correctionModeOpen) {
+          return;
+        }
+        closeQueue(false);
+        closeHistory(false);
+        closeRewinding(false);
+        waitingReturnFocus = document.activeElement;
+        waitingOverlay.hidden = false;
+        waitingOverlay.setAttribute("aria-hidden", "false");
+        waitingOpenButton?.setAttribute("aria-expanded", "true");
+        (waitingCloseButton || waitingPane)?.focus();
+      };
+
+      const closeWaiting = (restoreFocus = true) => {
+        if (!waitingOverlay) {
+          return;
+        }
+        waitingOverlay.hidden = true;
+        waitingOverlay.setAttribute("aria-hidden", "true");
+        waitingOpenButton?.setAttribute("aria-expanded", "false");
+        if (restoreFocus) {
+          (waitingReturnFocus || waitingOpenButton)?.focus({ preventScroll: true });
+        }
+        waitingReturnFocus = null;
+      };
+
+      const openRewinding = () => {
+        if (!rewindingOverlay || correctionModeOpen) {
+          return;
+        }
+        closeQueue(false);
+        closeHistory(false);
+        closeWaiting(false);
+        rewindingReturnFocus = document.activeElement;
+        if (rewindingInput) {
+          rewindingInput.value = rewindingInput.dataset.rewindingSavedValue || "";
+        }
+        rewindingOverlay.hidden = false;
+        rewindingOverlay.setAttribute("aria-hidden", "false");
+        rewindingOpenButton?.setAttribute("aria-expanded", "true");
+        rewindingInput?.focus();
+      };
+
+      const closeRewinding = (restoreFocus = true) => {
+        if (!rewindingOverlay) {
+          return;
+        }
+        rewindingOverlay.hidden = true;
+        rewindingOverlay.setAttribute("aria-hidden", "true");
+        rewindingOpenButton?.setAttribute("aria-expanded", "false");
+        if (rewindingInput) {
+          rewindingInput.value = rewindingInput.dataset.rewindingSavedValue || "";
+        }
+        if (restoreFocus) {
+          (rewindingReturnFocus || rewindingOpenButton)?.focus({ preventScroll: true });
+        }
+        rewindingReturnFocus = null;
       };
 
       const filterHistory = () => {
@@ -4401,13 +4832,25 @@
         openButton.addEventListener("click", openQueue);
       }
       if (closeButton) {
-        closeButton.addEventListener("click", closeQueue);
+        closeButton.addEventListener("click", () => closeQueue());
+      }
+      if (waitingOpenButton) {
+        waitingOpenButton.addEventListener("click", openWaiting);
+      }
+      if (waitingCloseButton) {
+        waitingCloseButton.addEventListener("click", () => closeWaiting());
       }
       if (historyOpenButton) {
         historyOpenButton.addEventListener("click", openHistory);
       }
       if (historyCloseButton) {
-        historyCloseButton.addEventListener("click", closeHistory);
+        historyCloseButton.addEventListener("click", () => closeHistory());
+      }
+      if (rewindingOpenButton) {
+        rewindingOpenButton.addEventListener("click", openRewinding);
+      }
+      if (rewindingDismissButton) {
+        rewindingDismissButton.addEventListener("click", () => closeRewinding());
       }
       if (correctionStartsOpen) {
         setCorrectionMode(true);
@@ -4447,16 +4890,28 @@
           closeQueue();
         }
       });
+      waitingOverlay?.addEventListener("click", (event) => {
+        if (event.target === waitingOverlay) {
+          closeWaiting();
+        }
+      });
       historyOverlay.addEventListener("click", (event) => {
         if (event.target === historyOverlay) {
           closeHistory();
+        }
+      });
+      rewindingOverlay?.addEventListener("click", (event) => {
+        if (event.target === rewindingOverlay) {
+          closeRewinding();
         }
       });
       document.addEventListener("click", (event) => {
         if (!correctionModeOpen) {
           return;
         }
-        const blockedLink = event.target.closest(".machine-tab, .queue-card, .history-row");
+        const blockedLink = event.target.closest(
+          ".machine-tab, .queue-card, .history-row, [data-waiting-row]",
+        );
         if (blockedLink) {
           event.preventDefault();
           event.stopPropagation();
@@ -4475,15 +4930,41 @@
         event.preventDefault();
         event.returnValue = "";
       });
-      queueCards.forEach((card) => card.addEventListener("click", closeQueue));
+      queueCards.forEach((card) => card.addEventListener("click", () => closeQueue(false)));
+      waitingRows.forEach((row) => row.addEventListener("click", () => closeWaiting(false)));
       historyFilters.forEach((filter) => filter.addEventListener("input", filterHistory));
-      historyRows.forEach((row) => row.addEventListener("click", closeHistory));
+      historyRows.forEach((row) => row.addEventListener("click", () => closeHistory(false)));
       document.addEventListener("keydown", (event) => {
+        if (event.key === "Tab" && rewindingOverlay && !rewindingOverlay.hidden) {
+          trapModalFocus(event, rewindingDialog);
+          return;
+        }
+        if (event.key === "Tab" && waitingOverlay && !waitingOverlay.hidden) {
+          trapModalFocus(event, waitingPane);
+          return;
+        }
+        if (event.key === "Escape" && rewindingOverlay && !rewindingOverlay.hidden) {
+          closeRewinding();
+          return;
+        }
+        if (event.key === "Escape" && waitingOverlay && !waitingOverlay.hidden) {
+          closeWaiting();
+          return;
+        }
         if (event.key === "Escape") {
-          closeQueue();
-          closeHistory();
+          if (overlay.classList.contains("open")) {
+            closeQueue();
+            return;
+          }
+          if (historyOverlay.classList.contains("open")) {
+            closeHistory();
+          }
         }
       });
+      if (rewindingOverlay && !rewindingOverlay.hidden) {
+        rewindingOpenButton?.setAttribute("aria-expanded", "true");
+        window.requestAnimationFrame(() => rewindingInput?.focus());
+      }
     })();
   </script>
 </body>
