@@ -181,6 +181,21 @@ Confirmed workstation screen structure:
 - While production is running, `Пауза` is available but visually secondary because pausing is exceptional behavior used for problems or urgent order changes.
 - While production is paused, the pause control becomes `Продължи` and becomes the primary action; `Приключи` remains secondary if finishing from pause is valid.
 - Do not use a generic `Stop` action in the terminal workflow because it can be confused with pause, finish, cancel, or machine stop.
+- A running or paused card may optionally use one roll-change pace clock for the
+  machine's complete synchronized winding set. The operator sets the previous
+  change/start time, interval, and next expected time; a quick acknowledgement
+  advances exactly one interval from the expected time, even when clicked late.
+- The pace clock belongs to the current machine/card pair and is stored only in
+  versioned browser local storage. It survives refreshes in the same browser
+  profile/origin, clears when the card stops owning active production, and is
+  never inherited by the next order.
+- The pace clock is a reminder, not a physical roll-change timestamp or
+  production record. It has no SQLite backup/report/history coupling and no
+  automatic PLC, HMI, encoder, speed, length, weight, or roll-entry integration.
+- Pausing freezes the displayed reminder in yellow, including `00:00`. After an
+  unresolved resume, a positive frozen value stays yellow and an unresolved
+  due value returns to red `00:00` until the operator acknowledges or corrects
+  the schedule.
 - The top machine navigation should align its machine-card group with the left edge of the details and recipe content below.
 - Global navigation actions should sit on the right side of the top machine-navigation band, aligned with the right-side order actions and roll panel below.
 - `Произведени поръчки` should be the top global navigation action, and `Опашка` should sit directly beneath it.
@@ -813,7 +828,6 @@ unit.
 
 Do not build this in the current implementation unless the user explicitly reopens it:
 
-- Per-machine roll-change timer. Possible shape discussed: a simple timer or countdown related to when rolls are removed/changed, useful because one terminal services multiple extrusion machines. This is deferred until after the prototype is tested and the user confirms whether it is useful.
 - Pallet/package entities, pallet selection across rolls, capacity/full/closed state, or a pallet lifecycle beyond the implemented per-roll number.
 - Pallet or product label printing, including label routes, barcodes, reprint/replace, and void history.
 - Shipping, dispatch, delivery, or sent-pallet tracking.

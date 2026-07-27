@@ -258,12 +258,30 @@ This list combines the two existing production-tracking workstreams with the new
    - Verified behavior: produced cards with a finish timestamp sort newest first; cards without a finish timestamp fall after dated cards with deterministic fallback ordering.
 
 10. **Roll change pace / countdown timer**
-   - Surface: `/terminal` machine KPI cards, active card detail, database.
+   - Surface: `/terminal` machine navigation cards, active-card lifecycle bar,
+     and versioned browser local storage.
    - Complexity: large.
-   - Goal: help workers track when wound rolls should be changed during active production, including cases where one machine runs multiple roll tracks from slitting/sleeve/flat-sheet setups.
-   - Desired behavior: workers set a roll-change pace such as 2 hours 30 minutes and click when a roll starts winding or has just been changed. The app then shows a countdown and a visual cue when the next change is due.
-   - Display direction: countdown status should be visible on the machine KPI/navigation cards so workers can see which machine needs attention.
-   - Needs design: whether the timer is per card, machine, roll track, or multiple tracks; how many simultaneous tracks are supported; what happens on pause/resume/finish; how reminders appear; whether missed changes are recorded; and how this interacts with actual roll gross-weight entry.
+   - Status: complete locally on July 27, 2026. The optional synchronized
+     winding-set pace clock, editor, anchored one-touch acknowledgement,
+     pause/resume state model, machine-card attention states, same-origin tab
+     synchronization, lifecycle cleanup, and guarded verification are
+     implemented.
+   - Implemented boundary: one optional schedule belongs to the current
+     running/paused machine-card pair. It is a reminder, not a physical
+     roll-change timestamp or production record. Version-1 records live only
+     in browser `localStorage`; there is no SQLite schema, migration, backup,
+     card-version, re-import, shift, roll, pallet, recipe, print, timing, or
+     historical-report coupling, and the next order never inherits a schedule.
+   - Verification: compileall and all three Node syntax checks exited zero;
+     15 Node schedule tests passed in 67.104239 ms; the focused Python matrix
+     passed 182 tests in 27.55 s; the final full-suite rerun passed 844 tests
+     in 67.48 s; `git diff --check` passed; and the guarded Playwright 1.61.0
+     workflow passed at `1920x768` and `1366x768` with no console errors, page errors,
+     horizontal overflow, timer-only database mutation, or schedule transfer
+     to the next order.
+   - Durable references: `v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md`,
+     `docs/implementation-notes/roll-change-countdown.md`, and browser evidence
+     under `artifacts/ui-checks/roll-change-countdown/`.
 
 11. **Track cards awaiting ripped rolls returned from rewinding/setting**
    - Surface: `/terminal`, `/admin`, database, production timing, and finalization/print eligibility.

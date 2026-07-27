@@ -1,10 +1,9 @@
 # Task 10: Roll-Change Countdown Specification
 
-Status: approved behavior consolidated on July 27, 2026. The test-first
-implementation plan is saved at
-`docs/superpowers/plans/2026-07-27-roll-change-countdown.md` and awaits separate
-user approval. No application code is authorized by this document or by the
-plan-writing step.
+Status: implemented and verified on July 27, 2026. The accepted behavior below
+is implemented without SQLite persistence or production-data coupling. Final
+evidence and the durable operating boundary are linked in the implementation
+handoff.
 
 ## Purpose
 
@@ -515,12 +514,13 @@ Verify at minimum `1920x768` and `1366x768`:
 
 ## Implementation Handoff
 
-The completed implementation plan is
-`docs/superpowers/plans/2026-07-27-roll-change-countdown.md`. Before application
-code changes:
+Implementation and verification are complete. Continue from these durable
+references:
 
-1. obtain explicit user approval to execute that plan;
-2. invoke the selected Superpowers execution workflow;
-3. stop at the focused checkpoints defined in the plan; and
-4. do not commit, deploy, or mutate a runtime/production database without
-   separate authorization.
+- [Task 10 implementation plan](../docs/superpowers/plans/2026-07-27-roll-change-countdown.md)
+- [Roll-change countdown implementation note](../docs/implementation-notes/roll-change-countdown.md)
+- [V2 plan status and final evidence](PLAN.md)
+
+Deployment remains separate work and must retain the repository's existing
+M001 production-profile and final release-candidate gates. Browser-local
+countdowns are not restored from SQLite backups.
