@@ -231,8 +231,8 @@ def create_fixture(database_path: Path) -> dict[str, object]:
 
     completed_id = cards["completed_editable"]
     start(completed_id)
-    set_defaults(completed_id, pallet="15")
-    add_roll(completed_id, "31.0")
+    set_defaults(completed_id, tare="1.25", pallet="15")
+    add_roll(completed_id, "31.25")
     add_roll(completed_id, "32.0", pallet="")
     finish(completed_id)
 

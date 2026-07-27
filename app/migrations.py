@@ -526,6 +526,12 @@ def _validate_rewinding_constraints(connection: sqlite3.Connection) -> None:
             "INSERT INTO cards (order_number) VALUES (?)",
             (f"__m004_rewinding_probe_{probe_suffix}",),
         ).lastrowid
+        shift_id = connection.execute(
+            """
+            INSERT INTO shift_occurrences (shift_number, started_at, ended_at)
+            VALUES (1, '2000-01-01 00:00:00', '2000-01-01 00:00:00')
+            """
+        ).lastrowid
 
         for value in (None, 1, 42, 999, "1"):
             try:
@@ -567,6 +573,27 @@ def _validate_rewinding_constraints(connection: sqlite3.Connection) -> None:
                         f"{status!r}"
                     )
                 raise RuntimeError(message) from error
+
+        try:
+            connection.execute(
+                "UPDATE cards SET final_extrusion_shift_occurrence_id = ? "
+                "WHERE id = ?",
+                (shift_id, card_id),
+            )
+        except sqlite3.IntegrityError as error:
+            raise RuntimeError(
+                "cards.final_extrusion_shift_occurrence_id lacks the required "
+                "constraint"
+            ) from error
+        stored_shift_id = connection.execute(
+            "SELECT final_extrusion_shift_occurrence_id FROM cards WHERE id = ?",
+            (card_id,),
+        ).fetchone()[0]
+        if stored_shift_id != shift_id:
+            raise RuntimeError(
+                "cards.final_extrusion_shift_occurrence_id lacks the required "
+                "constraint"
+            )
 
         try:
             connection.execute(

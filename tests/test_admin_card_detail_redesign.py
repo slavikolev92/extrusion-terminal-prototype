@@ -1224,7 +1224,10 @@ def test_admin_global_save_rolls_back_all_sections_when_timing_is_invalid(connec
     ]
 
     assert response.status_code == 200
-    assert "Завършена карта трябва да има поне един времеви сегмент." in body
+    assert (
+        "Картите с приключило екструдиране трябва да запазят поне един времеви сегмент."
+        in body
+    )
     assert after["version"] == before["version"]
     assert after["customer"] == before["customer"]
     assert after["raw_material_a"] == before["raw_material_a"]
@@ -1432,7 +1435,10 @@ def test_admin_global_save_rolls_back_recipe_components_when_timing_is_invalid(c
         ("linear_pe", "LLDPE; Before Rollback | 20%", "LLDPE", "Before Rollback", "20"),
     ]
     assert response.status_code == 200
-    assert "Завършена карта трябва да има поне един времеви сегмент." in body
+    assert (
+        "Картите с приключило екструдиране трябва да запазят поне един времеви сегмент."
+        in body
+    )
     assert after["version"] == before["version"]
     assert after["raw_material_a"] == before["raw_material_a"]
     assert after["linear_pe"] == before["linear_pe"]

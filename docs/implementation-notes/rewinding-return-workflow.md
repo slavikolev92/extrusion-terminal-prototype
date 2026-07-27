@@ -171,10 +171,11 @@ source column, preserves legacy extension columns with safe declared types,
 preserves valid partial values and the `cards` autoincrement high-water mark,
 and recreates the card indexes. Existing rows receive no inferred status,
 marker, or final shift, and no existing value is transformed. Startup validates
-column metadata, accepted/rejected count and status values, the exact foreign
-key, persisted counts and references, canonical statuses, integrity, and
-foreign-key consistency. Missing or malformed recorded/partial schemas fail
-instead of being recorded as migrated.
+column metadata, accepted/rejected count and status values, a real stored
+final-shift reference, the exact foreign key, persisted counts and references,
+canonical statuses, and foreign-key consistency. Migration tests separately run
+`PRAGMA integrity_check` and require `ok`. Missing or malformed recorded/partial
+schemas fail instead of being recorded as migrated.
 
 The migration runner temporarily disables foreign-key enforcement for the
 SQLite table rebuild, owns one transaction around apply plus validation, and

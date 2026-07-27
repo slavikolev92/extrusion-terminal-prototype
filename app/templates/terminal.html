@@ -3575,7 +3575,7 @@
         {% if selected_card %}
           {% set can_edit_rolls = selected_card.status in ["running", "awaiting_rewinding", "completed"] %}
           {% set can_edit_roll_defaults = selected_card.status in ["pending", "running", "paused", "awaiting_rewinding", "completed"] %}
-          {% set can_edit_card = selected_card.status in ["pending", "running", "paused", "completed"] %}
+          {% set can_edit_card = selected_card.status in ["pending", "running", "paused", "awaiting_rewinding", "completed"] %}
           <div class="workspace">
             <section class="panel details-panel">
               <div class="panel-head">

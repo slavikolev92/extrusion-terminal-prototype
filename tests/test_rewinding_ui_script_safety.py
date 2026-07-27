@@ -201,6 +201,15 @@ def test_rewinding_fixture_emits_all_deterministic_scenarios(tmp_path: Path):
                 "SELECT pallet_number FROM roll_entries WHERE card_id = ? ORDER BY roll_number",
                 (first_payload["cards"]["running_mixed"],),
             ).fetchall()
+            completed_rolls = connection.execute(
+                """
+                SELECT gross_weight, tare_weight, net_weight, pallet_number
+                FROM roll_entries
+                WHERE card_id = ?
+                ORDER BY roll_number
+                """,
+                (first_payload["cards"]["completed_editable"],),
+            ).fetchall()
             waiting_roll_counts = {
                 name: connection.execute(
                     "SELECT COUNT(*) FROM roll_entries WHERE card_id = ?",
@@ -235,6 +244,10 @@ def test_rewinding_fixture_emits_all_deterministic_scenarios(tmp_path: Path):
         assert rows[cards["waiting_newest"]]["finished_at"] > rows[cards["waiting_older"]]["finished_at"]
         assert rows[cards["waiting_newest"]]["rewinding_roll_count"] != rows[cards["waiting_older"]]["rewinding_roll_count"]
         assert [row[0] for row in running_pallets] == [7, None]
+        assert [tuple(row) for row in completed_rolls] == [
+            (31.25, 1.25, 30.0, 15),
+            (32.0, 1.25, 30.75, None),
+        ]
         assert waiting_roll_counts == {
             "waiting_newest": 2,
             "waiting_older": 1,

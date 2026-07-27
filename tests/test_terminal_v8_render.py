@@ -1436,6 +1436,26 @@ def test_terminal_v8_recipe_inputs_are_named_for_all_rows(connection):
     assert 'name="raw_material_batch_lot"' not in html
 
 
+def test_terminal_v8_waiting_recipe_actual_inputs_remain_enabled(connection):
+    card_id = release_ready_card("26145", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 2).ok
+    assert db.finish_card(card_id, card_version(card_id)).ok
+
+    recipe_form = form_block(
+        render_terminal(card_id),
+        f"/terminal/cards/{card_id}/materials",
+    )
+
+    for field_name in ("actual_material__raw_material_a", "batch_lot__raw_material_a"):
+        input_tag = re.search(
+            rf'<input[^>]+name="{field_name}"[^>]*>',
+            recipe_form,
+        )
+        assert input_tag is not None
+        assert "disabled" not in input_tag.group(0)
+
+
 def test_terminal_v8_recipe_form_marks_exit_autosave_contract(connection):
     card_id = release_ready_card("26143", machine_id=1, sequence=1)
 

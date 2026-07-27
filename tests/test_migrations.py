@@ -1832,6 +1832,90 @@ def test_init_rejects_recorded_m004_with_malformed_cards_schema(
         db.init_db()
 
 
+def test_recorded_m004_rejects_final_shift_constraint_that_forces_null(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "recorded-m004-final-shift-forced-null.sqlite3"
+    configure_database(monkeypatch, database_path)
+    db.init_db()
+    with db.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM cards").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM shift_occurrences"
+        ).fetchone()[0] == 0
+
+    canonical_definition = (
+        "final_extrusion_shift_occurrence_id INTEGER\n"
+        "        REFERENCES shift_occurrences(id) ON DELETE RESTRICT,"
+    )
+    malformed_definition = (
+        "final_extrusion_shift_occurrence_id INTEGER\n"
+        "        REFERENCES shift_occurrences(id) ON DELETE RESTRICT\n"
+        "        CHECK (final_extrusion_shift_occurrence_id IS NULL),"
+    )
+    malformed_table_sql = cards_table_sql(
+        "cards_final_shift_forced_null",
+        if_not_exists=False,
+    ).replace(canonical_definition, malformed_definition)
+    assert malformed_table_sql != cards_table_sql(
+        "cards_final_shift_forced_null",
+        if_not_exists=False,
+    )
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute(malformed_table_sql)
+        connection.execute("DROP TABLE cards")
+        connection.execute(
+            "ALTER TABLE cards_final_shift_forced_null RENAME TO cards"
+        )
+
+    with pytest.raises(RuntimeError, match="final_extrusion.*constraint"):
+        db.init_db()
+
+    with db.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM cards").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM shift_occurrences"
+        ).fetchone()[0] == 0
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 4"
+        ).fetchone()[0] == 1
+
+
+def test_recorded_m004_rejects_final_shift_write_that_does_not_persist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "recorded-m004-final-shift-discarded.sqlite3"
+    configure_database(monkeypatch, database_path)
+    db.init_db()
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER cards_discard_final_shift
+            AFTER UPDATE OF final_extrusion_shift_occurrence_id ON cards
+            WHEN NEW.final_extrusion_shift_occurrence_id IS NOT NULL
+            BEGIN
+                UPDATE cards
+                SET final_extrusion_shift_occurrence_id = NULL
+                WHERE id = NEW.id;
+            END
+            """
+        )
+
+    with pytest.raises(RuntimeError, match="final_extrusion.*constraint"):
+        db.init_db()
+
+    with db.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM cards").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM shift_occurrences"
+        ).fetchone()[0] == 0
+
+
 def test_m004_failure_after_cards_copy_rolls_back_schema_data_and_record(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

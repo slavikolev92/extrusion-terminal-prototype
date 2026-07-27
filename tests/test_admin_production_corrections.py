@@ -1139,7 +1139,9 @@ def test_admin_timing_correction_blocks_deleting_all_timing_from_completed_card(
     )
 
     assert not delete_result.ok
-    assert delete_result.messages == ("Завършените карти трябва да запазят поне един времеви сегмент.",)
+    assert delete_result.messages == (
+        "Картите с приключило екструдиране трябва да запазят поне един времеви сегмент.",
+    )
     assert not open_update_result.ok
     assert open_update_result.messages == ("Само карти в изработване могат да имат отворен времеви сегмент.",)
 
@@ -1343,6 +1345,9 @@ def test_waiting_timing_ledger_requires_one_closed_segment_and_rejects_open_segm
     after = db.fetch_admin_card_detail(card_id)
 
     assert not delete_all.ok
+    assert delete_all.messages == (
+        "Картите с приключило екструдиране трябва да запазят поне един времеви сегмент.",
+    )
     assert not open_segment.ok
     assert after == card
 

@@ -2243,7 +2243,13 @@ def _update_admin_timing_ledger(
     final_open_count += sum(1 for segment in parsed_new if segment["ended_at"] is None)
 
     if str(card["status"]) in EXTRUSION_ENDED_STATUSES and final_segment_count < 1:
-        return RuleResult(False, ("Завършена карта трябва да има поне един времеви сегмент.",))
+        return RuleResult(
+            False,
+            (
+                "Картите с приключило екструдиране трябва да запазят поне един "
+                "времеви сегмент.",
+            ),
+        )
 
     if str(card["status"]) != STATUS_RUNNING and final_open_count > 0:
         return RuleResult(False, ("Само карти в изработване могат да имат отворен времеви сегмент.",))
@@ -2548,7 +2554,10 @@ def validate_individual_timing_final_state(
     if not final_ended_at:
         return RuleResult(
             False,
-            ("Завършените карти трябва да запазят поне един времеви сегмент.",),
+            (
+                "Картите с приключило екструдиране трябва да запазят поне един "
+                "времеви сегмент.",
+            ),
         )
     return RuleResult(True)
 

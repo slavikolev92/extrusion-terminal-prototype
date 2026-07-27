@@ -307,9 +307,28 @@ async function verifyLayout(page, viewport) {
     lifecycleBoxes.push(box);
   }
   for (let index = 1; index < lifecycleBoxes.length; index += 1) {
+    assert(Math.abs(lifecycleBoxes[index].width - lifecycleBoxes[0].width) <= 1, "Lifecycle control widths differ.");
     assert(Math.abs(lifecycleBoxes[index].height - lifecycleBoxes[0].height) <= 1, "Lifecycle control heights differ.");
     assert(!boxesOverlap(lifecycleBoxes[index - 1], lifecycleBoxes[index]), "Lifecycle controls overlap.");
   }
+  const lifecycleFit = await lifecycle.evaluateAll((buttons) => buttons.map((button) => {
+    const buttonBox = button.getBoundingClientRect();
+    const visibleChildren = Array.from(button.children).filter((child) => {
+      const box = child.getBoundingClientRect();
+      return box.width > 0 && box.height > 0;
+    });
+    return {
+      contentFits: button.scrollWidth <= button.clientWidth + 1,
+      childrenFit: visibleChildren.every((child) => {
+        const box = child.getBoundingClientRect();
+        return box.left >= buttonBox.left + 4 && box.right <= buttonBox.right - 4;
+      }),
+    };
+  }));
+  assert(
+    lifecycleFit.every(({ contentFits, childrenFit }) => contentFits && childrenFit),
+    "Lifecycle control content is clipped or crowded.",
+  );
 
   const secondary = page.locator("[data-roll-secondary-actions] button");
   assertEqual(await secondary.count(), 2, "roll secondary action count");
@@ -317,12 +336,12 @@ async function verifyLayout(page, viewport) {
 
   const headingCells = page.locator(".roll-head > div");
   const widths = [];
-  for (let index = 1; index <= 4; index += 1) {
+  for (let index = 0; index < 5; index += 1) {
     const box = await headingCells.nth(index).boundingBox();
     assert(box !== null, `Roll heading ${index + 1} is missing.`);
     widths.push(box.width);
   }
-  assert(Math.max(...widths) - Math.min(...widths) <= 1, "Roll weight/pallet columns are not equal.");
+  assert(Math.max(...widths) - Math.min(...widths) <= 1, "First five roll-table columns are not equal.");
   const firstRow = page.locator(".roll-row[data-roll-id]").first();
   assertEqual(normalized(await firstRow.locator("[data-roll-display='gross']").textContent()), "20.0", "one-decimal gross");
   assertEqual(normalized(await firstRow.locator("[data-roll-display='tare']").textContent()), "1.0", "one-decimal tare");
@@ -479,15 +498,39 @@ async function verifyWaitingCompletion(page) {
 
 async function verifyRollEditingAndDirtyNavigation(page) {
   await resetForScenario(page);
-  await navigate(page, fixture.cards.completed_editable);
+  const cardId = fixture.cards.completed_editable;
+  await navigate(page, cardId);
   const firstRow = page.locator(".roll-row[data-roll-id]").first();
   const edit = firstRow.locator("[data-roll-edit-open]");
   assert(await edit.isVisible(), "Pencil row editor is missing.");
   await edit.click();
   assertEqual(await firstRow.getAttribute("data-roll-edit-open"), "true", "row edit opened");
+  assertEqual(
+    await firstRow.locator("input[name='tare_weight']").inputValue(),
+    "1.25",
+    "exact two-decimal tare loaded for unchanged save",
+  );
   await page.screenshot({ path: screenshotPath("row-edit.png"), fullPage: true });
+  await submitAndWait(page, () => page.locator("[data-roll-actions-for]:visible [data-roll-row-save]").click());
+  assertEqual(
+    normalized(await firstRow.locator("[data-roll-display='tare']").textContent()),
+    "1.3",
+    "one-decimal tare after unchanged exact save",
+  );
+  assertEqual(databaseSnapshot(cardId).rolls[0][2], 1.25, "exact tare after unchanged save");
+  await page.reload({ waitUntil: "networkidle" });
+  assertEqual(
+    normalized(await firstRow.locator("[data-roll-display='tare']").textContent()),
+    "1.3",
+    "one-decimal tare after reload",
+  );
+  await edit.click();
+  assertEqual(
+    await firstRow.locator("input[name='tare_weight']").inputValue(),
+    "1.25",
+    "exact two-decimal tare after reload",
+  );
   await page.locator("[data-roll-actions-for]:visible [data-roll-row-cancel]").click();
-  assertEqual(await firstRow.getAttribute("data-roll-edit-open"), "false", "row edit cancelled");
 
   await edit.click();
   const grossInput = firstRow.locator("input[name='gross_weight']");
@@ -503,13 +546,31 @@ async function verifyRollEditingAndDirtyNavigation(page) {
   await submitAndWait(page, () => page.locator("[data-roll-actions-for]:visible [data-roll-row-save]").click());
   assertEqual(normalized(await page.locator(".roll-row[data-roll-id]").first().locator("[data-roll-display='gross']").textContent()), "33.0", "saved row correction");
 
-  await page.locator(".roll-row[data-roll-id]").first().locator("[data-roll-edit-open]").click();
+  const beforeDelete = databaseSnapshot(cardId);
+  const rowsBeforeDelete = await page.locator(".roll-row[data-roll-id]").count();
+  const deletedRollNumber = beforeDelete.rolls.at(-1)[0];
+  await page.locator(".roll-row[data-roll-id]").last().locator("[data-roll-edit-open]").click();
   await page.locator("[data-roll-actions-for]:visible [data-roll-row-delete]").click();
   const deleteModal = page.locator("[data-roll-delete-modal-for]:visible");
   assert(normalized(await deleteModal.textContent()).includes("Потвърдете номера"), "Delete confirmation is missing.");
-  await deleteModal.locator("[data-roll-delete-cancel]").click();
-  await page.locator("[data-roll-actions-for]:visible [data-roll-row-cancel]").click();
-  passed("pencil editor, Cancel, Save, Delete confirmation, and dirty pane guards");
+  await deleteModal.locator("input[name='confirm_roll_number']").fill(String(deletedRollNumber));
+  await submitAndWait(page, () => deleteModal.locator("button[type='submit']").click());
+  const afterDelete = databaseSnapshot(cardId);
+  assertEqual(afterDelete.rolls, beforeDelete.rolls.slice(0, -1), "persisted roll deletion");
+  assertEqual(
+    await page.locator(".roll-row[data-roll-id]").count(),
+    rowsBeforeDelete - 1,
+    "rendered roll count after delete",
+  );
+  await page.reload({ waitUntil: "networkidle" });
+  assertEqual(databaseSnapshot(cardId).rolls, afterDelete.rolls, "roll deletion after reload");
+  assertEqual(
+    await page.locator(".roll-row[data-roll-id]").count(),
+    rowsBeforeDelete - 1,
+    "rendered roll count after delete reload",
+  );
+  assertEqual(afterDelete.rolls[0][2], 1.25, "exact tare after delete reload");
+  passed("pencil editor, Cancel, unchanged precision Save, persisted Delete, and dirty pane guards");
 
   await navigate(page, fixture.cards.running_mixed);
   const snapshot = databaseSnapshot(fixture.cards.running_mixed);
