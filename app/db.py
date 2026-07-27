@@ -3263,7 +3263,7 @@ def update_roll_weight(
     roll_id: int,
     loaded_version: int,
     gross_weight: str,
-    tare_weight: str,
+    tare_weight: str | None = None,
     pallet_number: str | None = None,
     *,
     require_active_shift: bool = False,
@@ -3276,13 +3276,15 @@ def update_roll_weight(
     if parse_error:
         return RuleResult(False, (parse_error,))
 
-    parsed_tare, tare_parse_error = parse_weight(
-        tare_weight,
-        "Шпула",
-        allow_blank=True,
-    )
-    if tare_parse_error:
-        return RuleResult(False, (tare_parse_error,))
+    parsed_tare: Decimal | None = None
+    if tare_weight is not None:
+        parsed_tare, tare_parse_error = parse_weight(
+            tare_weight,
+            "Шпула",
+            allow_blank=True,
+        )
+        if tare_parse_error:
+            return RuleResult(False, (tare_parse_error,))
 
     parsed_pallet: int | None = None
     if pallet_number is not None:
@@ -3325,6 +3327,8 @@ def update_roll_weight(
                 if roll["pallet_number"] is not None
                 else None
             )
+        if tare_weight is None:
+            parsed_tare = decimal_from_database(roll["tare_weight"])
 
         if (
             card["status"] in PRODUCTION_COMPLETE_STATUSES

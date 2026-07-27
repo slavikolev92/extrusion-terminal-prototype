@@ -1866,23 +1866,30 @@ async def save_tare_weight(
     request: Request,
     card_id: int,
     loaded_version: str = Form(...),
-    tare_weight: str = Form(""),
+    tare_weight: str | None = Form(None),
     pallet_number: str | None = Form(None),
 ):
+    submitted_tare = await form_text_preserving_explicit_blank(
+        request,
+        "tare_weight",
+        tare_weight,
+    )
+    submitted_pallet = await form_text_preserving_explicit_blank(
+        request,
+        "pallet_number",
+        pallet_number,
+    )
     notice_code = (
-        "roll_defaults_saved" if isinstance(pallet_number, str) else "tare_saved"
+        "roll_defaults_saved" if submitted_pallet is not None else "tare_saved"
     )
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
         roll_result = validate_terminal_card_available_for_post(card_id)
         if roll_result.ok:
-            submitted_pallet = (
-                pallet_number if isinstance(pallet_number, str) else None
-            )
             roll_result = update_roll_defaults(
                 card_id,
                 parsed_version,
-                tare_weight=tare_weight,
+                tare_weight=submitted_tare,
                 pallet_number=submitted_pallet,
                 require_active_shift=True,
             )
@@ -1975,6 +1982,16 @@ async def add_roll_weight(
     tare_weight: str | None = Form(None),
     pallet_number: str | None = Form(None),
 ):
+    submitted_tare = await form_text_preserving_explicit_blank(
+        request,
+        "tare_weight",
+        tare_weight,
+    )
+    submitted_pallet = await form_text_preserving_explicit_blank(
+        request,
+        "pallet_number",
+        pallet_number,
+    )
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
         roll_result = validate_terminal_card_available_for_post(card_id)
@@ -1983,8 +2000,8 @@ async def add_roll_weight(
                 card_id,
                 parsed_version,
                 gross_weight,
-                tare_weight=tare_weight,
-                pallet_number=pallet_number,
+                tare_weight=submitted_tare,
+                pallet_number=submitted_pallet,
                 require_active_shift=True,
             )
 
@@ -2048,11 +2065,21 @@ async def save_roll_weight(
     tare_weight: str | None = Form(None),
     pallet_number: str | None = Form(None),
 ):
+    submitted_tare = await form_text_preserving_explicit_blank(
+        request,
+        "tare_weight",
+        tare_weight,
+    )
+    submitted_pallet = await form_text_preserving_explicit_blank(
+        request,
+        "pallet_number",
+        pallet_number,
+    )
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
         roll_result = validate_terminal_card_available_for_post(card_id)
         if roll_result.ok:
-            if tare_weight is None or not isinstance(tare_weight, str):
+            if submitted_tare is None and submitted_pallet is None:
                 roll_result = update_roll_gross_weight(
                     card_id=card_id,
                     roll_id=roll_id,
@@ -2066,8 +2093,8 @@ async def save_roll_weight(
                     roll_id=roll_id,
                     loaded_version=parsed_version,
                     gross_weight=gross_weight,
-                    tare_weight=tare_weight,
-                    pallet_number=pallet_number,
+                    tare_weight=submitted_tare,
+                    pallet_number=submitted_pallet,
                     require_active_shift=True,
                 )
 
@@ -2082,8 +2109,8 @@ async def save_roll_weight(
         roll_result_loaded_version=loaded_version,
         roll_result_values={
             "gross_weight": gross_weight,
-            "tare_weight": tare_weight,
-            "pallet_number": pallet_number,
+            "tare_weight": submitted_tare,
+            "pallet_number": submitted_pallet,
         },
     )
 
@@ -2262,6 +2289,27 @@ async def finish_terminal_card(
         workflow_result,
         notice_code=notice_code,
     )
+
+
+async def form_text_preserving_explicit_blank(
+    request: Request,
+    field_name: str,
+    parsed_value: str | None,
+) -> str | None:
+    if isinstance(parsed_value, str):
+        return parsed_value
+
+    content_type = request.headers.get("content-type", "").lower()
+    if not (
+        content_type.startswith("application/x-www-form-urlencoded")
+        or content_type.startswith("multipart/form-data")
+    ):
+        return None
+
+    form = await request.form()
+    if field_name not in form:
+        return None
+    return str(form.get(field_name) or "")
 
 
 def parse_loaded_version(loaded_version: str) -> tuple[int | None, RuleResult]:

@@ -3227,6 +3227,272 @@ def test_terminal_tare_route_saves_dirty_tare_and_pallet_atomically(connection):
     assert card["version"] == loaded_version + 1
 
 
+def test_terminal_defaults_http_route_clears_explicitly_blank_pallet(connection):
+    card_id = release_ready_card("PALLET-HTTP-DEFAULT-CLEAR", machine_id=1, sequence=1)
+    assert db.update_roll_defaults(
+        card_id,
+        card_version(card_id),
+        tare_weight="1.25",
+        pallet_number="7",
+        require_active_shift=True,
+    ).ok
+    loaded_version = card_version(card_id)
+
+    status_code, headers = asyncio.run(
+        post_form_to_app(
+            f"/terminal/cards/{card_id}/tare",
+            {
+                "loaded_version": str(loaded_version),
+                "tare_weight": "1.25",
+                "pallet_number": "",
+            },
+        )
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert status_code == 303
+    assert headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=roll_defaults_saved"
+    )
+    assert card["tare_weight"] == 1.25
+    assert card["current_pallet_number"] is None
+    assert card["version"] == loaded_version + 1
+
+
+def test_terminal_defaults_http_route_preserves_omitted_tare_when_clearing_pallet(
+    connection,
+):
+    card_id = release_ready_card("PALLET-HTTP-DEFAULT-OMIT", machine_id=1, sequence=1)
+    assert db.update_roll_defaults(
+        card_id,
+        card_version(card_id),
+        tare_weight="1.25",
+        pallet_number="7",
+        require_active_shift=True,
+    ).ok
+    loaded_version = card_version(card_id)
+
+    status_code, headers = asyncio.run(
+        post_form_to_app(
+            f"/terminal/cards/{card_id}/tare",
+            {
+                "loaded_version": str(loaded_version),
+                "pallet_number": "",
+            },
+        )
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert status_code == 303
+    assert headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=roll_defaults_saved"
+    )
+    assert card["tare_weight"] == 1.25
+    assert card["current_pallet_number"] is None
+    assert card["version"] == loaded_version + 1
+
+
+def test_terminal_add_roll_http_route_clears_blank_pallet_atomically(connection):
+    card_id = release_ready_card("PALLET-HTTP-ROLL-CLEAR", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_roll_defaults(
+        card_id,
+        card_version(card_id),
+        tare_weight="1.25",
+        pallet_number="7",
+        require_active_shift=True,
+    ).ok
+    loaded_version = card_version(card_id)
+
+    status_code, headers = asyncio.run(
+        post_form_to_app(
+            f"/terminal/cards/{card_id}/rolls",
+            {
+                "loaded_version": str(loaded_version),
+                "gross_weight": "60.00",
+                "tare_weight": "1.25",
+                "pallet_number": "",
+            },
+        )
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert status_code == 303
+    assert headers["location"] == f"/terminal/cards/{card_id}?notice=roll_saved"
+    assert card["tare_weight"] == 1.25
+    assert card["current_pallet_number"] is None
+    assert card["roll_entries"][0]["pallet_number"] is None
+    assert card["roll_entries"][0]["tare_weight"] == 1.25
+    assert card["roll_entries"][0]["net_weight"] == 58.75
+    assert card["version"] == loaded_version + 1
+
+
+def test_terminal_add_roll_http_route_preserves_omitted_defaults(connection):
+    card_id = release_ready_card("ROLL-HTTP-DEFAULTS-OMIT", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_roll_defaults(
+        card_id,
+        card_version(card_id),
+        tare_weight="1.25",
+        pallet_number="7",
+        require_active_shift=True,
+    ).ok
+    loaded_version = card_version(card_id)
+
+    status_code, headers = asyncio.run(
+        post_form_to_app(
+            f"/terminal/cards/{card_id}/rolls",
+            {
+                "loaded_version": str(loaded_version),
+                "gross_weight": "60.00",
+            },
+        )
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert status_code == 303
+    assert headers["location"] == f"/terminal/cards/{card_id}?notice=roll_saved"
+    assert card["tare_weight"] == 1.25
+    assert card["current_pallet_number"] == 7
+    assert card["roll_entries"][0]["tare_weight"] == 1.25
+    assert card["roll_entries"][0]["pallet_number"] == 7
+    assert card["roll_entries"][0]["net_weight"] == 58.75
+    assert card["version"] == loaded_version + 1
+
+
+def test_terminal_add_roll_http_route_does_not_reuse_explicitly_blank_tare(connection):
+    card_id = release_ready_card("TARE-HTTP-ROLL-CLEAR", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_roll_defaults(
+        card_id,
+        card_version(card_id),
+        tare_weight="1.25",
+        pallet_number="7",
+        require_active_shift=True,
+    ).ok
+    before = db.fetch_terminal_card_detail(card_id)
+
+    status_code, headers = asyncio.run(
+        post_form_to_app(
+            f"/terminal/cards/{card_id}/rolls",
+            {
+                "loaded_version": str(before["version"]),
+                "gross_weight": "60.00",
+                "tare_weight": "",
+                "pallet_number": "",
+            },
+        )
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert status_code == 200
+    assert "location" not in headers
+    assert card["tare_weight"] == before["tare_weight"] == 1.25
+    assert card["current_pallet_number"] == before["current_pallet_number"] == 7
+    assert card["roll_entries"] == []
+    assert card["version"] == before["version"]
+
+
+def test_terminal_pencil_http_route_clears_only_selected_roll_defaults(connection):
+    card_id = release_ready_card("PALLET-HTTP-PENCIL-CLEAR", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_roll_defaults(
+        card_id,
+        card_version(card_id),
+        tare_weight="1.25",
+        pallet_number="7",
+        require_active_shift=True,
+    ).ok
+    assert db.add_roll_gross_weight(
+        card_id,
+        card_version(card_id),
+        "60.00",
+        require_active_shift=True,
+    ).ok
+    before = db.fetch_terminal_card_detail(card_id)
+    roll = before["roll_entries"][0]
+
+    status_code, headers = asyncio.run(
+        post_form_to_app(
+            f"/terminal/cards/{card_id}/rolls/{roll['id']}",
+            {
+                "loaded_version": str(before["version"]),
+                "gross_weight": "60.00",
+                "tare_weight": "",
+                "pallet_number": "",
+            },
+        )
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert status_code == 303
+    assert headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=roll_updated"
+    )
+    assert card["roll_entries"][0]["tare_weight"] is None
+    assert card["roll_entries"][0]["net_weight"] is None
+    assert card["roll_entries"][0]["pallet_number"] is None
+    assert card["tare_weight"] == 1.25
+    assert card["current_pallet_number"] == 7
+    assert card["version"] == before["version"] + 1
+
+
+@pytest.mark.parametrize(
+    ("submitted_pallet", "expected_pallet"),
+    (("", None), ("9", 9)),
+)
+def test_terminal_pencil_http_route_updates_pallet_when_tare_is_omitted(
+    connection,
+    submitted_pallet,
+    expected_pallet,
+):
+    card_id = release_ready_card(
+        f"PALLET-HTTP-PENCIL-OMIT-{submitted_pallet or 'BLANK'}",
+        machine_id=1,
+        sequence=1,
+    )
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_roll_defaults(
+        card_id,
+        card_version(card_id),
+        tare_weight="1.25",
+        pallet_number="7",
+        require_active_shift=True,
+    ).ok
+    assert db.add_roll_gross_weight(
+        card_id,
+        card_version(card_id),
+        "60.00",
+        require_active_shift=True,
+    ).ok
+    before = db.fetch_terminal_card_detail(card_id)
+    roll = before["roll_entries"][0]
+
+    status_code, headers = asyncio.run(
+        post_form_to_app(
+            f"/terminal/cards/{card_id}/rolls/{roll['id']}",
+            {
+                "loaded_version": str(before["version"]),
+                "gross_weight": "61.00",
+                "pallet_number": submitted_pallet,
+            },
+        )
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+
+    assert status_code == 303
+    assert headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=roll_updated"
+    )
+    assert card["roll_entries"][0]["gross_weight"] == 61
+    assert card["roll_entries"][0]["tare_weight"] == 1.25
+    assert card["roll_entries"][0]["pallet_number"] == expected_pallet
+    assert card["roll_entries"][0]["net_weight"] == 59.75
+    assert card["tare_weight"] == 1.25
+    assert card["current_pallet_number"] == 7
+    assert card["version"] == before["version"] + 1
+
+
 @pytest.mark.parametrize(
     "invalid_pallet",
     ("1000", "15+1", pytest.param("9" * 5000, id="5000-digits")),
