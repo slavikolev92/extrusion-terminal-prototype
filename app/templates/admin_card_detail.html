@@ -11,6 +11,9 @@
       <h1 class="admin-card-title-line">
         <span>Поръчка № {{ card.order_number }}</span>
         <span class="pill status-{{ card.status }}">{{ status_labels.get(card.status, card.status) }}</span>
+        {% if card.status == "awaiting_rewinding" %}
+          <span class="admin-rewinding-count">Пренавиване: {{ card.rewinding_roll_count or 0 }}</span>
+        {% endif %}
       </h1>
     </div>
     <div class="admin-card-actions" aria-label="Действия за технологична карта">

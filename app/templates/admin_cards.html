@@ -65,7 +65,12 @@
               <td>{{ card.order_number }}</td>
               <td>{{ card.delivery_date or "-" }}</td>
               <td>{% if card.ordered_gross_kg %}{{ card.ordered_gross_kg }}{% else %}-{% endif %}</td>
-              <td><span class="pill status-{{ card.status }}">{{ status_labels.get(card.status, card.status) }}</span></td>
+              <td>
+                <span class="pill status-{{ card.status }}">{{ status_labels.get(card.status, card.status) }}</span>
+                {% if card.status == "awaiting_rewinding" %}
+                  <span class="admin-rewinding-count">Пренавиване: {{ card.rewinding_roll_count or 0 }}</span>
+                {% endif %}
+              </td>
               <td>{{ card.customer or "-" }}</td>
               <td>{{ card.product_type or "-" }}</td>
               <td>{{ card.machine_id or "-" }} / {{ card.machine_sequence or "-" }}</td>

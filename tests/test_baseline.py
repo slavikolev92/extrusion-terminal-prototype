@@ -12,6 +12,7 @@ from app import db
 from app.constants import (
     CARD_STATUSES,
     STATUS_ARCHIVED,
+    STATUS_AWAITING_REWINDING,
     STATUS_COMPLETED,
     STATUS_IMPORTED,
     STATUS_LABELS,
@@ -1233,6 +1234,73 @@ def test_overwrite_import_updates_imported_fields_and_preserves_production_data(
     assert roll["entry_count"] == 1
     assert roll["pallet_number"] == 6
     assert segment_count == 1
+
+
+def test_overwrite_import_preserves_waiting_rewinding_production_state(
+    connection,
+    active_test_shift,
+):
+    card_id = import_one_ready_card("25281-waiting")
+    assert db.release_card(card_id, machine_id=2, machine_sequence=1).ok
+    assert db.start_production_timing(card_id, int(db.fetch_admin_card_detail(card_id)["version"])).ok
+    assert db.update_tare_weight(card_id, int(db.fetch_admin_card_detail(card_id)["version"]), "1.25").ok
+    assert db.add_roll_gross_weight(
+        card_id, int(db.fetch_admin_card_detail(card_id)["version"]), "25.50"
+    ).ok
+    assert db.update_rewinding_roll_count(
+        card_id, int(db.fetch_admin_card_detail(card_id)["version"]), 8
+    ).ok
+    assert db.finish_card(card_id, int(db.fetch_admin_card_detail(card_id)["version"])).ok
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET current_pallet_number = 7,
+                actual_raw_material_used = 'Actual LDPE',
+                raw_material_brand_grade = 'Grade A',
+                raw_material_batch_lot = 'Batch 42'
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+        setup_connection.commit()
+
+    before = db.fetch_admin_card_detail(card_id)
+    assert before is not None
+    assert before["status"] == STATUS_AWAITING_REWINDING
+    production_state = {
+        key: before[key]
+        for key in (
+            "status",
+            "rewinding_roll_count",
+            "final_extrusion_shift_occurrence_id",
+            "machine_id",
+            "machine_sequence",
+            "tare_weight",
+            "current_pallet_number",
+            "actual_raw_material_used",
+            "raw_material_brand_grade",
+            "raw_material_batch_lot",
+            "first_started_at",
+            "finished_at",
+        )
+    }
+    timing_segments = before["timing_segments"]
+    roll_entries = before["roll_entries"]
+
+    result = import_cards_from_csv(
+        "waiting-overwrite.csv",
+        csv_bytes(extrusion_row("25281-waiting", customer="Replacement Customer")),
+        overwrite_existing=True,
+    )
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert result.updated == 1
+    assert after is not None
+    assert after["customer"] == "Replacement Customer"
+    assert {key: after[key] for key in production_state} == production_state
+    assert after["timing_segments"] == timing_segments
+    assert after["roll_entries"] == roll_entries
 
 
 def test_overwrite_import_blocks_invalid_recipe_for_released_card(connection):

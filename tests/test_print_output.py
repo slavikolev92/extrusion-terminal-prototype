@@ -15,6 +15,7 @@ from app import db
 from app import printing
 from app.constants import (
     STATUS_ARCHIVED,
+    STATUS_AWAITING_REWINDING,
     STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_IMPORTED,
@@ -478,6 +479,58 @@ def test_only_produced_or_archived_cards_are_printable(connection, status):
     assert not result.ok
     assert result.data is None
     assert "Печатът е разрешен само за произведени или завършени карти." in result.messages
+
+
+def test_waiting_rewinding_card_uses_active_print_block_and_prints_after_completion(
+    connection,
+    active_test_shift,
+):
+    card_id = import_card("27001-waiting")
+    assert db.release_card(card_id, machine_id=1, machine_sequence=1).ok
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.25").ok
+    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 7).ok
+    assert db.finish_card(card_id, card_version(card_id)).ok
+    assert db.fetch_admin_card_detail(card_id)["status"] == STATUS_AWAITING_REWINDING
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "51.25").ok
+    original_finished_at = db.fetch_admin_card_detail(card_id)["finished_at"]
+
+    readiness = build_print_readiness(card_id)
+    blocked_response = get_print_page(card_id)
+
+    assert not readiness.ok
+    assert readiness.data is None
+    assert readiness.messages == [
+        "Печатът е разрешен само за произведени или завършени карти."
+    ]
+    assert "Печатът е блокиран" in blocked_response.text
+    assert "Печатът е разрешен само за произведени или завършени карти." in blocked_response.text
+
+    assert db.finish_card(card_id, card_version(card_id)).ok
+
+    completed_readiness = build_print_readiness(card_id)
+    completed_response = get_print_page(card_id)
+
+    assert completed_readiness.ok
+    assert completed_readiness.data is not None
+    assert completed_readiness.data["back"]["stop_display"] == format_datetime(
+        original_finished_at
+    )
+    assert "Пренавиване: 7" not in completed_response.text
+
+    assert db.archive_completed_card(card_id, card_version(card_id)).ok
+    archived_response = get_print_page(card_id)
+
+    assert archived_response.status_code == 200
+    assert "Печатът е блокиран" not in archived_response.text
+    assert "Пренавиване: 7" not in archived_response.text
+    with db.connect() as verify_connection:
+        assert (
+            verify_connection.execute(
+                "SELECT finished_at FROM cards WHERE id = ?", (card_id,)
+            ).fetchone()["finished_at"]
+            == original_finished_at
+        )
 
 
 def test_completed_card_with_missing_default_tare_is_printable_with_roll_tares(

@@ -9,7 +9,12 @@ import pytest
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app import db
-from app.constants import CARD_STATUSES, STATUS_LABELS
+from app.constants import (
+    CARD_STATUSES,
+    STATUS_ARCHIVED,
+    STATUS_AWAITING_REWINDING,
+    STATUS_LABELS,
+)
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 from app.main import (
     admin_card_detail_context,
@@ -315,6 +320,72 @@ def test_admin_detail_print_link_is_available_only_for_completed_cards(connectio
     assert "Печат / препечат" not in completed_html
     assert f"/cards/{cancelled_id}/print" not in cancelled_html
     assert "Принтирай" not in cancelled_html
+
+
+def test_waiting_rewinding_card_is_visible_to_admins_without_lifecycle_shortcuts(
+    connection,
+):
+    card_id = prepare_dense_completed_card("27041-waiting", roll_count=1)
+    with db.connect() as update_connection:
+        update_connection.execute(
+            """
+            UPDATE cards
+            SET status = ?, rewinding_roll_count = 4
+            WHERE id = ?
+            """,
+            (STATUS_AWAITING_REWINDING, card_id),
+        )
+        update_connection.commit()
+
+    detail_html = render_admin_detail(card_id)
+    list_html = render_admin_cards_list(
+        cards=db.fetch_admin_cards({"status": STATUS_AWAITING_REWINDING}),
+        filters={
+            "order_number": "",
+            "customer": "",
+            "product": "",
+            "status": STATUS_AWAITING_REWINDING,
+        },
+    )
+
+    assert "Изчаква пренавиване" in detail_html
+    assert "Изчаква пренавиване" in list_html
+    assert detail_html.count("Пренавиване: 4") == 1
+    assert list_html.count("Пренавиване: 4") == 1
+    assert 'value="awaiting_rewinding" selected' in list_html
+    assert "Actual LDPE A" in detail_html
+    assert "LOT-A" in detail_html
+    assert "51.00" in detail_html
+    assert "Машина" in detail_html
+    assert "Време" in detail_html
+    assert f'action="/admin/cards/{card_id}/cancel"' not in detail_html
+    assert f'action="/admin/cards/{card_id}/delete"' not in detail_html
+    assert f'action="/admin/cards/{card_id}/archive"' not in detail_html
+    assert f'href="/cards/{card_id}/print"' not in detail_html
+
+
+def test_admin_rewinding_count_is_hidden_after_waiting_status(connection):
+    completed_id = prepare_dense_completed_card("27041-completed", roll_count=1)
+    archived_id = prepare_dense_completed_card("27041-archived", roll_count=1)
+    with db.connect() as update_connection:
+        update_connection.execute(
+            "UPDATE cards SET rewinding_roll_count = 6 WHERE id = ?",
+            (completed_id,),
+        )
+        update_connection.execute(
+            "UPDATE cards SET status = ?, rewinding_roll_count = 9 WHERE id = ?",
+            (STATUS_ARCHIVED, archived_id),
+        )
+        update_connection.commit()
+
+    detail_html = render_admin_detail(completed_id)
+    archived_detail_html = render_admin_detail(archived_id)
+    list_html = render_admin_cards_list()
+
+    assert "Пренавиване: 6" not in detail_html
+    assert "Пренавиване: 9" not in archived_detail_html
+    assert "Пренавиване: 6" not in list_html
+    assert "Пренавиване: 9" not in list_html
 
 
 def test_admin_detail_separates_global_navigation_from_card_actions(connection):
