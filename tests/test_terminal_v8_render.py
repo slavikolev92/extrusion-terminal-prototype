@@ -1321,11 +1321,13 @@ def test_terminal_v8_renders_rewinding_and_roll_change_hosts_in_separate_action_
     assert "Пренавиване:" not in clear_button.group(0)
     assert "is-marked" not in clear_button.group(0)
     assert 'data-rewinding-open' in running_html
-    assert not re.search(
-        r'<div class="roll-secondary-actions"[^>]*>.*data-roll-change-open',
+    secondary_actions = re.search(
+        r'<div class="roll-secondary-actions"[^>]*>.*?</div>',
         running_html,
         re.S,
     )
+    assert secondary_actions
+    assert "data-roll-change-open" not in secondary_actions.group(0)
     assert re.search(
         rf'<div class="roll-change-controls"[^>]+data-machine-id="1"'
         rf'[^>]+data-card-id="{running_id}"[^>]+data-card-status="running"',
@@ -2559,6 +2561,7 @@ def test_terminal_roll_correction_script_blocks_other_actions_while_open(connect
     assert ".recipe-table input" in html
     assert "#queue-open" in html
     assert "#history-open" in html
+    assert "[data-rewinding-open], [data-roll-change-open], [data-roll-change-advance]" in html
     assert "initialCorrectionValues" in html
     assert "hasDirtyRollCorrections" in html
     assert "skipCorrectionBeforeUnload" in html

@@ -14,6 +14,7 @@ import {
   loadSchedule,
   parseIntervalMinutes,
   parseOperatorLocalMinute,
+  readSchedule,
   reconcileCardStatus,
   saveSchedule,
   storageKey,
@@ -175,6 +176,51 @@ test("storage rejects malformed, unsupported, wrong-card, and invalid intervals"
   }
   saveSchedule(storage, runningSchedule());
   assert.deepEqual(decodeSchedule(storage.getItem(key), 2, 22), runningSchedule());
+});
+
+test("steady-state reads leave a valid different-card schedule untouched", () => {
+  const storage = new MemoryStorage();
+  const replacement = { ...runningSchedule(), cardId: 99 };
+  storage.setItem(storageKey(2), JSON.stringify(replacement));
+
+  assert.equal(readSchedule(storage, 2, 22), null);
+  assert.equal(storage.getItem(storageKey(2)), JSON.stringify(replacement));
+});
+
+test("storage removes unrenderable timestamps and contradictory lifecycle shapes", () => {
+  const storage = new MemoryStorage();
+  const key = storageKey(2);
+  const base = runningSchedule();
+  const invalidSchedules = [
+    {
+      ...base,
+      previousChangeAtMs: 8_640_000_000_000_001,
+      nextExpectedAtMs: 8_640_000_000_001_001,
+    },
+    { ...base, frozenRemainingMs: 1, pauseNeedsResolution: false },
+    { ...base, frozenRemainingMs: null, pauseNeedsResolution: true },
+    { ...base, observedStatus: "paused", frozenRemainingMs: null, pauseNeedsResolution: false },
+  ];
+
+  for (const candidate of invalidSchedules) {
+    storage.setItem(key, JSON.stringify(candidate));
+    assert.equal(loadSchedule(storage, 2, 22), null);
+    assert.equal(storage.getItem(key), null);
+  }
+});
+
+test("storage accepts every lifecycle shape produced by the state machine", () => {
+  const base = runningSchedule();
+  const validSchedules = [
+    base,
+    { ...base, frozenRemainingMs: 5 * minute, pauseNeedsResolution: true },
+    { ...base, observedStatus: "paused", frozenRemainingMs: 5 * minute, pauseNeedsResolution: true },
+    { ...base, observedStatus: "paused", frozenRemainingMs: 5 * minute, pauseNeedsResolution: false },
+  ];
+
+  for (const candidate of validSchedules) {
+    assert.deepEqual(decodeSchedule(JSON.stringify(candidate), 2, 22), candidate);
+  }
 });
 
 test("context cleanup removes ended and replaced cards but preserves unrelated storage", () => {

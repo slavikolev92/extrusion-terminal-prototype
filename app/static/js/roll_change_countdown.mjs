@@ -6,9 +6,9 @@ import {
   clearMismatchedSchedules,
   clearSchedule,
   countdownView,
-  loadSchedule,
   parseIntervalMinutes,
   parseOperatorLocalMinute,
+  readSchedule,
   reconcileCardStatus,
   saveSchedule,
   toLocalDateTimeInputValue,
@@ -86,7 +86,15 @@ export function bootstrapRollChangeCountdown({
   function matchingSchedule(machineId, cardId) {
     if (!Number.isSafeInteger(machineId) || machineId <= 0) return null;
     if (!Number.isSafeInteger(cardId) || cardId <= 0) return null;
-    return loadSchedule(storage, machineId, cardId);
+    return readSchedule(storage, machineId, cardId);
+  }
+
+  function hasNonMatchingStoredRecord(machineId, cardId) {
+    if (!Number.isSafeInteger(machineId) || machineId <= 0) return false;
+    return (
+      storage.getItem(`${STORAGE_KEY_PREFIX}${machineId}`) !== null
+      && matchingSchedule(machineId, cardId) === null
+    );
   }
 
   function renderMachine(context, schedule, currentMs) {
@@ -156,10 +164,6 @@ export function bootstrapRollChangeCountdown({
   }
 
   function refresh() {
-    const currentMs = now();
-    for (const [machineId, context] of contexts) {
-      reconcileAndPersist(machineId, context, currentMs);
-    }
     renderAll();
   }
 
@@ -226,6 +230,11 @@ export function bootstrapRollChangeCountdown({
   function submitEditor(event) {
     event.preventDefault();
     if (!previousInput || !hoursInput || !minutesInput || !nextInput) return;
+    if (hasNonMatchingStoredRecord(selectedMachineId, selectedCardId)) {
+      closeEditor();
+      renderAll();
+      return;
+    }
     const result = validateEditorValues({
       previousValue: previousInput.value,
       hoursValue: hoursInput.value,
@@ -268,7 +277,9 @@ export function bootstrapRollChangeCountdown({
   }
 
   function clearEditorSchedule() {
-    clearSchedule(storage, selectedMachineId);
+    if (matchingSchedule(selectedMachineId, selectedCardId)) {
+      clearSchedule(storage, selectedMachineId);
+    }
     savedSchedule = null;
     closeEditor();
     renderAll();
@@ -276,7 +287,7 @@ export function bootstrapRollChangeCountdown({
 
   function advance() {
     if (hasOpenRollCorrection()) return;
-    const current = loadSchedule(storage, selectedMachineId, selectedCardId);
+    const current = readSchedule(storage, selectedMachineId, selectedCardId);
     if (!current) return;
     const advanced = advanceSchedule(current, selectedStatus, now());
     saveSchedule(storage, advanced);
@@ -316,15 +327,15 @@ export function bootstrapRollChangeCountdown({
 
   function handleStorage(event) {
     if (!event.key?.startsWith(STORAGE_KEY_PREFIX)) return;
-    clearMismatchedSchedules(storage, contexts);
-    const machineId = Number(event.key.slice(STORAGE_KEY_PREFIX.length));
-    const context = contexts.get(machineId);
-    if (context) reconcileAndPersist(machineId, context, now());
     renderAll();
   }
 
   clearMismatchedSchedules(storage, contexts);
-  refresh();
+  const bootstrapMs = now();
+  for (const [machineId, context] of contexts) {
+    reconcileAndPersist(machineId, context, bootstrapMs);
+  }
+  renderAll();
 
   listen(openControl, "click", openEditor);
   listen(previousInput, "input", recalculateDraft);

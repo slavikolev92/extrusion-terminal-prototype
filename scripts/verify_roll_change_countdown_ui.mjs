@@ -686,9 +686,9 @@ async function assertTerminalRegressionSurfaces(page, viewport) {
   assertEqual(page.url(), originalUrl, "dirty correction navigation block");
   assertEqual(await page.locator(".machine-tab[aria-disabled='true']").count(), 4, "correction link lock count");
   const correctionStorage = await rawSchedule(page, 1);
-  await page.locator("[data-roll-change-open]").click();
-  assert(await page.locator("[data-roll-change-overlay]").isHidden(), "Correction allowed the countdown editor to open.");
-  await page.locator("[data-roll-change-advance]").click();
+  assert(await page.locator("[data-roll-change-open]").isDisabled(), "Correction did not visibly lock the countdown editor control.");
+  assert(await page.locator("[data-roll-change-advance]").isDisabled(), "Correction did not visibly lock the countdown quick action.");
+  assert(await page.locator("[data-roll-change-overlay]").isHidden(), "Correction left the countdown editor open.");
   assertEqual(await rawSchedule(page, 1), correctionStorage, "correction quick-action storage");
   await page.locator("[data-roll-actions-for]:visible [data-roll-row-cancel]").click();
   assertEqual(await page.locator(".machine-tab[aria-disabled='true']").count(), 0, "correction link unlock count");
@@ -838,10 +838,72 @@ async function assertPauseResumeLifecycle(page, viewport) {
 }
 
 
-async function assertFinishAndReplacementCleanup(page, viewport) {
+async function assertStableSchedule(page, machineId, expected, label, settleMs = 250) {
+  await page.waitForFunction(
+    ({ key, value }) => localStorage.getItem(key) === value,
+    { key: storageKey(machineId), value: JSON.stringify(expected) },
+  );
+  await page.waitForTimeout(settleMs);
+  assertEqual(await readSchedule(page, machineId), expected, `${label} first stability read`);
+  await page.waitForTimeout(250);
+  assertEqual(await readSchedule(page, machineId), expected, `${label} second stability read`);
+}
+
+
+async function captureStorageEvents(page, machineId) {
+  await page.evaluate((key) => {
+    window.__rollChangeStorageEvents = [];
+    window.addEventListener("storage", (event) => {
+      if (event.key === key) {
+        window.__rollChangeStorageEvents.push({
+          oldValue: event.oldValue,
+          newValue: event.newValue,
+        });
+      }
+    });
+  }, storageKey(machineId));
+}
+
+
+async function capturedStorageEvents(page) {
+  return page.evaluate(() => window.__rollChangeStorageEvents || []);
+}
+
+
+async function assertTwoTabLifecycleAndReplacementStorage(context, page, mutationRequests, viewport) {
+  await navigate(page, fixture.cards.machine_3_running);
+  const initial = schedule({
+    machineId: 3,
+    cardId: fixture.cards.machine_3_running,
+    previousChangeAtMs: Date.now() - 20 * 60_000,
+    intervalMinutes: 30,
+    nextExpectedAtMs: Date.now() + 10 * 60_000,
+    status: "running",
+  });
+  await writeSchedule(page, initial);
+
+  const stale = await context.newPage();
+  instrumentPage(stale, mutationRequests);
+  await navigate(stale, fixture.cards.machine_3_running);
+  await captureStorageEvents(stale, 3);
+
+  await submitFormAndWait(page, 'form[action$="/timing/pause"]');
+  const paused = await readSchedule(page, 3);
+  assertEqual(paused.observedStatus, "paused", "fresh paused tab stored status");
+  await assertStableSchedule(page, 3, paused, "stale running tab after pause", 1_250);
+  assertEqual((await capturedStorageEvents(stale)).length, 1, "pause storage-event write count");
+
+  await submitFormAndWait(page, 'form[action$="/timing/resume"]');
+  const resumed = await readSchedule(page, 3);
+  assertEqual(resumed.observedStatus, "running", "fresh resumed tab stored status");
+  await assertStableSchedule(page, 3, resumed, "stale running tab after resume", 1_250);
+  assertEqual((await capturedStorageEvents(stale)).length, 2, "pause/resume storage-event write count");
+
   await navigate(page, fixture.cards.machine_1_running);
+  await navigate(stale, fixture.cards.machine_1_running);
   const now = Date.now();
   await writeSchedule(page, schedule({ machineId: 1, cardId: fixture.cards.machine_1_running, previousChangeAtMs: now - 20 * 60_000, intervalMinutes: 30, nextExpectedAtMs: now + 10 * 60_000, status: "running" }));
+  await captureStorageEvents(stale, 1);
   await page.locator('form[data-lifecycle-slot="finish"] button[type="submit"]').click();
   assert(await page.locator("[data-finish-confirm-modal]").isVisible(), "Finish confirmation did not open.");
   await Promise.all([
@@ -859,7 +921,38 @@ async function assertFinishAndReplacementCleanup(page, viewport) {
   });
   await page.reload({ waitUntil: "networkidle" });
   assertEqual(await rawSchedule(page, 1), null, "pending replacement cleanup");
-  passed(`${viewport.width}x${viewport.height}: finish cleanup, machine replacement, and no timer transfer`);
+
+  await navigate(page, fixture.cards.machine_1_follow_up);
+  await submitFormAndWait(page, 'form[action$="/timing/start"]');
+  const nextOrder = schedule({
+    machineId: 1,
+    cardId: fixture.cards.machine_1_follow_up,
+    previousChangeAtMs: Date.now() - 5 * 60_000,
+    intervalMinutes: 30,
+    nextExpectedAtMs: Date.now() + 25 * 60_000,
+    status: "running",
+  });
+  await writeSchedule(page, nextOrder, false);
+  await assertStableSchedule(page, 1, nextOrder, "stale old-card tab after next-order save", 1_250);
+
+  await stale.locator("[data-roll-change-advance]").evaluate((control) => control.click());
+  await assertStableSchedule(page, 1, nextOrder, "stale old-card quick acknowledgement");
+
+  await stale.locator("[data-roll-change-open]").click();
+  const staleMinute = Math.floor(Date.now() / 60_000) * 60_000;
+  await stale.locator("[data-roll-change-previous]").fill(localMinuteValue(staleMinute - 5 * 60_000));
+  await stale.locator("[data-roll-change-hours]").fill("0");
+  await stale.locator("[data-roll-change-minutes]").fill("30");
+  await stale.locator("[data-roll-change-next]").fill(localMinuteValue(staleMinute + 25 * 60_000));
+  await stale.locator("[data-roll-change-form] button[type='submit']").click();
+  await assertStableSchedule(page, 1, nextOrder, "stale old-card editor save");
+
+  await stale.locator("[data-roll-change-open]").click();
+  await stale.locator("[data-roll-change-clear]").click();
+  await assertStableSchedule(page, 1, nextOrder, "stale old-card clear action");
+  assertEqual((await capturedStorageEvents(stale)).length, 4, "replacement storage-event count");
+  await stale.close();
+  passed(`${viewport.width}x${viewport.height}: stale-tab pause/resume stability, finish cleanup, and next-card ownership`);
 }
 
 
@@ -890,7 +983,7 @@ async function runViewport(browser, viewport) {
 
     await assertDirtyAutosaveAndConflict(context, page, viewport);
     await assertPauseResumeLifecycle(page, viewport);
-    await assertFinishAndReplacementCleanup(page, viewport);
+    await assertTwoTabLifecycleAndReplacementStorage(context, page, mutationRequests, viewport);
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), "Lifecycle result has horizontal overflow.");
     summary.viewports.push({ ...viewport, status: "passed" });
   } finally {

@@ -208,9 +208,13 @@ export function loadSchedule(storage, machineId, cardId) {
   const key = storageKey(machineId);
   const raw = storage.getItem(key);
   if (raw === null) return null;
-  const schedule = decodeSchedule(raw, machineId, cardId);
+  const schedule = readSchedule(storage, machineId, cardId);
   if (!schedule) storage.removeItem(key);
   return schedule;
+}
+
+export function readSchedule(storage, machineId, cardId) {
+  return decodeSchedule(storage.getItem(storageKey(machineId)), machineId, cardId);
 }
 
 export function saveSchedule(storage, schedule) {
@@ -246,12 +250,17 @@ function validateScheduleObject(candidate, machineId, cardId) {
   if (candidate.schemaVersion !== STORAGE_VERSION) return null;
   if (!isPositiveSafeInteger(candidate.machineId) || !isPositiveSafeInteger(candidate.cardId)) return null;
   if (candidate.machineId !== machineId || candidate.cardId !== cardId) return null;
-  if (!isFiniteInteger(candidate.previousChangeAtMs) || !isFiniteInteger(candidate.nextExpectedAtMs)) return null;
+  if (!isRenderableTimestamp(candidate.previousChangeAtMs) || !isRenderableTimestamp(candidate.nextExpectedAtMs)) return null;
   if (!isFiniteInteger(candidate.intervalMinutes) || candidate.intervalMinutes < 1 || candidate.intervalMinutes > MAX_INTERVAL_MINUTES) return null;
   if (candidate.nextExpectedAtMs <= candidate.previousChangeAtMs) return null;
   if (!TRACKABLE.has(candidate.observedStatus)) return null;
   if (candidate.frozenRemainingMs !== null && (!isFiniteInteger(candidate.frozenRemainingMs) || candidate.frozenRemainingMs < 0)) return null;
   if (typeof candidate.pauseNeedsResolution !== "boolean") return null;
+  if (candidate.observedStatus === "paused" && candidate.frozenRemainingMs === null) return null;
+  if (
+    candidate.observedStatus === "running"
+    && candidate.pauseNeedsResolution !== (candidate.frozenRemainingMs !== null)
+  ) return null;
   return candidate;
 }
 
@@ -261,4 +270,8 @@ function isPositiveSafeInteger(value) {
 
 function isFiniteInteger(value) {
   return Number.isFinite(value) && Number.isInteger(value);
+}
+
+function isRenderableTimestamp(value) {
+  return isFiniteInteger(value) && !Number.isNaN(new Date(value).getTime());
 }
