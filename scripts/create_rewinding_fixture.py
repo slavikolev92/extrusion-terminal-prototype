@@ -23,15 +23,21 @@ SCENARIOS = (
     "waiting_zero",
     "completed_editable",
     "follow_up",
+    "paused_follow_up",
 )
 
 
 def resolve_under_test_runtime(raw_path: str, *, label: str) -> Path:
+    runtime_path = ROOT_DIR / ".test-runtime"
+    if runtime_path.is_symlink():
+        raise ValueError(".test-runtime guard root must not be a symlink")
+    if runtime_path.exists() and not runtime_path.is_dir():
+        raise ValueError(".test-runtime guard root must be a directory")
+    runtime_root = runtime_path.resolve()
     candidate = Path(raw_path)
     if not candidate.is_absolute():
         candidate = ROOT_DIR / candidate
     resolved = candidate.resolve()
-    runtime_root = (ROOT_DIR / ".test-runtime").resolve()
     try:
         resolved.relative_to(runtime_root)
     except ValueError as exc:
@@ -193,6 +199,7 @@ def create_fixture(database_path: Path) -> dict[str, object]:
     release(cards["waiting_older"], 3, 1)
     release(cards["waiting_zero"], 4, 1)
     release(cards["completed_editable"], 3, 2)
+    release(cards["paused_follow_up"], 2, 3)
 
     running_id = cards["running_mixed"]
     start(running_id)
