@@ -2046,6 +2046,7 @@ async def save_roll_weight(
     loaded_version: str = Form(...),
     gross_weight: str = Form(""),
     tare_weight: str | None = Form(None),
+    pallet_number: str | None = Form(None),
 ):
     parsed_version, roll_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
@@ -2066,6 +2067,7 @@ async def save_roll_weight(
                     loaded_version=parsed_version,
                     gross_weight=gross_weight,
                     tare_weight=tare_weight,
+                    pallet_number=pallet_number,
                     require_active_shift=True,
                 )
 
@@ -2077,6 +2079,12 @@ async def save_roll_weight(
         notice_code="roll_updated",
         roll_result_target="roll_row",
         roll_result_roll_id=roll_id,
+        roll_result_loaded_version=loaded_version,
+        roll_result_values={
+            "gross_weight": gross_weight,
+            "tare_weight": tare_weight,
+            "pallet_number": pallet_number,
+        },
     )
 
 
@@ -2107,6 +2115,7 @@ async def delete_roll_weight(
         notice_code="roll_deleted",
         roll_result_target="roll_delete",
         roll_delete_selected_roll_id=roll_id,
+        roll_result_loaded_version=loaded_version,
     )
 
 
@@ -2143,6 +2152,7 @@ async def delete_selected_roll_weight(
         notice_code="roll_deleted",
         roll_result_target="roll_delete",
         roll_delete_selected_roll_id=parsed_roll_id,
+        roll_result_loaded_version=loaded_version,
     )
 
 
@@ -2650,10 +2660,14 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
         "toast": None,
         "scroll_rolls_to_bottom": False,
         "open_roll_corrections": False,
+        "open_roll_row_id": None,
+        "roll_error_field": None,
         "open_rewinding_dialog": False,
         "refresh_required": False,
         "rewinding_result_value": results.get("rewinding_result_value", ""),
         "roll_delete_selected_roll_id": results.get("roll_delete_selected_roll_id"),
+        "roll_result_loaded_version": results.get("roll_result_loaded_version"),
+        "roll_result_values": results.get("roll_result_values") or {},
         "errors": {
             "tare": (),
             "pallet": (),
@@ -2693,6 +2707,21 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
             if result_name == "roll_result" and target == "new_roll":
                 feedback["scroll_rolls_to_bottom"] = True
             continue
+
+        if target == "roll_row":
+            feedback["open_roll_row_id"] = results.get("roll_result_roll_id")
+            normalized_messages = " ".join(messages).casefold()
+            if "бруто" in normalized_messages:
+                feedback["roll_error_field"] = "gross_weight"
+            elif "шпул" in normalized_messages:
+                feedback["roll_error_field"] = "tare_weight"
+            elif "палет" in normalized_messages:
+                feedback["roll_error_field"] = "pallet_number"
+            else:
+                feedback["roll_error_field"] = "gross_weight"
+
+        if target == "roll_delete" and is_terminal_card_state_error(messages):
+            feedback["open_roll_row_id"] = results.get("roll_delete_selected_roll_id")
 
         if is_terminal_card_state_error(messages):
             feedback["refresh_required"] = True
@@ -2793,6 +2822,16 @@ def enrich_terminal_card_display(card: dict[str, Any]) -> dict[str, Any]:
         )
     card["quantity_display"] = build_quantity_display(card)
     card["recipe_rows"] = build_terminal_recipe_rows(card)
+    for roll in card["roll_entries"]:
+        roll["gross_weight_display"] = one_decimal_weight_display(
+            roll["gross_weight"]
+        )
+        roll["tare_weight_display"] = one_decimal_weight_display(
+            roll["tare_weight"]
+        )
+        roll["net_weight_display"] = one_decimal_weight_display(
+            roll["net_weight"]
+        )
     card["target_gross_weight"] = target_gross_display(card)
     card["remaining_gross_weight"] = remaining_gross_display(card)
     card["total_gross_weight_display"] = one_decimal_weight_display(

@@ -19,6 +19,7 @@ from app.main import (
     TERMINAL_CARD_UNAVAILABLE_MESSAGE,
     add_roll_weight,
     app,
+    delete_roll_weight,
     delete_selected_roll_weight,
     finish_terminal_card,
     progress_percent,
@@ -122,8 +123,8 @@ def end_active_test_shift() -> dict[str, object]:
 
 def complete_card(card_id: int) -> None:
     assert db.start_production_timing(card_id, card_version(card_id)).ok
-    assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
-    assert db.add_roll_gross_weight(card_id, card_version(card_id), "60.00").ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.25").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "60.35").ok
     assert db.finish_card(card_id, card_version(card_id)).ok
 
 
@@ -191,10 +192,17 @@ def form_blocks(html: str, action: str) -> list[str]:
 
 
 def roll_row_block(html: str, roll_id: int) -> str:
-    start_marker = f'<div class="roll-row" data-roll-id="{roll_id}">'
-    start = html.find(start_marker)
-    assert start != -1
-    next_start = html.find('<div class="roll-row" data-roll-id="', start + len(start_marker))
+    start_match = re.search(
+        rf'<(?:div|form) class="roll-row[^\"]*"[^>]*data-roll-id="{roll_id}"[^>]*>',
+        html,
+    )
+    assert start_match is not None
+    start = start_match.start()
+    next_match = re.search(
+        r'<(?:div|form) class="roll-row[^\"]*"[^>]*data-roll-id="',
+        html[start_match.end() :],
+    )
+    next_start = start_match.end() + next_match.start() if next_match else -1
     correction_form_end = html.find("</form>", start)
     table_end = html.find('<div class="totals">', start)
     end_candidates = [
@@ -792,10 +800,10 @@ def test_terminal_v8_recipe_and_roll_spacing_is_balanced_for_compact_workstation
     assert any("min-height: 52px;" in rules for rules in recipe_row_rules)
     assert "align-items: center;" in recipe_cell_rules
     assert "padding: 6px 9px;" in recipe_cell_rules
-    assert any("padding: 6px 8px;" in rules for rules in roll_entry_rules)
-    assert any("margin-bottom: 6px;" in rules for rules in roll_entry_label_rules)
-    assert "min-height: 36px;" in roll_entry_input_rules
-    assert any("min-height: 36px;" in rules for rules in roll_entry_button_rules)
+    assert any("padding: 8px 0 2px;" in rules for rules in roll_entry_rules)
+    assert any("margin: 0;" in rules for rules in css_rules_all(html, r"(?m)^    \.roll-entry label\.roll-floating-field > \.field-label"))
+    assert "min-height: 40px;" in roll_entry_input_rules
+    assert any("min-height: 40px;" in rules for rules in css_rules_all(html, r"(?m)^    \.roll-entry > \.roll-add-button"))
     assert "min-height: 0;" in roll_entry_feedback_rules
     assert any("min-height: 36px;" in rules for rules in roll_head_rules)
 
@@ -1368,7 +1376,7 @@ def test_terminal_v8_waiting_and_rewinding_scripts_coordinate_modal_lifecycle(co
     assert "focusableModalElements" in html
     assert "trapModalFocus" in html
     trap_start = html.index("const trapModalFocus")
-    trap_end = html.index("const setCorrectionMode", trap_start)
+    trap_end = html.index("const setCorrectionControlLock", trap_start)
     trap_script = html[trap_start:trap_end]
     assert "!dialog?.contains(document.activeElement)" in trap_script
     shift_start = html.index("const shiftWindow")
@@ -1523,7 +1531,7 @@ def test_terminal_v8_rounds_machine_progress_but_shows_bottom_totals_with_one_de
         html,
     )
     assert re.search(r'value="100\.55"', html)
-    assert "<div>100.3</div>" in html
+    assert 'data-roll-display="net">100.3</span>' in html
     assert "100.50 / 1000.00 кг" not in html
 
 
@@ -1631,7 +1639,7 @@ def test_terminal_v8_does_not_render_print_action_for_produced_cards(connection)
 
     assert f"/cards/{completed_id}/print" not in completed_html
     assert "Печат / препечат" not in completed_html
-    assert "Корекция на ролки" in completed_html
+    assert 'aria-label="Редактирай ролка 1"' in completed_html
 
 
 def test_terminal_v8_hides_archived_cards_from_produced_lookup(connection):
@@ -1990,39 +1998,59 @@ def test_terminal_roll_rows_are_readonly_by_default_with_correction_action(conne
     html = render_terminal(card_id)
     row_html = roll_row_block(html, first_roll["id"])
 
-    assert "Корекция на ролки" in html
-    assert "Изтриване на ролки" in html
-    assert 'data-roll-correction-open' in html
-    assert 'data-roll-delete-open' in html
+    assert 'Корекция на ролки' not in html
+    assert 'aria-label="Редактирай ролка 1"' in row_html
+    assert row_html.count('class="roll-edit-button"') == 1
     assert 'data-roll-display="gross"' in row_html
     assert 'data-roll-display="tare"' in row_html
     assert 'data-roll-correction-input' in row_html
-    assert f'name="gross_weight__{first_roll["id"]}"' in row_html
-    assert f'name="tare_weight__{first_roll["id"]}"' in row_html
+    assert 'name="gross_weight"' in row_html
+    assert 'name="tare_weight"' in row_html
+    assert 'name="pallet_number"' in row_html
+    assert f'action="/terminal/cards/{card_id}/rolls/{first_roll["id"]}"' in row_html
     assert "disabled" in row_html
     assert 'data-dirty-autosave="true"' not in row_html
-    assert 'data-roll-correction-actions hidden' in html
+    assert 'data-roll-actions-for' in html
 
 
-def test_terminal_roll_correction_error_opens_correction_mode(connection):
+def test_terminal_roll_row_error_reopens_only_affected_row_and_preserves_values(connection):
     card_id = release_ready_card("26231", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "2.00").ok
     assert db.add_roll_gross_weight(card_id, card_version(card_id), "50.00").ok
 
+    roll = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]
     html = render_terminal(
         card_id,
-        roll_result=RuleResult(False, ("correction failure",)),
-        roll_result_target="roll_corrections",
+        roll_result=RuleResult(
+            False,
+            ("Палетът трябва да бъде цяло число от 1 до 999.",),
+        ),
+        roll_result_target="roll_row",
+        roll_result_roll_id=roll["id"],
+        roll_result_values={
+            "gross_weight": "51.23",
+            "tare_weight": "2.34",
+            "pallet_number": "9",
+        },
     )
 
-    assert 'data-roll-correction-root data-correction-open="true"' in html
-    assert "correction failure" in data_block(html, "data-feedback-target", "roll_corrections")
-    assert "Запази данните" in html
-    assert "Отказ" in html
+    row_html = roll_row_block(html, int(roll["id"]))
+    assert 'data-roll-edit-open="true"' in row_html
+    assert 'name="gross_weight"' in row_html and 'value="51.23"' in row_html
+    assert 'name="tare_weight"' in row_html and 'value="2.34"' in row_html
+    assert 'name="pallet_number"' in row_html and 'value="9"' in row_html
+    assert "Палетът трябва да бъде цяло число от 1 до 999." in row_html
+    assert f'data-roll-actions-for="{roll["id"]}"' in html
+    gross_tag = re.search(r'<input[^>]+name="gross_weight"[^>]*>', row_html)
+    pallet_tag = re.search(r'<input[^>]+name="pallet_number"[^>]*>', row_html)
+    assert gross_tag and pallet_tag
+    assert 'data-roll-error-focus="true"' not in gross_tag.group(0)
+    assert 'data-roll-error-focus="true"' in pallet_tag.group(0)
+    assert "openRowEdit(initialOpenRow, true);" in html
 
 
-def test_terminal_roll_table_scrolls_above_footer_actions(connection):
+def test_terminal_roll_table_scrolls_without_obsolete_batch_editor_css(connection):
     card_id = release_ready_card("26233", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "2.00").ok
@@ -2031,33 +2059,46 @@ def test_terminal_roll_table_scrolls_above_footer_actions(connection):
 
     html = render_terminal(card_id)
 
-    correction_form_rules = css_rules(html, r"(?m)^    \.roll-correction-form")
     roll_table_rules = css_rules(html, r"(?m)^    \.roll-table")
     roll_list_rules = css_rules(html, r"(?m)^    \.roll-list")
 
-    assert "min-height: 0;" in correction_form_rules
-    assert "display: grid;" in correction_form_rules
-    assert "grid-template-rows: minmax(0, 1fr);" in correction_form_rules
+    assert ".roll-correction-form {" not in html
+    assert ".roll-delete-panel {" not in html
     assert "height: 100%;" in roll_table_rules
     assert "min-height: 0;" in roll_table_rules
     assert "overflow: auto;" in roll_list_rules
 
 
-def test_terminal_roll_correction_actions_replace_totals_footer(connection):
+def test_terminal_row_editor_exposes_one_save_cancel_delete_action_set(connection):
     card_id = release_ready_card("26234", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "2.00").ok
     assert db.add_roll_gross_weight(card_id, card_version(card_id), "50.00").ok
 
-    html = render_terminal(
-        card_id,
-        roll_result=RuleResult(False, ("correction failure",)),
-        roll_result_target="roll_corrections",
+    card = db.fetch_terminal_card_detail(card_id)
+    roll = card["roll_entries"][0]
+    html = render_terminal(card_id)
+    assert f'Редакция на ролка №{roll["roll_number"]}' in html
+    assert len(re.findall(r'<button[^>]+data-roll-row-save', html)) == 1
+    assert len(re.findall(r'<button[^>]+data-roll-row-cancel', html)) == 1
+    assert len(re.findall(r'<button[^>]+data-roll-row-delete', html)) == 1
+    assert "const openRowEdit = (row, focusError = false) =>" in html
+    assert "closeRowEdit();" in html
+    assert "activeRow = row;" in html
+    message_rules = css_rules(html, r"(?m)^    \.roll-correction-message")
+    button_group_rules = css_rules(
+        html,
+        r"(?m)^    \.roll-correction-delete,\n    \.roll-correction-save,\n    \.roll-correction-cancel",
     )
-
-    assert 'class="panel-body roll-body roll-correction-mode"' in html
-    assert "data-roll-body" in html
-    assert "rollBody.classList.toggle(\"roll-correction-mode\", open);" in html
+    button_row_rules = css_rules(html, r"(?m)^    \.roll-correction-buttons")
+    save_rules = css_rules(html, r"(?m)^    \.roll-correction-save")
+    assert "font-size: 14px;" in message_rules
+    assert "font-size: 13px;" in button_group_rules
+    assert "padding: 0 10px;" in button_group_rules
+    assert "gap: 8px;" in button_row_rules
+    assert "border-color: #0b355f;" in save_rules
+    assert "background: #0b355f;" in save_rules
+    assert "color: #fff;" in save_rules
     assert "display: none;" in css_rules(
         html,
         r"(?m)^    \.roll-body\.roll-correction-mode \.totals",
@@ -2078,9 +2119,29 @@ def test_terminal_roll_entry_controls_follow_roll_table_weight_and_pallet_order(
 
     assert entry_html.find('class="add-roll-form"') < entry_html.find('class="tare-form')
     assert entry_html.find('class="tare-form') < entry_html.find('class="pallet-form')
-    assert entry_html.find("Нова ролка, кг") < entry_html.find("Шпула, кг")
-    assert entry_html.find("Шпула, кг") < entry_html.find("Палет")
+    assert entry_html.find('class="field-label">Ролка</span>') < entry_html.find('class="field-label">Шпула</span>')
+    assert entry_html.find('class="field-label">Шпула</span>') < entry_html.find('class="field-label">Палет</span>')
     assert entry_html.find("Палет") < entry_html.find('class="roll-add-button"')
+    assert entry_html.count('class="roll-floating-field"') == 3
+    entry_rules = css_rules_all(html, r"(?m)^    \.roll-entry")
+    accepted_entry_rules = next(
+        rules for rules in entry_rules
+        if "grid-template-columns: minmax(132px, 1.35fr)" in rules
+    )
+    assert "grid-template-columns: minmax(132px, 1.35fr) repeat(2, minmax(92px, .72fr)) 126px;" in accepted_entry_rules
+    assert "align-items: end;" in accepted_entry_rules
+    assert "border: 0;" in accepted_entry_rules
+    assert "background: transparent;" in accepted_entry_rules
+    add_rules = css_rules_all(html, r"(?m)^    \.roll-entry > \.roll-add-button")
+    assert any("width: 100%;" in rules and "height: 40px;" in rules for rules in add_rules)
+    assert ">Добави</span>" in entry_html
+    compact_roll_match = re.search(
+        r"@media \(max-height: 820px\) \{(?P<rules>.*?)\n    \}",
+        html,
+        re.S,
+    )
+    assert compact_roll_match is not None
+    assert "grid-template-columns: minmax(118px, 1.25fr) repeat(2, minmax(84px, .7fr)) 126px;" in compact_roll_match.group("rules")
     assert 'data-dirty-autosave="true"' in pallet_form
     assert 'data-dirty-autosave-group="roll-entry"' in pallet_form
     current_pallet_match = re.search(
@@ -2100,10 +2161,6 @@ def test_terminal_roll_entry_controls_follow_roll_table_weight_and_pallet_order(
     assert "currentPalletInput?.addEventListener(\"input\", syncNewRollPallet);" in html
     assert "currentPalletInput?.addEventListener(\"change\", syncNewRollPallet);" in html
     assert "newRollPalletCopy?.form?.addEventListener(\"submit\", syncNewRollPallet);" in html
-    assert "flex: 0 0 122px;" in css_rules(
-        html, r"\.roll-entry \.core-weight-field"
-    )
-    assert "flex: 0 0 92px;" in css_rules(html, r"\.roll-entry \.pallet-form")
     workspace_rules = css_rules_all(html, r"\.workspace")
     assert any(
         "grid-template-columns: minmax(0, 1fr) 510px;" in rules
@@ -2131,13 +2188,61 @@ def test_terminal_tare_and_pallet_render_as_one_coordinated_autosave_form(connec
     assert 'data-persist-dirty-autosave-group="roll-entry"' in add_roll_form
 
 
+def test_terminal_roll_defaults_remain_editable_in_supported_card_states(connection):
+    card_id = release_ready_card("ROLL-DEFAULT-STATES", machine_id=1, sequence=1)
+
+    def assert_defaults_enabled() -> None:
+        html = render_terminal(card_id)
+        tare_tag = re.search(r'<input[^>]+data-current-tare-input="true"[^>]*>', html)
+        pallet_tag = re.search(r'<input[^>]+data-current-pallet-input="true"[^>]*>', html)
+        assert tare_tag and pallet_tag
+        assert "disabled" not in tare_tag.group(0)
+        assert "disabled" not in pallet_tag.group(0)
+
+    assert_defaults_enabled()
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.25").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "20.00").ok
+    assert db.pause_production_timing(card_id, card_version(card_id)).ok
+    assert_defaults_enabled()
+    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 1).ok
+    assert db.finish_card(card_id, card_version(card_id)).ok
+    assert_defaults_enabled()
+
+
+def test_terminal_active_lifecycle_slots_are_equal_and_waiting_has_only_finish(connection):
+    card_id = release_ready_card("LIFECYCLE-SLOTS", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+
+    running_html = render_terminal(card_id)
+    running_actions = re.search(r'<div class="actions">(?P<body>.*?)</div>\s*</div>', running_html, re.S)
+    assert running_actions is not None
+    assert running_actions.group("body").count('data-lifecycle-slot') == 3
+    lifecycle_rules = css_rules(running_html, r"(?m)^    \.actions > \.action-button,\s*\.actions > form")
+    assert "width: 150px;" in lifecycle_rules
+    assert "flex: 0 0 150px;" in lifecycle_rules
+
+    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 3).ok
+    assert db.finish_card(card_id, card_version(card_id)).ok
+    waiting_html = render_terminal(card_id)
+    waiting_actions = re.search(r'<div class="actions">(?P<body>.*?)</div>\s*</div>', waiting_html, re.S)
+    assert waiting_actions is not None
+    waiting_body = waiting_actions.group("body")
+    assert "Старт" not in waiting_body
+    assert "Пауза" not in waiting_body
+    assert f'action="/terminal/cards/{card_id}/finish"' in waiting_body
+    assert "Приключи" in waiting_body
+    assert "disabled" not in waiting_body
+    assert 'class="menu"' not in waiting_html
+
+
 def test_terminal_roll_ledger_renders_blank_pallet_and_editable_pallet_correction(
     connection,
 ):
     card_id = release_ready_card("PALLET-TERMINAL-RENDER", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
-    assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
-    assert db.add_roll_gross_weight(card_id, card_version(card_id), "60.00").ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.25").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "60.35").ok
     roll = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]
 
     html = render_terminal(card_id)
@@ -2146,13 +2251,22 @@ def test_terminal_roll_ledger_renders_blank_pallet_and_editable_pallet_correctio
     )[0]
     row_html = roll_row_block(html, int(roll["id"]))
 
-    assert [ledger_head.find(label) for label in ("№", "Палет", "Бруто кг", "Шпула кг", "Нето кг")] == sorted(
+    assert [ledger_head.find(label) for label in ("№", "Бруто", "Шпула", "Нето", "Палет")] == sorted(
         ledger_head.find(label)
-        for label in ("№", "Палет", "Бруто кг", "Шпула кг", "Нето кг")
+        for label in ("№", "Бруто", "Шпула", "Нето", "Палет")
     )
+    assert "Бруто кг" not in ledger_head
+    assert "Шпула кг" not in ledger_head
+    assert "Нето кг" not in ledger_head
+    assert '<div class="roll-edit-heading" aria-label="Редакция"></div>' in ledger_head
     assert 'data-roll-display="pallet">-</span>' in row_html
+    assert 'data-roll-display="gross">60.4</span>' in row_html
+    assert 'data-roll-display="tare">1.3</span>' in row_html
+    assert 'data-roll-display="net">59.1</span>' in row_html
+    assert re.search(r'name="gross_weight"[^>]+value="60\.35"', row_html)
+    assert re.search(r'name="tare_weight"[^>]+value="1\.25"', row_html)
     pallet_input_match = re.search(
-        rf'<input[^>]+name="pallet_number__{roll["id"]}"[^>]*>',
+        r'<input[^>]+name="pallet_number"[^>]*>',
         row_html,
     )
     assert pallet_input_match is not None
@@ -2161,7 +2275,7 @@ def test_terminal_roll_ledger_renders_blank_pallet_and_editable_pallet_correctio
     assert 'inputmode="numeric"' in pallet_input_tag
     for forbidden_attribute in ('min="', 'max="', 'step="', 'pattern="', 'maxlength="'):
         assert forbidden_attribute not in pallet_input_tag
-    assert "grid-template-columns: 44px minmax(74px, .62fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);" in html
+    assert "grid-template-columns: repeat(5, minmax(0, 1fr)) 38px;" in html
 
 
 def test_terminal_pallet_errors_render_under_current_pallet_control(connection):
@@ -2228,7 +2342,7 @@ def test_terminal_new_roll_autofocus_validation_error_keeps_marker(connection):
     assert 'data-new-roll-autofocus="true"' in new_roll_input_tag(html)
 
 
-def test_terminal_new_roll_autofocus_script_guards_reload_and_roll_correction_mode(connection):
+def test_terminal_new_roll_autofocus_script_guards_reload_and_open_row_editor(connection):
     card_id = release_ready_card("26306", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "2.00").ok
@@ -2239,19 +2353,21 @@ def test_terminal_new_roll_autofocus_script_guards_reload_and_roll_correction_mo
     assert "focusNewRollInput" in html
     assert "input[data-new-roll-autofocus='true']" in html
     assert 'document.getElementById("terminal-refresh-alert")' in html
-    assert "[data-roll-correction-root][data-correction-open='true']" in html
+    assert ".roll-row[data-roll-edit-open='true']" in html
     assert "newRollInput.focus();" in html
 
+    roll = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]
     correction_html = render_terminal(
         card_id,
         roll_result=RuleResult(False, ("correction failure",)),
-        roll_result_target="roll_corrections",
+        roll_result_target="roll_row",
+        roll_result_roll_id=roll["id"],
     )
-    assert 'data-correction-open="true"' in correction_html
+    assert 'data-roll-edit-open="true"' in correction_html
     assert 'data-new-roll-autofocus="true"' in new_roll_input_tag(correction_html)
 
 
-def test_terminal_coordinated_defaults_and_correction_forms_use_dirty_autosave_without_new_roll_autosave(connection):
+def test_terminal_coordinated_defaults_and_row_forms_use_dirty_autosave_without_new_roll_autosave(connection):
     card_id = release_ready_card("26198", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "2.00").ok
@@ -2262,17 +2378,17 @@ def test_terminal_coordinated_defaults_and_correction_forms_use_dirty_autosave_w
     html = render_terminal(card_id)
     tare_form = form_block(html, f"/terminal/cards/{card_id}/tare")
     add_roll_form = form_block(html, f"/terminal/cards/{card_id}/rolls")
-    correction_form = form_block(html, f"/terminal/cards/{card_id}/rolls/corrections")
+    row_form = form_block(html, f"/terminal/cards/{card_id}/rolls/{roll['id']}")
     row_html = roll_row_block(html, roll["id"])
 
     assert 'data-dirty-autosave="true"' in tare_form
     assert tare_form.count('data-dirty-autosave="true"') == 1
     assert 'data-dirty-autosave="true"' not in add_roll_form
-    assert 'data-dirty-autosave="true"' not in correction_form
+    assert 'data-dirty-autosave="true"' not in row_form
     assert 'data-dirty-autosave="true"' not in row_html
     assert 'data-dirty-autosave-group="roll-entry"' in tare_form
     assert 'data-dirty-autosave-group="roll-entry"' not in add_roll_form
-    assert 'data-dirty-autosave-group="roll-entry"' not in correction_form
+    assert 'data-dirty-autosave-group="roll-entry"' not in row_form
     assert 'data-new-roll-tare-copy="true"' in add_roll_form
     assert 'data-new-roll-pallet-copy="true"' in add_roll_form
     assert 'data-persist-dirty-autosave-group="roll-entry"' in add_roll_form
@@ -2295,13 +2411,13 @@ def test_terminal_roll_correction_script_blocks_other_actions_while_open(connect
 
     html = render_terminal(card_id)
 
-    assert "setCorrectionMode" in html
-    assert "data-roll-correction-open" in html
-    assert "data-roll-correction-cancel" in html
+    assert "setCorrectionControlLock" in html
+    assert "if (!row || row === activeRow) return;" in html
+    assert "data-roll-edit-open" in html
+    assert "data-roll-row-cancel" in html
     assert "data-roll-correction-input" in html
     assert "correctionBlockedControls" in html
-    assert ".menu-btn" in html
-    assert "[data-roll-correction-open]" in html
+    assert 'class="menu"' not in html
     assert ".roll-add-button" in html
     assert ".tare-form input" in html
     assert ".pallet-form input" in html
@@ -2321,12 +2437,12 @@ def test_terminal_roll_correction_save_suppresses_dirty_exit_warning(connection)
 
     html = render_terminal(card_id)
 
-    assert re.search(
-        r"rollCorrectionRoot\.addEventListener\(\"submit\", \(\) => \{\s*"
-        r"skipCorrectionBeforeUnload = true;\s*"
-        r"\}\);",
-        html,
-    )
+    submit_handler_start = html.index('row.addEventListener("submit", (event) => {')
+    submit_handler_end = html.index("rollActionPanels.forEach", submit_handler_start)
+    submit_handler = html[submit_handler_start:submit_handler_end]
+    assert 'document.getElementById("terminal-refresh-alert")' in submit_handler
+    assert "event.preventDefault();" in submit_handler
+    assert "skipCorrectionBeforeUnload = true;" in submit_handler
 
 
 def test_terminal_v8_roll_saved_notice_scrolls_roll_list_to_bottom(connection):
@@ -2413,7 +2529,7 @@ def test_terminal_v8_failed_tare_result_renders_under_tare_field(connection):
 
     tare_block = data_block(html, "data-feedback-target", "tare")
     new_roll_block = data_block(html, "data-feedback-target", "new_roll")
-    assert "Шпула, кг" in html
+    assert 'class="field-label">Шпула</span>' in html
     assert "tare failure" in tare_block
     assert "tare failure" not in new_roll_block
 
@@ -2429,7 +2545,7 @@ def test_terminal_v8_failed_new_roll_result_renders_under_new_roll_field(connect
 
     tare_block = data_block(html, "data-feedback-target", "tare")
     new_roll_block = data_block(html, "data-feedback-target", "new_roll")
-    assert "Нова ролка, кг" in html
+    assert 'class="field-label">Ролка</span>' in html
     assert "new roll failure" in new_roll_block
     assert "new roll failure" not in tare_block
     assert 'class="roll-list" data-scroll-bottom="false"' in html
@@ -2455,6 +2571,57 @@ def test_terminal_v8_stale_new_roll_result_renders_refresh_alert_not_chip_or_err
     assert "sync-chip" not in html
     assert "action-error-chip" not in html
     assert STALE_CARD_MESSAGE not in new_roll_block
+
+
+def test_terminal_stale_roll_row_requires_reload_before_another_row_write(connection):
+    card_id = release_ready_card("STALE-ROLL-ROW", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "60.00").ok
+    stale_card = db.fetch_terminal_card_detail(card_id)
+    roll = stale_card["roll_entries"][0]
+    assert db.update_tare_weight(card_id, stale_card["version"], "1.25").ok
+
+    response = asyncio.run(
+        save_roll_weight(
+            make_test_request(f"/terminal/cards/{card_id}/rolls/{roll['id']}"),
+            card_id,
+            roll["id"],
+            str(stale_card["version"]),
+            "61.23",
+            "1.21",
+            "8",
+        )
+    )
+    html = response.body.decode("utf-8")
+
+    row_html = roll_row_block(html, int(roll["id"]))
+    unchanged_roll = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]
+    assert response.status_code == 200
+    assert (
+        unchanged_roll["gross_weight"],
+        unchanged_roll["tare_weight"],
+        unchanged_roll["pallet_number"],
+    ) == (60, 1.2, None)
+    assert 'id="terminal-refresh-alert"' in html
+    assert 'data-roll-edit-open="true"' in row_html
+    assert 'value="61.23"' in row_html
+    assert re.search(
+        rf'name="loaded_version" value="{stale_card["version"]}"',
+        row_html,
+    )
+    actions = re.search(
+        rf'<div class="roll-correction-actions" data-roll-actions-for="{roll["id"]}".*?</div>\s*</div>',
+        html,
+        re.S,
+    )
+    assert actions is not None
+    assert len(re.findall(r'<button[^>]+disabled', actions.group(0))) == 3
+    assert 'event.target.closest?.("#terminal-refresh-alert-button")' in html
+    assert "skipCorrectionBeforeUnload = true;" in html
+    assert 'activeRow && !document.getElementById("terminal-refresh-alert")' in html
+    assert 'if (document.getElementById("terminal-refresh-alert")) {' in html
+    assert "event.preventDefault();" in html
 
 
 def test_terminal_v8_failed_roll_edit_result_renders_in_affected_row_only(connection):
@@ -2515,33 +2682,49 @@ def test_terminal_roll_weight_route_preserves_row_tare_when_tare_field_omitted(c
     assert updated_roll["net_weight"] == 59.8
 
 
-def test_terminal_roll_weight_route_updates_row_tare_with_hidden_gross(connection):
+def test_terminal_roll_weight_route_updates_one_row_gross_tare_and_pallet_atomically(connection):
     card_id = release_ready_card("26176", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "2.00").ok
     assert db.add_roll_gross_weight(card_id, card_version(card_id), "50.00").ok
+    assert db.add_roll_gross_weight(
+        card_id,
+        card_version(card_id),
+        "60.00",
+        pallet_number="4",
+    ).ok
     card = db.fetch_terminal_card_detail(card_id)
     roll = card["roll_entries"][0]
+    untouched_roll = card["roll_entries"][1]
 
-    response = asyncio.run(
-        save_roll_weight(
-            make_test_request(f"/terminal/cards/{card_id}/rolls/{roll['id']}"),
-            card_id,
-            roll["id"],
-            str(card["version"]),
-            "50.00",
-            "3.00",
+    status_code, headers = asyncio.run(
+        post_form_to_app(
+            f"/terminal/cards/{card_id}/rolls/{roll['id']}",
+            {
+                "loaded_version": str(card["version"]),
+                "gross_weight": "51.23",
+                "tare_weight": "3.21",
+                "pallet_number": "7",
+            },
         )
     )
 
-    updated_roll = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]
-    assert response.status_code == 303
-    assert response.headers["location"] == (
+    updated = db.fetch_terminal_card_detail(card_id)
+    updated_roll = updated["roll_entries"][0]
+    assert status_code == 303
+    assert headers["location"] == (
         f"/terminal/cards/{card_id}?notice=roll_updated"
     )
-    assert updated_roll["gross_weight"] == 50
-    assert updated_roll["tare_weight"] == 3
-    assert updated_roll["net_weight"] == 47
+    assert (
+        updated_roll["gross_weight"],
+        updated_roll["tare_weight"],
+        updated_roll["pallet_number"],
+        updated_roll["net_weight"],
+    ) == (51.23, 3.21, 7, 48.02)
+    assert updated["roll_entries"][1] == untouched_roll
+    assert updated["tare_weight"] == card["tare_weight"] == 2
+    assert updated["current_pallet_number"] == card["current_pallet_number"] == 4
+    assert updated["version"] == card["version"] + 1
 
 
 def test_terminal_new_roll_route_can_save_current_tare_before_adding_roll(connection):
@@ -2684,7 +2867,45 @@ def test_terminal_roll_corrections_route_blocks_cancelled_card_direct_post(conne
     assert updated["version"] == card["version"]
 
 
-def test_terminal_v8_roll_delete_is_separate_from_roll_correction(connection):
+def test_terminal_stale_roll_delete_reopens_locked_row_and_requires_reload(connection):
+    card_id = release_ready_card("STALE-ROLL-DELETE", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "60.00").ok
+    stale_card = db.fetch_terminal_card_detail(card_id)
+    roll = stale_card["roll_entries"][0]
+    assert db.update_tare_weight(card_id, stale_card["version"], "1.25").ok
+
+    response = asyncio.run(
+        delete_roll_weight(
+            make_test_request(f"/terminal/cards/{card_id}/rolls/{roll['id']}/delete"),
+            card_id,
+            roll["id"],
+            str(stale_card["version"]),
+            str(roll["roll_number"]),
+        )
+    )
+    html = response.body.decode("utf-8")
+    row_html = roll_row_block(html, int(roll["id"]))
+
+    assert response.status_code == 200
+    assert db.fetch_terminal_card_detail(card_id)["roll_entries"][0]["id"] == roll["id"]
+    assert 'id="terminal-refresh-alert"' in html
+    assert 'data-roll-edit-open="true"' in row_html
+    assert re.search(
+        rf'<input type="hidden" name="loaded_version" value="{stale_card["version"]}">',
+        row_html,
+    )
+    actions = re.search(
+        rf'<div class="roll-correction-actions" data-roll-actions-for="{roll["id"]}".*?</div>\s*</div>',
+        html,
+        re.S,
+    )
+    assert actions is not None
+    assert len(re.findall(r'<button[^>]+disabled', actions.group(0))) == 3
+
+
+def test_terminal_v8_roll_delete_confirmation_names_selected_roll(connection):
     card_id = release_ready_card("26172", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
@@ -2694,14 +2915,13 @@ def test_terminal_v8_roll_delete_is_separate_from_roll_correction(connection):
     roll_id = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]["id"]
     row_html = roll_row_block(html, roll_id)
 
-    assert "Корекция на ролки" in html
-    assert "Изтриване на ролки" in html
-    assert 'data-roll-correction-open' in html
-    assert 'data-roll-delete-open' in html
-    assert f'action="/terminal/cards/{card_id}/rolls/corrections"' in html
-    assert f'action="/terminal/cards/{card_id}/rolls/actions/delete-selected"' in html
-    assert "/delete" not in row_html
-    assert "Изтрий" not in row_html
+    assert 'data-roll-edit-open' in row_html
+    assert f'data-roll-actions-for="{roll_id}"' in html
+    assert f'data-roll-number="1"' in html
+    assert f'action="/terminal/cards/{card_id}/rolls/{roll_id}/delete"' in html
+    assert "Сигурни ли сте, че искате да изтриете ролка №1?" in html
+    assert 'name="confirm_roll_number"' in html
+    assert "Потвърдете номера на ролката" in html
 
 
 def test_terminal_roll_delete_requires_matching_roll_number_confirmation(connection):
@@ -2775,15 +2995,19 @@ def test_terminal_failed_selected_roll_delete_preserves_selected_roll(connection
 
     assert response.status_code == 200
     assert "Потвърдете изтриването с номера на ролката." in page
-    assert 'class="roll-delete-panel" id="roll-delete-panel" hidden' not in page
-    assert re.search(
-        rf'<option value="{middle_roll["id"]}" selected>№{middle_roll["roll_number"]}',
+    middle_modal = re.search(
+        rf'<div class="finish-confirm-modal roll-delete-modal" id="roll-delete-modal-{middle_roll["id"]}"(?P<tag>[^>]*)>',
         page,
     )
-    assert not re.search(
-        rf'<option value="{first_roll["id"]}" selected>№{first_roll["roll_number"]}',
+    first_modal = re.search(
+        rf'<div class="finish-confirm-modal roll-delete-modal" id="roll-delete-modal-{first_roll["id"]}"(?P<tag>[^>]*)>',
         page,
     )
+    assert middle_modal and first_modal
+    assert re.search(r"\shidden(?:\s|$)", middle_modal.group("tag")) is None
+    assert re.search(r"\shidden(?:\s|$)", first_modal.group("tag"))
+    assert f'ролка №{middle_roll["roll_number"]}?' in page
+    assert f'action="/terminal/cards/{card_id}/rolls/{middle_roll["id"]}/delete"' in page
 
 
 def test_terminal_v8_material_error_renders_under_recipe_table(connection):
