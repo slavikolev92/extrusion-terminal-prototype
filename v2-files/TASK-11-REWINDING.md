@@ -22,7 +22,7 @@ timestamp:
 
 This is the functionality specification that governed implementation. It
 records the approved business behavior, UI, existing roll semantics, data
-contract, safeguards, prototype reference, and scope boundary. It does not
+contract, safeguards, accepted visual design, and scope boundary. It does not
 authorize deployment or mutation of a runtime/production database.
 
 ## Existing Physical Process
@@ -295,7 +295,7 @@ waiting reversal, special warning, or Admin recovery control.
 
 ## Approved Selected-Card UI
 
-The selected-card roll area must follow the approved prototype described below.
+The selected-card roll area must follow the accepted design described below.
 
 ### Action hierarchy
 
@@ -460,32 +460,16 @@ one order-wide historical value.
 - Successful mutations persist immediately and update the terminal polling
   signature/badge without requiring an unsafe partial client-side state.
 
-## Prototype Source Of Truth
+## Accepted Visual Design
 
-The user visually approved the prototype on July 26, 2026 with the statement
+The user visually approved the standalone prototype on July 26, 2026 with the statement
 `Excellent! This is the design.`
 
-The durable prototype is located at:
-
-- `v2-files/prototypes/rewinding-roll-controls/prototype.html` — standalone
-  review artifact;
-- `v2-files/prototypes/rewinding-roll-controls/prototype.css` — focused visual
-  additions and overrides;
-- `v2-files/prototypes/rewinding-roll-controls/prototype.js` — prototype-only
-  interactions;
-- `v2-files/prototypes/rewinding-roll-controls/README.md` — hierarchy and usage;
-- `v2-files/prototypes/rewinding-roll-controls/design-qa.md` — comparison and
-  browser-verification record; and
-- `v2-files/prototypes/rewinding-roll-controls/example.JPG` — user-supplied
-  field-label and table-spacing reference.
-
-The accepted artifact was checked at 1920 by 768 and 1366 by 768. Its QA record
-reports no remaining P0, P1, or P2 visual differences, no roll-panel horizontal
-overflow, consistent one-decimal display, equal table tracks, and verified
-button/input alignment.
-
-The prototype defines the selected-card visual treatment. This specification
-supersedes its prototype-only interactions where later business decisions differ:
+The standalone prototype was an implementation-time reference. Its disposable
+source was removed after acceptance; the accepted design is now embodied in the
+terminal template and Task 11 automated/live verification. This specification
+defines the selected-card visual treatment and supersedes earlier reference-only
+interactions where later business decisions differ:
 
 - the centered waiting pane and header button were approved after the prototype;
 - waiting-card finalization reuses `Приключи`;
@@ -493,13 +477,10 @@ supersedes its prototype-only interactions where later business decisions differ
 - persistence, validation, state transitions, conflicts, and migration are
   server responsibilities.
 
-Implementation compared the prototype against the then-current terminal so
-intervening work was preserved. The post-pallet comparison and the standalone
-prototype verifier passed on July 26, 2026, and the final implementation
-re-ran the unchanged verifier. Do not regenerate or replace the approved visual
-artifact merely to create another companion. The shipped Jinja/CSS transfers
-the focused treatment without copying the generated full-page prototype; the
-server owns persistence, validation, conflicts, and state transitions.
+Implementation preserved intervening terminal work while applying the accepted
+design. The shipped Jinja/CSS embodies that treatment; the server owns
+persistence, validation, conflicts, and state transitions. Do not recreate a
+standalone companion as a current verification dependency.
 
 ## Acceptance Scenarios For The Implementation Plan
 
@@ -555,7 +536,7 @@ server owns persistence, validation, conflicts, and state transitions.
 ### Existing roll UI and precision
 
 - The approved field labels, sizing, Add alignment, equal columns, header order,
-  pencil interaction, and one-decimal read display match the prototype.
+  pencil interaction, and one-decimal read display match the accepted design.
 - The coordinated `Шпула`/pallet defaults save and new-roll snapshot remain
   atomic after the visual refactor.
 - Editing one roll's `Шпула` changes only that roll and its net.

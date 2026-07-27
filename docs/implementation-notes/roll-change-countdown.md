@@ -8,17 +8,18 @@ change together. It is not a physical roll-change timestamp, an audit event, or
 a production record. Operators may weigh, wrap, and enter rolls later without
 moving the expected schedule.
 
-A normal acknowledgement advances exactly once from the current expected time:
+A normal acknowledgement treats its click time as the new previous/start
+anchor and creates exactly one interval from that click:
 
 ```text
-previous change      = current expected change
-next expected change = current expected change + interval
+previous change      = acknowledgement click time
+next expected change = acknowledgement click time + interval
 ```
 
-A late click therefore does not restart the interval from the click time and
-does not skip missed intervals. A directly edited next expected time becomes
-the new schedule anchor; the following acknowledgement adds one interval to
-that override.
+A late click therefore starts the next interval from its click time and never
+jumps over multiple missed intervals. A directly edited next expected time
+remains editable, but a following acknowledgement uses that later click time
+rather than the override as its anchor.
 
 ## Ownership And Clearing
 
@@ -43,9 +44,10 @@ record is also removed instead of guessed.
 | Running after pause | Still unresolved, due | Holds red resumed-unresolved `00:00`; the paused yellow override no longer applies. |
 | Running after pause | Resolved during pause | Returns to normal timestamp-derived counting and warning thresholds. |
 
-The quick acknowledgement remains available while paused. It advances exactly
-one scheduled interval and resolves the pause. Saving a corrected schedule in
-the editor also resolves it.
+The quick acknowledgement remains available while paused. It uses the click
+time as the new previous/start anchor, sets the next expected time exactly one
+interval later, and resolves the pause. Saving a corrected schedule in the
+editor also resolves it.
 
 ## Browser Storage Contract
 
@@ -92,9 +94,18 @@ remain outside the pilot boundary.
 
 - After a mistaken quick acknowledgement, open the editor and correct the
   previous/start time, interval, or next expected time.
-- To stop tracking deliberately, open the editor and use `Изчисти` (Clear).
+- To stop tracking deliberately, open the editor and use `Изключи брояча`.
 - After browser-storage loss, recreate the schedule from the known operational
   start/change time and interval. It cannot be restored from an SQLite backup.
+
+The editor follows the shift-window visual hierarchy. Its three numbered rows
+share one treatment and use a native date field plus direct, colon-separated
+hour and minute text inputs instead of combined date-time, dropdown, or numeric
+spinner widgets. `Използвай текущия час` sits in the start row;
+`Изключи брояча` sits on the left of the compact footer; and the equal-sized
+`Отказ` / `Запиши` pair sits on the right. A deliberate backdrop click still
+closes the editor, but a drag that begins in any editor field cannot be
+retargeted into an accidental close.
 
 ## Verification
 

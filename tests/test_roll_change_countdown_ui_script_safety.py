@@ -580,6 +580,31 @@ def test_roll_change_verifier_resolves_repo_playwright_without_install_commands(
         assert forbidden not in lowered
 
 
+def test_roll_change_verifier_uses_directional_spacing_and_accepted_geometry_checks():
+    source = VERIFIER_SCRIPT.read_text(encoding="utf-8")
+
+    assert "return start.left - rollChange.right;" in source
+    assert "Math.abs(whitespace.shift.left - whitespace.queue.left) <= 1" in source
+    assert "Math.abs(whitespace.shift.right - whitespace.queue.right) <= 1" in source
+    assert "Math.abs(ledger.headerGutter - ledger.bodyGutter) <= 1" in source
+    assert "Math.abs(headerCell.left - bodyCell.left) <= 1" in source
+    assert "Math.abs(headerCell.right - bodyCell.right) <= 1" in source
+    assert "const spread = Math.max(...centers) - Math.min(...centers);" in source
+    assert 'initialErrorSlot.display === "none" && initialErrorSlot.height === 0' in source
+    assert 'row.locator("[data-roll-edit-open]").click()' in source
+    assert '[data-roll-row-cancel]' in source
+
+
+def test_due_selected_countdown_accessible_name_includes_expected_time():
+    source = (REPO_ROOT / "app/static/js/roll_change_countdown.mjs").read_text(
+        encoding="utf-8"
+    )
+
+    assert (
+        "смяната е дължима; следваща ${view.nextExpectedLabel}" in source
+    )
+
+
 def test_roll_change_scripts_do_not_invoke_installers_during_real_execution(
     tmp_path: Path,
 ):

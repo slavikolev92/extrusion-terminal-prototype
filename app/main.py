@@ -2503,6 +2503,14 @@ def terminal_context(
         selected_machine_id = selected_card["machine_id"]
 
     enriched_queues = enrich_machine_queues(machine_queues, selected_card, selected_machine_id)
+    selected_card_is_machine_focus = bool(
+        selected_card
+        and any(
+            queue.get("focus_card")
+            and int(queue["focus_card"]["id"]) == int(selected_card["id"])
+            for queue in enriched_queues
+        )
+    )
     active_cards = [
         card
         for queue in enriched_queues
@@ -2552,6 +2560,7 @@ def terminal_context(
         "waiting_rewinding_cards": waiting_rewinding_cards,
         "waiting_rewinding_count": len(waiting_rewinding_cards),
         "selected_card": selected_card,
+        "selected_card_is_machine_focus": selected_card_is_machine_focus,
         "selected_machine_id": selected_machine_id,
         "terminal_snapshot": terminal_snapshot,
         "status_labels": STATUS_LABELS,

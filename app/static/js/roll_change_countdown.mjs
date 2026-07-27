@@ -6,11 +6,13 @@ import {
   clearMismatchedSchedules,
   clearSchedule,
   countdownView,
+  joinLocalDateTimeParts,
   parseIntervalMinutes,
   parseOperatorLocalMinute,
   readSchedule,
   reconcileCardStatus,
   saveSchedule,
+  splitLocalDateTimeParts,
   toLocalDateTimeInputValue,
   validateEditorValues,
 } from "./roll_change_countdown_core.mjs";
@@ -53,19 +55,26 @@ export function bootstrapRollChangeCountdown({
   const selectedStatus = controls?.dataset.cardStatus || "";
   const openControl = controls?.querySelector("[data-roll-change-open]") ?? null;
   const controlValue = controls?.querySelector("[data-roll-change-control-value]") ?? null;
-  const controlNext = controls?.querySelector("[data-roll-change-control-next]") ?? null;
   const advanceControl = controls?.querySelector("[data-roll-change-advance]") ?? null;
 
   const overlay = documentObject.querySelector("[data-roll-change-overlay]");
   const dialog = overlay?.querySelector("[data-roll-change-dialog]") ?? null;
   const form = overlay?.querySelector("[data-roll-change-form]") ?? null;
   const previousInput = form?.querySelector("[data-roll-change-previous]") ?? null;
+  const previousDateInput = form?.querySelector("[data-roll-change-previous-date]") ?? null;
+  const previousHourInput = form?.querySelector("[data-roll-change-previous-hour]") ?? null;
+  const previousMinuteInput = form?.querySelector("[data-roll-change-previous-minute]") ?? null;
   const hoursInput = form?.querySelector("[data-roll-change-hours]") ?? null;
   const minutesInput = form?.querySelector("[data-roll-change-minutes]") ?? null;
   const nextInput = form?.querySelector("[data-roll-change-next]") ?? null;
+  const nextDateInput = form?.querySelector("[data-roll-change-next-date]") ?? null;
+  const nextHourInput = form?.querySelector("[data-roll-change-next-hour]") ?? null;
+  const nextMinuteInput = form?.querySelector("[data-roll-change-next-minute]") ?? null;
+  const intervalSummary = form?.querySelector("[data-roll-change-interval-summary]") ?? null;
   const restartControl = form?.querySelector("[data-roll-change-restart]") ?? null;
   const clearControl = form?.querySelector("[data-roll-change-clear]") ?? null;
   const cancelControl = form?.querySelector("[data-roll-change-cancel]") ?? null;
+  const closeControl = overlay?.querySelector("[data-roll-change-close]") ?? null;
   const errorSlots = new Map(
     Array.from(form?.querySelectorAll("[data-roll-change-error-for]") ?? [], (slot) => [
       slot.dataset.rollChangeErrorFor,
@@ -75,6 +84,8 @@ export function bootstrapRollChangeCountdown({
 
   let savedSchedule = null;
   let returnFocus = null;
+  let backdropPressStarted = false;
+  let backdropPressEnded = false;
   const listeners = [];
 
   function listen(target, type, callback) {
@@ -121,11 +132,9 @@ export function bootstrapRollChangeCountdown({
   }
 
   function renderSelected(schedule, currentMs) {
-    if (!openControl || !controlValue || !controlNext || !advanceControl) return;
+    if (!openControl || !controlValue || !advanceControl) return;
     if (!schedule || !TRACKABLE.has(selectedStatus)) {
       controlValue.textContent = "Смяна на ролка";
-      controlNext.textContent = "";
-      controlNext.hidden = true;
       advanceControl.hidden = true;
       openControl.classList.remove(...TONE_CLASSES);
       openControl.setAttribute("aria-label", `Настрой смяна на ролките за машина ${selectedMachineId}`);
@@ -133,15 +142,13 @@ export function bootstrapRollChangeCountdown({
     }
     const view = countdownView(schedule, selectedStatus, currentMs);
     controlValue.textContent = view.display;
-    controlNext.textContent = `Следваща ${view.nextExpectedLabel}`;
-    controlNext.hidden = false;
     advanceControl.hidden = false;
     openControl.classList.remove(...TONE_CLASSES);
     openControl.classList.add(view.tone);
     openControl.setAttribute(
       "aria-label",
       view.due
-        ? `Редактирай смяната на ролките за машина ${selectedMachineId}; смяната е дължима`
+        ? `Редактирай смяната на ролките за машина ${selectedMachineId}; смяната е дължима; следваща ${view.nextExpectedLabel}`
         : `Редактирай смяната на ролките за машина ${selectedMachineId}; остават ${view.display}, следваща ${view.nextExpectedLabel}`,
     );
   }
@@ -169,6 +176,16 @@ export function bootstrapRollChangeCountdown({
 
   function clearErrors() {
     for (const slot of errorSlots.values()) slot.textContent = "";
+    for (const input of [
+      previousDateInput,
+      previousHourInput,
+      previousMinuteInput,
+      hoursInput,
+      minutesInput,
+      nextDateInput,
+      nextHourInput,
+      nextMinuteInput,
+    ]) input?.removeAttribute("aria-invalid");
   }
 
   function renderErrors(errors) {
@@ -176,15 +193,79 @@ export function bootstrapRollChangeCountdown({
     for (const [name, message] of Object.entries(errors)) {
       const slot = errorSlots.get(name);
       if (slot) slot.textContent = message;
+      const targets = {
+        previous: [previousDateInput, previousHourInput, previousMinuteInput],
+        hours: [hoursInput],
+        minutes: [minutesInput],
+        next: [nextDateInput, nextHourInput, nextMinuteInput],
+        form: [hoursInput, minutesInput],
+      }[name] ?? [];
+      for (const target of targets) target?.setAttribute("aria-invalid", "true");
     }
+  }
+
+  function writeDateTimeParts(canonicalInput, dateInput, hourInput, minuteInput, valueMs) {
+    if (!canonicalInput || !dateInput || !hourInput || !minuteInput) return;
+    if (valueMs === null) {
+      canonicalInput.value = "";
+      dateInput.value = "";
+      hourInput.value = "00";
+      minuteInput.value = "00";
+      return;
+    }
+    const parts = splitLocalDateTimeParts(valueMs);
+    canonicalInput.value = toLocalDateTimeInputValue(valueMs);
+    dateInput.value = parts.dateValue;
+    hourInput.value = parts.hourValue;
+    minuteInput.value = parts.minuteValue;
+  }
+
+  function syncDateTimeParts(canonicalInput, dateInput, hourInput, minuteInput) {
+    if (!canonicalInput || !dateInput || !hourInput || !minuteInput) return "";
+    const value = joinLocalDateTimeParts(
+      dateInput.value,
+      hourInput.value,
+      minuteInput.value,
+    );
+    canonicalInput.value = value;
+    return value;
+  }
+
+  function updateIntervalSummary() {
+    if (!intervalSummary || !hoursInput || !minutesInput) return;
+    const result = parseIntervalMinutes(hoursInput.value, minutesInput.value);
+    if (!result.ok) {
+      intervalSummary.textContent = "валиден интервал";
+      return;
+    }
+    const hours = Math.floor(result.value / 60);
+    const minutes = result.value % 60;
+    intervalSummary.textContent = `${hours} ч. и ${minutes} мин.`;
+  }
+
+  function normalizeNumericInput(input, maximum) {
+    if (!input || !/^\d{1,2}$/.test(input.value)) return;
+    if (Number(input.value) > maximum) return;
+    input.value = input.value.padStart(2, "0");
   }
 
   function recalculateDraft() {
     if (!previousInput || !hoursInput || !minutesInput || !nextInput) return;
-    const previousMs = parseOperatorLocalMinute(previousInput.value, now());
+    updateIntervalSummary();
+    const previousValue = syncDateTimeParts(
+      previousInput,
+      previousDateInput,
+      previousHourInput,
+      previousMinuteInput,
+    );
+    const previousMs = parseOperatorLocalMinute(previousValue, now());
     const intervalResult = parseIntervalMinutes(hoursInput.value, minutesInput.value);
     if (previousMs !== null && intervalResult.ok) {
-      nextInput.value = toLocalDateTimeInputValue(
+      writeDateTimeParts(
+        nextInput,
+        nextDateInput,
+        nextHourInput,
+        nextMinuteInput,
         calculateNextExpected(previousMs, intervalResult.value),
       );
     }
@@ -196,25 +277,26 @@ export function bootstrapRollChangeCountdown({
 
   function openEditor(event) {
     if (hasOpenRollCorrection()) return;
-    if (!overlay || !previousInput || !hoursInput || !minutesInput || !nextInput) return;
+    if (!overlay || !previousInput || !previousDateInput || !hoursInput || !minutesInput || !nextInput) return;
     returnFocus = event?.currentTarget ?? openControl;
     savedSchedule = matchingSchedule(selectedMachineId, selectedCardId);
     if (savedSchedule) {
-      previousInput.value = toLocalDateTimeInputValue(savedSchedule.previousChangeAtMs);
-      hoursInput.value = String(Math.floor(savedSchedule.intervalMinutes / 60));
-      minutesInput.value = String(savedSchedule.intervalMinutes % 60);
-      nextInput.value = toLocalDateTimeInputValue(savedSchedule.nextExpectedAtMs);
+      writeDateTimeParts(previousInput, previousDateInput, previousHourInput, previousMinuteInput, savedSchedule.previousChangeAtMs);
+      hoursInput.value = String(Math.floor(savedSchedule.intervalMinutes / 60)).padStart(2, "0");
+      minutesInput.value = String(savedSchedule.intervalMinutes % 60).padStart(2, "0");
+      writeDateTimeParts(nextInput, nextDateInput, nextHourInput, nextMinuteInput, savedSchedule.nextExpectedAtMs);
     } else {
-      previousInput.value = toLocalDateTimeInputValue(now());
-      hoursInput.value = "0";
-      minutesInput.value = "0";
-      nextInput.value = "";
+      writeDateTimeParts(previousInput, previousDateInput, previousHourInput, previousMinuteInput, now());
+      hoursInput.value = "00";
+      minutesInput.value = "00";
+      writeDateTimeParts(nextInput, nextDateInput, nextHourInput, nextMinuteInput, null);
     }
+    updateIntervalSummary();
     clearErrors();
     overlay.hidden = false;
     overlay.setAttribute("aria-hidden", "false");
     openControl?.setAttribute("aria-expanded", "true");
-    previousInput.focus();
+    previousDateInput.focus();
   }
 
   function closeEditor({ restoreFocus = true } = {}) {
@@ -235,6 +317,8 @@ export function bootstrapRollChangeCountdown({
       renderAll();
       return;
     }
+    syncDateTimeParts(previousInput, previousDateInput, previousHourInput, previousMinuteInput);
+    syncDateTimeParts(nextInput, nextDateInput, nextHourInput, nextMinuteInput);
     const result = validateEditorValues({
       previousValue: previousInput.value,
       hoursValue: hoursInput.value,
@@ -259,21 +343,8 @@ export function bootstrapRollChangeCountdown({
   }
 
   function restartDraft() {
-    if (!previousInput || !hoursInput || !minutesInput || !nextInput) return;
-    const intervalResult = parseIntervalMinutes(hoursInput.value, minutesInput.value);
-    if (!intervalResult.ok) {
-      renderErrors(intervalResult.errors);
-      return;
-    }
-    clearErrors();
-    const currentMs = now();
-    previousInput.value = toLocalDateTimeInputValue(currentMs);
-    nextInput.value = toLocalDateTimeInputValue(
-      calculateNextExpected(
-        parseOperatorLocalMinute(previousInput.value, currentMs),
-        intervalResult.value,
-      ),
-    );
+    if (!previousInput) return;
+    writeDateTimeParts(previousInput, previousDateInput, previousHourInput, previousMinuteInput, now());
   }
 
   function clearEditorSchedule() {
@@ -294,8 +365,25 @@ export function bootstrapRollChangeCountdown({
     refresh();
   }
 
+  function handleOverlayPointerDown(event) {
+    backdropPressStarted = event.target === overlay;
+    backdropPressEnded = false;
+  }
+
+  function handleOverlayPointerUp(event) {
+    backdropPressEnded = backdropPressStarted && event.target === overlay;
+  }
+
+  function handleOverlayPointerCancel() {
+    backdropPressStarted = false;
+    backdropPressEnded = false;
+  }
+
   function handleOverlayClick(event) {
-    if (event.target === overlay) closeEditor();
+    const shouldClose = backdropPressStarted && backdropPressEnded && event.target === overlay;
+    backdropPressStarted = false;
+    backdropPressEnded = false;
+    if (shouldClose) closeEditor();
   }
 
   function handleDialogKeydown(event) {
@@ -338,14 +426,34 @@ export function bootstrapRollChangeCountdown({
   renderAll();
 
   listen(openControl, "click", openEditor);
-  listen(previousInput, "input", recalculateDraft);
-  listen(hoursInput, "input", recalculateDraft);
-  listen(minutesInput, "input", recalculateDraft);
+  listen(previousDateInput, "input", recalculateDraft);
+  for (const [input, maximum, callback] of [
+    [previousHourInput, 23, recalculateDraft],
+    [previousMinuteInput, 59, recalculateDraft],
+    [hoursInput, 23, recalculateDraft],
+    [minutesInput, 59, recalculateDraft],
+    [nextHourInput, 23, () => syncDateTimeParts(nextInput, nextDateInput, nextHourInput, nextMinuteInput)],
+    [nextMinuteInput, 59, () => syncDateTimeParts(nextInput, nextDateInput, nextHourInput, nextMinuteInput)],
+  ]) {
+    listen(input, "input", () => {
+      callback();
+    });
+    listen(input, "focus", () => input.select());
+    listen(input, "blur", () => {
+      normalizeNumericInput(input, maximum);
+      callback();
+    });
+  }
+  listen(nextDateInput, "input", () => syncDateTimeParts(nextInput, nextDateInput, nextHourInput, nextMinuteInput));
   listen(form, "submit", submitEditor);
   listen(restartControl, "click", restartDraft);
   listen(clearControl, "click", clearEditorSchedule);
   listen(cancelControl, "click", () => closeEditor());
+  listen(closeControl, "click", () => closeEditor());
   listen(advanceControl, "click", advance);
+  listen(overlay, "pointerdown", handleOverlayPointerDown);
+  listen(overlay, "pointerup", handleOverlayPointerUp);
+  listen(overlay, "pointercancel", handleOverlayPointerCancel);
   listen(overlay, "click", handleOverlayClick);
   listen(documentObject, "keydown", handleDialogKeydown);
   listen(windowObject, "storage", handleStorage);

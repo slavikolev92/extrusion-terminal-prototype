@@ -44,9 +44,9 @@ The schedule has:
 - one next expected change time.
 
 The first next expected change is calculated from the start time plus the
-interval. The frequent one-touch action advances the expected schedule by
-exactly one interval. It never restarts from the time at which the operator
-clicked.
+interval. The frequent one-touch action treats its click time as the new
+previous/start anchor, then sets the next expected change to exactly one
+interval after that click. It never jumps by multiple intervals.
 
 The less frequent editor allows operators to correct the start time, interval,
 or next expected change after a breakdown, pause, speed change, dimension
@@ -56,8 +56,8 @@ The alternatives were rejected:
 
 - Linking the countdown to gross-weight entry would inherit the known delay
   between physical roll changing and terminal entry.
-- Restarting from every acknowledgement click would make the whole schedule
-  drift whenever an operator entered rolls late.
+- Automatically jumping over multiple missed intervals would hide when the
+  operator deliberately acknowledged the schedule.
 - A timer per lane is unnecessary because all lanes on the machine run and are
   changed together.
 - Machine/PLC integration, length encoders, roll-diameter measurement, and
@@ -102,11 +102,9 @@ next expected change       = 14:00
 The quick action always performs:
 
 ```text
-previous change      = current expected change
-next expected change = current expected change + interval
+previous change      = acknowledgement click time
+next expected change = acknowledgement click time + interval
 ```
-
-It does not use the acknowledgement click time.
 
 Example:
 
@@ -114,16 +112,16 @@ Example:
 current expected change = 14:00
 operator clicks          = 14:20
 interval                 = 02:00
-new expected change      = 16:00
+new previous change      = 14:20
+new expected change      = 16:20
 ```
 
-The click means, "Treat the scheduled change as completed normally and show the
-next scheduled change." It does not claim that the physical change occurred at
-14:20.
+The click acknowledges the schedule at 14:20 and starts one fresh interval
+there. It does not claim that the physical change occurred at 14:20.
 
-One click advances exactly one interval. It does not silently skip several
-intervals to reach the next future time. If the schedule has become materially
-wrong, the operator corrects it in the editor.
+One click creates exactly one interval from its click time. It does not silently
+skip several intervals to reach a later future time. If the schedule has become
+materially wrong, the operator corrects it in the editor.
 
 ### Manual next-time override
 
@@ -138,8 +136,10 @@ interval                         = 02:00
 ```
 
 After saving, the active countdown targets 16:30. The next normal quick action
-then advances to 18:30. A manual next-time override therefore becomes the new
-anchor for the repeating schedule.
+remains available, but uses its later click time as the new anchor and sets the
+next expected time to that click plus two hours. A manual next-time override is
+therefore editable schedule information, not the anchor for a later quick
+acknowledgement.
 
 ### Time representation
 
@@ -201,9 +201,9 @@ anchor for the repeating schedule.
   including `00:00`. Red urgency is suppressed while the machine is paused.
 - The paused machine-state dot is also yellow.
 - The quick acknowledgement remains available while paused.
-- A quick acknowledgement while paused still advances the expected schedule by
-  exactly one interval, but the display remains visibly paused while the card
-  remains paused.
+- A quick acknowledgement while paused uses its click time as the new
+  previous/start anchor and sets the next expected time to one interval later,
+  but the display remains visibly paused while the card remains paused.
 - Resuming production does not invent a correction for a disrupted schedule.
   If the countdown was not acknowledged or edited during the pause, it remains
   frozen and visibly unresolved until the operator uses the quick action or
@@ -263,7 +263,8 @@ visually separated from, the existing Start, Pause/Resume, and End actions.
 - It remains available whenever tracking is active, including before the due
   time and while the order is paused.
 - It requires one click and no confirmation dialog.
-- Every click advances exactly one scheduled interval.
+- Every click uses the click time as the previous/start anchor and sets exactly
+  one interval ahead; it never jumps by multiple intervals.
 - An accidental click can be corrected through the editor. The pilot does not
   add friction to the 95–98 percent normal path in an attempt to prevent every
   possible mistake.
@@ -290,22 +291,30 @@ Editor behavior:
 - Changing the previous/start time or interval immediately recalculates the
   proposed next expected time.
 - Directly editing the proposed next expected time overrides that calculation
-  and establishes the new schedule anchor after Save.
+  for the saved schedule. A later quick acknowledgement still uses its click
+  time as the new previous/start anchor.
 - Save applies the complete valid schedule atomically in browser storage.
-- Restart from now sets the previous/start time to the current local time and
-  the next expected time to now plus the current valid interval.
+- Restart from now changes only the previous/start date and time to the current
+  local time. It preserves the next draft, interval values, current validation
+  errors, `aria-invalid` state, and browser storage. It performs no validation
+  or recalculation; only Save validates and persists the complete draft.
 - Clear tracking removes the current card's optional schedule and returns both
   terminal surfaces to their inactive presentation.
 - Clear tracking requires no additional confirmation. Its placement inside the
   editor keeps it out of the frequent path, and the schedule can be configured
   again if it is cleared accidentally.
-- Cancel, Escape, or clicking outside the editor makes no change.
+- Cancel, Escape, or a deliberate backdrop click makes no change. A pointer
+  gesture that begins inside any editor field must never dismiss the editor,
+  even if it ends over the backdrop.
 - Invalid input leaves the editor open, preserves the submitted values, and
   shows a concise Bulgarian validation message beside the relevant field.
 
-Working Bulgarian labels may be refined during UI review without changing the
-behavioral contract. The concepts `Предишна смяна`/`Начален час`, `Интервал`,
-`Следваща смяна`, `Запиши`, `Започни от сега`, and `Изчисти` must remain clear.
+The editor uses a native date field plus direct, colon-separated hour and minute
+text inputs instead of combined native date-time, dropdown, or numeric-spinner
+widgets. The three numbered sections `Начало врътка`, `Интервал`, and
+`Очаквана смяна на ролките` share one visual treatment. `Използвай текущия час`
+belongs to the start section; `Изключи брояча` remains on the left of a compact
+footer while the equal-sized `Отказ` / `Запиши` pair remains on the right.
 
 ## Validation Rules
 
@@ -442,9 +451,11 @@ mutating the runtime database.
 Cover:
 
 - initial start plus interval calculation;
-- acknowledgement clicked on time, early, and late;
-- exact one-interval advancement rather than click-time restart;
-- manual next-time override and its use as the following anchor;
+- acknowledgement clicked on time, early, and late uses each click time as the
+  new anchor;
+- exactly one interval from the click, with no multi-interval jump;
+- manual next-time override remains editable, while a later quick action uses
+  its click time as the new anchor;
 - midnight/date rollover;
 - normal, five-minute warning, one-minute urgent, and due boundaries;
 - no negative countdown;

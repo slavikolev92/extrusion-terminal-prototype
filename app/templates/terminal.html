@@ -32,6 +32,12 @@
     {%- endif %}
   </span>
 {%- endmacro %}
+{% macro terminal_icon(name, extra_class="", extension="svg") -%}
+  <span class="button-icon button-icon-asset{% if extra_class %} {{ extra_class }}{% endif %}"
+        data-icon-asset="{{ name }}"
+        style="--button-icon-source: url('{{ url_for('static', path='/images/terminal-ui/' ~ name ~ '.' ~ extension) }}')"
+        aria-hidden="true"></span>
+{%- endmacro %}
 {% macro whole_kg(value, blank="-") -%}
   {%- if value is not none and value|string|trim and value|string|trim != "-" -%}
     {{- ((value|string|replace(",", ".")|float) + 0.5)|int -}}
@@ -133,6 +139,13 @@
       stroke-linejoin: round;
     }
 
+    .button-icon-asset {
+      display: inline-block;
+      background: currentColor;
+      -webkit-mask: var(--button-icon-source) center / contain no-repeat;
+      mask: var(--button-icon-source) center / contain no-repeat;
+    }
+
     input {
       width: 100%;
       min-width: 0;
@@ -164,14 +177,15 @@
     }
 
     .terminal-header {
-      --terminal-header-action-width: 214px;
+      --terminal-header-action-width: 260px;
+      --terminal-side-action-width: 186px;
       min-width: 0;
       min-height: 68px;
       padding: 10px 24px;
       border-bottom: 1px solid #cfd6de;
       background: var(--surface);
       display: grid;
-      grid-template-columns: minmax(var(--terminal-header-action-width), 1fr) auto minmax(var(--terminal-header-action-width), 1fr);
+      grid-template-columns: minmax(var(--terminal-side-action-width), 1fr) auto minmax(var(--terminal-side-action-width), 1fr);
       align-items: center;
       gap: 18px;
     }
@@ -197,8 +211,8 @@
     }
 
     .terminal-header-action {
-      width: var(--terminal-header-action-width);
-      min-width: var(--terminal-header-action-width);
+      width: var(--terminal-side-action-width);
+      min-width: var(--terminal-side-action-width);
       min-height: 46px;
       display: inline-flex;
       align-items: center;
@@ -218,8 +232,18 @@
       line-height: 1.15;
     }
 
+    .terminal-global-nav .terminal-header-action {
+      width: var(--terminal-header-action-width);
+      min-width: var(--terminal-header-action-width);
+    }
+
     .terminal-header-action:hover {
       border-color: #0b355f;
+    }
+
+    .terminal-header-action .button-icon {
+      width: 21px;
+      height: 21px;
     }
 
     .terminal-waiting-action {
@@ -249,18 +273,6 @@
 
     .terminal-shift-action {
       justify-self: end;
-    }
-
-    .shift-status-dot {
-      width: 10px;
-      height: 10px;
-      flex: 0 0 10px;
-      border-radius: 50%;
-      background: #aeb7c1;
-    }
-
-    .shift-status-dot.is-active {
-      background: var(--green);
     }
 
     .terminal-brand:focus-visible,
@@ -650,6 +662,7 @@
 
     .title {
       min-width: 0;
+      flex: 1 1 auto;
       display: grid;
       gap: 4px;
     }
@@ -667,6 +680,7 @@
 
     .action-area {
       min-width: 0;
+      flex: 0 0 auto;
       display: grid;
       justify-items: end;
       gap: 4px;
@@ -674,6 +688,7 @@
 
     .actions {
       align-items: center;
+      justify-content: flex-end;
       flex-wrap: nowrap;
     }
 
@@ -701,12 +716,12 @@
 
     .roll-change-controls {
       min-width: 0;
-      margin-left: 4px;
-      padding-left: 12px;
-      border-left: 1px solid var(--line);
+      margin-right: 12px;
+      padding-right: 12px;
       display: flex;
       align-items: center;
       gap: 8px;
+      transform: translateX(-44px);
     }
 
     .roll-change-open {
@@ -715,10 +730,10 @@
       padding: 4px 10px;
       display: inline-flex;
       flex: 0 0 150px;
-      flex-direction: column;
+      flex-direction: row;
       align-items: center;
       justify-content: center;
-      gap: 1px;
+      gap: 7px;
       border-color: #b8c4d1;
       color: #0b355f;
       background: #fff;
@@ -726,14 +741,19 @@
       line-height: 1.1;
     }
 
-    .roll-change-control-value,
-    .roll-change-control-next {
-      display: block;
+    .roll-change-control-value { display: block; }
+
+    .roll-change-control-icon {
+      width: 18px;
+      height: 18px;
     }
 
-    .roll-change-control-next {
-      font-size: 11px;
-      font-weight: 700;
+    .roll-change-open.normal .roll-change-control-icon,
+    .roll-change-open.warning .roll-change-control-icon,
+    .roll-change-open.urgent .roll-change-control-icon,
+    .roll-change-open.paused .roll-change-control-icon,
+    .roll-change-open.resync .roll-change-control-icon {
+      display: none;
     }
 
     .roll-change-open.warning,
@@ -765,7 +785,7 @@
 
     .roll-change-open:focus-visible,
     .roll-change-advance:focus-visible,
-    .roll-change-editor-actions button:focus-visible {
+    .roll-change-dialog button:focus-visible {
       outline: 3px solid var(--blue);
       outline-offset: 2px;
     }
@@ -1335,6 +1355,12 @@
     .roll-list {
       min-height: 0;
       overflow: auto;
+      scrollbar-gutter: stable;
+    }
+
+    .roll-head {
+      overflow-y: auto;
+      scrollbar-gutter: stable;
     }
 
     .roll-head,
@@ -1360,7 +1386,13 @@
       padding: 4px 7px;
       display: flex;
       align-items: center;
-      justify-content: flex-start;
+      justify-content: center;
+      text-align: center;
+    }
+
+    .roll-head > div {
+      justify-content: center;
+      text-align: center;
     }
 
     .roll-head > div:first-child,
@@ -1423,19 +1455,24 @@
       padding: 3px 6px;
       font-size: 14px;
       font-weight: 600;
+      text-align: center;
     }
 
-    .roll-weight-cell {
+    .roll-row > .roll-weight-cell {
       display: grid;
       min-height: 100%;
       align-content: center;
+      justify-content: stretch;
       gap: 3px;
     }
 
     .roll-display-value {
+      width: 100%;
       display: inline-flex;
       min-height: 36px;
       align-items: center;
+      justify-content: center;
+      text-align: center;
     }
 
     .roll-row-error-slot {
@@ -1960,7 +1997,8 @@
 
     @media (max-width: 1360px) {
       .terminal-header {
-        --terminal-header-action-width: 190px;
+        --terminal-header-action-width: 244px;
+        --terminal-side-action-width: 175px;
       }
 
       .terminal-header-action {
@@ -2178,7 +2216,8 @@
         padding: 14px;
       }
 
-      .roll-change-editor-actions {
+      .roll-change-editor-footer,
+      .roll-change-confirm-actions {
         gap: 6px;
       }
 
@@ -2515,68 +2554,360 @@
       padding: 24px;
       display: grid;
       place-items: center;
-      background: rgba(31, 41, 51, .4);
+      background: rgba(31, 41, 51, .46);
+      backdrop-filter: blur(3px);
     }
 
     .roll-change-overlay[hidden] { display: none; }
 
     .roll-change-dialog {
-      width: min(520px, 100%);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: var(--surface);
-      box-shadow: var(--shadow);
-      padding: 18px;
+      width: min(760px, calc(100vw - 40px));
+      max-height: calc(100vh - 40px);
+      border: 1px solid #d9e0e8;
+      border-radius: 20px;
+      background: #fff;
+      box-shadow: 0 32px 80px rgba(16, 24, 40, .34);
+      padding: 22px 26px 18px;
+      overflow: auto;
+    }
+
+    .roll-change-dialog-intro {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 13px;
+      padding: 0 0 16px;
+    }
+
+    .roll-change-dialog-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 999px;
+      background: #eaf2ff;
+      display: grid;
+      place-items: center;
+    }
+
+    .roll-change-dialog-icon img {
+      width: 29px;
+      height: 29px;
+    }
+
+    .roll-change-dialog-copy {
+      display: grid;
+      gap: 5px;
     }
 
     .roll-change-dialog h2 {
-      margin: 0 0 14px;
-      color: var(--primary-text);
-      font-size: 22px;
+      margin: 0;
+      color: #18212b;
+      font-size: 24px;
       line-height: 1.15;
-      font-weight: 900;
+      font-weight: 800;
+      letter-spacing: -.5px;
+    }
+
+    .roll-change-dialog-intro p {
+      margin: 0;
+      color: #506078;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .roll-change-dialog-close {
+      width: 40px;
+      height: 40px;
+      border: 1px solid #cfd8e3;
+      border-radius: 10px;
+      background: #fff;
+      padding: 0;
+      display: grid;
+      place-items: center;
+    }
+
+    .roll-change-dialog-close img {
+      width: 21px;
+      height: 21px;
     }
 
     .roll-change-dialog form,
     .roll-change-dialog label {
       display: grid;
-      gap: 6px;
+      gap: 7px;
     }
 
-    .roll-change-dialog form { gap: 12px; }
+    .roll-change-dialog form { gap: 0; }
 
     .roll-change-dialog label > span,
-    .roll-change-interval legend {
-      color: var(--secondary-text);
-      font-size: 14px;
-      font-weight: 700;
+    .roll-change-section-title {
+      color: #343f50;
+      font-size: 13px;
+      font-weight: 750;
     }
 
-    .roll-change-interval {
+    .roll-change-dialog label.roll-floating-field {
+      position: relative;
+      min-width: 0;
+      display: block;
+      padding-top: 8px;
+    }
+
+    .roll-change-dialog label.roll-floating-field > .field-label {
+      position: absolute;
+      z-index: 1;
+      top: 0;
+      left: 10px;
+      margin: 0;
+      padding: 0 6px;
+      background: #fff;
+      color: var(--secondary-text);
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 16px;
+      pointer-events: none;
+    }
+
+    .roll-change-dialog .field-error-slot:empty {
+      display: none;
+    }
+
+    .roll-change-editor-section {
       min-width: 0;
       margin: 0;
-      padding: 10px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 13px;
+      padding: 19px 0 24px;
+      border-top: 1px solid #e2e7ed;
+    }
+
+    .roll-change-section-heading {
+      display: flex;
+      align-items: center;
       gap: 10px;
     }
 
-    .roll-change-interval legend { padding: 0 4px; }
-    .roll-change-interval .field-error-slot { min-height: 0; }
+    .roll-change-section-heading h3 {
+      margin: 0;
+      color: #18212b;
+      font-size: 16px;
+      line-height: 1.2;
+      font-weight: 800;
+    }
 
-    .roll-change-editor-actions {
+    .roll-change-step {
+      width: 22px;
+      height: 22px;
+      flex: 0 0 22px;
+      border-radius: 999px;
+      background: #2865d8;
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .roll-change-section-content {
+      display: grid;
+      align-items: end;
+      gap: 20px;
+      margin-left: 0;
+    }
+
+    .roll-change-editor-section > .field-error-slot {
+      margin-left: 0;
+    }
+
+    .roll-change-section-content.has-start-action {
+      grid-template-columns: 156px 190px minmax(0, 1fr);
+      column-gap: 20px;
+    }
+
+    .roll-change-section-content.has-interval-time {
+      grid-template-columns: 190px;
+    }
+
+    .roll-change-section-content.has-expected-time {
+      grid-template-columns: 156px 190px;
+      column-gap: 20px;
+    }
+
+    .roll-change-time-pair {
+      min-width: 0;
+      width: 190px;
+      max-width: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      align-items: end;
+      gap: 7px;
+    }
+
+    .roll-change-clock-separator {
+      height: 46px;
+      display: grid;
+      place-items: center;
+      color: #343f50;
+      font-size: 20px;
+      font-weight: 750;
+    }
+
+    .roll-change-dialog input[type="date"],
+    .roll-change-dialog input[type="text"] {
+      width: 100%;
+      height: 46px;
+      min-height: 46px;
+      border: 1px solid #c7d0dc;
+      border-radius: 8px;
+      background: #fff;
+      padding: 8px 9px 5px;
+      color: #151b24;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .roll-change-dialog input[type="text"] {
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .roll-change-dialog input[type="date"] {
+      text-align: center;
+    }
+
+    .roll-change-dialog input[type="date"]::-webkit-datetime-edit {
+      width: 100%;
       display: flex;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-      gap: 8px;
+      justify-content: center;
+      padding: 0;
+    }
+
+    .roll-change-dialog input:focus {
+      border-color: #2865d8;
+      outline: 3px solid rgba(40, 101, 216, .14);
+    }
+
+    .roll-change-start-action {
+      width: 198px;
+      justify-self: end;
+      min-height: 46px;
+      border: 1px solid #2865d8;
+      border-radius: 8px;
+      background: #fff;
+      padding: 0 12px;
+      color: #2865d8;
+      font-size: 12px;
+      font-weight: 750;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+    }
+
+    .roll-change-start-action img {
+      width: 17px;
+      height: 17px;
+    }
+
+    .roll-change-helper {
+      margin: -6px 0 2px;
+      color: #637083;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .roll-change-helper strong {
+      color: #365684;
+      font-weight: 750;
+    }
+
+    .roll-change-interval-note {
+      margin: -5px 0 1px;
+      padding: 9px 12px;
+      border: 1px solid #cfe0ff;
+      border-radius: 8px;
+      background: #f3f7ff;
+      color: #52657f;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .roll-change-interval-note strong {
+      color: #365684;
+      font-weight: 750;
+    }
+
+    .roll-change-editor-footer {
+      padding: 20px 0 0;
+      border-top: 1px solid #e2e7ed;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .roll-change-confirm-actions {
+      display: flex;
+      gap: 12px;
+    }
+
+    .roll-change-editor-footer button {
+      width: 132px;
+      min-width: 0;
+      min-height: 42px;
+      padding: 7px 14px;
+      border: 1px solid #c7d0dc;
+      border-radius: 10px;
+      background: #fff;
+      color: #1f2937;
+      font-size: 14px;
+      font-weight: 750;
+    }
+
+    .roll-change-confirm-actions .roll-change-save {
+      border-color: #2865d8;
+      background: #2865d8;
+      color: #fff;
     }
 
     .roll-change-clear {
-      border-color: #c96b6b;
-      color: #9d2525;
-      background: #fff;
+      width: 170px !important;
+      border-color: #c94747 !important;
+      color: #b62929 !important;
+    }
+
+    @media (max-height: 850px) {
+      .roll-change-dialog {
+        padding: 16px 24px 18px;
+      }
+
+      .roll-change-dialog-intro {
+        padding-bottom: 12px;
+      }
+
+      .roll-change-dialog-icon {
+        width: 48px;
+        height: 48px;
+      }
+
+      .roll-change-dialog-icon img {
+        width: 29px;
+        height: 29px;
+      }
+
+      .roll-change-editor-section {
+        gap: 11px;
+        padding: 15px 0 19px;
+      }
+
+      .roll-change-helper {
+        margin-top: -5px;
+      }
+
+      .roll-change-editor-footer {
+        padding: 16px 0 0;
+      }
     }
 
     .shift-window-overlay {
@@ -3528,12 +3859,16 @@
         <nav class="terminal-global-nav" aria-label="Поръчки">
           <button class="terminal-header-action" id="queue-open" type="button"
                   data-terminal-action="waiting" aria-controls="queue-overlay"
-                  aria-expanded="false">Чакащи поръчки</button>
+                  aria-expanded="false">
+            {{ terminal_icon("waiting-orders") }}
+            <span>Чакащи поръчки</span>
+          </button>
           <button class="terminal-header-action terminal-waiting-action" id="waiting-open"
                   type="button" data-terminal-action="rewinding-waiting"
                   data-waiting-count="{{ waiting_rewinding_count }}"
                   aria-label="Изчакващи пренавиване"
                   aria-controls="waiting-overlay" aria-expanded="false">
+            {{ terminal_icon("awaiting-rewinding", "", "png") }}
             <span>Изчакващи пренавиване</span>
             {% if waiting_rewinding_count %}
               <span class="waiting-badge" aria-hidden="true">{{ waiting_rewinding_count }}</span>
@@ -3541,14 +3876,16 @@
           </button>
           <button class="terminal-header-action" id="history-open" type="button"
                   data-terminal-action="produced" aria-controls="history-overlay"
-                  aria-expanded="false">Произведени поръчки</button>
+                  aria-expanded="false">
+            {{ terminal_icon("produced-orders") }}
+            <span>Произведени поръчки</span>
+          </button>
         </nav>
         <button class="terminal-header-action terminal-shift-action" id="shift-open"
                 type="button" data-terminal-action="shift"
                 aria-controls="shift-window"
                 aria-expanded="{{ 'true' if shift_window_state != 'closed' else 'false' }}">
-          <span class="shift-status-dot{% if active_shift %} is-active{% endif %}"
-                aria-hidden="true"></span>
+          {{ terminal_icon("worker_3537", "", "webp") }}
           <span data-shift-header-label>{% if active_shift %}Смяна {{ active_shift.shift_number }}{% else %}Няма активна смяна{% endif %}</span>
         </button>
       </header>
@@ -3718,45 +4055,7 @@
           </div>
           <div class="action-area">
             <div class="actions">
-              {% if selected_card and selected_card.status == "awaiting_rewinding" %}
-                <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post" data-lifecycle-slot="finish" data-finish-confirm-form="true" data-finish-confirm-message="{{ selected_card.finish_confirmation_message }}">
-                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                  <button class="action-button action-primary" type="submit">{{ button_icon("check-circle") }}<span>Приключи</span></button>
-                </form>
-              {% elif selected_card and selected_card.status in ["pending", "running", "paused"] %}
-              {% if selected_card.status == "pending" %}
-                <form action="/terminal/cards/{{ selected_card.id }}/timing/start" method="post" data-lifecycle-slot="start">
-                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                  <button class="action-button action-primary" type="submit">{{ button_icon("play") }}<span>Старт</span></button>
-                </form>
-              {% else %}
-                <button class="action-button" type="button" data-lifecycle-slot="start" disabled>{{ button_icon("play") }}<span>Старт</span></button>
-              {% endif %}
-
-              {% if selected_card.status == "running" %}
-                <form action="/terminal/cards/{{ selected_card.id }}/timing/pause" method="post" data-lifecycle-slot="pause">
-                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                  <button class="action-button action-secondary" type="submit">{{ button_icon("pause") }}<span>Пауза</span></button>
-                </form>
-              {% elif selected_card.status == "paused" %}
-                <form action="/terminal/cards/{{ selected_card.id }}/timing/resume" method="post" data-lifecycle-slot="pause">
-                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                  <button class="action-button action-primary" type="submit">{{ button_icon("play") }}<span>Продължи</span></button>
-                </form>
-              {% else %}
-                <button class="action-button" type="button" data-lifecycle-slot="pause" disabled>{{ button_icon("pause") }}<span>Пауза</span></button>
-              {% endif %}
-
-              {% if selected_card.status in ["running", "paused"] %}
-                <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post" data-lifecycle-slot="finish" data-finish-confirm-form="true" data-finish-confirm-message="{{ selected_card.finish_confirmation_message }}">
-                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                  <button class="action-button {% if selected_card.status == 'running' %}action-primary{% else %}action-secondary{% endif %}" type="submit">{{ button_icon("check-circle") }}<span>Приключи</span></button>
-                </form>
-              {% else %}
-                <button class="action-button" type="button" data-lifecycle-slot="finish" disabled>{{ button_icon("check-circle") }}<span>Приключи</span></button>
-              {% endif %}
-              {% endif %}
-              {% if selected_card and selected_card.status in ["running", "paused"] %}
+              {% if selected_card and selected_card_is_machine_focus and selected_card.status in ["running", "paused"] %}
                 <div class="roll-change-controls"
                      data-roll-change-controls
                      data-machine-id="{{ selected_card.machine_id }}"
@@ -3764,14 +4063,52 @@
                      data-card-status="{{ selected_card.status }}">
                   <button class="roll-change-open" type="button" data-roll-change-open
                           aria-controls="roll-change-overlay" aria-expanded="false">
+                    {{ terminal_icon("rewinding-circular", "roll-change-control-icon") }}
                     <span class="roll-change-control-value" data-roll-change-control-value>Смяна на ролка</span>
-                    <span class="roll-change-control-next" data-roll-change-control-next hidden></span>
                   </button>
                   <button class="roll-change-advance" type="button" data-roll-change-advance hidden
                           aria-label="Потвърди смяна на ролките">
                     {{ button_icon("refresh-cw") }}
                   </button>
                 </div>
+              {% endif %}
+              {% if selected_card and selected_card.status == "awaiting_rewinding" %}
+                <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post" data-lifecycle-slot="finish" data-finish-confirm-form="true" data-finish-confirm-message="{{ selected_card.finish_confirmation_message }}">
+                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                  <button class="action-button action-primary" type="submit">{{ terminal_icon("end") }}<span>Приключи</span></button>
+                </form>
+              {% elif selected_card and selected_card.status in ["pending", "running", "paused"] %}
+              {% if selected_card.status == "pending" %}
+                <form action="/terminal/cards/{{ selected_card.id }}/timing/start" method="post" data-lifecycle-slot="start">
+                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                  <button class="action-button action-primary" type="submit">{{ terminal_icon("start") }}<span>Старт</span></button>
+                </form>
+              {% else %}
+                <button class="action-button" type="button" data-lifecycle-slot="start" disabled>{{ terminal_icon("start") }}<span>Старт</span></button>
+              {% endif %}
+
+              {% if selected_card.status == "running" %}
+                <form action="/terminal/cards/{{ selected_card.id }}/timing/pause" method="post" data-lifecycle-slot="pause">
+                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                  <button class="action-button action-secondary" type="submit">{{ terminal_icon("pause") }}<span>Пауза</span></button>
+                </form>
+              {% elif selected_card.status == "paused" %}
+                <form action="/terminal/cards/{{ selected_card.id }}/timing/resume" method="post" data-lifecycle-slot="pause">
+                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                  <button class="action-button action-primary" type="submit">{{ terminal_icon("start") }}<span>Продължи</span></button>
+                </form>
+              {% else %}
+                <button class="action-button" type="button" data-lifecycle-slot="pause" disabled>{{ terminal_icon("pause") }}<span>Пауза</span></button>
+              {% endif %}
+
+              {% if selected_card.status in ["running", "paused"] %}
+                <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post" data-lifecycle-slot="finish" data-finish-confirm-form="true" data-finish-confirm-message="{{ selected_card.finish_confirmation_message }}">
+                  <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
+                  <button class="action-button {% if selected_card.status == 'running' %}action-primary{% else %}action-secondary{% endif %}" type="submit">{{ terminal_icon("end") }}<span>Приключи</span></button>
+                </form>
+              {% else %}
+                <button class="action-button" type="button" data-lifecycle-slot="finish" disabled>{{ terminal_icon("end") }}<span>Приключи</span></button>
+              {% endif %}
               {% endif %}
             </div>
           </div>
@@ -3905,6 +4242,7 @@
                     <button class="roll-secondary-button{% if selected_card.rewinding_roll_count %} is-marked{% endif %}"
                             type="button" data-rewinding-open
                             aria-controls="rewinding-overlay" aria-expanded="false">
+                      {{ terminal_icon("awaiting-rewinding", "", "png") }}
                       Пренавиване{% if selected_card.rewinding_roll_count %}: {{ selected_card.rewinding_roll_count }}{% endif %}
                     </button>
                   </div>
@@ -4007,7 +4345,7 @@
                                    value="{{ submitted_gross if submitted_gross is not none else (roll.gross_weight if roll.gross_weight is not none else '') }}"
                                    {% if not row_is_open %}disabled hidden{% endif %}
                                    {% if not can_edit_rolls %}disabled{% endif %}>
-                            <div class="roll-row-error-slot field-error-slot" data-feedback-roll-id="{{ roll.id }}">
+                            <div class="roll-row-error-slot field-error-slot" data-feedback-roll-id="{{ roll.id }}"{% if not roll_errors %} hidden{% endif %}>
                               {% if roll_errors %}
                                 <div class="inline-error" role="alert">
                                   {% for message in roll_errors %}<p>{{ message }}</p>{% endfor %}
@@ -4167,35 +4505,69 @@
       </section>
     </div>
   {% endif %}
-  {% if selected_card and selected_card.status in ["running", "paused"] %}
+  {% if selected_card and selected_card_is_machine_focus and selected_card.status in ["running", "paused"] %}
     <div class="roll-change-overlay" id="roll-change-overlay" data-roll-change-overlay hidden aria-hidden="true">
       <section class="roll-change-dialog" role="dialog" aria-modal="true"
                aria-labelledby="roll-change-title" tabindex="-1" data-roll-change-dialog>
-        <h2 id="roll-change-title">Смяна на ролки</h2>
+        <div class="roll-change-dialog-intro">
+          <div class="roll-change-dialog-icon" aria-hidden="true">
+            <img src="{{ url_for('static', path='/images/shift-ui/clock.svg') }}" alt="">
+          </div>
+          <div class="roll-change-dialog-copy">
+            <h2 id="roll-change-title">Смяна на ролки</h2>
+            <p>Задайте началния час и интервала за общата смяна на всички ролки на машината.</p>
+          </div>
+          <button type="button" class="roll-change-dialog-close" aria-label="Затвори" data-roll-change-close>
+            <img src="{{ url_for('static', path='/images/shift-ui/x.svg') }}" alt="">
+          </button>
+        </div>
         <form data-roll-change-form novalidate>
-          <label>
-            <span>Предишна смяна / начален час</span>
-            <input type="datetime-local" step="60" data-roll-change-previous>
-            <span class="field-error-slot" data-roll-change-error-for="previous"></span>
-          </label>
-          <fieldset class="roll-change-interval">
-            <legend>Интервал</legend>
-            <label><span>Часове</span><input type="number" min="0" max="23" step="1" inputmode="numeric" data-roll-change-hours></label>
-            <label><span>Минути</span><input type="number" min="0" max="59" step="1" inputmode="numeric" data-roll-change-minutes></label>
-            <span class="field-error-slot" data-roll-change-error-for="hours"></span>
-            <span class="field-error-slot" data-roll-change-error-for="minutes"></span>
-          </fieldset>
-          <label>
-            <span>Следваща смяна</span>
-            <input type="datetime-local" step="60" data-roll-change-next>
-            <span class="field-error-slot" data-roll-change-error-for="next"></span>
-          </label>
-          <span class="field-error-slot" data-roll-change-error-for="form" role="alert"></span>
-          <div class="roll-change-editor-actions">
-            <button type="button" class="roll-change-clear" data-roll-change-clear>Изчисти</button>
-            <button type="button" data-roll-change-restart>Започни от сега</button>
-            <button type="button" data-roll-change-cancel>Отказ</button>
-            <button type="submit" class="action-primary">Запиши</button>
+          <section class="roll-change-editor-section roll-change-start-section">
+            <div class="roll-change-section-heading"><span class="roll-change-step">1</span><h3>Начало врътка</h3></div>
+            <input type="hidden" data-roll-change-previous>
+            <div class="roll-change-section-content has-start-action">
+              <label class="roll-floating-field"><span class="field-label">Дата</span><input type="date" aria-describedby="roll-change-error-previous" data-roll-change-previous-date></label>
+              <div class="roll-change-time-pair">
+                <label class="roll-floating-field"><span class="field-label">Час</span><input type="text" inputmode="numeric" pattern="[0-9]{1,2}" maxlength="2" autocomplete="off" aria-label="Начален час" aria-describedby="roll-change-error-previous" data-roll-change-previous-hour></label>
+                <span class="roll-change-clock-separator" aria-hidden="true">:</span>
+                <label class="roll-floating-field"><span class="field-label">Минути</span><input type="text" inputmode="numeric" pattern="[0-9]{1,2}" maxlength="2" autocomplete="off" aria-label="Начални минути" aria-describedby="roll-change-error-previous" data-roll-change-previous-minute></label>
+              </div>
+              <button type="button" class="roll-change-start-action" data-roll-change-restart><img src="{{ url_for('static', path='/images/shift-ui/clock.svg') }}" alt="">Използвай текущия час</button>
+            </div>
+            <span class="field-error-slot" id="roll-change-error-previous" data-roll-change-error-for="previous"></span>
+          </section>
+          <section class="roll-change-editor-section roll-change-interval-section">
+            <div class="roll-change-section-heading"><span class="roll-change-step">2</span><h3>Интервал</h3></div>
+            <p class="roll-change-interval-note">Напомняне на всеки <strong data-roll-change-interval-summary>0 ч. и 0 мин.</strong></p>
+            <div class="roll-change-section-content has-interval-time">
+              <div class="roll-change-time-pair">
+                <label class="roll-floating-field"><span class="field-label">Час</span><input type="text" inputmode="numeric" pattern="[0-9]{1,2}" maxlength="2" autocomplete="off" aria-label="Часове на интервала" aria-describedby="roll-change-error-hours roll-change-error-form" data-roll-change-hours><span class="field-error-slot" id="roll-change-error-hours" data-roll-change-error-for="hours"></span></label>
+                <span class="roll-change-clock-separator" aria-hidden="true">:</span>
+                <label class="roll-floating-field"><span class="field-label">Минути</span><input type="text" inputmode="numeric" pattern="[0-9]{1,2}" maxlength="2" autocomplete="off" aria-label="Минути на интервала" aria-describedby="roll-change-error-minutes roll-change-error-form" data-roll-change-minutes><span class="field-error-slot" id="roll-change-error-minutes" data-roll-change-error-for="minutes"></span></label>
+              </div>
+            </div>
+          </section>
+          <section class="roll-change-editor-section roll-change-expected-section">
+            <div class="roll-change-section-heading"><span class="roll-change-step">3</span><h3>Очаквана смяна на ролките</h3></div>
+            <p class="roll-change-helper">Изчислява се автоматично. Коригирайте часа само при прекъсване или забавяне.</p>
+            <input type="hidden" data-roll-change-next>
+            <div class="roll-change-section-content has-expected-time">
+              <label class="roll-floating-field"><span class="field-label">Дата</span><input type="date" aria-describedby="roll-change-error-next" data-roll-change-next-date></label>
+              <div class="roll-change-time-pair">
+                <label class="roll-floating-field"><span class="field-label">Час</span><input type="text" inputmode="numeric" pattern="[0-9]{1,2}" maxlength="2" autocomplete="off" aria-label="Очакван час" aria-describedby="roll-change-error-next" data-roll-change-next-hour></label>
+                <span class="roll-change-clock-separator" aria-hidden="true">:</span>
+                <label class="roll-floating-field"><span class="field-label">Минути</span><input type="text" inputmode="numeric" pattern="[0-9]{1,2}" maxlength="2" autocomplete="off" aria-label="Очаквани минути" aria-describedby="roll-change-error-next" data-roll-change-next-minute></label>
+              </div>
+            </div>
+            <span class="field-error-slot" id="roll-change-error-next" data-roll-change-error-for="next"></span>
+          </section>
+          <span class="field-error-slot" id="roll-change-error-form" data-roll-change-error-for="form" role="alert"></span>
+          <div class="roll-change-editor-footer">
+            <button type="button" class="roll-change-clear" data-roll-change-clear>Изключи брояча</button>
+            <div class="roll-change-confirm-actions">
+              <button type="button" data-roll-change-cancel>Отказ</button>
+              <button type="submit" class="roll-change-save">Запиши</button>
+            </div>
           </div>
         </form>
       </section>

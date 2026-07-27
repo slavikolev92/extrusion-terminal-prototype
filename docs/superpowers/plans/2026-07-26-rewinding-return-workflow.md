@@ -13,7 +13,7 @@
 - Treat [README.md](/home/sk/projects/extrusion-terminal/README.md) as authoritative and expand its extrusion-only lifecycle narrowly: this feature tracks an extrusion card awaiting returned rolls; it does not manage rewinding/slitting work.
 - Follow [AGENTS.md](/home/sk/projects/extrusion-terminal/AGENTS.md) and [v2-files/AGENTS.md](/home/sk/projects/extrusion-terminal/v2-files/AGENTS.md). Do not touch `data/extrusion_terminal.sqlite3`; tests and browser checks must use temporary databases.
 - Preserve the one-app, SQLite, server-rendered pilot architecture. Add no dependency, client framework, background service, user/permission system, Task 10 roll-change/countdown behavior, or Task 12 pallet/transportation lifecycle expansion.
-- Use [v2-files/TASK-11-REWINDING.md](/home/sk/projects/extrusion-terminal/v2-files/TASK-11-REWINDING.md) as the approved behavioral specification and [v2-files/prototypes/rewinding-roll-controls/prototype.html](/home/sk/projects/extrusion-terminal/v2-files/prototypes/rewinding-roll-controls/prototype.html) as the fixed visual reference. Do not regenerate or replace the prototype.
+- Use [v2-files/TASK-11-REWINDING.md](/home/sk/projects/extrusion-terminal/v2-files/TASK-11-REWINDING.md) as the approved behavioral specification. The standalone prototype was an implementation-time reference; its disposable source was removed after acceptance, and the accepted design is embodied in the terminal template and Task 11 automated/live verification.
 - Keep the rewinding count informational. It is either `NULL` or an integer from `1` through `999`; blank or zero clears it. It never has to match the number of rolls later returned.
 - A positive rewinding count permits `Приключи` from either `running` or `paused` without tare, pallet, or roll entries. Running closes its open timing segment; paused remains paused in timing history and gains no artificial segment.
 - Waiting cards are extrusion-ended and terminal-visible, but are not active, completed, archived, or printable. Their machine is free because status excludes them from active work; remaining active queue positions are normalized while the card's saved machine/sequence history remains unchanged, matching current completion behavior.
@@ -65,7 +65,6 @@
 - `tests/test_admin_card_detail_redesign.py`: waiting admin detail rendering/actions.
 - `tests/test_print_output.py`: waiting remains non-printable.
 - `tests/test_baseline.py`: overwrite re-import preservation for both new card fields.
-- `v2-files/prototypes/rewinding-roll-controls/`: accepted, read-only Task 11 visual reference and verifier.
 - `README.md`, `AGENTS.md`, `v2-files/PLAN.md`, and `v2-files/AGENTS.md`: confirmed scope, current behavior, task status, and migration register.
 
 ## Task 1: Make the Cards Schema Migration-Safe and Add M004
@@ -898,7 +897,7 @@ git commit -m "Add terminal rewinding queue controls"
 
 **Interfaces produced:** Accepted selected-card control hierarchy, aligned roll inputs, one-decimal read table, and one-row-at-a-time editor.
 
-**Interfaces consumed:** existing add/update/delete roll routes, Task 4 row-level pallet support, accepted prototype.
+**Interfaces consumed:** existing add/update/delete roll routes, Task 4 row-level pallet support, and the accepted Task 11 visual design.
 
 **Files:**
 
@@ -942,7 +941,7 @@ Keep form values sourced from the exact stored representation rather than the on
 
 - [ ] **Step 4: Rebuild only the real roll-panel hierarchy**
 
-Match the approved prototype within the real terminal card:
+Match the accepted visual design within the real terminal card:
 
 1. primary lifecycle controls at the top;
 2. secondary `Пренавиване` and inert `Смяна на ролка` controls beneath;
@@ -976,16 +975,12 @@ source .venv/bin/activate
 python -m pytest tests/test_terminal_v8_render.py tests/test_roll_entry.py tests/test_rewinding_workflow.py -q
 ```
 
-- [ ] **Step 8: Compare against the fixed prototype**
+- [ ] **Step 8: Review the accepted visual design in the real terminal**
 
-Run the existing prototype verifier unchanged:
-
-```bash
-PROTOTYPE_URL=http://127.0.0.1:8765/prototype.html \
-node v2-files/prototypes/rewinding-roll-controls/verify-prototype.mjs
-```
-
-Expected: `rewinding prototype checks passed`. This verifies the reference remains intact; it is not evidence that the live app is complete.
+Use the focused terminal tests and the guarded live-app verification to review
+the accepted roll-panel hierarchy. The standalone prototype was an
+implementation-time reference and its disposable source was removed after
+acceptance, so it is not a current verification dependency.
 
 - [ ] **Step 9: Review checkpoint**
 
@@ -996,7 +991,8 @@ git diff -- app/main.py app/templates/terminal.html tests/test_terminal_v8_rende
 git diff --check
 ```
 
-Compare the real roll panel side-by-side with the fixed prototype and confirm no unrelated terminal layout was replaced. If explicitly authorized:
+Compare the real roll panel with the accepted design and confirm no unrelated
+terminal layout was replaced. If explicitly authorized:
 
 ```bash
 git add app/main.py app/templates/terminal.html tests/test_terminal_v8_render.py tests/test_roll_entry.py
@@ -1260,7 +1256,7 @@ Record:
 - roll/default/material/timing correction rules;
 - pallet optionality and consistent warning behavior;
 - recovery through Produced Orders when the marker was forgotten;
-- UI strings and fixed prototype reference;
+- UI strings and accepted visual design;
 - M004 rebuild, transaction, rollback, and operational DB safety;
 - exact automated and Playwright verification commands and artifact directory.
 
@@ -1280,7 +1276,10 @@ In `v2-files/AGENTS.md`, append M004 to the migration register with:
 
 - [ ] **Step 3: Reconcile the approved Task 11 spec**
 
-Read `v2-files/TASK-11-REWINDING.md` against the implementation. Correct only factual drift discovered during implementation; do not silently alter approved product behavior. Preserve its reference to the accepted prototype and all previously approved unrelated roll-panel visual changes.
+Read `v2-files/TASK-11-REWINDING.md` against the implementation. Correct only
+factual drift discovered during implementation; do not silently alter approved
+product behavior. Preserve the accepted visual design and all previously
+approved unrelated roll-panel visual changes.
 
 - [ ] **Step 4: Run syntax/import checks and focused tests**
 
@@ -1319,21 +1318,21 @@ python -m pytest -q
 
 Expected: every test passes; the result must exceed the pre-feature baseline of `686` tests because Task 11 adds coverage.
 
-- [ ] **Step 6: Re-run the accepted reference and live-app browser checks**
+- [ ] **Step 6: Re-run the live-app browser checks**
 
 Run:
 
 ```bash
-PROTOTYPE_URL=http://127.0.0.1:8765/prototype.html \
-node v2-files/prototypes/rewinding-roll-controls/verify-prototype.mjs
-
 BASE_URL=http://127.0.0.1:8011 \
 FIXTURE_JSON=.test-runtime/rewinding-ui.json \
 ARTIFACT_DIR=artifacts/ui-checks/rewinding-return-workflow \
 node scripts/verify_rewinding_ui.mjs
 ```
 
-Expected: both commands exit zero. Capture the live-app output and inspect the latest screenshots before making a completion claim.
+Expected: the live-app command exits zero. Capture its output and inspect the
+latest screenshots before making a completion claim. The standalone prototype
+was an implementation-time reference and its disposable source was removed
+after acceptance.
 
 - [ ] **Step 7: Perform an adversarial data-integrity review**
 
@@ -1390,19 +1389,13 @@ git add \
   tests/test_admin_production_corrections.py tests/test_admin_card_detail_redesign.py tests/test_print_output.py \
   tests/test_baseline.py tests/test_shift_routes.py \
   tests/test_rewinding_ui_script_safety.py \
-  v2-files/PLAN.md v2-files/AGENTS.md v2-files/TASK-11-REWINDING.md \
-  v2-files/prototypes/rewinding-roll-controls/README.md \
-  v2-files/prototypes/rewinding-roll-controls/design-qa.md \
-  v2-files/prototypes/rewinding-roll-controls/example.JPG \
-  v2-files/prototypes/rewinding-roll-controls/generate-prototype.mjs \
-  v2-files/prototypes/rewinding-roll-controls/prototype.css \
-  v2-files/prototypes/rewinding-roll-controls/prototype.html \
-  v2-files/prototypes/rewinding-roll-controls/prototype.js \
-  v2-files/prototypes/rewinding-roll-controls/verify-prototype.mjs
+  v2-files/PLAN.md v2-files/AGENTS.md v2-files/TASK-11-REWINDING.md
 git commit -m "Implement rewinding return workflow"
 ```
 
-The accepted prototype directory is currently part of the uncommitted Task 11 design record. Include those exact files only in the final user-authorized Task 11 commit, after verifying they remain unchanged during implementation.
+The standalone prototype was an implementation-time reference. Its disposable
+source was removed after acceptance; do not add replacement prototype assets to
+the final user-authorized Task 11 commit.
 
 ## Completion Criteria
 
@@ -1416,5 +1409,5 @@ Task 11 is complete only when all of the following are true:
 - Pallet remains optional, and the existing mixed-pallet warning is consistent in all finish contexts.
 - Waiting cards remain excluded from print, archive, cancel, delete, start, pause, resume, and queue sequencing.
 - The real terminal matches the accepted control hierarchy and roll-table design at both required viewport sizes.
-- Focused tests, the complete pytest suite, prototype verification, live Playwright verification, syntax checks, and `git diff --check` all pass with recorded evidence.
+- Focused tests, the complete pytest suite, live Playwright verification, syntax checks, and `git diff --check` all pass with recorded evidence.
 - README, both AGENTS files, V2 plan/spec, and the implementation note agree with the shipped behavior.

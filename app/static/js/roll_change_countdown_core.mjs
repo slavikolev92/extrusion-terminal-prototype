@@ -63,10 +63,10 @@ export function reconcileCardStatus(schedule, status, nowMs) {
 }
 
 export function advanceSchedule(schedule, status, nowMs) {
-  const nextExpectedAtMs = schedule.nextExpectedAtMs + schedule.intervalMinutes * MINUTE_MS;
+  const nextExpectedAtMs = calculateNextExpected(nowMs, schedule.intervalMinutes);
   return {
     ...schedule,
-    previousChangeAtMs: schedule.nextExpectedAtMs,
+    previousChangeAtMs: nowMs,
     nextExpectedAtMs,
     observedStatus: status,
     frozenRemainingMs: status === "paused" ? Math.max(0, nextExpectedAtMs - nowMs) : null,
@@ -147,6 +147,19 @@ export function toLocalDateTimeInputValue(valueMs) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
+export function splitLocalDateTimeParts(valueMs) {
+  const [dateValue, timeValue] = toLocalDateTimeInputValue(valueMs).split("T");
+  const [hourValue, minuteValue] = timeValue.split(":");
+  return { dateValue, hourValue, minuteValue };
+}
+
+export function joinLocalDateTimeParts(dateValue, hourValue, minuteValue) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue ?? "")) return "";
+  if (!/^\d{1,2}$/.test(hourValue ?? "") || Number(hourValue) > 23) return "";
+  if (!/^\d{1,2}$/.test(minuteValue ?? "") || Number(minuteValue) > 59) return "";
+  return `${dateValue}T${String(hourValue).padStart(2, "0")}:${String(minuteValue).padStart(2, "0")}`;
+}
+
 export function formatNextExpected(nextExpectedAtMs, nowMs) {
   const expected = new Date(nextExpectedAtMs);
   const now = new Date(nowMs);
@@ -183,9 +196,9 @@ export function validateEditorValues(values, nowMs) {
   if (previousChangeAtMs === null) errors.previous = "Въведете валиден начален час.";
 
   const nextExpectedAtMs = parseOperatorLocalMinute(values.nextValue, nowMs);
-  if (nextExpectedAtMs === null) errors.next = "Въведете валиден час за следващата смяна.";
+  if (nextExpectedAtMs === null) errors.next = "Въведете валиден очакван час.";
   else if (previousChangeAtMs !== null && nextExpectedAtMs <= previousChangeAtMs) {
-    errors.next = "Следващата смяна трябва да е след предишната.";
+    errors.next = "Очакваният час трябва да е след началния.";
   }
 
   if (Object.keys(errors).length > 0) return { ok: false, errors };

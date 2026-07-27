@@ -26,6 +26,14 @@ function assertEqual(actual, expected, label) {
 }
 
 
+function assertTimestampBetween(actual, startedAt, endedAt, label) {
+  assert(
+    Number.isFinite(actual) && actual >= startedAt && actual <= endedAt,
+    `${label}: expected a timestamp from ${startedAt} through ${endedAt}, found ${actual}`,
+  );
+}
+
+
 function normalized(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
@@ -210,6 +218,21 @@ function localMinuteValue(timestamp) {
 }
 
 
+async function setDateTimeControl(page, prefix, timestamp) {
+  const [dateValue, timeValue] = localMinuteValue(timestamp).split("T");
+  const [hourValue, minuteValue] = timeValue.split(":");
+  await page.locator(`[data-roll-change-${prefix}-date]`).fill(dateValue);
+  await page.locator(`[data-roll-change-${prefix}-hour]`).fill(hourValue);
+  await page.locator(`[data-roll-change-${prefix}-minute]`).fill(minuteValue);
+}
+
+
+async function setIntervalControl(page, hoursValue, minutesValue) {
+  await page.locator("[data-roll-change-hours]").fill(String(hoursValue));
+  await page.locator("[data-roll-change-minutes]").fill(String(minutesValue));
+}
+
+
 async function readSchedule(page, machineId) {
   return page.evaluate((key) => {
     const raw = localStorage.getItem(key);
@@ -341,6 +364,87 @@ async function machineGeometry(page) {
 }
 
 
+function assertSameVerticalCenter(boxes, label) {
+  const centers = boxes.map((box) => box.top + box.height / 2);
+  const spread = Math.max(...centers) - Math.min(...centers);
+  assert(spread <= 1, `${label} are not vertically centered together (${spread}px spread).`);
+}
+
+
+async function assertShiftAndWaitingButtonWhitespace(page) {
+  const whitespace = await page.evaluate(() => {
+    const measure = (selector) => {
+      const button = document.querySelector(selector);
+      const buttonBox = button.getBoundingClientRect();
+      const children = Array.from(button.children)
+        .filter((child) => !child.hidden)
+        .map((child) => child.getBoundingClientRect());
+      return {
+        left: Math.min(...children.map((box) => box.left)) - buttonBox.left,
+        right: buttonBox.right - Math.max(...children.map((box) => box.right)),
+      };
+    };
+    return { queue: measure("#queue-open"), shift: measure("#shift-open") };
+  });
+  assert(Math.abs(whitespace.shift.left - whitespace.queue.left) <= 1, "Shift button left whitespace differs from Waiting Orders.");
+  assert(Math.abs(whitespace.shift.right - whitespace.queue.right) <= 1, "Shift button right whitespace differs from Waiting Orders.");
+}
+
+
+async function assertRollLedgerGeometry(page) {
+  const ledger = await page.evaluate(() => {
+    const head = document.querySelector(".roll-head");
+    const list = document.querySelector(".roll-list");
+    const row = list.querySelector(".roll-row[data-roll-id]");
+    const box = (element) => {
+      const value = element.getBoundingClientRect();
+      return { left: value.left, right: value.right };
+    };
+    return {
+      headerGutter: head.offsetWidth - head.clientWidth,
+      bodyGutter: list.offsetWidth - list.clientWidth,
+      headerCells: Array.from(head.querySelectorAll(":scope > div"), box),
+      bodyCells: Array.from(row.querySelectorAll(":scope > div"), box),
+    };
+  });
+  assertEqual(ledger.headerCells.length, ledger.bodyCells.length, "roll ledger column count");
+  assert(Math.abs(ledger.headerGutter - ledger.bodyGutter) <= 1, "Roll ledger scrollbar gutters differ.");
+  for (const [index, headerCell] of ledger.headerCells.entries()) {
+    const bodyCell = ledger.bodyCells[index];
+    assert(Math.abs(headerCell.left - bodyCell.left) <= 1, `Roll ledger column ${index + 1} left edge is misaligned.`);
+    assert(Math.abs(headerCell.right - bodyCell.right) <= 1, `Roll ledger column ${index + 1} right edge is misaligned.`);
+  }
+}
+
+
+async function assertRollValueVerticalCenters(page) {
+  const row = page.locator(".roll-row[data-roll-id]").first();
+  const displayBoxes = async () => row.locator("[data-roll-display]").evaluateAll((values) => values.map((value) => {
+    const box = value.getBoundingClientRect();
+    return { top: box.top, height: box.height };
+  }));
+  const initialErrorSlot = await row.locator("[data-feedback-roll-id]").evaluate((slot) => {
+    const box = slot.getBoundingClientRect();
+    return { display: getComputedStyle(slot).display, height: box.height };
+  });
+  assert(initialErrorSlot.display === "none" && initialErrorSlot.height === 0, "Empty gross validation slot reserves vertical space.");
+  assertSameVerticalCenter(await displayBoxes(), "Gross, tare, net, and pallet display values before editing");
+
+  await row.locator("[data-roll-edit-open]").click();
+  assertEqual(await row.getAttribute("data-roll-edit-open"), "true", "roll edit state");
+  const inputBoxes = await row.locator("[data-roll-correction-input]").evaluateAll((inputs) => inputs.map((input) => {
+    const box = input.getBoundingClientRect();
+    return { top: box.top, height: box.height };
+  }));
+  assertSameVerticalCenter(inputBoxes, "Gross, tare, and pallet correction inputs");
+
+  const rollId = await row.getAttribute("data-roll-id");
+  await page.locator(`[data-roll-actions-for="${rollId}"] [data-roll-row-cancel]`).click();
+  assertEqual(await row.getAttribute("data-roll-edit-open"), "false", "roll cancel state");
+  assertSameVerticalCenter(await displayBoxes(), "Gross, tare, net, and pallet display values after cancel");
+}
+
+
 async function assertLayoutAndInactiveState(page, viewport) {
   await removeSchedule(page, 1);
   const open = page.locator("[data-roll-change-open]");
@@ -399,11 +503,14 @@ async function assertLayoutAndInactiveState(page, viewport) {
   assert(lifecycleBoxes.every((box) => box.width === lifecycleBoxes[0].width && box.height === lifecycleBoxes[0].height), "Lifecycle controls do not retain equal dimensions.");
   assert(lifecycleBoxes.every((box) => box.width >= 140 && box.height >= 38), "Lifecycle controls lost their usable hit areas.");
   const topbarSpacing = await page.evaluate(() => {
-    const finish = document.querySelector("[data-lifecycle-slot='finish'] .action-button, button[data-lifecycle-slot='finish']").getBoundingClientRect();
-    const timer = document.querySelector("[data-roll-change-controls]").getBoundingClientRect();
-    return timer.left - finish.right;
+    const start = document.querySelector("[data-lifecycle-slot='start'] .action-button, button[data-lifecycle-slot='start']").getBoundingClientRect();
+    const rollChange = document.querySelector("[data-roll-change-controls]").getBoundingClientRect();
+    return start.left - rollChange.right;
   });
-  assert(topbarSpacing >= 12, `Timer group is not visibly separated (${topbarSpacing}px).`);
+  assert(topbarSpacing >= 12, `Roll-change group is not visibly separated (${topbarSpacing}px).`);
+  await assertShiftAndWaitingButtonWhitespace(page);
+  await assertRollLedgerGeometry(page);
+  await assertRollValueVerticalCenters(page);
   for (const [label, locator] of [["editor", open], ["quick", quick]]) {
     const box = await locator.boundingBox();
     assert(box && box.width >= 38 && box.height >= 38, `${label} control has an unusable hit area.`);
@@ -443,7 +550,7 @@ async function assertEditorAndScheduleMath(page, viewport) {
   await open.click();
   assertEqual(await rawSchedule(page, 1), validRaw, "editor-open storage bytes");
   assert(await overlay.isVisible(), "Editor did not open.");
-  assert(await page.evaluate(() => document.activeElement?.hasAttribute("data-roll-change-previous")), "Editor did not focus its first field.");
+  assert(await page.evaluate(() => document.activeElement?.hasAttribute("data-roll-change-previous-date")), "Editor did not focus its first field.");
   const modalGeometry = await page.locator("[data-roll-change-dialog]").evaluate((dialog) => {
     const box = dialog.getBoundingClientRect();
     return {
@@ -454,14 +561,92 @@ async function assertEditorAndScheduleMath(page, viewport) {
   });
   assert(modalGeometry.centeredX <= 2 && modalGeometry.centeredY <= 2 && modalGeometry.contained, "Editor modal is not centered and contained.");
 
-  await page.locator("[data-roll-change-next]").focus();
+  const editorStructure = await page.locator("[data-roll-change-dialog]").evaluate((dialog) => {
+    const sections = Array.from(dialog.querySelectorAll(".roll-change-editor-section"));
+    const fields = Array.from(dialog.querySelectorAll('[data-roll-change-previous-hour], [data-roll-change-previous-minute], [data-roll-change-hours], [data-roll-change-minutes], [data-roll-change-next-hour], [data-roll-change-next-minute]'));
+    const start = dialog.querySelector(".roll-change-start-section");
+    const interval = dialog.querySelector(".roll-change-interval-section");
+    const clear = dialog.querySelector("[data-roll-change-clear]")?.getBoundingClientRect();
+    const cancel = dialog.querySelector("[data-roll-change-cancel]")?.getBoundingClientRect();
+    const save = dialog.querySelector("button[type='submit']")?.getBoundingClientRect();
+    const restart = dialog.querySelector("[data-roll-change-restart]");
+    return {
+      sectionCount: sections.length,
+      sectionsShareStyle: sections.every((section) => {
+        const style = getComputedStyle(section);
+        return style.display === "grid" && style.borderTopStyle === "solid";
+      }),
+      allTypedInputs: fields.length === 6 && fields.every((field) => (
+        field.tagName === "INPUT"
+        && field.type === "text"
+        && field.inputMode === "numeric"
+        && field.maxLength === 2
+      )),
+      alignedSectionLefts: start && interval
+        ? Math.abs(start.getBoundingClientRect().left - interval.getBoundingClientRect().left)
+        : Number.POSITIVE_INFINITY,
+      compactActions: clear && cancel && save
+        ? Math.max(clear.height, cancel.height, save.height) <= 52
+        : false,
+      equalConfirmActions: cancel && save
+        ? Math.abs(cancel.width - save.width) <= 1 && Math.abs(cancel.height - save.height) <= 1
+        : false,
+      restartContentFits: restart
+        ? restart.scrollWidth <= restart.clientWidth && restart.scrollHeight <= restart.clientHeight
+        : false,
+    };
+  });
+  assertEqual(editorStructure.sectionCount, 3, "numbered editor sections");
+  assert(editorStructure.sectionsShareStyle, "Editor sections do not share one visual treatment.");
+  assert(editorStructure.allTypedInputs, "Hour/minute controls are not direct two-digit numeric text inputs.");
+  assert(editorStructure.alignedSectionLefts <= 1, "Start and interval sections are not vertically aligned.");
+  assert(editorStructure.compactActions, "Editor footer actions are still oversized.");
+  assert(editorStructure.equalConfirmActions, "Cancel and save actions are not equal in size.");
+  assert(editorStructure.restartContentFits, "Current-time action content is clipped or overflows its button.");
+
+  const editorTarget = screenshotPath(`editor-${viewport.width}x${viewport.height}.png`);
+  await page.screenshot({ path: editorTarget, fullPage: true });
+  const editorDialogTarget = screenshotPath(`editor-dialog-${viewport.width}x${viewport.height}.png`);
+  await page.locator("[data-roll-change-dialog]").screenshot({ path: editorDialogTarget });
+
+  const dragFields = [
+    "[data-roll-change-previous-date]",
+    "[data-roll-change-previous-hour]",
+    "[data-roll-change-previous-minute]",
+    "[data-roll-change-hours]",
+    "[data-roll-change-minutes]",
+    "[data-roll-change-next-hour]",
+    "[data-roll-change-next-minute]",
+  ];
+  for (const selector of dragFields) {
+    const fieldBox = await page.locator(selector).boundingBox();
+    assert(fieldBox, `${selector} has no visible geometry.`);
+    await page.mouse.move(fieldBox.x + fieldBox.width / 2, fieldBox.y + fieldBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(8, Math.round(viewport.height / 2), { steps: 8 });
+    await page.mouse.up();
+    assert(await overlay.isVisible(), `A drag beginning in ${selector} closed the editor.`);
+  }
+  const destinationFieldBox = await page.locator("[data-roll-change-previous-hour]").boundingBox();
+  assert(destinationFieldBox, "Start-hour field has no visible geometry for reverse drag test.");
+  await page.mouse.move(2, 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    destinationFieldBox.x + destinationFieldBox.width / 2,
+    destinationFieldBox.y + destinationFieldBox.height / 2,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  assert(await overlay.isVisible(), "A drag beginning on the backdrop and ending in a field closed the editor.");
+  passed(`${viewport.width}x${viewport.height}: field drags cannot dismiss the editor; deliberate backdrop click still can`);
+
+  await page.locator("[data-roll-change-next-minute]").focus();
   await page.locator("[data-roll-change-form] button[type='submit']").press("Tab");
-  assert(await page.evaluate(() => document.activeElement?.hasAttribute("data-roll-change-previous")), "Editor focus escaped after the last action.");
+  assert(await page.evaluate(() => document.activeElement?.hasAttribute("data-roll-change-close")), "Editor focus escaped after the last action.");
   await page.keyboard.press("Shift+Tab");
   assert(await page.evaluate(() => document.activeElement?.matches("[data-roll-change-form] button[type='submit']")), "Editor reverse focus trap failed.");
 
-  await page.locator("[data-roll-change-hours]").fill("0");
-  await page.locator("[data-roll-change-minutes]").fill("0");
+  await setIntervalControl(page, 0, 0);
   await page.locator("[data-roll-change-form] button[type='submit']").click();
   assert(await overlay.isVisible(), "Zero interval closed the editor.");
   assertEqual(normalized(await page.locator('[data-roll-change-error-for="form"]').textContent()), "Изберете интервал поне 1 минута.", "zero interval error");
@@ -471,28 +656,42 @@ async function assertEditorAndScheduleMath(page, viewport) {
     await page.screenshot({ path: target, fullPage: true });
   }
 
+  await page.locator("[data-roll-change-hours]").fill("5");
+  await page.locator("[data-roll-change-hours]").press("Tab");
+  assertEqual(await page.locator("[data-roll-change-hours]").inputValue(), "05", "single-digit interval hour normalization");
+  assertEqual(normalized(await page.locator("[data-roll-change-interval-summary]").textContent()), "5 ч. и 0 мин.", "typed interval summary");
   await page.locator("[data-roll-change-hours]").fill("24");
-  await page.locator("[data-roll-change-minutes]").fill("30");
   await page.locator("[data-roll-change-form] button[type='submit']").click();
-  assertEqual(normalized(await page.locator('[data-roll-change-error-for="hours"]').textContent()), "Часовете трябва да са цяло число от 0 до 23.", "hours bounds error");
+  assertEqual(normalized(await page.locator('[data-roll-change-error-for="hours"]').textContent()), "Часовете трябва да са цяло число от 0 до 23.", "typed hour bound");
+  assertEqual(await page.locator("[data-roll-change-hours]").getAttribute("aria-invalid"), "true", "hour aria-invalid state");
   await page.locator("[data-roll-change-hours]").fill("0");
   await page.locator("[data-roll-change-minutes]").fill("60");
   await page.locator("[data-roll-change-form] button[type='submit']").click();
-  assertEqual(normalized(await page.locator('[data-roll-change-error-for="minutes"]').textContent()), "Минутите трябва да са цяло число от 0 до 59.", "minutes bounds error");
+  assertEqual(normalized(await page.locator('[data-roll-change-error-for="minutes"]').textContent()), "Минутите трябва да са цяло число от 0 до 59.", "typed minute bound");
+
+  for (const malformedValue of ["-1", "2x", " 1"]) {
+    await page.locator("[data-roll-change-hours]").focus();
+    await page.locator("[data-roll-change-hours]").press("Control+A");
+    await page.keyboard.insertText(malformedValue);
+    await page.locator("[data-roll-change-minutes]").fill("00");
+    await page.locator("[data-roll-change-form] button[type='submit']").click();
+    assertEqual(await page.locator("[data-roll-change-hours]").inputValue(), malformedValue, `malformed hour preserved: ${JSON.stringify(malformedValue)}`);
+    assertEqual(normalized(await page.locator('[data-roll-change-error-for="hours"]').textContent()), "Часовете трябва да са цяло число от 0 до 23.", `malformed hour rejected: ${JSON.stringify(malformedValue)}`);
+    assertEqual(await rawSchedule(page, 1), validRaw, `malformed hour preserved storage: ${JSON.stringify(malformedValue)}`);
+  }
 
   const minute = Math.floor(Date.now() / 60_000) * 60_000;
   const previous = minute - 60 * 60_000;
-  await page.locator("[data-roll-change-previous]").fill(localMinuteValue(previous));
-  await page.locator("[data-roll-change-hours]").fill("0");
-  await page.locator("[data-roll-change-minutes]").fill("30");
+  await setDateTimeControl(page, "previous", previous);
+  await setIntervalControl(page, 0, 30);
   assertEqual(await page.locator("[data-roll-change-next]").inputValue(), localMinuteValue(previous + 30 * 60_000), "previous/interval draft recalculation");
-  await page.locator("[data-roll-change-next]").fill(localMinuteValue(previous));
+  await setDateTimeControl(page, "next", previous);
   await page.locator("[data-roll-change-form] button[type='submit']").click();
-  assertEqual(normalized(await page.locator('[data-roll-change-error-for="next"]').textContent()), "Следващата смяна трябва да е след предишната.", "reversed next-time error");
+  assertEqual(normalized(await page.locator('[data-roll-change-error-for="next"]').textContent()), "Очакваният час трябва да е след началния.", "reversed next-time error");
   assertEqual(await rawSchedule(page, 1), validRaw, "reversed next preserved record");
 
   const directNext = minute - 10 * 60_000;
-  await page.locator("[data-roll-change-next]").fill(localMinuteValue(directNext));
+  await setDateTimeControl(page, "next", directNext);
   await page.locator("[data-roll-change-form] button[type='submit']").click();
   assert(await overlay.isHidden(), "Valid direct next-time save did not close.");
   const directSaved = await readSchedule(page, 1);
@@ -500,14 +699,18 @@ async function assertEditorAndScheduleMath(page, viewport) {
   assertEqual(directSaved.intervalMinutes, 30, "direct save interval");
   assertEqual(directSaved.nextExpectedAtMs, directNext, "direct next-time anchor");
 
+  const lateClickStarted = Date.now();
   await page.locator("[data-roll-change-advance]").click();
+  const lateClickEnded = Date.now();
   const late = await readSchedule(page, 1);
-  assertEqual(late.previousChangeAtMs, directNext, "late acknowledgement previous anchor");
-  assertEqual(late.nextExpectedAtMs, directNext + 30 * 60_000, "late acknowledgement next anchor");
+  assertTimestampBetween(late.previousChangeAtMs, lateClickStarted, lateClickEnded, "late acknowledgement click-time anchor");
+  assertEqual(late.nextExpectedAtMs - late.previousChangeAtMs, 30 * 60_000, "late acknowledgement exact interval");
+  const earlyClickStarted = Date.now();
   await page.locator("[data-roll-change-advance]").click();
+  const earlyClickEnded = Date.now();
   const early = await readSchedule(page, 1);
-  assertEqual(early.previousChangeAtMs, late.nextExpectedAtMs, "early acknowledgement previous anchor");
-  assertEqual(early.nextExpectedAtMs, late.nextExpectedAtMs + 30 * 60_000, "early acknowledgement next anchor");
+  assertTimestampBetween(early.previousChangeAtMs, earlyClickStarted, earlyClickEnded, "early acknowledgement click-time anchor");
+  assertEqual(early.nextExpectedAtMs - early.previousChangeAtMs, 30 * 60_000, "early acknowledgement exact interval");
 
   for (const closeMethod of ["cancel", "escape", "backdrop"]) {
     const before = await rawSchedule(page, 1);
@@ -522,12 +725,33 @@ async function assertEditorAndScheduleMath(page, viewport) {
 
   const restartBefore = await rawSchedule(page, 1);
   await open.click();
+  await page.locator("[data-roll-change-hours]").fill("24");
+  await page.locator("[data-roll-change-form] button[type='submit']").click();
+  const invalidRestartError = normalized(await page.locator('[data-roll-change-error-for="hours"]').textContent());
+  const invalidRestartAria = await page.locator("[data-roll-change-hours]").getAttribute("aria-invalid");
+  assertEqual(invalidRestartError, "Часовете трябва да са цяло число от 0 до 23.", "invalid interval precondition for current-time action");
+  assertEqual(invalidRestartAria, "true", "invalid interval aria precondition for current-time action");
+  const invalidRestartNext = await page.locator("[data-roll-change-next]").inputValue();
+  const invalidRestartStarted = Date.now();
+  await page.locator("[data-roll-change-restart]").click();
+  const invalidRestartPrevious = await page.locator("[data-roll-change-previous]").inputValue();
+  assert(
+    [localMinuteValue(invalidRestartStarted), localMinuteValue(Date.now())].includes(invalidRestartPrevious),
+    "Current-time action did not set the start to the current minute with an invalid interval.",
+  );
+  assertEqual(await page.locator("[data-roll-change-next]").inputValue(), invalidRestartNext, "current-time action preserved expected timestamp");
+  assertEqual(await page.locator("[data-roll-change-hours]").inputValue(), "24", "current-time action preserved interval input");
+  assertEqual(normalized(await page.locator('[data-roll-change-error-for="hours"]').textContent()), invalidRestartError, "current-time action preserved interval error");
+  assertEqual(await page.locator("[data-roll-change-hours]").getAttribute("aria-invalid"), invalidRestartAria, "current-time action preserved interval aria state");
+  assertEqual(await rawSchedule(page, 1), restartBefore, "current-time action preserved storage");
+  await page.locator("[data-roll-change-cancel]").click();
+  await open.click();
+  const restartNextBefore = await page.locator("[data-roll-change-next]").inputValue();
   const restartStarted = Date.now();
   await page.locator("[data-roll-change-restart]").click();
   const restartPrevious = await page.locator("[data-roll-change-previous]").inputValue();
   assert([localMinuteValue(restartStarted), localMinuteValue(Date.now())].includes(restartPrevious), "Restart did not use the current minute.");
-  const restartPreviousMs = new Date(restartPrevious).getTime();
-  assertEqual(await page.locator("[data-roll-change-next]").inputValue(), localMinuteValue(restartPreviousMs + early.intervalMinutes * 60_000), "restart draft next timestamp");
+  assertEqual(await page.locator("[data-roll-change-next]").inputValue(), restartNextBefore, "current-time action left expected timestamp unchanged");
   await page.locator("[data-roll-change-cancel]").click();
   assertEqual(await rawSchedule(page, 1), restartBefore, "restart then cancel storage bytes");
 
@@ -539,13 +763,20 @@ async function assertEditorAndScheduleMath(page, viewport) {
   assert(await page.locator("[data-roll-change-advance]").isHidden(), "Clear left quick action visible.");
   assert(await page.locator('[data-machine-id="1"] [data-roll-change-machine-timer]').isHidden(), "Clear left machine timer visible.");
 
+  const inactiveOpenedAt = Date.now();
   await open.click();
+  const inactivePrevious = await page.locator("[data-roll-change-previous]").inputValue();
+  assert(
+    [localMinuteValue(inactiveOpenedAt), localMinuteValue(Date.now())].includes(inactivePrevious),
+    "Inactive editor did not default the start date and time to now.",
+  );
+  assertEqual(await page.locator("[data-roll-change-hours]").inputValue(), "00", "inactive interval hour default");
+  assertEqual(await page.locator("[data-roll-change-minutes]").inputValue(), "00", "inactive interval minute default");
   const rehydratePrevious = minute - 5 * 60_000;
   const rehydrateNext = minute + 25 * 60_000;
-  await page.locator("[data-roll-change-previous]").fill(localMinuteValue(rehydratePrevious));
-  await page.locator("[data-roll-change-hours]").fill("0");
-  await page.locator("[data-roll-change-minutes]").fill("30");
-  await page.locator("[data-roll-change-next]").fill(localMinuteValue(rehydrateNext));
+  await setDateTimeControl(page, "previous", rehydratePrevious);
+  await setIntervalControl(page, 0, 30);
+  await setDateTimeControl(page, "next", rehydrateNext);
   await page.locator("[data-roll-change-form] button[type='submit']").click();
   const rehydrateRaw = await rawSchedule(page, 1);
   await page.reload({ waitUntil: "networkidle" });
@@ -575,23 +806,27 @@ async function assertStorageEventsDueAndCorrection(context, page, mutationReques
   await page.waitForFunction(({ key, expected }) => localStorage.getItem(key) === JSON.stringify(expected), { key: storageKey(1), expected: replacement });
   assert(await page.locator("[data-roll-change-advance]").isVisible(), "Native storage save did not update peer UI.");
 
+  const crossTabClickStarted = Date.now();
   await page.locator("[data-roll-change-advance]").click();
+  const crossTabClickEnded = Date.now();
   const acknowledged = await readSchedule(page, 1);
   await peer.waitForFunction(({ key, expected }) => localStorage.getItem(key) === JSON.stringify(expected), { key: storageKey(1), expected: acknowledged });
-  assertEqual(acknowledged.previousChangeAtMs, replacement.nextExpectedAtMs, "cross-tab acknowledgement previous");
-  assertEqual(acknowledged.nextExpectedAtMs, replacement.nextExpectedAtMs + 30 * 60_000, "cross-tab acknowledgement next");
+  assertTimestampBetween(acknowledged.previousChangeAtMs, crossTabClickStarted, crossTabClickEnded, "cross-tab acknowledgement click-time anchor");
+  assertEqual(acknowledged.nextExpectedAtMs - acknowledged.previousChangeAtMs, 30 * 60_000, "cross-tab acknowledgement exact interval");
 
   await page.locator("[data-roll-change-open]").click();
   const correctedNext = Math.floor((Date.now() + 12 * 60_000) / 60_000) * 60_000;
-  await page.locator("[data-roll-change-next]").fill(localMinuteValue(correctedNext));
+  await setDateTimeControl(page, "next", correctedNext);
   await page.locator("[data-roll-change-form] button[type='submit']").click();
   const corrected = await readSchedule(page, 1);
   assertEqual(corrected.nextExpectedAtMs, correctedNext, "corrected direct next anchor");
   await peer.waitForFunction(({ key, expected }) => localStorage.getItem(key) === JSON.stringify(expected), { key: storageKey(1), expected: corrected });
+  const correctionClickStarted = Date.now();
   await page.locator("[data-roll-change-advance]").click();
+  const correctionClickEnded = Date.now();
   const afterCorrection = await readSchedule(page, 1);
-  assertEqual(afterCorrection.previousChangeAtMs, correctedNext, "corrected acknowledgement previous");
-  assertEqual(afterCorrection.nextExpectedAtMs, correctedNext + corrected.intervalMinutes * 60_000, "corrected acknowledgement next");
+  assertTimestampBetween(afterCorrection.previousChangeAtMs, correctionClickStarted, correctionClickEnded, "corrected acknowledgement click-time anchor");
+  assertEqual(afterCorrection.nextExpectedAtMs - afterCorrection.previousChangeAtMs, corrected.intervalMinutes * 60_000, "corrected acknowledgement exact interval");
 
   const due = schedule({
     machineId: 1,
@@ -783,10 +1018,13 @@ async function assertPauseResumeLifecycle(page, viewport) {
 
   await submitFormAndWait(page, 'form[action$="/timing/pause"]');
   const beforePausedAdvance = await readSchedule(page, 2);
+  const pausedClickStarted = Date.now();
   await page.locator("[data-roll-change-advance]").click();
+  const pausedClickEnded = Date.now();
   const afterPausedAdvance = await readSchedule(page, 2);
-  assertEqual(afterPausedAdvance.previousChangeAtMs, beforePausedAdvance.nextExpectedAtMs, "paused acknowledgement previous");
-  assertEqual(afterPausedAdvance.nextExpectedAtMs, beforePausedAdvance.nextExpectedAtMs + beforePausedAdvance.intervalMinutes * 60_000, "paused acknowledgement next");
+  assertTimestampBetween(afterPausedAdvance.previousChangeAtMs, pausedClickStarted, pausedClickEnded, "paused acknowledgement click-time anchor");
+  assertEqual(afterPausedAdvance.nextExpectedAtMs - afterPausedAdvance.previousChangeAtMs, beforePausedAdvance.intervalMinutes * 60_000, "paused acknowledgement exact interval");
+  assertEqual(afterPausedAdvance.frozenRemainingMs, beforePausedAdvance.intervalMinutes * 60_000, "paused acknowledgement frozen interval");
   assertEqual(afterPausedAdvance.pauseNeedsResolution, false, "paused acknowledgement resolution");
   assert(await page.locator('[data-machine-id="2"] [data-roll-change-machine-timer]').evaluate((element) => element.classList.contains("paused")), "Acknowledged paused timer lost paused styling.");
   assert(await page.locator("[data-roll-change-open]").evaluate((element) => element.classList.contains("paused")), "Selected acknowledged paused timer lost paused styling.");
@@ -800,10 +1038,9 @@ async function assertPauseResumeLifecycle(page, viewport) {
   });
   assertEqual((await readSchedule(page, 2)).pauseNeedsResolution, true, "paused editor unresolved precondition");
   await page.locator("[data-roll-change-open]").click();
-  await page.locator("[data-roll-change-previous]").fill(localMinuteValue(editorMinute - 5 * 60_000));
-  await page.locator("[data-roll-change-hours]").fill("0");
-  await page.locator("[data-roll-change-minutes]").fill("10");
-  await page.locator("[data-roll-change-next]").fill(localMinuteValue(editorMinute + 5 * 60_000));
+  await setDateTimeControl(page, "previous", editorMinute - 5 * 60_000);
+  await setIntervalControl(page, 0, 10);
+  await setDateTimeControl(page, "next", editorMinute + 5 * 60_000);
   await page.locator("[data-roll-change-form] button[type='submit']").click();
   const editorResolved = await readSchedule(page, 2);
   assertEqual(editorResolved.pauseNeedsResolution, false, "paused editor save resolution");
@@ -940,10 +1177,9 @@ async function assertTwoTabLifecycleAndReplacementStorage(context, page, mutatio
 
   await stale.locator("[data-roll-change-open]").click();
   const staleMinute = Math.floor(Date.now() / 60_000) * 60_000;
-  await stale.locator("[data-roll-change-previous]").fill(localMinuteValue(staleMinute - 5 * 60_000));
-  await stale.locator("[data-roll-change-hours]").fill("0");
-  await stale.locator("[data-roll-change-minutes]").fill("30");
-  await stale.locator("[data-roll-change-next]").fill(localMinuteValue(staleMinute + 25 * 60_000));
+  await setDateTimeControl(stale, "previous", staleMinute - 5 * 60_000);
+  await setIntervalControl(stale, 0, 30);
+  await setDateTimeControl(stale, "next", staleMinute + 25 * 60_000);
   await stale.locator("[data-roll-change-form] button[type='submit']").click();
   await assertStableSchedule(page, 1, nextOrder, "stale old-card editor save");
 

@@ -11,6 +11,7 @@ import {
   decodeSchedule,
   formatNextExpected,
   formatRemaining,
+  joinLocalDateTimeParts,
   loadSchedule,
   parseIntervalMinutes,
   parseOperatorLocalMinute,
@@ -18,6 +19,7 @@ import {
   reconcileCardStatus,
   saveSchedule,
   storageKey,
+  splitLocalDateTimeParts,
   toLocalDateTimeInputValue,
   validateEditorValues,
 } from "../../app/static/js/roll_change_countdown_core.mjs";
@@ -53,20 +55,36 @@ test("initial schedule calculation crosses midnight with absolute local time", (
   assert.equal(calculateNextExpected(localAt(2026, 7, 27, 23, 30), 120), localAt(2026, 7, 28, 1, 30));
 });
 
-test("early, on-time, and late acknowledgement all use the same anchor", () => {
+test("stable date, hour, and minute controls round-trip one local minute", () => {
+  assert.deepEqual(splitLocalDateTimeParts(localAt(2026, 7, 27, 4, 5)), {
+    dateValue: "2026-07-27",
+    hourValue: "04",
+    minuteValue: "05",
+  });
+  assert.equal(joinLocalDateTimeParts("2026-07-27", "04", "05"), "2026-07-27T04:05");
+  assert.equal(joinLocalDateTimeParts("", "04", "05"), "");
+  assert.equal(joinLocalDateTimeParts("2026-07-27", "24", "05"), "");
+});
+
+test("early, on-time, and late acknowledgement restart from the click time", () => {
   for (const clickedAt of [
     localAt(2026, 7, 27, 13, 50),
     localAt(2026, 7, 27, 14, 0),
     localAt(2026, 7, 27, 14, 20),
   ]) {
-    assert.equal(advanceSchedule(runningSchedule(), "running", clickedAt).nextExpectedAtMs, localAt(2026, 7, 27, 16, 0));
+    const advanced = advanceSchedule(runningSchedule(), "running", clickedAt);
+    assert.equal(advanced.previousChangeAtMs, clickedAt);
+    assert.equal(advanced.nextExpectedAtMs, clickedAt + 120 * minute);
   }
 });
 
-test("late acknowledgement advances from expected time exactly once", () => {
-  const advanced = advanceSchedule(runningSchedule(), "running", localAt(2026, 7, 27, 14, 20));
-  assert.equal(advanced.previousChangeAtMs, localAt(2026, 7, 27, 14, 0));
-  assert.equal(advanced.nextExpectedAtMs, localAt(2026, 7, 27, 16, 0));
+test("repeated acknowledgement never produces more than one interval", () => {
+  const firstClick = localAt(2026, 7, 27, 14, 20);
+  const secondClick = localAt(2026, 7, 27, 14, 21);
+  const first = advanceSchedule(runningSchedule(), "running", firstClick);
+  const second = advanceSchedule(first, "running", secondClick);
+  assert.equal(second.previousChangeAtMs, secondClick);
+  assert.equal(second.nextExpectedAtMs - secondClick, 120 * minute);
 });
 
 test("warning boundaries and rounded display use exact milliseconds", () => {
@@ -95,7 +113,8 @@ test("pause, unresolved resume, and acknowledgement preserve the approved state 
   assert.equal(countdownView(resumed, "running", pausedAt + 90 * minute).tone, "resync");
 
   const resolved = advanceSchedule(resumed, "running", pausedAt + 90 * minute);
-  assert.equal(resolved.nextExpectedAtMs, localAt(2026, 7, 27, 16, 0));
+  assert.equal(resolved.previousChangeAtMs, pausedAt + 90 * minute);
+  assert.equal(resolved.nextExpectedAtMs, pausedAt + 210 * minute);
   assert.equal(resolved.pauseNeedsResolution, false);
   assert.equal(resolved.frozenRemainingMs, null);
 });
@@ -109,13 +128,13 @@ test("paused due suppresses red but resumed unresolved due restores red", () => 
   assert.equal(countdownView(resumed, "running", schedule.nextExpectedAtMs + 20 * minute).tone, "urgent");
 });
 
-test("manual next override becomes the following acknowledgement anchor", () => {
+test("acknowledgement replaces a manual next-time override with click time plus interval", () => {
   const values = validateEditorValues({
     previousValue: "2026-07-27T14:00", hoursValue: "2", minutesValue: "0", nextValue: "2026-07-27T16:30",
   }, localAt(2026, 7, 27, 14, 20));
   assert.equal(values.ok, true);
   const schedule = buildSchedule({ machineId: 2, cardId: 22, ...values.value, status: "running", nowMs: localAt(2026, 7, 27, 14, 20) });
-  assert.equal(advanceSchedule(schedule, "running", localAt(2026, 7, 27, 16, 50)).nextExpectedAtMs, localAt(2026, 7, 27, 18, 30));
+  assert.equal(advanceSchedule(schedule, "running", localAt(2026, 7, 27, 16, 50)).nextExpectedAtMs, localAt(2026, 7, 27, 18, 50));
 });
 
 test("time-only values resolve to the most recent non-future local occurrence", () => {
@@ -127,6 +146,11 @@ test("time-only values resolve to the most recent non-future local occurrence", 
 test("local input and labels preserve local calendar boundaries", () => {
   const midnight = localAt(2026, 7, 28, 0, 5);
   assert.equal(toLocalDateTimeInputValue(midnight), "2026-07-28T00:05");
+  assert.equal(joinLocalDateTimeParts("2026-07-28", "0", "5"), "2026-07-28T00:05");
+  assert.equal(joinLocalDateTimeParts("2026-07-28", "23", "59"), "2026-07-28T23:59");
+  assert.equal(joinLocalDateTimeParts("2026-07-28", "24", "00"), "");
+  assert.equal(joinLocalDateTimeParts("2026-07-28", "12", "60"), "");
+  assert.equal(joinLocalDateTimeParts("2026-07-28", "1a", "05"), "");
   assert.equal(formatNextExpected(localAt(2026, 7, 27, 23, 55), midnight), "27.07 23:55");
   assert.equal(formatNextExpected(localAt(2026, 7, 28, 1, 30), midnight), "01:30");
 });
@@ -138,14 +162,16 @@ test("editor rejects interval bounds, zero combined interval, impossible times, 
   assert.equal(parseOperatorLocalMinute("2026-02-30T12:00", localAt(2026, 2, 1, 0, 0)), null);
   assert.deepEqual(
     validateEditorValues({ previousValue: "2026-07-27T14:00", hoursValue: "2", minutesValue: "0", nextValue: "2026-07-27T14:00" }, localAt(2026, 7, 27, 14, 0)),
-    { ok: false, errors: { next: "Следващата смяна трябва да е след предишната." } },
+    { ok: false, errors: { next: "Очакваният час трябва да е след началния." } },
   );
 });
 
 test("paused acknowledgement retains a fresh frozen countdown and editor replacement resets pause resolution", () => {
   const paused = reconcileCardStatus(runningSchedule(), "paused", localAt(2026, 7, 27, 13, 50));
   const advanced = advanceSchedule(paused, "paused", localAt(2026, 7, 27, 14, 5));
-  assert.equal(advanced.frozenRemainingMs, 115 * minute);
+  assert.equal(advanced.previousChangeAtMs, localAt(2026, 7, 27, 14, 5));
+  assert.equal(advanced.nextExpectedAtMs, localAt(2026, 7, 27, 16, 5));
+  assert.equal(advanced.frozenRemainingMs, 120 * minute);
   assert.equal(advanced.pauseNeedsResolution, false);
   const replacement = buildSchedule({
     machineId: 2, cardId: 22, previousChangeAtMs: localAt(2026, 7, 27, 13, 0), intervalMinutes: 120,

@@ -13,7 +13,7 @@
 - [README.md](../../../README.md), [AGENTS.md](../../../AGENTS.md), and [v2-files/AGENTS.md](../../../v2-files/AGENTS.md) govern the implementation. Do not mutate `data/extrusion_terminal.sqlite3`; every automated and browser test uses a temporary database under `.test-runtime/`.
 - [v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md](../../../v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md) is the approved behavioral contract. This plan may make implementation details explicit but may not expand the feature.
 - There is one optional schedule per machine's current card and one schedule represents every synchronized winding lane on that machine. Do not add per-roll, per-lane, per-pallet, or per-spindle countdowns.
-- The frequent acknowledgement always advances exactly one interval from the current expected change, never from click time and never by enough intervals to catch up automatically.
+- The frequent acknowledgement uses its click time as the new previous/start anchor and sets the next expected time to exactly one interval after that click; it never jumps by multiple intervals to catch up automatically.
 - Track only `running` and `paused` cards. Starting a card does not create a schedule. A pending, awaiting-rewinding, completed, archived, cancelled, replaced, or moved card clears its former schedule.
 - Pausing freezes the displayed duration. Paused timers are yellow, including `00:00`; unresolved timers remain frozen after resume until acknowledgement or a valid editor save. A resumed unresolved positive duration stays yellow and a resumed unresolved zero duration is red.
 - Warning boundaries use exact milliseconds: more than `05:00` is normal, `05:00` through `01:01` is yellow, and `01:00` through due is red. A positive partial minute rounds up for display; overdue values clamp to `00:00`.
@@ -177,7 +177,7 @@ test("initial schedule calculation crosses midnight with absolute local time", (
   );
 });
 
-test("early, on-time, and late acknowledgement all use the same anchor", () => {
+test("early, on-time, and late acknowledgement each use click time as the anchor", () => {
   for (const clickedAt of [
     localAt(2026, 7, 27, 13, 50),
     localAt(2026, 7, 27, 14, 0),
@@ -185,19 +185,19 @@ test("early, on-time, and late acknowledgement all use the same anchor", () => {
   ]) {
     assert.equal(
       advanceSchedule(runningSchedule(), "running", clickedAt).nextExpectedAtMs,
-      localAt(2026, 7, 27, 16, 0),
+      clickedAt + 120 * minute,
     );
   }
 });
 
-test("late acknowledgement advances from expected time exactly once", () => {
+test("late acknowledgement advances from click time by exactly one interval", () => {
   const advanced = advanceSchedule(
     runningSchedule(),
     "running",
     localAt(2026, 7, 27, 14, 20),
   );
-  assert.equal(advanced.previousChangeAtMs, localAt(2026, 7, 27, 14, 0));
-  assert.equal(advanced.nextExpectedAtMs, localAt(2026, 7, 27, 16, 0));
+  assert.equal(advanced.previousChangeAtMs, localAt(2026, 7, 27, 14, 20));
+  assert.equal(advanced.nextExpectedAtMs, localAt(2026, 7, 27, 16, 20));
 });
 
 test("warning boundaries and rounded display use exact milliseconds", () => {
@@ -227,7 +227,7 @@ test("pause, unresolved resume, and acknowledgement preserve the approved state 
   assert.equal(countdownView(resumed, "running", pausedAt + 90 * minute).tone, "resync");
 
   const resolved = advanceSchedule(resumed, "running", pausedAt + 90 * minute);
-  assert.equal(resolved.nextExpectedAtMs, localAt(2026, 7, 27, 16, 0));
+  assert.equal(resolved.nextExpectedAtMs, pausedAt + 210 * minute);
   assert.equal(resolved.pauseNeedsResolution, false);
   assert.equal(resolved.frozenRemainingMs, null);
 });
@@ -241,7 +241,7 @@ test("paused due suppresses red but resumed unresolved due restores red", () => 
   assert.equal(countdownView(resumed, "running", schedule.nextExpectedAtMs + 20 * minute).tone, "urgent");
 });
 
-test("manual next override becomes the following acknowledgement anchor", () => {
+test("manual next override remains editable but later acknowledgement uses click time", () => {
   const values = validateEditorValues({
     previousValue: "2026-07-27T14:00",
     hoursValue: "2",
@@ -258,7 +258,7 @@ test("manual next override becomes the following acknowledgement anchor", () => 
   });
   assert.equal(
     advanceSchedule(schedule, "running", localAt(2026, 7, 27, 16, 50)).nextExpectedAtMs,
-    localAt(2026, 7, 27, 18, 30),
+    localAt(2026, 7, 27, 18, 50),
   );
 });
 
@@ -365,10 +365,10 @@ export function reconcileCardStatus(schedule, status, nowMs) {
 }
 
 export function advanceSchedule(schedule, status, nowMs) {
-  const nextExpectedAtMs = schedule.nextExpectedAtMs + schedule.intervalMinutes * MINUTE_MS;
+  const nextExpectedAtMs = nowMs + schedule.intervalMinutes * MINUTE_MS;
   return {
     ...schedule,
-    previousChangeAtMs: schedule.nextExpectedAtMs,
+    previousChangeAtMs: nowMs,
     nextExpectedAtMs,
     observedStatus: status,
     frozenRemainingMs: status === "paused" ? Math.max(0, nextExpectedAtMs - nowMs) : null,
@@ -605,88 +605,35 @@ Add fixed-geometry styles:
 
 - [ ] **Step 4: Render selected-card controls without changing lifecycle slots**
 
-Add `refresh-cw` to `button_icon`:
+For a running or paused selected card, render one `data-roll-change-controls`
+group before the lifecycle forms inside `.actions`. The group remains left of the
+right-aligned Start, Pause/Resume, and End controls; those lifecycle controls
+retain their existing grouping and dimensions. The group has no divider.
 
-```jinja2
-{%- elif name == "refresh-cw" -%}
-  <svg viewBox="0 0 24 24" focusable="false">
-    <path d="M20 11a8 8 0 1 0-2.34 5.66"></path>
-    <path d="M20 4v7h-7"></path>
-  </svg>
-```
-
-Immediately after the existing three lifecycle children inside `.actions`, render a separate group only for running/paused selected cards:
-
-```jinja2
-{% if selected_card and selected_card.status in ["running", "paused"] %}
-  <div class="roll-change-controls"
-       data-roll-change-controls
-       data-machine-id="{{ selected_card.machine_id }}"
-       data-card-id="{{ selected_card.id }}"
-       data-card-status="{{ selected_card.status }}">
-    <button class="roll-change-open" type="button" data-roll-change-open
-            aria-controls="roll-change-overlay" aria-expanded="false">
-      <span class="roll-change-control-value" data-roll-change-control-value>Смяна на ролка</span>
-      <span class="roll-change-control-next" data-roll-change-control-next hidden></span>
-    </button>
-    <button class="roll-change-advance" type="button" data-roll-change-advance hidden
-            aria-label="Потвърди смяна на ролките">
-      {{ button_icon("refresh-cw") }}
-    </button>
-  </div>
-{% endif %}
-```
-
-Give `.roll-change-controls` a left divider and gap, keep the open control at `150px`, the quick control at `38px`, and do not change `.actions > form` or `.actions > .action-button` widths. The active open control uses two compact lines (`HH:MM` and `Следваща HH:MM`); the inactive control uses the single label `Смяна на ролка`.
+The inactive setup button uses the supplied circular rewinding asset and the
+label `Смяна на ролка`. When tracking is active, that button shows only the
+countdown, and the separate circular-arrow `data-roll-change-advance` button
+acknowledges the change. Keep the existing DOM data attributes and the current
+template/CSS sizing relationships rather than introducing fixed-width or
+two-line assumptions.
 
 - [ ] **Step 5: Add the editor markup and remove only the Task 11 inert action**
 
-Delete this exact inert element from `.roll-secondary-actions`:
+Leave the rewinding button and its status/count conditions unchanged. For a
+selected running or paused card, render the shipped modal after the rewinding
+overlay. Its three numbered sections are `Начало врътка`, `Интервал`, and
+`Очаквана смяна на ролките`.
 
-```html
-<button class="roll-secondary-button" type="button" data-roll-change>Смяна на ролка</button>
-```
+The start and expected sections each use a native date field plus direct text
+hour and minute fields with a visible colon separator. The interval section uses
+the same split text hour/minute treatment and shows its reminder summary. Keep
+the canonical hidden start/next inputs for controller synchronization, the
+current field-error slots, the close button, and the shipped actions:
+`Използвай текущия час`, `Изключи брояча`, `Отказ`, and `Запиши`.
 
-Leave the rewinding button and its status/count conditions byte-for-byte unchanged.
-
-Render this editor after the rewinding overlay only for a selected running/paused card:
-
-```jinja2
-<div class="roll-change-overlay" id="roll-change-overlay" data-roll-change-overlay hidden aria-hidden="true">
-  <section class="roll-change-dialog" role="dialog" aria-modal="true"
-           aria-labelledby="roll-change-title" tabindex="-1" data-roll-change-dialog>
-    <h2 id="roll-change-title">Смяна на ролки</h2>
-    <form data-roll-change-form novalidate>
-      <label>
-        <span>Предишна смяна / начален час</span>
-        <input type="datetime-local" step="60" data-roll-change-previous>
-        <span class="field-error-slot" data-roll-change-error-for="previous"></span>
-      </label>
-      <fieldset class="roll-change-interval">
-        <legend>Интервал</legend>
-        <label><span>Часове</span><input type="number" min="0" max="23" step="1" inputmode="numeric" data-roll-change-hours></label>
-        <label><span>Минути</span><input type="number" min="0" max="59" step="1" inputmode="numeric" data-roll-change-minutes></label>
-        <span class="field-error-slot" data-roll-change-error-for="hours"></span>
-        <span class="field-error-slot" data-roll-change-error-for="minutes"></span>
-      </fieldset>
-      <label>
-        <span>Следваща смяна</span>
-        <input type="datetime-local" step="60" data-roll-change-next>
-        <span class="field-error-slot" data-roll-change-error-for="next"></span>
-      </label>
-      <span class="field-error-slot" data-roll-change-error-for="form" role="alert"></span>
-      <div class="roll-change-editor-actions">
-        <button type="button" class="roll-change-clear" data-roll-change-clear>Изчисти</button>
-        <button type="button" data-roll-change-restart>Започни от сега</button>
-        <button type="button" data-roll-change-cancel>Отказ</button>
-        <button type="submit" class="action-primary">Запиши</button>
-      </div>
-    </form>
-  </section>
-</div>
-```
-
-Style it with the existing modal visual language, a maximum width of `520px`, a two-column interval fieldset, visible `:focus-visible`, `[hidden] { display: none; }`, and compact rules under the existing `max-height: 760px` media query. Clear is visually destructive but not the primary action. Do not add a confirmation layer.
+Use the current modal, section, field, focus, and responsive styles from the
+terminal template. Do not introduce alternate field widgets, a new confirmation
+layer, or obsolete fixed-size assumptions.
 
 - [ ] **Step 6: Load the controller as a deferred ES module**
 
@@ -817,7 +764,7 @@ The body must perform these exact operations:
 2. Call `clearMismatchedSchedules(windowObject.localStorage, contexts)` before rendering.
 3. For each trackable matching record, call `reconcileCardStatus(record, status, now())`; persist only if reconciliation changed stored state.
 4. Render inactive machine slots with `hidden = true`; render active slots with `view.display`, `view.tone`, and `aria-label = "Машина N, смяна на ролките след HH:MM"` or `"Машина N, смяната на ролките е дължима"`.
-5. Render the selected inactive open control as `Смяна на ролка` and hide the quick button. Render the active control with remaining time plus `Следваща <label>`, set a descriptive Bulgarian `aria-label`, and unhide the quick button.
+5. Render the selected inactive open control with the supplied circular rewinding asset and `Смяна на ролка`, then hide the quick button. Render the active control with the remaining countdown and unhide the separate quick button. Its Bulgarian `aria-label` includes the next expected label in both normal and due states.
 6. Start one display interval for the page. Each tick rerenders from timestamps; it never calls `saveSchedule`.
 7. Listen for `storage` events whose key begins with `STORAGE_KEY_PREFIX`; validate, reconcile for the page's server-rendered status, and rerender all affected surfaces without reloading.
 8. Return `destroy()` that clears the display interval and removes the storage listener so the module is testable and does not leak listeners.
@@ -840,21 +787,22 @@ Use one `savedSchedule` and one `returnFocus` variable inside the controller. Op
 - fills active values from storage;
 - clears errors, unhides the overlay, sets `aria-hidden="false"` and `aria-expanded="true"`, then focuses the previous/start field.
 
-Use this recalculation rule on previous/hours/minutes `input` events:
+On start-date/start-time or interval input, synchronize the split controls into
+the canonical hidden start value, update the interval summary, and recalculate
+the split expected fields only when the start and interval are valid. Direct
+expected-date/time edits synchronize their canonical hidden value and remain
+otherwise untouched. Submit calls `validateEditorValues`, renders each Bulgarian
+error in its matching error slot, and writes one complete `buildSchedule` only
+when valid. Saving while paused sets a resolved paused schedule; saving while
+resumed-unresolved clears the frozen state because `buildSchedule` creates a
+corrected schedule. On success, close and rerender.
 
-```js
-const previousMs = parseOperatorLocalMinute(previousInput.value, now());
-const intervalResult = parseIntervalMinutes(hoursInput.value, minutesInput.value);
-if (previousMs !== null && intervalResult.ok) {
-  nextInput.value = toLocalDateTimeInputValue(
-    calculateNextExpected(previousMs, intervalResult.value),
-  );
-}
-```
-
-Direct edits to the next input are left untouched until another previous/interval input event. Submit calls `validateEditorValues`, renders each Bulgarian error in its matching error slot, and writes one complete `buildSchedule` only when valid. Saving while paused sets a resolved paused schedule; saving while resumed-unresolved clears the frozen state because `buildSchedule` creates a corrected schedule. On success, close and rerender.
-
-`Започни от сега` updates only the draft previous and next fields using the current valid interval; it does not persist until `Запиши`. If the interval is invalid, show the normal interval errors and keep the modal open. `Изчисти` immediately removes this machine's key, closes, and rerenders without a confirmation.
+`Използвай текущия час` updates only the draft previous/start date and time to the
+current local time. It leaves the next draft, interval values, validation
+errors, `aria-invalid` state, and browser storage unchanged; it neither
+validates nor recalculates. Only `Запиши` validates and persists the complete
+draft. `Изключи брояча` immediately removes this machine's key, closes, and rerenders
+without a confirmation.
 
 Cancel, backdrop click, and Escape close without writing and restore focus to the open control. Trap Tab/Shift+Tab inside the visible dialog. Do not close on an interior dialog click. No modal opens automatically.
 
@@ -870,7 +818,7 @@ saveSchedule(storage, advanced);
 refresh();
 ```
 
-Do not confirm, navigate, submit a form, modify a card version, emit a production timestamp, or calculate from click time. Keep the button enabled for every active running/paused schedule, including early, due, paused, and resumed-unresolved states.
+Do not confirm, navigate, submit a form, modify a card version, or emit a production timestamp. Use click time as the new previous/start anchor and calculate exactly one interval after it. Keep the button enabled for every active running/paused schedule, including early, due, paused, and resumed-unresolved states.
 
 - [ ] **Step 6: Build a guarded deterministic browser fixture**
 
@@ -1114,17 +1062,20 @@ At both viewports, exercise and assert:
 2. opening does not write storage;
 3. invalid zero/bounds/next-before-previous input remains open with Bulgarian field errors and preserves the prior valid record;
 4. previous or interval input recalculates the next draft;
-5. direct next-time edit is saved as the anchor;
-6. late quick acknowledgement sets new previous to the old next and new next to old next plus one interval, not `Date.now() + interval`;
-7. a second early acknowledgement advances exactly one more interval;
+5. direct next-time edit is saved, while a later quick acknowledgement uses its
+   click time as the new anchor;
+6. late quick acknowledgement sets new previous to the click time and new next to click time plus one interval;
+7. a second early acknowledgement again uses its own click time and exactly one interval;
 8. Cancel, Escape, and backdrop leave JSON byte-for-byte unchanged and return focus;
-9. Restart updates the draft from current time but Cancel still preserves stored state;
+9. Restart changes only the previous/start draft to current time and leaves the
+   next draft, interval values, errors, aria state, and storage unchanged;
+   Cancel still preserves stored state;
 10. Clear removes one machine key and hides both terminal timer surfaces without a confirmation;
 11. normal refresh and a new browser page in the same context rehydrate the record;
 12. a stale production-data write renders the existing conflict-required refresh alert, and clicking its reload control preserves the browser-local countdown unchanged;
 13. a second same-origin tab updates after the first tab acknowledges or saves, using the native `storage` event;
 14. a due record remains at red `00:00` across multiple display ticks and never advances itself;
-15. an accidental early acknowledgement can be corrected through a direct next-time editor save, after which the following quick action advances from that corrected anchor.
+15. an accidental early acknowledgement can be corrected through a direct next-time editor save, after which the following quick action uses its own click time as the anchor.
 
 Use direct `page.evaluate(() => JSON.parse(localStorage.getItem(key)))` assertions for exact timestamps. Do not wait two real hours or weaken exact schedule math to visible text checks.
 
@@ -1136,7 +1087,7 @@ Exercise the real terminal lifecycle forms and assert:
 2. paused urgent/due is yellow, including `00:00`;
 3. resume without acknowledgement/edit keeps a positive frozen value yellow and non-ticking;
 4. resume of unresolved frozen zero makes it red;
-5. acknowledgement while paused advances one expected interval, stays visually paused, and becomes resolved;
+5. acknowledgement while paused uses click time plus one interval, stays visually paused, and becomes resolved;
 6. editor Save while paused also resolves it;
 7. resolved pause followed by resume returns to timestamp-derived normal/warning/urgent counting;
 8. finishing the selected card removes its storage key after redirect, frees/replaces the machine focus, and does not transfer the timer to `machine_1_follow_up`;
@@ -1151,7 +1102,8 @@ At `1920x768` and `1366x768`, assert:
 
 - four machine-card geometries do not change between an inactive and active timer;
 - dot, timer bubble, customer/product, progress, and quantity do not overlap or clip;
-- three lifecycle controls retain equal dimensions and the timer group is visually separated;
+- three lifecycle controls retain equal dimensions, the roll-change group is visually separated from Start using its right edge and Start's left edge, and Shift button side whitespace matches Waiting Orders from rendered geometry;
+- roll-ledger header/body columns align with equal scrollbar gutters, and gross/tare/net/pallet values or their editable inputs share vertical centers without an empty gross-error slot reserving space;
 - setup/open and quick buttons have usable bounding boxes and visible keyboard focus;
 - focus stays inside the editor, Escape restores it, and machine links contain no nested button;
 - queue, waiting, Produced Orders, shift window, rewinding dialog, roll add/correction, and dirty-navigation protections still open/close or block exactly as before;
@@ -1233,8 +1185,8 @@ git commit -m "Verify roll-change countdown workflow"
 Document these exact facts:
 
 - the countdown is an optional synchronized winding-set pace clock, not a physical roll-change timestamp or production record;
-- late acknowledgement advances from the expected time exactly once;
-- direct next-time override becomes the new schedule anchor;
+- late acknowledgement uses click time as the previous/start anchor and sets exactly one interval from that click;
+- direct next-time override remains editable, while a later quick acknowledgement uses its own click time as the new anchor;
 - machine/card ownership and every clear condition;
 - the paused/resolved/unresolved state table, including yellow paused `00:00` and red resumed-unresolved `00:00`;
 - exact storage key and version-1 JSON fields;
@@ -1318,18 +1270,18 @@ Run:
 
 ```bash
 git diff --check
-git diff -- README.md v2-files/PLAN.md v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md docs/implementation-notes/roll-change-countdown.md
+git diff -- README.md v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md docs/implementation-notes/roll-change-countdown.md docs/superpowers/plans/2026-07-27-roll-change-countdown.md
 git status --short
 ```
 
 If and only if the user has explicitly authorized commits, stage only reviewed Task 10 paths and commit:
 
 ```bash
-git add README.md v2-files/PLAN.md v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md docs/implementation-notes/roll-change-countdown.md
+git add README.md v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md docs/implementation-notes/roll-change-countdown.md docs/superpowers/plans/2026-07-27-roll-change-countdown.md
 git commit -m "Document roll-change countdown workflow"
 ```
 
-Do not stage the user's unrelated Task 13 work or any runtime database, `.test-runtime`, `artifacts`, `node_modules`, screenshot, trace, video, or Playwright-report path.
+Do not stage the user's unrelated `v2-files/PLAN.md` or Task 13 work, or any runtime database, `.test-runtime`, `artifacts`, `node_modules`, screenshot, trace, video, or Playwright-report path.
 
 ---
 

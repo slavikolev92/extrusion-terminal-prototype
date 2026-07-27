@@ -139,7 +139,7 @@ show only the primary lifecycle action `Приключи`; Start and Pause are a
 `Смяна на ролка` remains visibly present beside the marker but intentionally has
 no persistence, modal, countdown, reminder, or click behavior in Task 11.
 
-The selected roll area follows the fixed approved prototype: equal lifecycle
+The selected roll area follows the accepted design: equal lifecycle
 controls; border-embedded `Ролка`, `Шпула`, and `Палет` inputs; aligned `Добави`;
 columns `№`, `Бруто`, `Шпула`, `Нето`, `Палет`, then one pencil action; one open
 row editor; and Save/Cancel/Delete only for the selected row. Admin displays
@@ -147,12 +147,11 @@ row editor; and Save/Cancel/Delete only for the selected row. Admin displays
 production corrections, and exposes no waiting-card finalization, cancel,
 delete, archive, or print shortcut.
 
-The visually accepted immutable reference is
-`v2-files/prototypes/rewinding-roll-controls/`. It was approved on July 26, 2026
-as “Excellent! This is the design.” The shipped implementation preserves the
-prototype's hierarchy and roll-table treatment while applying the later
-approved centered waiting pane and server-owned workflow rules. The prototype
-was not regenerated or modified during implementation.
+The standalone prototype was an implementation-time reference approved on July
+26, 2026 as “Excellent! This is the design.” Its disposable source was removed
+after acceptance. The accepted design is now embodied in the terminal template
+and Task 11 automated/live verification, while preserving the later approved
+centered waiting pane and server-owned workflow rules.
 
 ## M004 Schema And Recovery
 
@@ -226,13 +225,8 @@ python -m pytest -q
 # 814 passed in 61.92s
 ```
 
-The unchanged accepted prototype verifier ran against a local static server:
-
-```bash
-PROTOTYPE_URL=http://127.0.0.1:8765/prototype.html \
-node v2-files/prototypes/rewinding-roll-controls/verify-prototype.mjs
-# rewinding prototype checks passed
-```
+The standalone prototype was an implementation-time reference only and is no
+longer a verification dependency after its disposable source was removed.
 
 The guarded live fixture and app used only the required ignored database:
 
@@ -271,7 +265,6 @@ state unchanged after `injected status failure`.
 
 Ignored browser evidence is under:
 
-- `artifacts/ui-checks/rewinding-ui-prototype/`
 - `artifacts/ui-checks/rewinding-return-workflow/verification-summary.json`
 - `artifacts/ui-checks/rewinding-return-workflow/rewinding-1920x768-full.png`
 - `artifacts/ui-checks/rewinding-return-workflow/rewinding-1366x768-full.png`

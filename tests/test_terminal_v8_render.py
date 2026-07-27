@@ -561,6 +561,25 @@ def test_terminal_v8_machine_card_and_machine_default_prefer_running_over_paused
     assert "V8 Customer 26147" in machine_tab
 
 
+def test_terminal_v8_non_focus_paused_card_cannot_own_machine_countdown(
+    connection,
+):
+    paused_id = release_ready_card("26148", machine_id=2, sequence=1)
+    running_id = release_ready_card("26149", machine_id=2, sequence=2)
+    assert db.start_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.pause_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.start_production_timing(running_id, card_version(running_id)).ok
+
+    paused_html = render_terminal(paused_id)
+    running_html = render_terminal(running_id)
+
+    assert "Машина 2: №26148" in paused_html
+    assert 'data-roll-change-controls' not in paused_html
+    assert 'data-roll-change-overlay' not in paused_html
+    assert 'data-roll-change-controls' in running_html
+    assert 'data-roll-change-overlay' in running_html
+
+
 def test_terminal_v8_renders_only_accepted_selected_card_details(connection):
     card_id = release_ready_card("26101", machine_id=1, sequence=1)
 
@@ -1236,6 +1255,9 @@ def test_terminal_v8_renders_waiting_rewinding_header_badge_and_separate_rows(
     history_button = re.search(r'<button[^>]+id="history-open".*?</button>', html, re.S)
     assert queue_button and waiting_button and history_button
     assert queue_button.start() < waiting_button.start() < history_button.start()
+    assert "/static/images/terminal-ui/waiting-orders.svg" in queue_button.group(0)
+    assert "/static/images/terminal-ui/awaiting-rewinding.png" in waiting_button.group(0)
+    assert "/static/images/terminal-ui/produced-orders.svg" in history_button.group(0)
     assert 'aria-label="Изчакващи пренавиване"' in waiting_button.group(0)
     assert 'data-waiting-count="2"' in waiting_button.group(0)
     assert re.search(r'<span class="waiting-badge"[^>]*>2</span>', waiting_button.group(0))
@@ -1317,6 +1339,7 @@ def test_terminal_v8_renders_rewinding_and_roll_change_hosts_in_separate_action_
         re.S,
     )
     assert clear_button
+    assert "/static/images/terminal-ui/awaiting-rewinding.png" in clear_button.group(0)
     assert "Пренавиване" in clear_button.group(0)
     assert "Пренавиване:" not in clear_button.group(0)
     assert "is-marked" not in clear_button.group(0)
@@ -1334,6 +1357,14 @@ def test_terminal_v8_renders_rewinding_and_roll_change_hosts_in_separate_action_
         running_html,
     )
     assert 'data-roll-change-open' in running_html
+    roll_change_button = re.search(
+        r'<button[^>]+data-roll-change-open[^>]*>.*?</button>',
+        running_html,
+        re.S,
+    )
+    assert roll_change_button
+    assert 'roll-change-control-icon' in roll_change_button.group(0)
+    assert "/static/images/terminal-ui/rewinding-circular.svg" in roll_change_button.group(0)
     assert 'data-roll-change-advance' in running_html
     assert 'aria-label="Потвърди смяна на ролките"' in running_html
     assert 'data-roll-change-overlay' in running_html
@@ -1349,29 +1380,54 @@ def test_terminal_v8_renders_rewinding_and_roll_change_hosts_in_separate_action_
     assert 'aria-labelledby="roll-change-title"' in editor
     assert 'data-roll-change-dialog' in editor
     assert 'data-roll-change-form novalidate' in editor
-    assert re.search(
-        r'<input type="datetime-local" step="60" data-roll-change-previous>',
-        editor,
-    )
-    assert re.search(
-        r'<input type="number" min="0" max="23" step="1" inputmode="numeric" data-roll-change-hours>',
-        editor,
-    )
-    assert re.search(
-        r'<input type="number" min="0" max="59" step="1" inputmode="numeric" data-roll-change-minutes>',
-        editor,
-    )
-    assert re.search(
-        r'<input type="datetime-local" step="60" data-roll-change-next>',
-        editor,
-    )
+    assert 'class="roll-change-dialog-intro"' in editor
+    assert editor.count('class="roll-change-editor-section') == 3
+    assert '<h3>Начало врътка</h3>' in editor
+    assert '<h3>Интервал</h3>' in editor
+    assert '<h3>Очаквана смяна на ролките</h3>' in editor
+    assert editor.count('class="roll-change-step"') == 3
+    assert '<input type="hidden" data-roll-change-previous>' in editor
+    assert re.search(r'<input[^>]+type="date"[^>]+data-roll-change-previous-date>', editor)
+    for input_name in (
+        "previous-hour",
+        "previous-minute",
+        "hours",
+        "minutes",
+        "next-hour",
+        "next-minute",
+    ):
+        assert re.search(
+            rf'<input[^>]+type="text"[^>]+inputmode="numeric"[^>]+'
+            rf'data-roll-change-{input_name}',
+            editor,
+        )
+        assert f'<select data-roll-change-{input_name}>' not in editor
+    assert editor.count('class="roll-change-clock-separator" aria-hidden="true">:</span>') == 3
+    assert '<input type="hidden" data-roll-change-next>' in editor
+    assert re.search(r'<input[^>]+type="date"[^>]+data-roll-change-next-date>', editor)
+    assert 'type="datetime-local"' not in editor
+    assert 'type="number"' not in editor
+    assert "Следваща смяна" not in editor
+    assert not re.search(r">\s*Коригирай\s*</button>", editor)
+    assert "Очаквана смяна на ролките" in editor
+    assert 'class="roll-change-interval-note">Напомняне на всеки' in editor
+    assert 'data-roll-change-interval-summary' in editor
     for error_name in ("previous", "hours", "minutes", "next", "form"):
         assert f'data-roll-change-error-for="{error_name}"' in editor
+        assert f'id="roll-change-error-{error_name}"' in editor
+    assert editor.count('aria-describedby="roll-change-error-previous"') == 3
+    assert editor.count('aria-describedby="roll-change-error-next"') == 3
+    assert 'aria-describedby="roll-change-error-hours roll-change-error-form"' in editor
+    assert 'aria-describedby="roll-change-error-minutes roll-change-error-form"' in editor
     assert 'data-roll-change-error-for="form" role="alert"' in editor
-    assert 'data-roll-change-clear>Изчисти</button>' in editor
-    assert 'data-roll-change-restart>Започни от сега</button>' in editor
+    assert 'class="roll-change-start-action"' in editor
+    assert 'data-roll-change-restart' in editor
+    assert 'Използвай текущия час</button>' in editor
+    assert 'class="roll-change-editor-footer"' in editor
+    assert 'data-roll-change-clear>Изключи брояча</button>' in editor
+    assert 'class="roll-change-confirm-actions"' in editor
     assert 'data-roll-change-cancel>Отказ</button>' in editor
-    assert '<button type="submit" class="action-primary">Запиши</button>' in editor
+    assert '<button type="submit" class="roll-change-save">Запиши</button>' in editor
 
     paused_tone_rules = css_rules(
         running_html,
@@ -1810,11 +1866,11 @@ def test_terminal_v8_action_and_roll_add_buttons_render_decorative_icons(connect
         pending_html,
         f"/terminal/cards/{card_id}/timing/start",
     )
-    assert 'data-icon="play"' in start_form
+    assert 'data-icon-asset="start"' in start_form
     assert 'aria-hidden="true"' in start_form
     assert "Старт" in start_form
-    assert 'data-icon="pause"' in pending_html
-    assert 'data-icon="check-circle"' in pending_html
+    assert 'data-icon-asset="pause"' in pending_html
+    assert 'data-icon-asset="end"' in pending_html
     assert 'data-icon="plus"' in pending_html
 
     assert db.start_production_timing(card_id, card_version(card_id)).ok
@@ -1826,9 +1882,9 @@ def test_terminal_v8_action_and_roll_add_buttons_render_decorative_icons(connect
     finish_form = form_block(running_html, f"/terminal/cards/{card_id}/finish")
     roll_form = form_block(running_html, f"/terminal/cards/{card_id}/rolls")
     roll_entry = roll_entry_block(running_html)
-    assert 'data-icon="pause"' in pause_form
+    assert 'data-icon-asset="pause"' in pause_form
     assert "Пауза" in pause_form
-    assert 'data-icon="check-circle"' in finish_form
+    assert 'data-icon-asset="end"' in finish_form
     assert "Приключи" in finish_form
     assert f'id="add-roll-form-{card_id}"' in roll_form
     assert 'data-icon="plus"' in roll_entry
@@ -1841,7 +1897,7 @@ def test_terminal_v8_action_and_roll_add_buttons_render_decorative_icons(connect
         paused_html,
         f"/terminal/cards/{card_id}/timing/resume",
     )
-    assert 'data-icon="play"' in resume_form
+    assert 'data-icon-asset="start"' in resume_form
     assert "Продължи" in resume_form
 
 
@@ -2114,6 +2170,48 @@ def test_terminal_v8_roll_rows_are_compact_and_vertically_centered(connection):
     assert ".roll-row-error-slot:empty {\n      display: none;" in html
 
 
+def test_terminal_v8_roll_ledger_centers_headers_and_display_values(connection):
+    card_id = release_ready_card("26112-CENTERED", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.50").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "50.00").ok
+
+    html = render_terminal(card_id)
+    row = db.fetch_terminal_card_detail(card_id)["roll_entries"][0]
+    row_html = roll_row_block(html, int(row["id"]))
+
+    roll_head_rules = css_rules_all(html, r"(?m)^    \.roll-head > div")
+    roll_body_rules = css_rules_all(html, r"(?m)^    \.roll-row > div")
+    roll_list_rules = css_rules(html, r"(?m)^    \.roll-list")
+    assert ".roll-head {\n      overflow-y: auto;" in html
+    roll_head_scroll_rules = css_rules_all(html, r"(?m)^    \.roll-head")
+    assert ".roll-row > .roll-weight-cell {" in html
+    roll_weight_rules = css_rules(html, r"(?m)^    \.roll-row > \.roll-weight-cell")
+    display_value_rules = css_rules(html, r"(?m)^    \.roll-display-value")
+
+    assert any(
+        "justify-content: center;" in rules and "text-align: center;" in rules
+        for rules in roll_head_rules
+    )
+    assert any(
+        "justify-content: center;" in rules and "text-align: center;" in rules
+        for rules in roll_body_rules
+    )
+    assert "display: grid;" in roll_weight_rules
+    assert "justify-content: stretch;" in roll_weight_rules
+    assert "scrollbar-gutter: stable;" in roll_list_rules
+    assert any(
+        "overflow-y: auto;" in rules and "scrollbar-gutter: stable;" in rules
+        for rules in roll_head_scroll_rules
+    )
+    assert "width: 100%;" in display_value_rules
+    assert "justify-content: center;" in display_value_rules
+    assert re.search(
+        r'<div class="roll-row-error-slot field-error-slot"[^>]*hidden>',
+        row_html,
+    )
+
+
 def test_terminal_roll_rows_are_readonly_by_default_with_correction_action(connection):
     card_id = release_ready_card("26230", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
@@ -2345,16 +2443,25 @@ def test_terminal_active_lifecycle_slots_are_equal_and_waiting_has_only_finish(c
     running_html = render_terminal(card_id)
     running_actions = re.search(r'<div class="actions">(?P<body>.*?)</div>\s*</div>', running_html, re.S)
     assert running_actions is not None
-    assert running_actions.group("body").count('data-lifecycle-slot') == 3
+    running_body = running_actions.group("body")
+    assert running_body.count('data-lifecycle-slot') == 3
     assert len(re.findall(r'data-lifecycle-slot=', running_html)) == 3
-    assert re.search(r'<div class="roll-change-controls"', running_html)
-    timer_group = re.search(
-        r'<div class="roll-change-controls"[^>]*>.*?</div>\s*</div>',
-        running_html,
-        re.S,
+    assert '<div class="roll-change-controls"' in running_body
+    assert (
+        running_body.index('data-roll-change-open')
+        < running_body.index('data-roll-change-advance')
+        < running_body.index('data-lifecycle-slot="start"')
+        < running_body.index('data-lifecycle-slot="pause"')
+        < running_body.index('data-lifecycle-slot="finish"')
     )
-    assert timer_group is not None
-    assert 'data-lifecycle-slot' not in timer_group.group(0)
+    timer_rules = css_rules(running_html, r"(?m)^    \.roll-change-controls")
+    assert "margin-right: 12px;" in timer_rules
+    assert "padding-right: 12px;" in timer_rules
+    assert "border-right:" not in timer_rules
+    assert "border-left:" not in timer_rules
+    assert "transform: translateX(-44px);" in timer_rules
+    action_area_rules = css_rules(running_html, r"(?m)^    \.action-area")
+    assert "padding-right: 44px;" not in action_area_rules
     lifecycle_rules = css_rules(running_html, r"(?m)^    \.actions > \.action-button,\s*\.actions > form")
     assert "width: 150px;" in lifecycle_rules
     assert "flex: 0 0 150px;" in lifecycle_rules
@@ -3999,7 +4106,7 @@ def test_terminal_v8_refresh_alert_hook_exists_and_old_sync_ui_is_absent(connect
     assert "Довършете текущото въвеждане" not in html
 
 
-def test_terminal_header_has_centered_global_actions_and_active_shift_status(connection):
+def test_terminal_header_has_centered_global_actions_and_shift_identity(connection):
     active_shift = db.fetch_active_shift()
     assert active_shift is not None
 
@@ -4010,17 +4117,31 @@ def test_terminal_header_has_centered_global_actions_and_active_shift_status(con
     header_html = header.group(0)
     assert "/static/images/kolev-logo.png" in header_html
     assert header_html.count('class="terminal-header-action') == 4
+    assert "/static/images/terminal-ui/waiting-orders.svg" in header_html
+    assert "/static/images/terminal-ui/awaiting-rewinding.png" in header_html
+    assert "/static/images/terminal-ui/produced-orders.svg" in header_html
+    assert "/static/images/terminal-ui/worker_3537.webp" in header_html
+    assert Path("app/static/images/terminal-ui/worker_3537.webp").is_file()
     assert ">Чакащи поръчки<" in header_html
     assert "Изчакващи пренавиване" in header_html
     assert ">Произведени поръчки<" in header_html
     assert 'id="shift-open"' in header_html
-    assert 'class="shift-status-dot is-active"' in header_html
+    assert "shift-status-dot" not in header_html
     assert f'>Смяна {active_shift["shift_number"]}<' in header_html
     assert str(active_shift["started_at"]) not in header_html
     assert 'class="machine-nav-actions"' not in html
+    assert "--terminal-header-action-width: 260px;" in html
+    assert "--terminal-side-action-width: 186px;" in html
+    assert re.search(
+        r"@media \(max-width: 1360px\).*?"
+        r"--terminal-header-action-width: 244px;.*?"
+        r"--terminal-side-action-width: 175px;",
+        html,
+        re.S,
+    )
 
 
-def test_terminal_header_shows_nonwrapping_no_active_shift_status(connection):
+def test_terminal_header_shows_nonwrapping_no_active_shift_label(connection):
     end_active_test_shift()
 
     html = render_terminal()
@@ -4028,8 +4149,7 @@ def test_terminal_header_shows_nonwrapping_no_active_shift_status(connection):
 
     assert header is not None
     header_html = header.group(0)
-    assert 'class="shift-status-dot"' in header_html
-    assert 'class="shift-status-dot is-active"' not in header_html
+    assert "shift-status-dot" not in header_html
     assert ">Няма активна смяна<" in header_html
     assert 'data-terminal-action="shift"' in header_html
 
