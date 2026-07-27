@@ -273,12 +273,13 @@ This list combines the two existing production-tracking workstreams with the new
      card-version, re-import, shift, roll, pallet, recipe, print, timing, or
      historical-report coupling, and the next order never inherits a schedule.
    - Verification: compileall and all three Node syntax checks exited zero;
-     18 Node schedule tests passed in 70.304575 ms; the focused Python matrix
-     passed 182 tests in 27.55 s; the final full-suite rerun passed 844 tests
-     in 67.48 s; `git diff --check` passed; and the guarded Playwright 1.61.0
-     workflow passed at `1920x768` and `1366x768` with no console errors, page errors,
-     horizontal overflow, timer-only database mutation, or schedule transfer
-     to the next order.
+     19 Node schedule tests passed in 123.953662 ms; the focused Python matrix
+     passed 182 tests in 28.07 s; the final full-suite rerun passed 844 tests
+     in 67.51 s; `git diff --check` passed; and the guarded Playwright 1.61.0
+     workflow passed at `1920x768` and `1366x768`, including adversarial drags
+     from every time control over the backdrop, with no console errors, page
+     errors, horizontal overflow, timer-only database mutation, accidental
+     editor dismissal, or schedule transfer to the next order.
    - Durable references: `v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md`,
      `docs/implementation-notes/roll-change-countdown.md`, and browser evidence
      under `artifacts/ui-checks/roll-change-countdown/`.
@@ -313,6 +314,70 @@ This list combines the two existing production-tracking workstreams with the new
    - Implemented behavior: each roll optionally snapshots a `1..999` pallet number scoped to its card; corrections preserve current-versus-snapshot semantics; print output groups current saved rolls by numeric pallet with gross/net totals and conditional `Без палет`.
    - Explicitly deferred/out of scope: package/pallet entities, roll-selection workflow, label routes, label void/reprint history, package/pallet lifecycle, shipping state, and cross-card packaging.
 
+### Operations / Infrastructure
+
+13. **Production backup and recovery resilience**
+   - Surface: app VM, Proxmox host, USB backup storage, cloud backup target, optional Tailscale standby server, emergency recovery workstation.
+   - Complexity: large.
+   - Status: discussion paused and persisted in `v2-files/TASK-13-BACKUP-RESILIENCE.md`.
+   - Goal: make the terminal production data recoverable if the app, VM, Proxmox host, physical server, disk, USB drive, cloud sync, network, or power fails.
+   - Decided direction: target `0-10 minutes` maximum data loss, tolerate roughly `1-4 hours` recovery time with paper fallback during outage, use two backup destinations beyond the VM (`USB attached to the Proxmox server` plus `cloud storage chosen later`), and keep recovery portable enough that another LAN PC or Linux/Windows machine can temporarily run the app if the main server is unavailable.
+   - Possible extension: a warm standby server over Tailscale may receive validated backup copies and remain ready for manager-approved failover. It should run the approved app release rather than emergency `git pull` from the latest branch.
+   - Needs design: exact cloud provider/tool, USB mount and monitoring approach, retention policy, checksum/metadata format, backup-health visibility, operator/admin alerting, restore drills, standby activation rules, terminal URL/failover behavior, UPS behavior, and scenario-specific runbooks.
+
+### Deferred Prototype / Recipe Catalogue
+
+14. **CSV-managed extrusion recipe catalogue and filterable material entry**
+   - Surface: `/admin/settings`, `/terminal`, `/admin` card detail, database.
+   - Complexity: medium; the visible behavior is simple, but safe import,
+     persistence, search, concurrent-entry behavior, and verification require
+     care. Current estimate: 6-10 engineering hours after the task is resumed.
+   - Status: discussion concluded and deferred in
+     `v2-files/TASK-14-RECIPE-CATALOG-PROTOTYPE.md`; no implementation is
+     authorized. Resume after the current UI work and planned production-data
+     migration.
+   - Goal: atomically replace a SQLite-backed reference catalogue from the exact
+     seven-column CSV represented by the V14.07 `RecipeCatalogExtrusion`
+     worksheet, then offer category-filtered, searchable suggestions in the
+     existing actual-material text fields while retaining free-form entry.
+   - Safety boundary: the catalogue needs a schema-only migration, but existing
+     cards and historical actual-material text are not migrated or linked to
+     mutable catalogue entries. Invalid imports leave the current catalogue
+     active, and successful replacements affect future suggestions only.
+   - Prototype purpose: test catalogue ownership, update frequency, search and
+     naming quality, and operator exception behavior before considering one
+     recipe-prefilled editable material field or strict allowed-list enforcement.
+   - Relationship: this is a bounded first prototype slice of Task 6, not the
+     full worker recipe edit and inventory workflow.
+
+### Terminal / Workstation UI Follow-Up
+
+15. **State-based lifecycle buttons and split terminal action header**
+   - Surface: `/terminal` selected-card header and existing roll-change
+     countdown controls.
+   - Complexity: small; presentation, render expectations, and browser geometry
+     only. No backend lifecycle, database, migration, or stored-data change is
+     expected.
+   - Status: discussion concluded and preserved in
+     `v2-files/TASK-15-TERMINAL-ACTION-HEADER.md`; implementation has not
+     started.
+   - Goal: stop rendering obsolete disabled lifecycle controls after production
+     begins, make the Start/Pause/Continue control morph with card state, keep
+     exactly one visually primary action in each active state, and align the two
+     header control groups with the Details and Rolls panes below.
+   - Approved button hierarchy: pending shows primary `Старт` plus disabled
+     `Приключи` and no Pause; running shows secondary `Пауза` plus primary
+     `Приключи` and no Start; paused shows primary `Продължи` plus secondary
+     enabled `Приключи` and no Start.
+   - Approved color rule: retain the existing dark primary and white active
+     secondary treatments. Gray is reserved for disabled controls; green/red
+     action colors are not introduced because finishing is the normal successful
+     path rather than a destructive or emergency action.
+   - Approved layout: keep one header row, align the roll-change group to the
+     right edge above Details, and align the lifecycle group to the right edge
+     above Rolls by sharing the workspace column geometry at both supported
+     workstation widths.
+
 ## Suggested Implementation Order
 
 1. Before deployment, complete the production legacy-data profile and
@@ -326,5 +391,15 @@ This list combines the two existing production-tracking workstreams with the new
    waiting-for-rewound-rolls workflow and Task 12's bounded per-roll pallet
    attribution/operational-card summary are complete locally. Production
    deployment remains a separate, explicitly gated operation.
+5. Before pilot production, design and implement Task 13 enough to provide
+   unattended validated backups, redundant copy targets, and a rehearsed restore
+   path. This is operational safety work, not a UI polish task.
+6. Complete Task 15 as an independent presentation-only terminal correction
+   after the current Task 10 countdown work is settled. Preserve the countdown
+   hooks and existing lifecycle business rules.
+7. Keep Task 14 deferred during the current UI correction work. After the
+   planned production-data migration, resume it as a bounded Task 6 prototype
+   before considering a single material field, strict catalogue enforcement, or
+   live inventory integration.
 
 This order is only a first cut. The larger items need short design passes before implementation because they change workflow, database shape, and future ERP/costing assumptions.
