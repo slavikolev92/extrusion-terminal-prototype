@@ -184,8 +184,9 @@ Confirmed workstation screen structure:
 - A running or paused card may optionally use one roll-change pace clock for the
   machine's complete synchronized winding set. The operator sets the previous
   change/start time, interval, and next expected time; a quick acknowledgement
-  treats the click time as the new change/start time and schedules the next
-  expected change exactly one interval later.
+  advances from the saved scheduled time. It always advances at least one
+  interval and, when several intervals are overdue, catches up to the first
+  scheduled time strictly after the acknowledgement.
 - The pace clock belongs to the current machine/card pair and is stored only in
   versioned browser local storage. It survives refreshes in the same browser
   profile/origin, clears when the card stops owning active production, and is

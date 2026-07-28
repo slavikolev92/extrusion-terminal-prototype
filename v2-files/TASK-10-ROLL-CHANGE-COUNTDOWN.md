@@ -44,9 +44,10 @@ The schedule has:
 - one next expected change time.
 
 The first next expected change is calculated from the start time plus the
-interval. The frequent one-touch action treats its click time as the new
-previous/start anchor, then sets the next expected change to exactly one
-interval after that click. It never jumps by multiple intervals.
+interval. The frequent one-touch action advances from the saved next expected
+time, preserving the scheduled cadence. It always advances at least once and,
+if several intervals are already overdue, skips whole scheduled intervals until
+the new next expected time is strictly in the future.
 
 The less frequent editor allows operators to correct the start time, interval,
 or next expected change after a breakdown, pause, speed change, dimension
@@ -56,8 +57,9 @@ The alternatives were rejected:
 
 - Linking the countdown to gross-weight entry would inherit the known delay
   between physical roll changing and terminal entry.
-- Automatically jumping over multiple missed intervals would hide when the
-  operator deliberately acknowledged the schedule.
+- Advancing only one interval when several are already overdue would leave the
+  reminder immediately red after a valid acknowledgement and force repeated
+  clicks without adding useful information.
 - A timer per lane is unnecessary because all lanes on the machine run and are
   changed together.
 - Machine/PLC integration, length encoders, roll-diameter measurement, and
@@ -99,11 +101,11 @@ next expected change       = 14:00
 
 ### Normal acknowledgement
 
-The quick action always performs:
+The quick action always advances from the saved schedule:
 
 ```text
-previous change      = acknowledgement click time
-next expected change = acknowledgement click time + interval
+new previous change      = last scheduled boundary before the new next time
+new next expected change = first scheduled boundary strictly after the click
 ```
 
 Example:
@@ -112,15 +114,16 @@ Example:
 current expected change = 14:00
 operator clicks          = 14:20
 interval                 = 02:00
-new previous change      = 14:20
-new expected change      = 16:20
+new previous change      = 14:00
+new expected change      = 16:00
 ```
 
-The click acknowledges the schedule at 14:20 and starts one fresh interval
-there. It does not claim that the physical change occurred at 14:20.
+The acknowledgement preserves the two-hour scheduled cadence. It does not
+claim that the physical change occurred when the terminal button was pressed.
 
-One click creates exactly one interval from its click time. It does not silently
-skip several intervals to reach a later future time. If the schedule has become
+One click advances at least one interval. If the saved expected time is several
+intervals overdue, the same click skips whole scheduled intervals until the new
+expected time is strictly in the future. If the schedule itself has become
 materially wrong, the operator corrects it in the editor.
 
 ### Manual next-time override
@@ -135,11 +138,9 @@ operator override               = 16:30
 interval                         = 02:00
 ```
 
-After saving, the active countdown targets 16:30. The next normal quick action
-remains available, but uses its later click time as the new anchor and sets the
-next expected time to that click plus two hours. A manual next-time override is
-therefore editable schedule information, not the anchor for a later quick
-acknowledgement.
+After saving, the active countdown targets 16:30. That edited value becomes the
+scheduled anchor. The next quick acknowledgement advances from 16:30 in whole
+two-hour intervals until the next expected time is strictly in the future.
 
 ### Time representation
 
@@ -201,9 +202,10 @@ acknowledgement.
   including `00:00`. Red urgency is suppressed while the machine is paused.
 - The paused machine-state dot is also yellow.
 - The quick acknowledgement remains available while paused.
-- A quick acknowledgement while paused uses its click time as the new
-  previous/start anchor and sets the next expected time to one interval later,
-  but the display remains visibly paused while the card remains paused.
+- A quick acknowledgement while paused uses the same scheduled-cadence rule:
+  it advances at least once and catches up through whole intervals when needed.
+  The resulting future duration remains frozen and visibly paused while the
+  card remains paused.
 - Resuming production does not invent a correction for a disrupted schedule.
   If the countdown was not acknowledged or edited during the pause, it remains
   frozen and visibly unresolved until the operator uses the quick action or
@@ -263,8 +265,9 @@ visually separated from, the existing Start, Pause/Resume, and End actions.
 - It remains available whenever tracking is active, including before the due
   time and while the order is paused.
 - It requires one click and no confirmation dialog.
-- Every click uses the click time as the previous/start anchor and sets exactly
-  one interval ahead; it never jumps by multiple intervals.
+- Every click advances from the saved expected time by at least one whole
+  interval, then skips any additional overdue intervals so the new expected
+  time is strictly in the future.
 - An accidental click can be corrected through the editor. The pilot does not
   add friction to the 95–98 percent normal path in an attempt to prevent every
   possible mistake.
@@ -291,8 +294,8 @@ Editor behavior:
 - Changing the previous/start time or interval immediately recalculates the
   proposed next expected time.
 - Directly editing the proposed next expected time overrides that calculation
-  for the saved schedule. A later quick acknowledgement still uses its click
-  time as the new previous/start anchor.
+  for the saved schedule. A later quick acknowledgement uses the edited next
+  expected time as its scheduled anchor.
 - Save applies the complete valid schedule atomically in browser storage.
 - Restart from now changes only the previous/start date and time to the current
   local time. It preserves the next draft, interval values, current validation
@@ -451,11 +454,12 @@ mutating the runtime database.
 Cover:
 
 - initial start plus interval calculation;
-- acknowledgement clicked on time, early, and late uses each click time as the
-  new anchor;
-- exactly one interval from the click, with no multi-interval jump;
-- manual next-time override remains editable, while a later quick action uses
-  its click time as the new anchor;
+- acknowledgement clicked on time, early, and late preserves the scheduled
+  anchor and advances at least one interval;
+- multi-interval overdue acknowledgement catches up to the first future
+  scheduled boundary in one action;
+- manual next-time override remains editable and becomes the anchor for a
+  later quick action;
 - midnight/date rollover;
 - normal, five-minute warning, one-minute urgent, and due boundaries;
 - no negative countdown;
@@ -512,7 +516,8 @@ Verify at minimum `1920x768` and `1366x768`:
 - Cross-workstation, cross-browser, server, or mobile synchronization.
 - Historical roll-change events, missed-change reports, audit trails, KPIs, or
   shift-manager review.
-- Treating acknowledgement time as the physical roll-change timestamp.
+- Treating acknowledgement time as the physical roll-change timestamp or as a
+  replacement schedule anchor.
 - Automatic coupling to gross roll entry, tare, pallet, shift, recipe, timing
   segments, print output, or production totals.
 - A countdown per roll, lane, spindle, shaft, or pallet.
@@ -528,7 +533,8 @@ Verify at minimum `1920x768` and `1366x768`:
 Implementation and verification are complete. Continue from these durable
 references:
 
-- [Task 10 implementation plan](../docs/superpowers/plans/2026-07-27-roll-change-countdown.md)
+- [July 28 scheduled-cadence correction plan](../docs/superpowers/plans/2026-07-28-scheduled-countdown-and-machine-dot.md)
+- [Original Task 10 implementation plan (historical; its click-time cadence is superseded)](../docs/superpowers/plans/2026-07-27-roll-change-countdown.md)
 - [Roll-change countdown implementation note](../docs/implementation-notes/roll-change-countdown.md)
 - [V2 plan status and final evidence](PLAN.md)
 

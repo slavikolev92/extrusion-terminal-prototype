@@ -63,10 +63,20 @@ export function reconcileCardStatus(schedule, status, nowMs) {
 }
 
 export function advanceSchedule(schedule, status, nowMs) {
-  const nextExpectedAtMs = calculateNextExpected(nowMs, schedule.intervalMinutes);
+  const intervalMs = schedule.intervalMinutes * MINUTE_MS;
+  const intervalsToAdvance = Math.max(
+    1,
+    Math.floor((nowMs - schedule.nextExpectedAtMs) / intervalMs) + 1,
+  );
+  const previousChangeAtMs = schedule.nextExpectedAtMs
+    + (intervalsToAdvance - 1) * intervalMs;
+  const nextExpectedAtMs = calculateNextExpected(
+    previousChangeAtMs,
+    schedule.intervalMinutes,
+  );
   return {
     ...schedule,
-    previousChangeAtMs: nowMs,
+    previousChangeAtMs,
     nextExpectedAtMs,
     observedStatus: status,
     frozenRemainingMs: status === "paused" ? Math.max(0, nextExpectedAtMs - nowMs) : null,

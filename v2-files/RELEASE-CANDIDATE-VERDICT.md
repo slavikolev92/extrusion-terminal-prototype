@@ -4,7 +4,7 @@ Date: 2026-07-28 UTC
 
 ## Revision provenance
 
-- Executable application/verifier candidate:
+- Previous committed executable application/verifier candidate:
   `bfe1e417b4fa1605b700fa119ff4f0a1f8477421`.
 - Initial Task 10 verdict commit:
   `231f780386a7a3eeeeff2ea1aae2a0aa09fd20f9`. That commit is
@@ -14,14 +14,18 @@ Date: 2026-07-28 UTC
 - The first provenance correction is
   `ea493dcc2367bfc5650529b515f3fb83502e030b`; it changes only this verdict and
   the release-candidate audit plan.
-- The revision containing this update is also documentation-only. Its own
-  commit SHA cannot be embedded recursively; inspect the Git revision
-  containing this text for that final documentation SHA. Neither `231f780` nor
-  `ea493dc` is the executable candidate.
+- The final prior provenance correction is
+  `9c66fd641c795d976a085feb7e9ceb5a3eb13558`; it is also documentation-only.
+  None of `231f780`, `ea493dc`, or `9c66fd6` is the previous executable
+  candidate.
 
-The cited 912 Python, 61 migration, and 19 Node results were run on executable
-candidate `bfe1e41`. They are not represented as results of the later
-documentation-only lineage.
+The scheduled-cadence and solid-dot correction is currently an uncommitted
+working tree based on `9c66fd641c795d976a085feb7e9ceb5a3eb13558`.
+It therefore has no candidate SHA yet. Fresh verification on that exact working
+tree passed 912 Python tests (including 61 migration tests), 253 focused Python
+tests, 20 Node tests, and the complete guarded countdown browser workflow at
+both supported viewports. The earlier 912 Python, 61 migration, and 19 Node
+results remain historical evidence for executable candidate `bfe1e41`.
 
 Production deployment is not authorized. Stage A passed, but the mandatory
 production gates in Tasks 8 and 9 were not and cannot be performed without a
@@ -35,11 +39,14 @@ currently deployed with that database.
 There is no open Stage A technical or data-integrity defect. The final
 whole-branch review reported one Important roll-verifier path-boundary finding;
 candidate `bfe1e41` closes it with two RED/GREEN sentinel regressions and fresh
-live verification. There are now 0 open Critical, Important, or Minor findings.
-Verification for the exact candidate includes:
+live verification. The later scheduled-cadence and solid-dot correction has
+fresh affected, complete, and live verification; it remains uncommitted pending
+separate user authorization. Its independent adversarial review closed one
+Minor historical-plan handoff contradiction and finished at `0 / 0 / 0`
+Critical / Important / Minor findings. Verification evidence includes:
 
-- 912 passing Python tests, including 61 migration tests, and 19 passing Node
-  tests;
+- 912 passing Python tests, including 61 migration tests, and 20 passing Node
+  tests on the corrected working tree;
 - all required live rewinding and countdown verifiers at both required
   viewports, followed by the repaired final auxiliary roll/pallet verifier and
   three fresh complete shift-management verifier runs;
@@ -64,8 +71,8 @@ substitute for the missing production-backup and production-clone evidence.
 
 | Gate | Result | Deployment ruling |
 | --- | --- | --- |
-| Committed executable candidate and clean tracked code tree | Pass at `bfe1e417b4fa1605b700fa119ff4f0a1f8477421`; `231f780386a7a3eeeeff2ea1aae2a0aa09fd20f9`, `ea493dcc2367bfc5650529b515f3fb83502e030b`, and the revision containing this update are documentation-only | Satisfies the candidate-freeze prerequisite only. |
-| Complete automated suites | Pass: 912 Python, 61 migration, 19 Node | Satisfies Stage A only. |
+| Committed executable candidate and clean tracked code tree | Previous candidate passed at `bfe1e417b4fa1605b700fa119ff4f0a1f8477421`; the approved scheduled-cadence/solid-dot correction is verified but uncommitted | The correction must receive a new committed candidate SHA before any production rehearsal or deployment. |
+| Complete automated suites | Pass on the corrected working tree: 912 Python, 61 migration, 253 focused, 20 Node | Satisfies Stage A only. |
 | Stage A combined workflow and final live verifiers | `PASS WITH DOCUMENTED NON-BLOCKING LIMITATIONS` | Satisfies Stage A only. |
 | Immutable production backup and deployed-revision identity | Missing | Blocking. Task 8 must not start from a live database or an unsafe raw copy. |
 | Production M001 legacy-data profile and treatment decision | Not run | Blocking. No legacy mapping may be guessed. |
@@ -81,8 +88,16 @@ substitute for the missing production-backup and production-clone evidence.
 | No immutable SQLite-safe production backup or exact deployed revision was supplied. | User / production system owner supplies both; release engineer fingerprints and protects them. | Tasks 8 and 9 cannot be performed safely or reproducibly. | Mandatory blocker. Do not deploy or profile the live runtime database. |
 | M001 legacy quantity/unit values and card/import-source disagreements are unprofiled. | Release engineer after the immutable evidence is supplied; user decides any ambiguous business mapping. | Existing production rows may require explicit remediation, and guessing could misstate ordered values or route meaning. | Mandatory blocker. Complete Task 8 and obtain any required mapping approval before migration rehearsal. |
 | The full current M001-M005 chain—or M001-M006 only if Task 8 approves the next migration—plus timing, invariant comparison, production-clone smoke, repeat-run idempotence, and rollback are unproved on production-shaped data. | Release engineer performs Task 9; production operator confirms the maintenance and recovery procedure. | Migration duration, production-data preservation, startup behavior, and recovery time are unknown for the real database. | Mandatory blocker. Complete Task 9 before any production `GO`. |
-| Accepted documents conflict on whether countdown quick acknowledgement anchors to the prior scheduled time or to the operator click time. Current click-time behavior is tested and unchanged. | User / product owner. | Operators will continue receiving the next interval from click time; changing the anchor later would change reminder behavior and requires updated tests and documentation. | Decision remains open for morning review. Before production approval, explicitly accept click-time behavior or authorize, implement, and reverify a different anchor. No semantic change or waiver is made here. |
-| Task 15, the state-based lifecycle buttons and split terminal action header, remains deferred and unimplemented even though `v2-files/PLAN.md` names it before pilot use. | User / product owner chooses implementation or waiver; implementation owner completes and verifies it if retained. | The pilot otherwise ships the current tested action-header presentation rather than the approved Task 15 presentation. Backend lifecycle rules remain unchanged. | Unresolved production prerequisite. Implement and verify Task 15, or explicitly waive it before pilot production. This verdict records no waiver. |
+
+## Resolved product decisions
+
+- Countdown acknowledgement preserves the saved scheduled cadence, advances at
+  least once, and skips whole overdue intervals to the first strictly future
+  expected time. This replaces the prior click-time behavior and has focused,
+  complete, and live browser verification.
+- Task 15 is deferred outside the current release. Nothing in Task 15 is
+  approved for implementation, and it is not a pilot-production prerequisite.
+  The current tested terminal header remains in place.
 
 ## Evidence used
 
@@ -100,12 +115,15 @@ substitute for the missing production-backup and production-clone evidence.
   `final-verifier-fix/`, `final-verifier-fix-round-1/`, and
   `final-whole-review-fix/roll-pallet-live/`
 - final Task 7 and verifier reviews: every reported Critical, Important, and
-  Minor finding is closed; the parked countdown product decision is unchanged.
+  Minor finding is closed;
+- scheduled-cadence/solid-dot live evidence:
+  `artifacts/ui-checks/scheduled-countdown-dot-fix/green/`.
 
 ## Required next action
 
-The user must supply an immutable SQLite-safe production backup and the exact
-deployed application revision. Then perform Task 8, obtain any required M001
-mapping decision, perform Task 9 on disposable clones, and repeat this final
-review. Deployment remains a separate, explicit user-authorized operation even
-after a future `GO`.
+First give the verified scheduled-cadence/solid-dot working tree a committed
+candidate SHA under separate user authorization. The user must then supply an
+immutable SQLite-safe production backup and the exact deployed application
+revision. Perform Task 8, obtain any required M001 mapping decision, perform
+Task 9 on disposable clones, and repeat this final review. Deployment remains a
+separate, explicit user-authorized operation even after a future `GO`.

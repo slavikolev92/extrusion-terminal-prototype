@@ -280,6 +280,14 @@ This list combines the two existing production-tracking workstreams with the new
      from every time control over the backdrop, with no console errors, page
      errors, horizontal overflow, timer-only database mutation, accidental
      editor dismissal, or schedule transfer to the next order.
+   - July 28 correction: quick acknowledgement preserves the saved scheduled
+     cadence, advances at least once, and catches up through whole intervals to
+     the first strictly future expected time. The machine-state indicator is a
+     solid borderless `16px` circle. This correction remains browser-local and
+     makes no production-data or schema change. Fresh verification passed 20
+     Node schedule tests, 253 focused Python tests including all 61 migration
+     tests, 912 complete Python tests, and the guarded live browser workflow at
+     both supported viewports with zero console/page errors.
    - Durable references: `v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md`,
      `docs/implementation-notes/roll-change-countdown.md`, and browser evidence
      under `artifacts/ui-checks/roll-change-countdown/`.
@@ -358,22 +366,23 @@ This list combines the two existing production-tracking workstreams with the new
    - Complexity: small; presentation, render expectations, and browser geometry
      only. No backend lifecycle, database, migration, or stored-data change is
      expected.
-   - Status: discussion concluded and preserved in
-     `v2-files/TASK-15-TERMINAL-ACTION-HEADER.md`; implementation has not
-     started.
+   - Status: deferred outside the current release by explicit user decision on
+     July 28, 2026. Nothing in this task is approved for implementation, work
+     has not started, and it is not a pilot-production prerequisite. The task
+     file preserves discussion context only.
    - Goal: stop rendering obsolete disabled lifecycle controls after production
      begins, make the Start/Pause/Continue control morph with card state, keep
      exactly one visually primary action in each active state, and align the two
      header control groups with the Details and Rolls panes below.
-   - Approved button hierarchy: pending shows primary `Старт` plus disabled
+   - Preserved proposal only: pending shows primary `Старт` plus disabled
      `Приключи` and no Pause; running shows secondary `Пауза` plus primary
      `Приключи` and no Start; paused shows primary `Продължи` plus secondary
      enabled `Приключи` and no Start.
-   - Approved color rule: retain the existing dark primary and white active
+   - Preserved proposed color rule: retain the existing dark primary and white active
      secondary treatments. Gray is reserved for disabled controls; green/red
      action colors are not introduced because finishing is the normal successful
      path rather than a destructive or emergency action.
-   - Approved layout: keep one header row, align the roll-change group to the
+   - Preserved proposed layout: keep one header row, align the roll-change group to the
      right edge above Details, and align the lifecycle group to the right edge
      above Rolls by sharing the workspace column geometry at both supported
      workstation widths.
@@ -394,9 +403,8 @@ This list combines the two existing production-tracking workstreams with the new
 5. Before pilot production, design and implement Task 13 enough to provide
    unattended validated backups, redundant copy targets, and a rehearsed restore
    path. This is operational safety work, not a UI polish task.
-6. Complete Task 15 as an independent presentation-only terminal correction
-   after the current Task 10 countdown work is settled. Preserve the countdown
-   hooks and existing lifecycle business rules.
+6. Keep Task 15 deferred outside the current release. It is not approved for
+   implementation and is not a pilot-production prerequisite.
 7. Keep Task 14 deferred during the current UI correction work. After the
    planned production-data migration, resume it as a bounded Task 6 prototype
    before considering a single material field, strict catalogue enforcement, or

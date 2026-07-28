@@ -1,5 +1,13 @@
 # Roll-Change Countdown Implementation Plan
 
+> **Historical cadence notice (2026-07-28):** This plan records the original
+> Task 10 implementation. Its instructions that anchor acknowledgement to click
+> time and forbid multi-interval catch-up are superseded by
+> [`2026-07-28-scheduled-countdown-and-machine-dot.md`](2026-07-28-scheduled-countdown-and-machine-dot.md)
+> and the current `v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md`. Preserve the rest
+> of this file as implementation history; do not use its old cadence rules for
+> future changes.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add an optional, refresh-safe countdown for the next synchronized roll change on each machine's current running or paused extrusion card, with one-touch schedule advancement and a correction editor that never changes production data.

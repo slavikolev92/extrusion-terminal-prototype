@@ -1,9 +1,10 @@
 # Task 15: State-Based Lifecycle Buttons And Split Terminal Action Header
 
-Status: design discussion concluded and preserved on July 27, 2026.
-Implementation has not started. This task is a bounded workstation presentation
-change and does not authorize unrelated terminal redesign or backend workflow
-changes.
+Status: deferred outside the current release by explicit user decision on
+July 28, 2026. Nothing in this document is approved for implementation,
+implementation has not started, and Task 15 is not a pilot-production
+prerequisite. The remaining content preserves the prior design discussion as a
+proposal only; it does not authorize terminal or backend changes.
 
 ## Purpose
 
@@ -22,7 +23,7 @@ separate Details and Rolls panes.
 This task removes those obsolete controls, preserves a stable two-button
 lifecycle area, and splits the header into two pane-aligned action zones.
 
-## Confirmed Interaction Model
+## Discussed Interaction Proposal
 
 The first lifecycle position is one state-dependent control:
 
@@ -81,7 +82,7 @@ header zone.
   behavior unless a minimal spacing adjustment is required by the shared
   header grid.
 
-## Confirmed Visual Hierarchy And Colors
+## Discussed Visual Hierarchy And Colors
 
 Use the application's existing action treatments:
 
@@ -104,7 +105,7 @@ Do not introduce green Start/Continue buttons or a red End button:
 At every pending, running, or paused state, exactly one enabled action should
 have the primary treatment.
 
-## Confirmed Split-Header Layout
+## Discussed Split-Header Proposal
 
 Keep the existing single selected-card header row and its bottom divider. Do not
 create inset cards, stacked toolbars, or extra panel-heading rows.
@@ -238,7 +239,7 @@ workstation viewports, it must verify:
 - neither group overlaps the title, the other group, or a pane boundary;
 - equal lifecycle button sizes and established hit areas are retained;
 - active secondary buttons are visibly distinct from disabled gray controls;
-- pending, running, and paused states render the approved labels and hierarchy;
+- pending, running, and paused states render the proposed labels and hierarchy;
 - countdown setup, editor, quick acknowledgement, pause, resume, and finish
   still work after the host move;
 - there is no horizontal overflow, clipping, console error, or page error; and
@@ -296,7 +297,7 @@ transformation is needed for Task 15.
 Task 15 is complete when:
 
 - each card state renders only its meaningful lifecycle actions;
-- the first lifecycle control morphs Start -> Pause -> Continue as approved;
+- the first lifecycle control morphs Start -> Pause -> Continue as proposed;
 - exactly one enabled action is primary in pending, running, and paused states;
 - End remains enabled but secondary while paused;
 - the roll-change and lifecycle groups align with their respective Details and

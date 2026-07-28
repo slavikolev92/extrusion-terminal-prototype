@@ -26,14 +26,6 @@ function assertEqual(actual, expected, label) {
 }
 
 
-function assertTimestampBetween(actual, startedAt, endedAt, label) {
-  assert(
-    Number.isFinite(actual) && actual >= startedAt && actual <= endedAt,
-    `${label}: expected a timestamp from ${startedAt} through ${endedAt}, found ${actual}`,
-  );
-}
-
-
 function normalized(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
@@ -508,23 +500,45 @@ async function assertLayoutAndInactiveState(page, viewport) {
       const value = element.getBoundingClientRect();
       return { left: value.left, top: value.top, right: value.right, bottom: value.bottom, width: value.width, height: value.height };
     };
-    return hosts.map((host) => ({
-      host: box(host),
-      dot: box(host.querySelector(".machine-state-dot")),
-      timer: host.querySelector("[data-roll-change-machine-timer]:not([hidden])") ? box(host.querySelector("[data-roll-change-machine-timer]")) : null,
-      customer: box(host.querySelector(".machine-tab-customer")),
-      product: box(host.querySelector(".machine-tab-product")),
-      progress: box(host.querySelector(".progress")),
-      quantity: box(host.querySelector(".machine-tab-qty")),
-    }));
+    return hosts.map((host) => {
+      const dot = host.querySelector(".machine-state-dot");
+      const dotStyle = getComputedStyle(dot);
+      return {
+        host: box(host),
+        dot: box(dot),
+        dotStyle: {
+          borderTopWidth: dotStyle.borderTopWidth,
+          boxShadow: dotStyle.boxShadow,
+          borderRadius: dotStyle.borderRadius,
+          backgroundColor: dotStyle.backgroundColor,
+        },
+        dotState: ["running", "paused", "idle"].find((name) => dot.classList.contains(name)),
+        timer: host.querySelector("[data-roll-change-machine-timer]:not([hidden])") ? box(host.querySelector("[data-roll-change-machine-timer]")) : null,
+        customer: box(host.querySelector(".machine-tab-customer")),
+        product: box(host.querySelector(".machine-tab-product")),
+        progress: box(host.querySelector(".progress")),
+        quantity: box(host.querySelector(".machine-tab-qty")),
+      };
+    });
   });
   const overlaps = (left, right) => (
     left.left < right.right && left.right > right.left
     && left.top < right.bottom && left.bottom > right.top
   );
+  const expectedDotColors = {
+    running: "rgb(31, 122, 67)",
+    paused: "rgb(211, 155, 22)",
+    idle: "rgb(135, 146, 158)",
+  };
   for (const [index, measurement] of measurements.entries()) {
+    assertEqual(measurement.dot.width, 16, `Machine ${index + 1} dot width`);
+    assertEqual(measurement.dot.height, 16, `Machine ${index + 1} dot height`);
+    assertEqual(measurement.dotStyle.borderTopWidth, "0px", `Machine ${index + 1} dot border`);
+    assertEqual(measurement.dotStyle.boxShadow, "none", `Machine ${index + 1} dot shadow`);
+    assertEqual(measurement.dotStyle.borderRadius, "50%", `Machine ${index + 1} dot radius`);
+    assertEqual(measurement.dotStyle.backgroundColor, expectedDotColors[measurement.dotState], `Machine ${index + 1} dot status color`);
     for (const [name, child] of Object.entries(measurement)) {
-      if (name === "host" || child === null) continue;
+      if (name === "host" || name === "dotStyle" || name === "dotState" || child === null) continue;
       assert(child.left >= measurement.host.left - 1 && child.right <= measurement.host.right + 1, `Machine ${index + 1} ${name} clips horizontally.`);
       assert(child.top >= measurement.host.top - 1 && child.bottom <= measurement.host.bottom + 1, `Machine ${index + 1} ${name} clips vertically.`);
     }
@@ -737,18 +751,28 @@ async function assertEditorAndScheduleMath(page, viewport) {
   assertEqual(directSaved.intervalMinutes, 30, "direct save interval");
   assertEqual(directSaved.nextExpectedAtMs, directNext, "direct next-time anchor");
 
-  const lateClickStarted = Date.now();
   await page.locator("[data-roll-change-advance]").click();
-  const lateClickEnded = Date.now();
   const late = await readSchedule(page, 1);
-  assertTimestampBetween(late.previousChangeAtMs, lateClickStarted, lateClickEnded, "late acknowledgement click-time anchor");
-  assertEqual(late.nextExpectedAtMs - late.previousChangeAtMs, 30 * 60_000, "late acknowledgement exact interval");
-  const earlyClickStarted = Date.now();
+  assertEqual(late.previousChangeAtMs, directNext, "late acknowledgement scheduled anchor");
+  assertEqual(late.nextExpectedAtMs, directNext + 30 * 60_000, "late acknowledgement next scheduled interval");
   await page.locator("[data-roll-change-advance]").click();
-  const earlyClickEnded = Date.now();
   const early = await readSchedule(page, 1);
-  assertTimestampBetween(early.previousChangeAtMs, earlyClickStarted, earlyClickEnded, "early acknowledgement click-time anchor");
-  assertEqual(early.nextExpectedAtMs - early.previousChangeAtMs, 30 * 60_000, "early acknowledgement exact interval");
+  assertEqual(early.previousChangeAtMs, late.nextExpectedAtMs, "early acknowledgement scheduled anchor");
+  assertEqual(early.nextExpectedAtMs, late.nextExpectedAtMs + 30 * 60_000, "early acknowledgement next scheduled interval");
+
+  const multiIntervalNext = minute - 65 * 60_000;
+  await writeSchedule(page, schedule({
+    machineId: 1,
+    cardId: fixture.cards.machine_1_running,
+    previousChangeAtMs: multiIntervalNext - 30 * 60_000,
+    intervalMinutes: 30,
+    nextExpectedAtMs: multiIntervalNext,
+    status: "running",
+  }));
+  await page.locator("[data-roll-change-advance]").click();
+  const caughtUp = await readSchedule(page, 1);
+  assertEqual(caughtUp.previousChangeAtMs, multiIntervalNext + 60 * 60_000, "multi-interval acknowledgement scheduled anchor");
+  assertEqual(caughtUp.nextExpectedAtMs, multiIntervalNext + 90 * 60_000, "multi-interval acknowledgement first future interval");
 
   for (const closeMethod of ["cancel", "escape", "backdrop"]) {
     const before = await rawSchedule(page, 1);
@@ -853,13 +877,11 @@ async function assertStorageEventsDueAndCorrection(context, page, mutationReques
   await page.waitForFunction(({ key, expected }) => localStorage.getItem(key) === JSON.stringify(expected), { key: storageKey(1), expected: replacement });
   assert(await page.locator("[data-roll-change-advance]").isVisible(), "Native storage save did not update peer UI.");
 
-  const crossTabClickStarted = Date.now();
   await page.locator("[data-roll-change-advance]").click();
-  const crossTabClickEnded = Date.now();
   const acknowledged = await readSchedule(page, 1);
   await peer.waitForFunction(({ key, expected }) => localStorage.getItem(key) === JSON.stringify(expected), { key: storageKey(1), expected: acknowledged });
-  assertTimestampBetween(acknowledged.previousChangeAtMs, crossTabClickStarted, crossTabClickEnded, "cross-tab acknowledgement click-time anchor");
-  assertEqual(acknowledged.nextExpectedAtMs - acknowledged.previousChangeAtMs, 30 * 60_000, "cross-tab acknowledgement exact interval");
+  assertEqual(acknowledged.previousChangeAtMs, replacement.nextExpectedAtMs, "cross-tab acknowledgement scheduled anchor");
+  assertEqual(acknowledged.nextExpectedAtMs, replacement.nextExpectedAtMs + 30 * 60_000, "cross-tab acknowledgement next scheduled interval");
 
   await page.locator("[data-roll-change-open]").click();
   const correctedNext = Math.floor((Date.now() + 12 * 60_000) / 60_000) * 60_000;
@@ -868,12 +890,10 @@ async function assertStorageEventsDueAndCorrection(context, page, mutationReques
   const corrected = await readSchedule(page, 1);
   assertEqual(corrected.nextExpectedAtMs, correctedNext, "corrected direct next anchor");
   await peer.waitForFunction(({ key, expected }) => localStorage.getItem(key) === JSON.stringify(expected), { key: storageKey(1), expected: corrected });
-  const correctionClickStarted = Date.now();
   await page.locator("[data-roll-change-advance]").click();
-  const correctionClickEnded = Date.now();
   const afterCorrection = await readSchedule(page, 1);
-  assertTimestampBetween(afterCorrection.previousChangeAtMs, correctionClickStarted, correctionClickEnded, "corrected acknowledgement click-time anchor");
-  assertEqual(afterCorrection.nextExpectedAtMs - afterCorrection.previousChangeAtMs, corrected.intervalMinutes * 60_000, "corrected acknowledgement exact interval");
+  assertEqual(afterCorrection.previousChangeAtMs, correctedNext, "corrected acknowledgement scheduled anchor");
+  assertEqual(afterCorrection.nextExpectedAtMs, correctedNext + corrected.intervalMinutes * 60_000, "corrected acknowledgement next scheduled interval");
 
   const due = schedule({
     machineId: 1,
@@ -1065,13 +1085,13 @@ async function assertPauseResumeLifecycle(page, viewport) {
 
   await submitFormAndWait(page, 'form[action$="/timing/pause"]');
   const beforePausedAdvance = await readSchedule(page, 2);
-  const pausedClickStarted = Date.now();
   await page.locator("[data-roll-change-advance]").click();
-  const pausedClickEnded = Date.now();
   const afterPausedAdvance = await readSchedule(page, 2);
-  assertTimestampBetween(afterPausedAdvance.previousChangeAtMs, pausedClickStarted, pausedClickEnded, "paused acknowledgement click-time anchor");
-  assertEqual(afterPausedAdvance.nextExpectedAtMs - afterPausedAdvance.previousChangeAtMs, beforePausedAdvance.intervalMinutes * 60_000, "paused acknowledgement exact interval");
-  assertEqual(afterPausedAdvance.frozenRemainingMs, beforePausedAdvance.intervalMinutes * 60_000, "paused acknowledgement frozen interval");
+  const pausedIntervalMs = beforePausedAdvance.intervalMinutes * 60_000;
+  assertEqual(afterPausedAdvance.previousChangeAtMs, beforePausedAdvance.nextExpectedAtMs, "paused acknowledgement scheduled anchor");
+  assertEqual(afterPausedAdvance.nextExpectedAtMs, beforePausedAdvance.nextExpectedAtMs + pausedIntervalMs, "paused acknowledgement next scheduled interval");
+  assert(afterPausedAdvance.frozenRemainingMs > pausedIntervalMs, "Early paused acknowledgement did not preserve the remaining scheduled time.");
+  assert(afterPausedAdvance.frozenRemainingMs <= pausedIntervalMs + beforePausedAdvance.frozenRemainingMs, "Paused acknowledgement gained more than one scheduled interval.");
   assertEqual(afterPausedAdvance.pauseNeedsResolution, false, "paused acknowledgement resolution");
   assert(await page.locator('[data-machine-id="2"] [data-roll-change-machine-timer]').evaluate((element) => element.classList.contains("paused")), "Acknowledged paused timer lost paused styling.");
   assert(await page.locator("[data-roll-change-open]").evaluate((element) => element.classList.contains("paused")), "Selected acknowledged paused timer lost paused styling.");

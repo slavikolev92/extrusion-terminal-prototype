@@ -23,6 +23,16 @@
   `artifacts/ui-checks/release-candidate-audit/final-whole-review-fix/roll-pallet-live/`.
 - Later verdict/audit record updates are documentation-only and do not create a
   different executable candidate.
+- The user resolved the two remaining product questions on July 28: countdown
+  acknowledgement must preserve scheduled cadence and catch up to the first
+  strictly future interval, while Task 15 is deferred outside the current
+  release and is not a production prerequisite. The cadence correction and
+  solid `16px` machine-dot correction are implemented in an uncommitted
+  isolated working tree based on `9c66fd641c795d976a085feb7e9ceb5a3eb13558`.
+  Fresh verification passes 253 focused Python tests (including all 61
+  migrations), 912 complete Python tests, 20 Node schedule tests, syntax and
+  compile checks, and the guarded countdown browser workflow at `1920x768` and
+  `1366x768` with zero console/page errors.
 - Task 8 is pending. It requires a user-supplied immutable SQLite-safe
   production backup and the exact deployed application revision; neither was
   supplied during this audit.
@@ -81,7 +91,9 @@
 
   Record the HEAD, tracked diff hash, untracked source/document hashes, Python version, SQLite version, Node version, and Playwright version in `candidate-manifest.txt`.
 
-  Expected: the manifest distinguishes the complete candidate from commit `c6b68ff` while the roll-change countdown remains uncommitted.
+  Expected: the manifest distinguishes the previous committed candidate from
+  any later documentation lineage and from the current verified but
+  uncommitted cadence/dot correction.
 
 - [ ] **Step 3: Enforce the release-freeze gate**
 

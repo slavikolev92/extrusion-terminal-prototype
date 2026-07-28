@@ -8,18 +8,19 @@ change together. It is not a physical roll-change timestamp, an audit event, or
 a production record. Operators may weigh, wrap, and enter rolls later without
 moving the expected schedule.
 
-A normal acknowledgement treats its click time as the new previous/start
-anchor and creates exactly one interval from that click:
+A normal acknowledgement advances from the saved next expected time and
+preserves the scheduled cadence:
 
 ```text
-previous change      = acknowledgement click time
-next expected change = acknowledgement click time + interval
+new previous change      = last scheduled boundary before the new next time
+new next expected change = first scheduled boundary strictly after the click
 ```
 
-A late click therefore starts the next interval from its click time and never
-jumps over multiple missed intervals. A directly edited next expected time
-remains editable, but a following acknowledgement uses that later click time
-rather than the override as its anchor.
+The action always advances at least one interval. If the saved expected time is
+already several intervals overdue, one acknowledgement skips whole scheduled
+intervals until the new expected time is strictly in the future. A directly
+edited next expected time remains editable and becomes the anchor for later
+acknowledgements.
 
 ## Ownership And Clearing
 
@@ -44,10 +45,15 @@ record is also removed instead of guessed.
 | Running after pause | Still unresolved, due | Holds red resumed-unresolved `00:00`; the paused yellow override no longer applies. |
 | Running after pause | Resolved during pause | Returns to normal timestamp-derived counting and warning thresholds. |
 
-The quick acknowledgement remains available while paused. It uses the click
-time as the new previous/start anchor, sets the next expected time exactly one
-interval later, and resolves the pause. Saving a corrected schedule in the
+The quick acknowledgement remains available while paused. It applies the same
+scheduled-cadence catch-up rule and resolves the pause; the future duration is
+then frozen in the paused presentation. Saving a corrected schedule in the
 editor also resolves it.
+
+Machine navigation continues to map running, paused, and idle states to green,
+yellow, and gray. The visible indicator is a solid borderless `16px` circle
+with no outer shadow; the existing hidden textual status labels remain the
+non-color accessibility cue.
 
 ## Browser Storage Contract
 
@@ -148,3 +154,9 @@ node scripts/verify_roll_change_countdown_ui.mjs
 The verifier exercises both `1920x768` and `1366x768`. Screenshots and the JSON
 summary are written under `artifacts/ui-checks/roll-change-countdown/`; those
 artifacts and the `.test-runtime` fixture remain untracked.
+
+The July 28 scheduled-cadence and solid-dot correction was additionally
+verified under `artifacts/ui-checks/scheduled-countdown-dot-fix/green/`. Its
+guarded workflow passed both supported viewports with no console or page errors,
+alongside 20 Node schedule tests, 253 focused Python tests, and the 912-test
+complete Python suite.
