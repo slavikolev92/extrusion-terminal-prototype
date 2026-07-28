@@ -18,7 +18,7 @@ const baseURL = requiredEnvironment("BASE_URL").replace(/\/+$/, "");
 const fixtureInput = requiredEnvironment("FIXTURE_JSON");
 const artifactInput = requiredEnvironment("ARTIFACT_DIR");
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(scriptDir, "..");
+const repoRoot = fs.realpathSync(path.resolve(scriptDir, ".."));
 const runtimeRoot = path.resolve(repoRoot, ".test-runtime");
 const artifactRoot = path.resolve(repoRoot, "artifacts", "ui-checks");
 const requestedFixturePath = path.resolve(repoRoot, fixtureInput);
@@ -64,6 +64,22 @@ function isStrictChild(parent, candidate) {
 }
 
 
+function assertNoSymlinkComponents(base, candidate, message) {
+  const relative = path.relative(base, candidate);
+  assert(
+    relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative)),
+    message,
+  );
+  let current = base;
+  for (const component of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    if (fs.existsSync(current)) {
+      assert(!fs.lstatSync(current).isSymbolicLink(), message);
+    }
+  }
+}
+
+
 function assertEvidenceOutputLeaves() {
   for (const outputName of evidenceOutputNames) {
     const outputPath = path.join(artifactDir, outputName);
@@ -91,6 +107,11 @@ assert(
   isStrictChild(artifactRoot, artifactDir),
   "ARTIFACT_DIR must be below artifacts/ui-checks.",
 );
+assertNoSymlinkComponents(
+  repoRoot,
+  artifactDir,
+  "ARTIFACT_DIR guard path must not contain symlinks.",
+);
 assert(
   fs.existsSync(requestedFixturePath),
   `Fixture JSON does not exist: ${requestedFixturePath}`,
@@ -101,6 +122,20 @@ assert(
   "FIXTURE_JSON must resolve below .test-runtime.",
 );
 fs.mkdirSync(artifactRoot, { recursive: true });
+assertNoSymlinkComponents(
+  repoRoot,
+  artifactDir,
+  "ARTIFACT_DIR guard path must not contain symlinks.",
+);
+let existingArtifactAncestor = artifactDir;
+while (!fs.existsSync(existingArtifactAncestor)) {
+  existingArtifactAncestor = path.dirname(existingArtifactAncestor);
+}
+assert(
+  existingArtifactAncestor === artifactRoot
+    || isStrictChild(fs.realpathSync(artifactRoot), fs.realpathSync(existingArtifactAncestor)),
+  "ARTIFACT_DIR resolves outside artifacts/ui-checks.",
+);
 fs.mkdirSync(artifactDir, { recursive: true });
 assert(
   isStrictChild(fs.realpathSync(artifactRoot), fs.realpathSync(artifactDir)),

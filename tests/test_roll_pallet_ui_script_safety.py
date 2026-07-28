@@ -8,9 +8,11 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -102,6 +104,48 @@ def create_roll_pallet_fixture(database_path: Path, fixture_path: Path) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+@contextmanager
+def request_counting_server():
+    requests: list[str] = []
+
+    class RequestHandler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
+            requests.append(self.path)
+            self.send_response(503)
+            self.end_headers()
+
+        def log_message(self, format, *args):  # noqa: A002
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), RequestHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        yield f"http://{host}:{port}", requests
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+def isolated_roll_verifier_case(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+    isolated_repo = tmp_path / "isolated-repo"
+    isolated_script = isolated_repo / "scripts" / VERIFIER_SCRIPT.name
+    runtime_dir = isolated_repo / ".test-runtime" / "guard-case"
+    database_path = runtime_dir / "fixture.sqlite3"
+    fixture_path = runtime_dir / "fixture.json"
+    isolated_script.parent.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+    shutil.copy2(VERIFIER_SCRIPT, isolated_script)
+    database_path.write_bytes(b"database sentinel\n")
+    fixture_path.write_text(
+        json.dumps({"db_path": str(database_path)}),
+        encoding="utf-8",
+    )
+    return isolated_repo, isolated_script, database_path, fixture_path
 
 
 def test_roll_pallet_fixture_rejects_database_path_outside_test_runtime(tmp_path):
@@ -277,6 +321,85 @@ def test_roll_pallet_verifier_rejects_non_regular_screenshot_leaf_before_health(
     assert database_after == database_before
     assert not summary_exists
     assert "Evidence output path must be absent or a regular file" in result.stderr
+
+
+def test_roll_pallet_verifier_rejects_symlinked_artifact_guard_root_before_mutation(
+    tmp_path: Path,
+):
+    isolated_repo, isolated_script, database_path, fixture_path = (
+        isolated_roll_verifier_case(tmp_path)
+    )
+    outside_root = tmp_path / "outside-artifact-root"
+    sentinel_path = outside_root / "sentinel.txt"
+    artifact_parent = isolated_repo / "artifacts"
+    artifact_root = artifact_parent / "ui-checks"
+    artifact_dir = artifact_root / "escaped-output"
+    outside_root.mkdir()
+    sentinel_path.write_text("outside sentinel\n", encoding="utf-8")
+    artifact_parent.mkdir()
+    artifact_root.symlink_to(outside_root, target_is_directory=True)
+    database_before = database_path.read_bytes()
+
+    with request_counting_server() as (base_url, requests):
+        result = subprocess.run(
+            ["node", str(isolated_script)],
+            cwd=isolated_repo,
+            env=verifier_environment(
+                BASE_URL=base_url,
+                FIXTURE_JSON=str(fixture_path),
+                ARTIFACT_DIR=str(artifact_dir),
+            ),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+
+    assert result.returncode != 0
+    assert sentinel_path.read_text(encoding="utf-8") == "outside sentinel\n"
+    assert not (outside_root / "escaped-output").exists()
+    assert database_path.read_bytes() == database_before
+    assert requests == []
+    assert "ARTIFACT_DIR guard path must not contain symlinks." in result.stderr
+
+
+def test_roll_pallet_verifier_rejects_symlinked_intermediate_artifact_component_before_mutation(
+    tmp_path: Path,
+):
+    isolated_repo, isolated_script, database_path, fixture_path = (
+        isolated_roll_verifier_case(tmp_path)
+    )
+    artifact_root = isolated_repo / "artifacts" / "ui-checks"
+    outside_root = tmp_path / "outside-intermediate"
+    sentinel_path = outside_root / "sentinel.txt"
+    artifact_dir = artifact_root / "escape" / "escaped-output"
+    artifact_root.mkdir(parents=True)
+    outside_root.mkdir()
+    sentinel_path.write_text("outside sentinel\n", encoding="utf-8")
+    (artifact_root / "escape").symlink_to(outside_root, target_is_directory=True)
+    database_before = database_path.read_bytes()
+
+    with request_counting_server() as (base_url, requests):
+        result = subprocess.run(
+            ["node", str(isolated_script)],
+            cwd=isolated_repo,
+            env=verifier_environment(
+                BASE_URL=base_url,
+                FIXTURE_JSON=str(fixture_path),
+                ARTIFACT_DIR=str(artifact_dir),
+            ),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+
+    assert result.returncode != 0
+    assert sentinel_path.read_text(encoding="utf-8") == "outside sentinel\n"
+    assert not (outside_root / "escaped-output").exists()
+    assert database_path.read_bytes() == database_before
+    assert requests == []
+    assert "ARTIFACT_DIR guard path must not contain symlinks." in result.stderr
 
 
 def test_roll_pallet_fixture_creates_only_the_four_required_card_kinds(tmp_path):
