@@ -4,6 +4,8 @@ import csv
 import io
 import threading
 
+import pytest
+
 from app import db
 from app.constants import STATUS_IMPORTED, STATUS_PAUSED, STATUS_PENDING, STATUS_RUNNING
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
@@ -313,6 +315,135 @@ def test_unrelease_pending_card_normalizes_old_machine_queue(connection):
     assert third["status"] == STATUS_PENDING
     assert third["machine_sequence"] == 2
     assert machine_1_cards == [("25821", 1), ("25823", 2)]
+
+
+def test_unrelease_rejects_started_cancelled_restored_pending_card_without_mutation(
+    connection,
+):
+    first_id = release_ready_card("25821-first", machine_id=1, machine_sequence=1)
+    card_id = release_ready_card("25821-started", machine_id=1, machine_sequence=2)
+    third_id = release_ready_card("25821-third", machine_id=1, machine_sequence=3)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.cancel_card(card_id, card_version(card_id)).ok
+    assert db.restore_cancelled_card(card_id, card_version(card_id)).ok
+
+    def snapshot():
+        card = db.fetch_admin_card_detail(card_id)
+        assert card is not None
+        queue = [
+            (
+                int(queued["id"]),
+                str(queued["status"]),
+                int(queued["machine_id"]),
+                int(queued["machine_sequence"]),
+                int(queued["version"]),
+            )
+            for machine_queue in db.fetch_machine_queues()
+            if int(machine_queue["machine"]["id"]) == 1
+            for queued in machine_queue["cards"]
+        ]
+        timing = [
+            (
+                int(segment["id"]),
+                segment["started_at"],
+                segment["ended_at"],
+                segment["end_reason"],
+            )
+            for segment in card["timing_segments"]
+        ]
+        return (
+            str(card["status"]),
+            None if card["machine_id"] is None else int(card["machine_id"]),
+            None if card["machine_sequence"] is None else int(card["machine_sequence"]),
+            int(card["version"]),
+            card["first_started_at"],
+            timing,
+            queue,
+        )
+
+    before = snapshot()
+    result = db.unrelease_pending_card(card_id, card_version(card_id))
+    after = snapshot()
+
+    assert not result.ok
+    assert result.messages == (
+        "Технологични карти със започнато производство или производствени данни "
+        "не могат да се връщат за планиране.",
+    )
+    assert after == before
+    assert {row[0] for row in after[-1]} == {first_id, card_id, third_id}
+
+
+@pytest.mark.parametrize(
+    "production_kind",
+    ("tare", "pallet", "card_material", "recipe_actual", "roll", "timing"),
+)
+def test_unrelease_rejects_every_pending_machine_side_data_category_without_mutation(
+    connection,
+    production_kind,
+):
+    card_id = release_ready_card(
+        f"25821-production-{production_kind}",
+        machine_id=2,
+        machine_sequence=1,
+    )
+    with db.connect() as setup_connection:
+        if production_kind == "tare":
+            setup_connection.execute(
+                "UPDATE cards SET tare_weight = 1.25 WHERE id = ?",
+                (card_id,),
+            )
+        elif production_kind == "pallet":
+            setup_connection.execute(
+                "UPDATE cards SET current_pallet_number = 7 WHERE id = ?",
+                (card_id,),
+            )
+        elif production_kind == "card_material":
+            setup_connection.execute(
+                "UPDATE cards SET actual_raw_material_used = 'Actual LDPE' WHERE id = ?",
+                (card_id,),
+            )
+        elif production_kind == "recipe_actual":
+            setup_connection.execute(
+                """
+                INSERT INTO recipe_actual_entries (
+                    card_id, component_key, component_label,
+                    actual_material_used, batch_lot
+                ) VALUES (?, 'raw_material_a', 'A', 'Actual A', '')
+                """,
+                (card_id,),
+            )
+        elif production_kind == "roll":
+            setup_connection.execute(
+                """
+                INSERT INTO roll_entries (card_id, order_number, roll_number, gross_weight)
+                SELECT id, order_number, 1, 25.00 FROM cards WHERE id = ?
+                """,
+                (card_id,),
+            )
+        else:
+            setup_connection.execute(
+                """
+                INSERT INTO production_time_segments (
+                    card_id, started_at, ended_at, end_reason
+                ) VALUES (?, '2026-07-28 08:00:00', '2026-07-28 08:05:00', 'correction')
+                """,
+                (card_id,),
+            )
+
+    before = db.fetch_admin_card_detail(card_id)
+    before_queue = db.fetch_machine_queues()
+    result = db.unrelease_pending_card(card_id, card_version(card_id))
+    after = db.fetch_admin_card_detail(card_id)
+    after_queue = db.fetch_machine_queues()
+
+    assert not result.ok
+    assert result.messages == (
+        "Технологични карти със започнато производство или производствени данни "
+        "не могат да се връщат за планиране.",
+    )
+    assert after == before
+    assert after_queue == before_queue
 
 
 def test_unrelease_pending_card_blocks_stale_loaded_version(connection):

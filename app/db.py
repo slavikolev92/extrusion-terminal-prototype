@@ -44,6 +44,10 @@ STALE_CONFIGURATION_MESSAGE = (
 NO_ACTIVE_SHIFT_MESSAGE = "Отворете смяна, преди да продължите."
 PALLET_NUMBER_ERROR = "Палетът трябва да бъде цяло число от 1 до 999."
 REWINDING_COUNT_ERROR = "Броят за пренавиване трябва да бъде цяло число от 1 до 999."
+UNRELEASE_PRODUCTION_DATA_MESSAGE = (
+    "Технологични карти със започнато производство или производствени данни "
+    "не могат да се връщат за планиране."
+)
 MAX_SHIFT_COUNT = 99
 TIMING_END_REASONS = ("pause", "finish", "correction")
 TIMING_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -1168,6 +1172,10 @@ def fetch_admin_card_detail(card_id: int) -> dict[str, Any] | None:
         card.update(roll_data)
         card["recipe_actual_entries"] = fetch_recipe_actual_entries(connection, card_id)
         card["recipe_components"] = fetch_recipe_components(connection, card_id)
+        card["can_unrelease"] = (
+            card["status"] == STATUS_PENDING
+            and not card_has_unrelease_blocking_production_data(connection, row)
+        )
         return card
 
 
@@ -1924,9 +1932,14 @@ def restore_cancelled_card(card_id: int, loaded_version: int) -> RuleResult:
 
 def unrelease_pending_card(card_id: int, loaded_version: int) -> RuleResult:
     with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
         card = connection.execute(
             """
-            SELECT id, order_number, status, machine_id, machine_sequence, version
+            SELECT id, order_number, status, machine_id, machine_sequence, version,
+                   first_started_at, finished_at, tare_weight, current_pallet_number,
+                   rewinding_roll_count, final_extrusion_shift_occurrence_id,
+                   actual_raw_material_used, raw_material_brand_grade,
+                   raw_material_batch_lot
             FROM cards
             WHERE id = ?
             """,
@@ -1941,6 +1954,9 @@ def unrelease_pending_card(card_id: int, loaded_version: int) -> RuleResult:
                 False,
                 ("Само изчакващи технологични карти могат да се връщат за планиране.",),
             )
+
+        if card_has_unrelease_blocking_production_data(connection, card):
+            return RuleResult(False, (UNRELEASE_PRODUCTION_DATA_MESSAGE,))
 
         old_machine_id = int(card["machine_id"]) if card["machine_id"] is not None else None
         cursor = connection.execute(
@@ -4335,6 +4351,59 @@ def card_has_entered_production_data(
         (card["id"],),
     ).fetchone()
     return actual_entry is not None
+
+
+def card_has_unrelease_blocking_production_data(
+    connection: sqlite3.Connection,
+    card: sqlite3.Row,
+) -> bool:
+    lifecycle_fields = (
+        "first_started_at",
+        "finished_at",
+        "rewinding_roll_count",
+        "final_extrusion_shift_occurrence_id",
+    )
+    if any(card[field] is not None for field in lifecycle_fields):
+        return True
+    if card_has_entered_production_data(connection, card):
+        return True
+    ledger_row = connection.execute(
+        """
+        SELECT
+            EXISTS(SELECT 1 FROM roll_entries WHERE card_id = ?) AS has_roll,
+            EXISTS(
+                SELECT 1 FROM production_time_segments WHERE card_id = ?
+            ) AS has_timing
+        """,
+        (card["id"], card["id"]),
+    ).fetchone()
+    return bool(ledger_row["has_roll"] or ledger_row["has_timing"])
+
+
+def fetch_unrelease_eligible_card_ids(card_ids: list[int]) -> set[int]:
+    normalized_ids = sorted({int(card_id) for card_id in card_ids})
+    if not normalized_ids:
+        return set()
+    placeholders = ", ".join("?" for _ in normalized_ids)
+    with connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT id, status, first_started_at, finished_at, tare_weight,
+                   current_pallet_number, rewinding_roll_count,
+                   final_extrusion_shift_occurrence_id,
+                   actual_raw_material_used, raw_material_brand_grade,
+                   raw_material_batch_lot
+            FROM cards
+            WHERE id IN ({placeholders})
+              AND status = ?
+            """,
+            (*normalized_ids, STATUS_PENDING),
+        ).fetchall()
+        return {
+            int(card["id"])
+            for card in rows
+            if not card_has_unrelease_blocking_production_data(connection, card)
+        }
 
 
 def update_terminal_material_fields(

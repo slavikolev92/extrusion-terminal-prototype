@@ -28,12 +28,14 @@
       {% elif card.status == "archived" %}
         <button class="admin-action-button admin-finish-button disabled" type="button" disabled>Маркирай завършена</button>
       {% endif %}
-      {% if card.status == "pending" %}
+      {% if card.status == "pending" and card.can_unrelease %}
         <form action="/admin/cards/{{ card.id }}/unrelease" method="post">
           <input type="hidden" name="loaded_version" value="{{ card.version }}">
           <input type="hidden" name="return_to" value="detail">
           <button class="admin-action-button" type="submit">Върни в планиране</button>
         </form>
+      {% elif card.status == "pending" %}
+        <p class="admin-action-unavailable" role="note">Връщането в планиране е недостъпно след начало на производство.</p>
       {% endif %}
       {% if card.status in ["pending", "running", "paused"] %}
         <form action="/admin/cards/{{ card.id }}/cancel" method="post">
@@ -142,6 +144,7 @@
 
   <form id="admin-card-save-form" class="admin-operational-form" action="/admin/cards/{{ card.id }}/save-all" method="post">
     <input type="hidden" name="loaded_version" value="{{ card.version }}">
+    {% set production_fields_disabled = card.status == "imported" %}
 
     <section class="section operational-panel admin-compact-card" id="order">
       <div class="section-head">
@@ -252,6 +255,10 @@
       </div>
     </section>
 
+  {% if production_fields_disabled %}
+    <p class="notice admin-lifecycle-note" role="note">Производствените полета са достъпни след изпращане към терминала.</p>
+  {% endif %}
+
   <section class="section operational-panel" id="materials">
     <div class="admin-ledger-form">
       <div class="section-head">
@@ -279,10 +286,10 @@
             </div>
             <div class="readonly-cell recipe-number">{{ row.planned_kg or "" }}</div>
             <div>
-              <input name="actual_material__{{ row.field }}" value="{{ row.actual_material or '' }}" aria-label="{{ row.source_label }} вложен материал">
+              <input name="actual_material__{{ row.field }}" value="{{ row.actual_material or '' }}" aria-label="{{ row.source_label }} вложен материал" {% if production_fields_disabled %}disabled{% endif %}>
             </div>
             <div>
-              <input name="batch_lot__{{ row.field }}" value="{{ row.batch or '' }}" aria-label="{{ row.source_label }} партида">
+              <input name="batch_lot__{{ row.field }}" value="{{ row.batch or '' }}" aria-label="{{ row.source_label }} партида" {% if production_fields_disabled %}disabled{% endif %}>
             </div>
           </div>
         {% endfor %}
@@ -299,15 +306,15 @@
       <div class="admin-roll-toolbar">
         <label>
           <span>Шпула, кг</span>
-          <input type="number" name="tare_weight" min="0" step="0.01" value="{{ card.tare_weight if card.tare_weight is not none else '' }}">
+          <input type="number" name="tare_weight" min="0" step="0.01" value="{{ card.tare_weight if card.tare_weight is not none else '' }}" {% if production_fields_disabled %}disabled{% endif %}>
         </label>
         <label>
           <span>Палет</span>
-          <input type="text" inputmode="numeric" name="current_pallet_number" value="{{ card.current_pallet_number if card.current_pallet_number is not none else '' }}">
+          <input type="text" inputmode="numeric" name="current_pallet_number" value="{{ card.current_pallet_number if card.current_pallet_number is not none else '' }}" {% if production_fields_disabled %}disabled{% endif %}>
         </label>
         <label>
           <span>Нова ролка, кг</span>
-          <input type="number" name="new_gross_weight" min="0" step="0.01" placeholder="Бруто">
+          <input type="number" name="new_gross_weight" min="0" step="0.01" placeholder="Бруто" {% if production_fields_disabled %}disabled{% endif %}>
         </label>
       </div>
 
@@ -325,17 +332,17 @@
             <div class="admin-ledger-row admin-roll-ledger-row">
               <div>{{ roll.roll_number }}</div>
               <div>
-                <input type="text" inputmode="numeric" name="pallet_number__{{ roll.id }}" value="{{ roll.pallet_number if roll.pallet_number is not none else '' }}" placeholder="-">
+                <input type="text" inputmode="numeric" name="pallet_number__{{ roll.id }}" value="{{ roll.pallet_number if roll.pallet_number is not none else '' }}" placeholder="-" aria-label="Ролка {{ roll.roll_number }}, палет" {% if production_fields_disabled %}disabled{% endif %}>
               </div>
               <div>
-                <input type="number" name="gross_weight__{{ roll.id }}" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}">
+                <input type="number" name="gross_weight__{{ roll.id }}" min="0" step="0.01" value="{{ roll.gross_weight if roll.gross_weight is not none else '' }}" aria-label="Ролка {{ roll.roll_number }}, бруто" {% if production_fields_disabled %}disabled{% endif %}>
               </div>
               <div>
-                <input type="number" name="tare_weight__{{ roll.id }}" min="0" step="0.01" value="{{ roll.tare_weight if roll.tare_weight is not none else '' }}">
+                <input type="number" name="tare_weight__{{ roll.id }}" min="0" step="0.01" value="{{ roll.tare_weight if roll.tare_weight is not none else '' }}" aria-label="Ролка {{ roll.roll_number }}, шпула" {% if production_fields_disabled %}disabled{% endif %}>
               </div>
               <div class="readonly-cell">{{ roll.net_weight if roll.net_weight is not none else "-" }}</div>
               <div class="ledger-row-actions">
-                <button class="admin-row-delete-button" type="submit" form="roll-delete-{{ roll.id }}" aria-label="Изтрий ролка {{ roll.roll_number }}">×</button>
+                <button class="admin-row-delete-button" type="submit" form="roll-delete-{{ roll.id }}" aria-label="Изтрий ролка {{ roll.roll_number }}" {% if production_fields_disabled %}disabled{% endif %}>×</button>
               </div>
             </div>
           {% endfor %}
@@ -376,10 +383,10 @@
         </div>
         {% for segment in card.timing_segments %}
           <div class="admin-ledger-row admin-timing-ledger-row">
-            <div><input name="started_at__{{ segment.id }}" value="{{ segment.started_at }}"></div>
-            <div><input name="ended_at__{{ segment.id }}" value="{{ segment.ended_at or '' }}"></div>
+            <div><input name="started_at__{{ segment.id }}" value="{{ segment.started_at }}" aria-label="Сегмент {{ loop.index }}, начало" {% if production_fields_disabled %}disabled{% endif %}></div>
+            <div><input name="ended_at__{{ segment.id }}" value="{{ segment.ended_at or '' }}" aria-label="Сегмент {{ loop.index }}, край" {% if production_fields_disabled %}disabled{% endif %}></div>
             <div>
-              <select name="end_reason__{{ segment.id }}">
+              <select name="end_reason__{{ segment.id }}" aria-label="Сегмент {{ loop.index }}, причина" {% if production_fields_disabled %}disabled{% endif %}>
                 <option value="" {% if not segment.end_reason %}selected{% endif %}>В ход</option>
                 <option value="pause" {% if segment.end_reason == "pause" %}selected{% endif %}>пауза</option>
                 <option value="finish" {% if segment.end_reason == "finish" %}selected{% endif %}>приключване</option>
@@ -387,15 +394,15 @@
               </select>
             </div>
             <div class="ledger-row-actions">
-              <button class="admin-row-delete-button" type="submit" form="timing-delete-{{ segment.id }}" aria-label="Изтрий времеви сегмент {{ loop.index }}">×</button>
+              <button class="admin-row-delete-button" type="submit" form="timing-delete-{{ segment.id }}" aria-label="Изтрий времеви сегмент {{ loop.index }}" {% if production_fields_disabled %}disabled{% endif %}>×</button>
             </div>
           </div>
         {% endfor %}
         <div class="admin-ledger-row admin-timing-ledger-row new-row">
-          <div><input name="new_started_at" placeholder="YYYY-MM-DD HH:MM:SS"></div>
-          <div><input name="new_ended_at" placeholder="YYYY-MM-DD HH:MM:SS"></div>
+          <div><input name="new_started_at" placeholder="YYYY-MM-DD HH:MM:SS" {% if production_fields_disabled %}disabled{% endif %}></div>
+          <div><input name="new_ended_at" placeholder="YYYY-MM-DD HH:MM:SS" {% if production_fields_disabled %}disabled{% endif %}></div>
           <div>
-            <select name="new_end_reason">
+            <select name="new_end_reason" {% if production_fields_disabled %}disabled{% endif %}>
               <option value="">В ход</option>
               <option value="pause">пауза</option>
               <option value="finish">приключване</option>
@@ -410,12 +417,12 @@
   </form>
 
   {% for roll in card.roll_entries %}
-    <form id="roll-delete-{{ roll.id }}" class="ledger-delete-form" action="/admin/cards/{{ card.id }}/rolls/{{ roll.id }}/delete" method="post" onsubmit="return confirm('Да се изтрие ли ролка {{ roll.roll_number }} с бруто {{ roll.gross_weight if roll.gross_weight is not none else '-' }} кг?');">
+    <form id="roll-delete-{{ roll.id }}" class="ledger-delete-form" action="/admin/cards/{{ card.id }}/rolls/{{ roll.id }}/delete" method="post" data-action-confirm="Да се изтрие ли ролка {{ roll.roll_number }} с бруто {{ roll.gross_weight if roll.gross_weight is not none else '-' }} кг?">
       <input type="hidden" name="loaded_version" value="{{ card.version }}">
     </form>
   {% endfor %}
   {% for segment in card.timing_segments %}
-    <form id="timing-delete-{{ segment.id }}" class="ledger-delete-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}/delete" method="post" onsubmit="return confirm('Да се изтрие ли времеви сегмент {{ loop.index }}: {{ segment.started_at }} - {{ segment.ended_at or 'в ход' }}?');">
+    <form id="timing-delete-{{ segment.id }}" class="ledger-delete-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}/delete" method="post" data-action-confirm="Да се изтрие ли времеви сегмент {{ loop.index }}: {{ segment.started_at }} - {{ segment.ended_at or 'в ход' }}?">
       <input type="hidden" name="loaded_version" value="{{ card.version }}">
     </form>
   {% endfor %}
@@ -446,7 +453,7 @@
         </div>
       </dl>
       {% if card.status == "imported" and not card.roll_entries and not card.timing_segments %}
-        <form class="danger-form" action="/admin/cards/{{ card.id }}/delete" method="post">
+        <form class="danger-form" action="/admin/cards/{{ card.id }}/delete" method="post" data-delete-order="{{ card.order_number }}">
           <input type="hidden" name="loaded_version" value="{{ card.version }}">
           <button type="submit">Изтрий невъзложена технологична карта</button>
         </form>
@@ -454,4 +461,96 @@
     </details>
   </section>
 </main>
+
+<script>
+  (() => {
+    const globalForm = document.getElementById("admin-card-save-form");
+    if (!globalForm) {
+      return;
+    }
+
+    const discardMessage = "Има незапазени промени. Да бъдат ли отхвърлени?";
+    let globalFormDirty = false;
+    let discardApproved = false;
+
+    const markGlobalFormDirty = () => {
+      globalFormDirty = true;
+      discardApproved = false;
+    };
+    const approveDiscard = () => {
+      if (!globalFormDirty || discardApproved) {
+        return true;
+      }
+      if (!window.confirm(discardMessage)) {
+        return false;
+      }
+      discardApproved = true;
+      return true;
+    };
+    const actionConfirmation = (form) => {
+      if (form.dataset.actionConfirm) {
+        return form.dataset.actionConfirm;
+      }
+      if (Object.prototype.hasOwnProperty.call(form.dataset, "deleteOrder")) {
+        return `Изтриване на поръчка ${form.dataset.deleteOrder}?`;
+      }
+      return "";
+    };
+
+    globalForm.addEventListener("input", markGlobalFormDirty);
+    globalForm.addEventListener("change", markGlobalFormDirty);
+    globalForm.addEventListener("submit", () => {
+      globalFormDirty = false;
+      discardApproved = true;
+    });
+
+    document.querySelectorAll("form").forEach((form) => {
+      if (form === globalForm) {
+        return;
+      }
+      form.addEventListener("submit", (event) => {
+        const confirmation = actionConfirmation(form);
+        if (confirmation && !window.confirm(confirmation)) {
+          event.preventDefault();
+          return;
+        }
+        if (!approveDiscard()) {
+          event.preventDefault();
+        }
+      });
+    });
+
+    document.querySelectorAll("a[href]").forEach((link) => {
+      link.addEventListener("click", (event) => {
+        if (
+          event.defaultPrevented
+          || link.target === "_blank"
+          || link.hasAttribute("download")
+          || event.button !== 0
+          || event.metaKey
+          || event.ctrlKey
+          || event.shiftKey
+          || event.altKey
+        ) {
+          return;
+        }
+        const href = link.getAttribute("href") || "";
+        if (href.startsWith("#")) {
+          return;
+        }
+        if (!approveDiscard()) {
+          event.preventDefault();
+        }
+      });
+    });
+
+    window.addEventListener("beforeunload", (event) => {
+      if (!globalFormDirty || discardApproved) {
+        return;
+      }
+      event.preventDefault();
+      event.returnValue = "";
+    });
+  })();
+</script>
 {% endblock %}

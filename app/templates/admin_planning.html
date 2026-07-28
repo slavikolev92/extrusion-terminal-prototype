@@ -153,7 +153,7 @@
                       <details class="planning-overflow">
                         <summary aria-label="Още действия за поръчка {{ card.order_number }}">⋮</summary>
                         <div class="planning-overflow-menu">
-                          {% if card.status == "pending" %}
+                          {% if card.status == "pending" and card.can_unrelease %}
                             <form action="/admin/cards/{{ card.id }}/unrelease" method="post">
                               <input type="hidden" name="loaded_version" value="{{ card.version }}">
                               <input type="hidden" name="return_to" value="planning">

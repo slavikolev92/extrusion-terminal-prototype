@@ -161,23 +161,26 @@ export function bootstrapRollChangeCountdown({
     );
   }
 
-  function setLifecycleInitializationPending(pending) {
-    lifecycleInitializationPending = pending;
-    if (pending) {
-      if (openControl) openControl.disabled = true;
-      if (advanceControl) advanceControl.disabled = true;
-      return;
-    }
-    if (lifecycleReloadRequired) return;
+  function syncLifecycleControlLock() {
+    const lifecycleLocked = lifecycleReloadRequired || lifecycleInitializationPending;
     const correctionOpen = hasOpenRollCorrection();
     if (openControl) {
-      openControl.disabled = correctionOpen
+      openControl.dataset.lifecycleLockActive = lifecycleLocked ? "true" : "false";
+      openControl.disabled = lifecycleLocked
+        || correctionOpen
         || openControl.dataset.correctionInitiallyDisabled === "true";
     }
     if (advanceControl) {
-      advanceControl.disabled = correctionOpen
+      advanceControl.dataset.lifecycleLockActive = lifecycleLocked ? "true" : "false";
+      advanceControl.disabled = lifecycleLocked
+        || correctionOpen
         || advanceControl.dataset.correctionInitiallyDisabled === "true";
     }
+  }
+
+  function setLifecycleInitializationPending(pending) {
+    lifecycleInitializationPending = pending;
+    syncLifecycleControlLock();
   }
 
   function requireLifecycleReload(status) {
@@ -185,8 +188,7 @@ export function bootstrapRollChangeCountdown({
     lifecycleReloadRequired = true;
     synchronizedSelectedStatus = TRACKABLE.has(status) ? status : null;
     closeEditor({ restoreFocus: false });
-    if (openControl) openControl.disabled = true;
-    if (advanceControl) advanceControl.disabled = true;
+    syncLifecycleControlLock();
     if (reloadAlert) {
       reloadAlert.hidden = false;
       reloadAlert.dataset.synchronizedStatus = synchronizedSelectedStatus ?? "ended";

@@ -21,6 +21,7 @@ from .constants import (
     STATUS_AWAITING_REWINDING,
     STATUS_IMPORTED,
     STATUS_PENDING,
+    STATUS_RUNNING,
     TERMINAL_ARCHIVE_STATUSES,
     TIMING_REASON_LABELS,
 )
@@ -49,6 +50,7 @@ from .db import (
     fetch_terminal_configuration,
     fetch_terminal_shift_page_state,
     fetch_terminal_card_detail,
+    fetch_unrelease_eligible_card_ids,
     fetch_waiting_rewinding_cards,
     fetch_machine_queues,
     fetch_machines,
@@ -108,6 +110,10 @@ DRAFT_SORT_LABELS = {
     "ordered_gross_kg": "Бруто кг",
 }
 SAFE_ANCHOR_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+IMPORTED_OPERATIONAL_PAYLOAD_MESSAGE = (
+    "Производствени данни не могат да се записват, преди картата да бъде "
+    "изпратена към терминала."
+)
 
 TERMINAL_NOTICE_MESSAGES = {
     "materials_saved": ("Материалите са записани.",),
@@ -229,10 +235,19 @@ def admin_planning_context(
     **extra: Any,
 ) -> dict[str, Any]:
     raw_machine_queues = fetch_machine_queues()
+    active_card_ids = [
+        int(card["id"])
+        for queue in raw_machine_queues
+        for card in queue["cards"]
+    ]
+    unrelease_eligible_ids = fetch_unrelease_eligible_card_ids(active_card_ids)
     machine_queues = [
         {
             **queue,
-            "cards": prepare_planning_card_rows(queue["cards"]),
+            "cards": prepare_planning_card_rows(
+                queue["cards"],
+                unrelease_eligible_ids=unrelease_eligible_ids,
+            ),
         }
         for queue in raw_machine_queues
     ]
@@ -348,13 +363,24 @@ def format_planning_delivery_date(value: Any) -> str:
     return raw_value
 
 
-def prepare_planning_card_rows(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def prepare_planning_card_rows(
+    cards: list[dict[str, Any]],
+    *,
+    unrelease_eligible_ids: set[int] | None = None,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for card in cards:
         row = dict(card)
         row["planning_delivery_date"] = format_planning_delivery_date(card.get("delivery_date"))
         row["planning_gross_kg"] = str(card.get("ordered_gross_kg") or "").strip() or "-"
         row["planning_size"] = str(card.get("size_thickness") or "").strip() or "-"
+        row["can_unrelease"] = (
+            row.get("status") == STATUS_PENDING
+            and (
+                unrelease_eligible_ids is None
+                or int(row["id"]) in unrelease_eligible_ids
+            )
+        )
         rows.append(row)
     return rows
 
@@ -1044,6 +1070,34 @@ def current_card_version_and_status(
     return int(card["version"]), str(card["status"]), RuleResult(True)
 
 
+def has_nonblank_admin_operational_payload(form: Any) -> bool:
+    exact_fields = {
+        "tare_weight",
+        "current_pallet_number",
+        "new_gross_weight",
+        "new_started_at",
+        "new_ended_at",
+        "new_end_reason",
+        "delete_roll_id",
+        "delete_segment_id",
+    }
+    prefixes = (
+        "actual_material__",
+        "batch_lot__",
+        "gross_weight__",
+        "tare_weight__",
+        "pallet_number__",
+        "started_at__",
+        "ended_at__",
+        "end_reason__",
+    )
+    return any(
+        str(value or "").strip()
+        and (key in exact_fields or key.startswith(prefixes))
+        for key, value in form.multi_items()
+    )
+
+
 def save_all_admin_card_changes(
     card_id: int,
     loaded_version: int,
@@ -1059,6 +1113,20 @@ def save_all_admin_card_changes(
         return recipe_result
 
     with connect() as connection:
+        current_version, current_status, result = current_card_version_and_status(
+            card_id,
+            connection,
+        )
+        if not result.ok:
+            return result
+        if current_version != loaded_version:
+            return RuleResult(False, (STALE_CARD_MESSAGE,))
+        if (
+            current_status == STATUS_IMPORTED
+            and has_nonblank_admin_operational_payload(form)
+        ):
+            return RuleResult(False, (IMPORTED_OPERATIONAL_PAYLOAD_MESSAGE,))
+
         result = update_admin_imported_fields(
             card_id=card_id,
             loaded_version=loaded_version,
@@ -2511,6 +2579,21 @@ def terminal_context(
             for queue in enriched_queues
         )
     )
+    selected_machine_occupying_card = next(
+        (
+            card
+            for queue in enriched_queues
+            if selected_machine_id is not None
+            and int(queue["machine"]["id"]) == int(selected_machine_id)
+            for card in queue["cards"]
+            if card["status"] == STATUS_RUNNING
+            and (
+                selected_card is None
+                or int(card["id"]) != int(selected_card["id"])
+            )
+        ),
+        None,
+    )
     active_cards = [
         card
         for queue in enriched_queues
@@ -2561,6 +2644,7 @@ def terminal_context(
         "waiting_rewinding_count": len(waiting_rewinding_cards),
         "selected_card": selected_card,
         "selected_card_is_machine_focus": selected_card_is_machine_focus,
+        "selected_machine_occupying_card": selected_machine_occupying_card,
         "selected_machine_id": selected_machine_id,
         "terminal_snapshot": terminal_snapshot,
         "status_labels": STATUS_LABELS,

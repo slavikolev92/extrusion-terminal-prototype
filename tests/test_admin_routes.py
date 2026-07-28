@@ -1034,6 +1034,60 @@ def test_failed_unrelease_from_detail_renders_detail_inline(connection):
     assert card["machine_sequence"] == 1
 
 
+def test_started_restored_pending_unrelease_route_rejects_without_mutation(connection):
+    card_id = import_route_card("25923-restored-started")
+    assert db.release_card(
+        card_id,
+        machine_id=4,
+        machine_sequence=1,
+        loaded_version=card_version(card_id),
+    ).ok
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.cancel_card(card_id, card_version(card_id)).ok
+    assert db.restore_cancelled_card(card_id, card_version(card_id)).ok
+    before = db.fetch_admin_card_detail(card_id)
+    before_queues = db.fetch_machine_queues()
+
+    response = asyncio.run(
+        unrelease_admin_card(
+            make_request(f"/admin/cards/{card_id}/unrelease"),
+            card_id=card_id,
+            loaded_version=str(card_version(card_id)),
+            return_to="detail",
+        )
+    )
+    after = db.fetch_admin_card_detail(card_id)
+    after_queues = db.fetch_machine_queues()
+
+    assert response.status_code == 200
+    assert "location" not in response.headers
+    assert response.context["workflow_result"].messages == (
+        "Технологични карти със започнато производство или производствени данни "
+        "не могат да се връщат за планиране.",
+    )
+    assert after == before
+    assert after_queues == before_queues
+
+
+def test_admin_planning_suppresses_unrelease_for_started_restored_pending_card(connection):
+    card_id = import_route_card("25923-restored-planning")
+    assert db.release_card(
+        card_id,
+        machine_id=4,
+        machine_sequence=1,
+        loaded_version=card_version(card_id),
+    ).ok
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.cancel_card(card_id, card_version(card_id)).ok
+    assert db.restore_cancelled_card(card_id, card_version(card_id)).ok
+
+    response = asyncio.run(admin_planning(make_request("/admin/planning", method="GET")))
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert f'action="/admin/cards/{card_id}/unrelease"' not in html
+
+
 def test_admin_planning_renders_unrelease_form_for_pending_queue_cards_only(connection):
     pending_id = import_route_card("25924", ordered_gross_kg="640.25")
     running_id = import_route_card("25925", ordered_gross_kg="")

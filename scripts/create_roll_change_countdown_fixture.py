@@ -22,6 +22,9 @@ SCENARIOS = (
     "machine_3_running",
     "machine_4_paused",
     "completed",
+    "machine_2_paused",
+    "imported",
+    "restored_started",
 )
 
 
@@ -172,6 +175,20 @@ def finish(card_id: int) -> None:
     )
 
 
+def cancel(card_id: int) -> None:
+    require_ok(
+        db.cancel_card(card_id, card_version(card_id)),
+        f"cancel card {card_id}",
+    )
+
+
+def restore(card_id: int) -> None:
+    require_ok(
+        db.restore_cancelled_card(card_id, card_version(card_id)),
+        f"restore card {card_id}",
+    )
+
+
 def create_fixture(database_path: Path) -> dict[str, object]:
     reset_database(database_path)
     configuration = db.fetch_terminal_configuration()
@@ -192,6 +209,14 @@ def create_fixture(database_path: Path) -> dict[str, object]:
     release(cards["machine_2_running"], 2, 1)
     release(cards["machine_3_running"], 3, 1)
     release(cards["machine_4_paused"], 4, 1)
+    release(cards["machine_2_paused"], 2, 3)
+    release(cards["restored_started"], 2, 2)
+
+    start(cards["machine_2_paused"])
+    pause(cards["machine_2_paused"])
+    start(cards["restored_started"])
+    cancel(cards["restored_started"])
+    restore(cards["restored_started"])
 
     for scenario in (
         "machine_1_running",

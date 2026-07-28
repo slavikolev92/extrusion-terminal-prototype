@@ -1417,6 +1417,448 @@ async function assertCorrectionLockDuringDelayedBootstrap(context, current, late
 }
 
 
+async function assertCorrectionClosePreservesPendingLifecycleLock(context, current, late) {
+  const machineId = 1;
+  const cardId = fixture.cards.machine_1_running;
+  await navigate(current, cardId);
+  await removeSchedule(current, machineId, false);
+  const currentHtml = await captureTerminalHtml(context, cardId);
+  const expected = await lifecycleCandidateFromMarkup(current, machineId);
+  await setRawLifecycle(current, machineId, "{not-json");
+
+  let snapshotRequested;
+  let releaseSnapshot;
+  const snapshotSeen = new Promise((resolve) => { snapshotRequested = resolve; });
+  const snapshotRelease = new Promise((resolve) => { releaseSnapshot = resolve; });
+  await late.route("**/terminal/snapshot*", async (route) => {
+    snapshotRequested();
+    await snapshotRelease;
+    await route.continue();
+  });
+  await installCapturedTerminalRoute(late, cardId, currentHtml);
+  await navigateCapturedTerminal(late, cardId);
+  await Promise.race([
+    snapshotSeen,
+    late.waitForTimeout(3_000).then(() => {
+      throw new Error("Correction-close pending case did not request authoritative snapshot.");
+    }),
+  ]);
+
+  const row = late.locator(".roll-row[data-roll-id]").first();
+  const rollId = await row.getAttribute("data-roll-id");
+  await row.locator("[data-roll-edit-open]").click();
+  await late.locator(`[data-roll-actions-for="${rollId}"] [data-roll-row-cancel]`).click();
+  assertEqual(await row.getAttribute("data-roll-edit-open"), "false", "pending-close correction state");
+  assert(await late.locator("[data-roll-change-open]").isDisabled(), "Closing correction unlocked editor while lifecycle authority was pending.");
+  assert(await late.locator("[data-roll-change-advance]").isDisabled(), "Closing correction unlocked quick acknowledgement while lifecycle authority was pending.");
+  assertEqual(await rawSchedule(late, machineId), null, "pending-close schedule guard");
+
+  releaseSnapshot();
+  await waitForLifecycle(late, machineId, expected);
+  assert(await late.locator("[data-roll-change-reload-alert]").isHidden(), "Matching authority incorrectly required reload after correction close.");
+  assert(await late.locator("[data-roll-change-open]").isEnabled(), "Matching authority did not release editor after correction closed.");
+  assert(await late.locator("[data-roll-change-advance]").isEnabled(), "Matching authority did not release quick acknowledgement after correction closed.");
+}
+
+
+async function assertCorrectionClosePreservesReloadLatch(context, current, late) {
+  const machineId = 1;
+  const cardId = fixture.cards.machine_1_running;
+  await navigate(current, cardId);
+  await removeSchedule(current, machineId, false);
+  const currentHtml = await captureTerminalHtml(context, cardId);
+  await setRawLifecycle(current, machineId, "{not-json");
+  const snapshotResponse = await context.request.get(`${baseURL}/terminal/snapshot`);
+  assert(snapshotResponse.ok(), `Reload-latch snapshot fixture returned HTTP ${snapshotResponse.status()}.`);
+  const divergentSnapshot = await snapshotResponse.json();
+  const selected = divergentSnapshot.active_cards.find((card) => card.id === cardId);
+  assert(selected, "Reload-latch snapshot omitted selected card.");
+  selected.version += 1;
+  selected.status = "paused";
+
+  let snapshotRequested;
+  let releaseSnapshot;
+  const snapshotSeen = new Promise((resolve) => { snapshotRequested = resolve; });
+  const snapshotRelease = new Promise((resolve) => { releaseSnapshot = resolve; });
+  await late.route("**/terminal/snapshot*", async (route) => {
+    snapshotRequested();
+    await snapshotRelease;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(divergentSnapshot),
+    });
+  });
+  await installCapturedTerminalRoute(late, cardId, currentHtml);
+  await navigateCapturedTerminal(late, cardId);
+  await Promise.race([
+    snapshotSeen,
+    late.waitForTimeout(3_000).then(() => {
+      throw new Error("Correction-close reload case did not request authoritative snapshot.");
+    }),
+  ]);
+
+  const row = late.locator(".roll-row[data-roll-id]").first();
+  const rollId = await row.getAttribute("data-roll-id");
+  await row.locator("[data-roll-edit-open]").click();
+  releaseSnapshot();
+  await late.waitForFunction(
+    () => document.querySelector("[data-roll-change-reload-alert]")?.hidden === false,
+    null,
+    { timeout: 3_000 },
+  );
+  await late.locator(`[data-roll-actions-for="${rollId}"] [data-roll-row-cancel]`).click();
+  assertEqual(await row.getAttribute("data-roll-edit-open"), "false", "reload-close correction state");
+  assert(await late.locator("[data-roll-change-reload-alert]").isVisible(), "Closing correction removed the reload-required alert.");
+  assert(await late.locator("[data-roll-change-open]").isDisabled(), "Closing correction unlocked editor after reload latch.");
+  assert(await late.locator("[data-roll-change-advance]").isDisabled(), "Closing correction unlocked quick acknowledgement after reload latch.");
+  await forceCountdownMutationPaths(late);
+  assertEqual(await rawSchedule(late, machineId), null, "reload-close schedule mutation guard");
+}
+
+
+async function assertModalFocusContainment(_context, page, _late, viewport) {
+  const cardId = fixture.cards.machine_1_running;
+  await navigate(page, cardId);
+
+  const assertBackgroundIsolated = async (selectors, label) => {
+    for (const selector of selectors) {
+      const element = page.locator(selector);
+      assert(await element.getAttribute("inert") !== null, `${label} left ${selector} keyboard-reachable.`);
+      assertEqual(await element.getAttribute("aria-hidden"), "true", `${label} ${selector} assistive isolation`);
+    }
+  };
+
+  const assertDrawer = async ({ opener, overlay, dialog, lastControl, label }) => {
+    const openerControl = page.locator(opener);
+    await openerControl.focus();
+    await openerControl.click();
+    const overlayControl = page.locator(overlay);
+    const dialogControl = page.locator(dialog);
+    assert(await overlayControl.isVisible(), `${label} did not open.`);
+    assertEqual(await dialogControl.getAttribute("role"), "dialog", `${label} dialog role`);
+    assertEqual(await dialogControl.getAttribute("aria-modal"), "true", `${label} modal state`);
+    await assertBackgroundIsolated([".terminal-header", ".machine-nav", ".main"], label);
+    const first = dialogControl.locator("button:not([disabled]), input:not([disabled]), a[href]").first();
+    const last = page.locator(lastControl).last();
+    await last.focus();
+    await page.keyboard.press("Tab");
+    assert(await first.evaluate((element) => document.activeElement === element), `${label} forward focus did not wrap.`);
+    await first.focus();
+    await page.keyboard.press("Shift+Tab");
+    assert(await last.evaluate((element) => document.activeElement === element), `${label} reverse focus did not wrap.`);
+    await page.keyboard.press("Escape");
+    assert(await overlayControl.isHidden(), `${label} Escape did not close.`);
+    assert(await openerControl.evaluate((element) => document.activeElement === element), `${label} did not restore opener focus.`);
+  };
+
+  await assertDrawer({
+    opener: "#queue-open",
+    overlay: "#queue-overlay",
+    dialog: "#queue-overlay [role='dialog']",
+    lastControl: "#queue-overlay .queue-card[href]",
+    label: "Queue dialog",
+  });
+  await assertDrawer({
+    opener: "#history-open",
+    overlay: "#history-overlay",
+    dialog: "#history-overlay [role='dialog']",
+    lastControl: "#history-overlay .history-row[href]",
+    label: "Produced dialog",
+  });
+
+  const finishOpener = page.locator('form[data-lifecycle-slot="finish"] button[type="submit"]');
+  await finishOpener.focus();
+  await finishOpener.click();
+  const finishModal = page.locator("[data-finish-confirm-modal]");
+  const finishDialog = finishModal.locator("[role='dialog']");
+  const finishCancel = finishModal.locator("[data-finish-confirm-cancel]");
+  const finishSubmit = finishModal.locator("[data-finish-confirm-submit]");
+  assert(await finishModal.isVisible(), "Finish dialog did not open.");
+  assertEqual(await finishDialog.getAttribute("role"), "dialog", "Finish dialog role");
+  assertEqual(await finishDialog.getAttribute("aria-modal"), "true", "Finish modal state");
+  await assertBackgroundIsolated([".app"], "Finish dialog");
+  await finishSubmit.focus();
+  await page.keyboard.press("Tab");
+  assert(await finishCancel.evaluate((element) => document.activeElement === element), "Finish forward focus did not wrap.");
+  await finishCancel.focus();
+  await page.keyboard.press("Shift+Tab");
+  assert(await finishSubmit.evaluate((element) => document.activeElement === element), "Finish reverse focus did not wrap.");
+  await page.keyboard.press("Escape");
+  assert(await finishModal.isHidden(), "Finish Escape did not close.");
+  assert(await finishOpener.evaluate((element) => document.activeElement === element), "Finish did not restore opener focus.");
+
+  await page.screenshot({
+    path: screenshotPath(`round4-modal-containment-${viewport.width}x${viewport.height}.png`),
+    fullPage: true,
+  });
+}
+
+
+async function assertRound4AdminAndAffordances(context, page, _late, viewport) {
+  page.removeAllListeners("dialog");
+  const dialogDecisions = [];
+  const observedDialogs = [];
+  page.on("dialog", async (dialog) => {
+    const decision = dialogDecisions.shift();
+    observedDialogs.push({ type: dialog.type(), message: dialog.message() });
+    if (!decision) {
+      summary.pageErrors.push(`Unexpected native dialog: ${dialog.type()} ${dialog.message()}`);
+      await dialog.dismiss();
+      return;
+    }
+    if (decision.accept) await dialog.accept();
+    else await dialog.dismiss();
+  });
+
+  const performWithDialogs = async (decisions, action, label) => {
+    const start = observedDialogs.length;
+    dialogDecisions.push(...decisions);
+    await action();
+    const deadline = Date.now() + 3_000;
+    while (observedDialogs.length - start < decisions.length && Date.now() < deadline) {
+      await page.waitForTimeout(25);
+    }
+    await page.waitForTimeout(150);
+    const actual = observedDialogs.slice(start);
+    assertEqual(actual.length, decisions.length, `${label} dialog count`);
+    assertEqual(dialogDecisions.length, 0, `${label} pending dialog decisions`);
+    decisions.forEach((decision, index) => {
+      if (decision.type) assertEqual(actual[index].type, decision.type, `${label} dialog ${index + 1} type`);
+      if (decision.messageIncludes) {
+        assert(
+          actual[index].message.includes(decision.messageIncludes),
+          `${label} dialog ${index + 1} omitted ${decision.messageIncludes}: ${actual[index].message}`,
+        );
+      }
+    });
+    return actual;
+  };
+
+  const navigateAdmin = async (cardId) => {
+    const response = await page.goto(`${baseURL}/admin/cards/${cardId}`, { waitUntil: "networkidle" });
+    assert(response?.ok(), `Admin navigation returned HTTP ${response?.status() || "unknown"}.`);
+  };
+  const discardDecision = (accept) => ({
+    accept,
+    type: "confirm",
+    messageIncludes: "Има незапазени промени",
+  });
+  const planningLink = '.admin-nav-link[href="/admin/planning"]';
+  const completedId = fixture.cards.completed;
+  const discardDirtyToPlanning = (label) => performWithDialogs(
+    [discardDecision(true)],
+    () => Promise.all([
+      page.waitForURL(`${baseURL}/admin/planning`),
+      page.locator(planningLink).click(),
+    ]),
+    label,
+  );
+
+  resetFixture();
+  const dirtyControls = [
+    [completedId, 'input[name="customer"]', "Незаписан клиент", "imported field"],
+    [completedId, 'input[name="actual_material__raw_material_a"]', "Незаписан материал", "material field"],
+    [completedId, 'input[name="tare_weight"]', "1.25", "roll default"],
+    [completedId, 'input[name^="gross_weight__"]', "21.00", "roll correction"],
+    [completedId, 'input[name^="started_at__"]', "2026-07-28 09:00:00", "timing correction"],
+  ];
+  for (const [cardId, selector, value, label] of dirtyControls) {
+    await navigateAdmin(cardId);
+    const control = page.locator(selector).first();
+    await control.fill(value);
+    await performWithDialogs(
+      [discardDecision(false)],
+      () => page.locator(planningLink).click(),
+      `${label} navigation cancel`,
+    );
+    assertEqual(new URL(page.url()).pathname, `/admin/cards/${cardId}`, `${label} retained URL`);
+    assertEqual(await control.inputValue(), value, `${label} retained dirty value`);
+    await discardDirtyToPlanning(`${label} navigation cleanup`);
+  }
+  passed(`${viewport.width}x${viewport.height}: imported/material/default/roll/timing dirty navigation protection`);
+
+  await navigateAdmin(completedId);
+  await page.locator('input[name="customer"]').fill("Незаписан преди презареждане");
+  await performWithDialogs(
+    [{ accept: false, type: "beforeunload" }],
+    () => page.evaluate(() => { window.location.href = "/admin/import"; }),
+    "beforeunload dirty protection",
+  );
+  assertEqual(new URL(page.url()).pathname, `/admin/cards/${completedId}`, "beforeunload cancelled navigation");
+
+  await page.locator('input[name="customer"]').fill("Записан клиент от браузъра");
+  const saveDialogStart = observedDialogs.length;
+  await Promise.all([
+    page.waitForURL(`${baseURL}/admin/cards/${completedId}`),
+    page.locator('.admin-save-button[form="admin-card-save-form"]').click(),
+  ]);
+  await page.waitForTimeout(150);
+  assertEqual(observedDialogs.length, saveDialogStart, "global Save dialog count");
+  assertEqual(
+    await page.locator('input[name="customer"]').inputValue(),
+    "Записан клиент от браузъра",
+    "global Save persisted value",
+  );
+
+  resetFixture();
+  await navigateAdmin(completedId);
+  await page.locator('input[name="tare_weight"]').fill("1.25");
+  await performWithDialogs(
+    [discardDecision(true)],
+    () => Promise.all([
+      page.waitForURL(`${baseURL}/admin/cards/${completedId}`),
+      page.locator(`form[action="/admin/cards/${completedId}/archive"] button`).click(),
+    ]),
+    "lifecycle approved discard",
+  );
+  assert(normalized(await page.locator(".admin-card-title-line").textContent()).includes("Завършена"), "Approved lifecycle discard did not archive the card.");
+
+  resetFixture();
+  await navigateAdmin(completedId);
+  let before = databaseSnapshot();
+  await page.locator('input[name="customer"]').fill("Незаписано преди ролка");
+  await performWithDialogs(
+    [
+      { accept: true, type: "confirm", messageIncludes: "Да се изтрие ли ролка 1" },
+      discardDecision(false),
+    ],
+    () => page.locator('button[form^="roll-delete-"]').first().click(),
+    "roll deletion dirty cancel",
+  );
+  assertEqual(databaseSnapshot(), before, "roll deletion dirty cancel database preservation");
+  await discardDirtyToPlanning("roll deletion dirty cleanup");
+
+  await navigateAdmin(completedId);
+  before = databaseSnapshot();
+  await page.locator('input[name="customer"]').fill("Незаписано преди сегмент");
+  await performWithDialogs(
+    [
+      { accept: true, type: "confirm", messageIncludes: "Да се изтрие ли времеви сегмент 1" },
+      discardDecision(false),
+    ],
+    () => page.locator('button[form^="timing-delete-"]').first().click(),
+    "timing deletion dirty cancel",
+  );
+  assertEqual(databaseSnapshot(), before, "timing deletion dirty cancel database preservation");
+  await discardDirtyToPlanning("timing deletion dirty cleanup");
+
+  resetFixture();
+  const importedId = fixture.cards.imported;
+  await navigateAdmin(importedId);
+  await page.locator(".admin-system-section summary").click();
+  before = databaseSnapshot();
+  await performWithDialogs(
+    [{ accept: false, type: "confirm", messageIncludes: "Изтриване на поръчка ROLL-CHANGE-UI-08?" }],
+    () => page.locator(`form[action="/admin/cards/${importedId}/delete"] button`).click(),
+    "permanent delete cancel",
+  );
+  assertEqual(databaseSnapshot(), before, "permanent delete cancel database preservation");
+  await page.locator('input[name="customer"]').fill("Незаписано преди изтриване");
+  await performWithDialogs(
+    [
+      { accept: true, type: "confirm", messageIncludes: "Изтриване на поръчка ROLL-CHANGE-UI-08?" },
+      discardDecision(false),
+    ],
+    () => page.locator(`form[action="/admin/cards/${importedId}/delete"] button`).click(),
+    "permanent delete dirty cancel",
+  );
+  assertEqual(databaseSnapshot(), before, "permanent delete dirty cancel database preservation");
+  await discardDirtyToPlanning("permanent delete dirty cleanup");
+
+  resetFixture();
+  await navigateAdmin(completedId);
+  await page.locator('input[name^="ended_at__"]').first().fill("2026-07-28 09:05:00");
+  await performWithDialogs(
+    [discardDecision(true)],
+    () => Promise.all([
+      page.waitForURL(`${baseURL}/admin/planning`),
+      page.locator(planningLink).click(),
+    ]),
+    "navigation approved discard",
+  );
+
+  resetFixture();
+  await navigateAdmin(importedId);
+  assert(await page.locator('input[name="customer"]').isEnabled(), "Imported source editing was disabled.");
+  for (const selector of [
+    'input[name="actual_material__raw_material_a"]',
+    'input[name="batch_lot__raw_material_a"]',
+    'input[name="tare_weight"]',
+    'input[name="current_pallet_number"]',
+    'input[name="new_gross_weight"]',
+    'input[name="new_started_at"]',
+    'input[name="new_ended_at"]',
+    'select[name="new_end_reason"]',
+  ]) {
+    assert(await page.locator(selector).isDisabled(), `Imported operational control remained enabled: ${selector}`);
+  }
+  await page.locator('input[name="customer"]').fill("Не трябва да се запише");
+  const craftedActual = page.locator('input[name="actual_material__raw_material_a"]');
+  await craftedActual.evaluate((input) => { input.disabled = false; });
+  await craftedActual.fill("Crafted actual");
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: "networkidle" }),
+    page.locator('.admin-save-button[form="admin-card-save-form"]').click(),
+  ]);
+  assert(normalized(await page.locator("body").textContent()).includes("Производствени данни не могат да се записват"), "Imported operational rejection was not explicit.");
+  assertEqual(await page.locator('input[name="customer"]').inputValue(), "Клиент 8 за брояч на ролки", "imported operational rejection atomic source value");
+  passed(`${viewport.width}x${viewport.height}: imported operational rejection and disabled state`);
+
+  resetFixture();
+  const restoredId = fixture.cards.restored_started;
+  await navigateAdmin(restoredId);
+  assertEqual(
+    await page.locator(`form[action="/admin/cards/${restoredId}/unrelease"]`).count(),
+    0,
+    "restored-started unrelease affordance",
+  );
+  assert(normalized(await page.locator("body").textContent()).includes("Връщането в планиране е недостъпно след начало на производство"), "Restored-started unrelease explanation missing.");
+  const restoredVersion = await page.locator('#admin-card-save-form input[name="loaded_version"]').inputValue();
+  before = databaseSnapshot();
+  const rejectedUnrelease = await context.request.post(`${baseURL}/admin/cards/${restoredId}/unrelease`, {
+    form: { loaded_version: restoredVersion, return_to: "detail" },
+  });
+  assertEqual(rejectedUnrelease.status(), 200, "restored-started unrelease route status");
+  assert(normalized(await rejectedUnrelease.text()).includes("не могат да се връщат за планиране"), "Restored-started unrelease route omitted rejection.");
+  assertEqual(databaseSnapshot(), before, "restored-started unrelease preservation");
+  passed(`${viewport.width}x${viewport.height}: restored-started unrelease backend and affordance`);
+
+  resetFixture();
+  await navigate(page, fixture.cards.machine_1_follow_up);
+  const occupiedStart = page.locator('button[data-lifecycle-slot="start"]');
+  assert(await occupiedStart.isDisabled(), "occupied pending Start remained enabled.");
+  assertEqual(await page.locator('form[action$="/timing/start"]').count(), 0, "occupied pending Start form count");
+  assert(normalized(await page.locator("#machine-occupied-reason").textContent()).includes("ROLL-CHANGE-UI-01"), "Occupied pending explanation omitted running order.");
+
+  await navigate(page, fixture.cards.machine_2_paused);
+  const occupiedContinue = page.locator('button[data-lifecycle-slot="pause"]');
+  assert(await occupiedContinue.isDisabled(), "occupied paused Continue remained enabled.");
+  assert(normalized(await occupiedContinue.textContent()).includes("Продължи"), "occupied paused Continue label missing.");
+  assertEqual(await page.locator('form[action$="/timing/resume"]').count(), 0, "occupied paused Continue form count");
+  assertEqual(await page.locator('form[data-lifecycle-slot="finish"]').count(), 1, "occupied paused Finish availability");
+  assert(normalized(await page.locator("#machine-occupied-reason").textContent()).includes("ROLL-CHANGE-UI-03"), "Occupied paused explanation omitted running order.");
+  passed(`${viewport.width}x${viewport.height}: occupied pending Start and occupied paused Continue affordances`);
+
+  await navigate(page, fixture.cards.machine_1_running);
+  const terminalRoll = page.locator(".roll-row[data-roll-id]").first();
+  assertEqual(await terminalRoll.locator('input[name="gross_weight"]').getAttribute("aria-label"), "Ролка 1, бруто", "terminal roll accessible name gross");
+  assertEqual(await terminalRoll.locator('input[name="tare_weight"]').getAttribute("aria-label"), "Ролка 1, шпула", "terminal roll accessible name tare");
+  assertEqual(await terminalRoll.locator('input[name="pallet_number"]').getAttribute("aria-label"), "Ролка 1, палет", "terminal roll accessible name pallet");
+
+  await navigateAdmin(completedId);
+  assertEqual(await page.locator('input[name^="pallet_number__"]').first().getAttribute("aria-label"), "Ролка 1, палет", "admin roll accessible name");
+  assertEqual(await page.locator('input[name^="started_at__"]').first().getAttribute("aria-label"), "Сегмент 1, начало", "admin timing accessible name start");
+  assertEqual(await page.locator('input[name^="ended_at__"]').first().getAttribute("aria-label"), "Сегмент 1, край", "admin timing accessible name end");
+  assertEqual(await page.locator('select[name^="end_reason__"]').first().getAttribute("aria-label"), "Сегмент 1, причина", "admin timing accessible name reason");
+  await page.screenshot({
+    path: screenshotPath(`round4-admin-guards-${viewport.width}x${viewport.height}.png`),
+    fullPage: true,
+  });
+  passed(`${viewport.width}x${viewport.height}: terminal roll accessible name and admin timing accessible name`);
+}
+
+
 async function assertDelayedReplacementBootstrap(context, current, late) {
   const machineId = 1;
   const cardId = fixture.cards.machine_1_running;
@@ -1522,6 +1964,10 @@ async function assertLifecycleRequestFailure(context, current, late) {
 const bootstrapCases = {
   "same-card": assertDelayedSameCardBootstrap,
   "correction-lock": assertCorrectionLockDuringDelayedBootstrap,
+  "correction-close-pending": assertCorrectionClosePreservesPendingLifecycleLock,
+  "correction-close-reload-latched": assertCorrectionClosePreservesReloadLatch,
+  "round4-modal-containment": assertModalFocusContainment,
+  "round4-admin-and-affordances": assertRound4AdminAndAffordances,
   replacement: assertDelayedReplacementBootstrap,
   empty: assertDelayedEmptyMachineBootstrap,
   malformed: (context, current, late) => assertLifecycleSchemaTolerance(

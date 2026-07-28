@@ -322,6 +322,24 @@ def test_admin_detail_print_link_is_available_only_for_completed_cards(connectio
     assert "Принтирай" not in cancelled_html
 
 
+def test_admin_detail_suppresses_unrelease_for_started_restored_pending_card(connection):
+    card_id = import_ready_card("27041-started-restored")
+    assert db.release_card(
+        card_id,
+        machine_id=1,
+        machine_sequence=1,
+        loaded_version=card_version(card_id),
+    ).ok
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.cancel_card(card_id, card_version(card_id)).ok
+    assert db.restore_cancelled_card(card_id, card_version(card_id)).ok
+
+    html = render_admin_detail(card_id)
+
+    assert f'action="/admin/cards/{card_id}/unrelease"' not in html
+    assert "Връщането в планиране е недостъпно след начало на производство." in html
+
+
 def test_waiting_rewinding_card_is_visible_to_admins_without_lifecycle_shortcuts(
     connection,
 ):
@@ -644,6 +662,79 @@ def test_admin_roll_ledger_renders_current_and_per_roll_pallets(connection):
     assert "Без палет" not in roll_ledger_html
 
 
+def test_admin_roll_and_timing_row_controls_have_unique_accessible_names(connection):
+    card_id = prepare_dense_completed_card("27120-accessible", roll_count=2)
+    card = db.fetch_admin_card_detail(card_id)
+    assert card is not None
+
+    html = render_admin_detail(card_id)
+
+    for roll in card["roll_entries"]:
+        roll_number = int(roll["roll_number"])
+        roll_id = int(roll["id"])
+        for field, label in (
+            ("pallet_number", "палет"),
+            ("gross_weight", "бруто"),
+            ("tare_weight", "шпула"),
+        ):
+            tag = re.search(
+                rf'<input[^>]+name="{field}__{roll_id}"[^>]*>',
+                html,
+            )
+            assert tag is not None
+            assert f'aria-label="Ролка {roll_number}, {label}"' in tag.group(0)
+
+    for index, segment in enumerate(card["timing_segments"], start=1):
+        segment_id = int(segment["id"])
+        for element, field, label in (
+            ("input", "started_at", "начало"),
+            ("input", "ended_at", "край"),
+            ("select", "end_reason", "причина"),
+        ):
+            tag = re.search(
+                rf'<{element}[^>]+name="{field}__{segment_id}"[^>]*>',
+                html,
+            )
+            assert tag is not None
+            assert f'aria-label="Сегмент {index}, {label}"' in tag.group(0)
+
+
+def test_admin_detail_permanent_delete_uses_safe_order_confirmation_hook(connection):
+    order_number = "27120' + confirm('unsafe') + '"
+    card_id = import_ready_card(order_number)
+
+    html = render_admin_detail(card_id)
+    delete_form = re.search(
+        rf'<form[^>]+action="/admin/cards/{card_id}/delete"[^>]*>',
+        html,
+    )
+
+    assert delete_form is not None
+    assert (
+        'data-delete-order="27120&#39; + confirm(&#39;unsafe&#39;) + &#39;"'
+        in delete_form.group(0)
+    )
+    assert "onsubmit=" not in delete_form.group(0)
+
+
+def test_admin_detail_global_form_renders_complete_dirty_discard_protection(connection):
+    card_id = prepare_dense_completed_card("27120-dirty-guard", roll_count=1)
+
+    html = render_admin_detail(card_id)
+
+    assert 'const globalForm = document.getElementById("admin-card-save-form")' in html
+    assert 'globalForm.addEventListener("input", markGlobalFormDirty)' in html
+    assert 'globalForm.addEventListener("change", markGlobalFormDirty)' in html
+    assert 'globalForm.addEventListener("submit"' in html
+    assert 'document.querySelectorAll("form")' in html
+    assert 'document.querySelectorAll("a[href]")' in html
+    assert 'window.addEventListener("beforeunload"' in html
+    assert "Има незапазени промени. Да бъдат ли отхвърлени?" in html
+    assert "discardApproved" in html
+    assert 'data-action-confirm="Да се изтрие ли ролка 1 с бруто 51 кг?"' in html
+    assert 'data-action-confirm="Да се изтрие ли времеви сегмент 1:' in html
+
+
 def test_admin_detail_uses_single_timing_ledger_without_duplicate_segment_forms(connection):
     card_id = prepare_dense_completed_card("27003", roll_count=2)
 
@@ -736,7 +827,9 @@ def test_admin_roll_and_timing_ledgers_use_explicit_x_delete_actions(connection)
     assert "/delete" in html
     assert "/timing-segments/" in html
     assert html.count("/delete") >= 2
-    assert "return confirm(" in html
+    assert "return confirm(" not in html
+    assert "data-action-confirm=" in html
+    assert "window.confirm(confirmation)" in html
 
 
 def test_admin_card_post_response_redirects_to_section_anchor_on_success(connection):
@@ -944,6 +1037,79 @@ def test_admin_global_save_updates_structured_materials_on_imported_card(connect
         "SABIC 119ZJ",
         "20",
     )
+
+
+def test_admin_imported_card_disables_operational_controls_but_keeps_source_editing(
+    connection,
+):
+    card_id = import_ready_card("27121-imported-controls")
+
+    html = render_admin_detail(card_id)
+
+    def control(name: str) -> str:
+        match = re.search(rf"<(?:input|select)[^>]+name=\"{re.escape(name)}\"[^>]*>", html)
+        assert match is not None, name
+        return match.group(0)
+
+    assert "Производствените полета са достъпни след изпращане към терминала." in html
+    assert "disabled" not in control("customer")
+    assert "disabled" not in control("planned_material__raw_material_a")
+    for name in (
+        "actual_material__raw_material_a",
+        "batch_lot__raw_material_a",
+        "tare_weight",
+        "current_pallet_number",
+        "new_gross_weight",
+        "new_started_at",
+        "new_ended_at",
+        "new_end_reason",
+    ):
+        assert "disabled" in control(name), name
+
+
+def test_admin_imported_card_rejects_nonblank_operational_payload_atomically(
+    connection,
+):
+    card_id = import_ready_card("27121-imported-payload")
+    before = db.fetch_admin_card_detail(card_id)
+    assert before is not None
+
+    response = asyncio.run(
+        save_admin_card_changes(
+            FormRequest(
+                MultiItemForm(
+                    [
+                        ("loaded_version", str(before["version"])),
+                        ("customer", "Must Not Persist"),
+                        *admin_material_form_items(
+                            card_id,
+                            overrides={
+                                "raw_material_a": {
+                                    "actual_material": "Crafted actual",
+                                    "batch_lot": "Crafted batch",
+                                }
+                            },
+                        ),
+                        ("tare_weight", "1.25"),
+                        ("current_pallet_number", "7"),
+                        ("new_gross_weight", "25.00"),
+                        ("new_started_at", "2026-07-28 08:00:00"),
+                        ("new_ended_at", "2026-07-28 08:05:00"),
+                        ("new_end_reason", "correction"),
+                    ]
+                )
+            ),
+            card_id,
+        )
+    )
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert response.status_code == 200
+    assert (
+        "Производствени данни не могат да се записват, преди картата да бъде "
+        "изпратена към терминала."
+    ) in response.body.decode("utf-8")
+    assert after == before
 
 
 def test_admin_global_save_accepts_multi_word_category_as_free_text(connection):

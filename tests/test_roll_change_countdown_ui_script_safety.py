@@ -174,8 +174,11 @@ def test_roll_change_fixture_emits_all_deterministic_scenarios(tmp_path: Path):
             "machine_3_running",
             "machine_4_paused",
             "completed",
+            "machine_2_paused",
+            "imported",
+            "restored_started",
         }
-        assert len(set(first_payload["cards"].values())) == 6
+        assert len(set(first_payload["cards"].values())) == 9
 
         with sqlite3.connect(database_path) as connection:
             connection.row_factory = sqlite3.Row
@@ -184,7 +187,7 @@ def test_roll_change_fixture_emits_all_deterministic_scenarios(tmp_path: Path):
                 for row in connection.execute(
                     """
                     SELECT id, status, machine_id, machine_sequence,
-                           tare_weight, version
+                           tare_weight, first_started_at, version
                     FROM cards
                     ORDER BY id
                     """
@@ -208,6 +211,8 @@ def test_roll_change_fixture_emits_all_deterministic_scenarios(tmp_path: Path):
                     "machine_3_running",
                     "machine_4_paused",
                     "completed",
+                    "machine_2_paused",
+                    "restored_started",
                 )
             }
             running_rolls = connection.execute(
@@ -228,6 +233,13 @@ def test_roll_change_fixture_emits_all_deterministic_scenarios(tmp_path: Path):
         assert rows[cards["machine_2_running"]]["status"] == "running"
         assert rows[cards["machine_3_running"]]["status"] == "running"
         assert rows[cards["machine_4_paused"]]["status"] == "paused"
+        assert rows[cards["machine_2_paused"]]["status"] == "paused"
+        assert rows[cards["machine_2_paused"]]["machine_id"] == 2
+        assert rows[cards["imported"]]["status"] == "imported"
+        assert rows[cards["imported"]]["machine_id"] is None
+        assert rows[cards["restored_started"]]["status"] == "pending"
+        assert rows[cards["restored_started"]]["machine_id"] == 2
+        assert rows[cards["restored_started"]]["first_started_at"] is not None
         assert rows[cards["completed"]]["status"] == "completed"
         assert rows[cards["completed"]]["machine_id"] == 3
         assert open_timing_counts == {
@@ -236,6 +248,8 @@ def test_roll_change_fixture_emits_all_deterministic_scenarios(tmp_path: Path):
             "machine_3_running": 1,
             "machine_4_paused": 0,
             "completed": 0,
+            "machine_2_paused": 0,
+            "restored_started": 0,
         }
         assert [tuple(row) for row in running_rolls] == [(25.0, 1.0, 24.0)]
         assert active_shift_count == 1
@@ -593,6 +607,23 @@ def test_roll_change_verifier_uses_directional_spacing_and_accepted_geometry_che
     assert 'initialErrorSlot.display === "none" && initialErrorSlot.height === 0' in source
     assert 'row.locator("[data-roll-edit-open]").click()' in source
     assert '[data-roll-row-cancel]' in source
+
+
+def test_roll_change_verifier_covers_round4_guarded_workflows_at_both_viewports():
+    source = VERIFIER_SCRIPT.read_text(encoding="utf-8")
+
+    assert '"correction-close-pending"' in source
+    assert '"correction-close-reload-latched"' in source
+    assert '"round4-modal-containment"' in source
+    assert '"round4-admin-and-affordances"' in source
+    assert "assertRound4AdminAndAffordances" in source
+    assert "beforeunload" in source
+    assert "restored-started unrelease" in source
+    assert "imported operational rejection" in source
+    assert "occupied pending Start" in source
+    assert "occupied paused Continue" in source
+    assert "terminal roll accessible name" in source
+    assert "admin timing accessible name" in source
 
 
 def test_due_selected_countdown_accessible_name_includes_expected_time():

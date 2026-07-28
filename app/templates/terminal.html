@@ -714,6 +714,16 @@
       line-height: 1;
     }
 
+    .action-disabled-reason {
+      max-width: 470px;
+      margin: 0;
+      color: #667382;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.2;
+      text-align: right;
+    }
+
     .roll-change-controls {
       min-width: 0;
       margin-right: 12px;
@@ -3941,9 +3951,10 @@
       </header>
 
       <div class="queue-overlay" id="queue-overlay" aria-hidden="true">
-        <aside class="queue-drawer" aria-label="Опашка по машини">
+        <aside class="queue-drawer" role="dialog" aria-modal="true"
+               aria-labelledby="queue-title" tabindex="-1">
           <div class="queue-drawer-head">
-            <h2>Опашка по машини</h2>
+            <h2 id="queue-title">Опашка по машини</h2>
             <button class="queue-close" id="queue-close" type="button" aria-label="Затвори опашката">×</button>
           </div>
           <div class="queue-sections">
@@ -4009,9 +4020,10 @@
       </div>
 
       <div class="history-overlay" id="history-overlay" aria-hidden="true">
-        <aside class="history-drawer" aria-label="Произведени поръчки">
+        <aside class="history-drawer" role="dialog" aria-modal="true"
+               aria-labelledby="history-title" tabindex="-1">
           <div class="history-drawer-head">
-            <h2>Произведени поръчки</h2>
+            <h2 id="history-title">Произведени поръчки</h2>
             <button class="history-close" id="history-close" type="button" aria-label="Затвори произведените поръчки">×</button>
           </div>
           <div class="history-filters" aria-label="Филтри за произведени поръчки">
@@ -4082,11 +4094,13 @@
                   <button class="action-button action-primary" type="submit">{{ terminal_icon("end") }}<span>Приключи</span></button>
                 </form>
               {% elif selected_card and selected_card.status in ["pending", "running", "paused"] %}
-              {% if selected_card.status == "pending" %}
+              {% if selected_card.status == "pending" and not selected_machine_occupying_card %}
                 <form action="/terminal/cards/{{ selected_card.id }}/timing/start" method="post" data-lifecycle-slot="start">
                   <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                   <button class="action-button action-primary" type="submit">{{ terminal_icon("start") }}<span>Старт</span></button>
                 </form>
+              {% elif selected_card.status == "pending" %}
+                <button class="action-button" type="button" data-lifecycle-slot="start" disabled aria-describedby="machine-occupied-reason">{{ terminal_icon("start") }}<span>Старт</span></button>
               {% else %}
                 <button class="action-button" type="button" data-lifecycle-slot="start" disabled>{{ terminal_icon("start") }}<span>Старт</span></button>
               {% endif %}
@@ -4096,11 +4110,13 @@
                   <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                   <button class="action-button action-secondary" type="submit">{{ terminal_icon("pause") }}<span>Пауза</span></button>
                 </form>
-              {% elif selected_card.status == "paused" %}
+              {% elif selected_card.status == "paused" and not selected_machine_occupying_card %}
                 <form action="/terminal/cards/{{ selected_card.id }}/timing/resume" method="post" data-lifecycle-slot="pause">
                   <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                   <button class="action-button action-primary" type="submit">{{ terminal_icon("start") }}<span>Продължи</span></button>
                 </form>
+              {% elif selected_card.status == "paused" %}
+                <button class="action-button" type="button" data-lifecycle-slot="pause" disabled aria-describedby="machine-occupied-reason">{{ terminal_icon("start") }}<span>Продължи</span></button>
               {% else %}
                 <button class="action-button" type="button" data-lifecycle-slot="pause" disabled>{{ terminal_icon("pause") }}<span>Пауза</span></button>
               {% endif %}
@@ -4115,6 +4131,9 @@
               {% endif %}
               {% endif %}
             </div>
+            {% if selected_machine_occupying_card and selected_card and selected_card.status in ["pending", "paused"] %}
+              <p class="action-disabled-reason" id="machine-occupied-reason" role="note">Машина {{ selected_card.machine_id }} е заета от поръчка {{ selected_machine_occupying_card.order_number }}.</p>
+            {% endif %}
           </div>
         </header>
 
@@ -4360,6 +4379,7 @@
                             <input class="roll-correction-input" data-roll-correction-input
                                    {% if roll_error_field == "gross_weight" %}data-roll-error-focus="true"{% endif %}
                                    type="number" name="gross_weight" min="0" step="0.01"
+                                   aria-label="Ролка {{ roll.roll_number }}, бруто"
                                    value="{{ submitted_gross if submitted_gross is not none else (roll.gross_weight if roll.gross_weight is not none else '') }}"
                                    {% if not row_is_open %}disabled hidden{% endif %}
                                    {% if not can_edit_rolls %}disabled{% endif %}>
@@ -4376,6 +4396,7 @@
                             <input class="roll-correction-input" data-roll-correction-input
                                    {% if roll_error_field == "tare_weight" %}data-roll-error-focus="true"{% endif %}
                                    type="number" name="tare_weight" min="0" step="0.01"
+                                   aria-label="Ролка {{ roll.roll_number }}, шпула"
                                    value="{{ submitted_tare if submitted_tare is not none else (roll.tare_weight if roll.tare_weight is not none else '') }}"
                                    {% if not row_is_open %}disabled hidden{% endif %}
                                    {% if not can_edit_rolls %}disabled{% endif %}>
@@ -4388,6 +4409,7 @@
                             <input class="roll-correction-input" data-roll-correction-input
                                    {% if roll_error_field == "pallet_number" %}data-roll-error-focus="true"{% endif %}
                                    type="text" inputmode="numeric" name="pallet_number"
+                                   aria-label="Ролка {{ roll.roll_number }}, палет"
                                    value="{{ submitted_pallet if submitted_pallet is not none else (roll.pallet_number if roll.pallet_number is not none else '') }}"
                                    {% if not row_is_open %}disabled hidden{% endif %}
                                    {% if not can_edit_rolls %}disabled{% endif %}>
@@ -4889,13 +4911,74 @@
       const finishConfirmBody = finishConfirmModal?.querySelector("#finish-confirm-body");
       const finishConfirmBack = finishConfirmModal?.querySelector("[data-finish-confirm-cancel]");
       const finishConfirmSubmit = finishConfirmModal?.querySelector("[data-finish-confirm-submit]");
+      const finishConfirmDialog = finishConfirmModal?.querySelector("[role='dialog']");
+      const finishBackground = document.querySelector(".app");
       let pendingFinishForm = null;
       let finishConfirmReturnFocus = null;
       let finishConfirmSubmitting = false;
+      let finishBackgroundState = null;
 
       if (!finishConfirmModal || finishConfirmForms.length === 0) {
         return;
       }
+
+      const setFinishBackgroundIsolated = (isolated) => {
+        if (!finishBackground) {
+          return;
+        }
+        if (isolated) {
+          if (!finishBackgroundState) {
+            finishBackgroundState = {
+              inert: finishBackground.hasAttribute("inert"),
+              ariaHidden: finishBackground.getAttribute("aria-hidden"),
+            };
+          }
+          finishBackground.setAttribute("inert", "");
+          finishBackground.setAttribute("aria-hidden", "true");
+          return;
+        }
+        if (!finishBackgroundState) {
+          return;
+        }
+        if (finishBackgroundState.inert) {
+          finishBackground.setAttribute("inert", "");
+        } else {
+          finishBackground.removeAttribute("inert");
+        }
+        if (finishBackgroundState.ariaHidden === null) {
+          finishBackground.removeAttribute("aria-hidden");
+        } else {
+          finishBackground.setAttribute("aria-hidden", finishBackgroundState.ariaHidden);
+        }
+        finishBackgroundState = null;
+      };
+
+      const finishFocusableElements = () => Array.from(
+        finishConfirmDialog?.querySelectorAll(
+          'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+        ) || [],
+      ).filter((element) => !element.hidden && !element.closest("[hidden]"));
+
+      const trapFinishFocus = (event) => {
+        const focusable = finishFocusableElements();
+        if (focusable.length === 0) {
+          event.preventDefault();
+          finishConfirmDialog?.focus();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (!finishConfirmDialog?.contains(document.activeElement)) {
+          event.preventDefault();
+          first.focus();
+        } else if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      };
 
       const openFinishConfirm = (form) => {
         pendingFinishForm = form;
@@ -4904,6 +4987,7 @@
         finishConfirmSubmit.disabled = false;
         finishConfirmModal.hidden = false;
         finishConfirmModal.setAttribute("aria-hidden", "false");
+        setFinishBackgroundIsolated(true);
         finishConfirmSubmit?.focus();
       };
 
@@ -4913,6 +4997,7 @@
         finishConfirmSubmit.disabled = false;
         pendingFinishForm = null;
         finishConfirmSubmitting = false;
+        setFinishBackgroundIsolated(false);
         finishConfirmReturnFocus?.focus({ preventScroll: true });
         finishConfirmReturnFocus = null;
       };
@@ -4938,7 +5023,12 @@
       });
 
       document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape" && !finishConfirmModal.hidden) {
+        if (finishConfirmModal.hidden) {
+          return;
+        }
+        if (event.key === "Tab") {
+          trapFinishFocus(event);
+        } else if (event.key === "Escape") {
           closeFinishConfirm();
         }
       });
@@ -5240,10 +5330,12 @@
 
     (() => {
       const overlay = document.getElementById("queue-overlay");
+      const queueDialog = overlay?.querySelector("[role='dialog']");
       const openButton = document.getElementById("queue-open");
       const closeButton = document.getElementById("queue-close");
       const queueCards = document.querySelectorAll(".queue-card");
       const historyOverlay = document.getElementById("history-overlay");
+      const historyDialog = historyOverlay?.querySelector("[role='dialog']");
       const historyOpenButton = document.getElementById("history-open");
       const historyCloseButton = document.getElementById("history-close");
       const historyFilters = document.querySelectorAll(".history-filter");
@@ -5265,6 +5357,9 @@
       const rollActionPanels = Array.from(document.querySelectorAll("[data-roll-actions-for]"));
       const rollDeleteModals = Array.from(document.querySelectorAll("[data-roll-delete-modal-for]"));
       const rollBody = document.querySelector("[data-roll-body]");
+      const drawerBackgroundTargets = Array.from(
+        document.querySelectorAll(".terminal-header, .machine-nav, .main"),
+      );
       const correctionBlockedControls = document.querySelectorAll(
         ".actions form button, .roll-add-button, .add-roll-form input, .tare-form input, .pallet-form input, .recipe-table input, #queue-open, #waiting-open, #history-open, [data-rewinding-open], [data-roll-change-open], [data-roll-change-advance]"
       );
@@ -5279,6 +5374,8 @@
       let historyReturnFocus = null;
       let waitingReturnFocus = null;
       let rewindingReturnFocus = null;
+      let drawerBackgroundState = null;
+      let drawerBackgroundOwner = null;
 
       correctionBlockedControls.forEach((control) => {
         control.dataset.correctionInitiallyDisabled = control.disabled ? "true" : "false";
@@ -5323,6 +5420,41 @@
         }
       };
 
+      const setDrawerBackgroundIsolated = (isolated, owner) => {
+        if (isolated) {
+          if (!drawerBackgroundState) {
+            drawerBackgroundState = drawerBackgroundTargets.map((element) => ({
+              element,
+              inert: element.hasAttribute("inert"),
+              ariaHidden: element.getAttribute("aria-hidden"),
+            }));
+          }
+          drawerBackgroundOwner = owner;
+          drawerBackgroundTargets.forEach((element) => {
+            element.setAttribute("inert", "");
+            element.setAttribute("aria-hidden", "true");
+          });
+          return;
+        }
+        if (!drawerBackgroundState || drawerBackgroundOwner !== owner) {
+          return;
+        }
+        drawerBackgroundState.forEach(({ element, inert, ariaHidden }) => {
+          if (inert) {
+            element.setAttribute("inert", "");
+          } else {
+            element.removeAttribute("inert");
+          }
+          if (ariaHidden === null) {
+            element.removeAttribute("aria-hidden");
+          } else {
+            element.setAttribute("aria-hidden", ariaHidden);
+          }
+        });
+        drawerBackgroundState = null;
+        drawerBackgroundOwner = null;
+      };
+
       const setCorrectionControlLock = (open) => {
         correctionModeOpen = open;
         rollBody?.classList.toggle("roll-correction-mode", open);
@@ -5330,7 +5462,8 @@
           if (open) {
             control.disabled = true;
           } else {
-            control.disabled = control.dataset.correctionInitiallyDisabled === "true";
+            control.disabled = control.dataset.correctionInitiallyDisabled === "true"
+              || control.dataset.lifecycleLockActive === "true";
           }
         });
         rollEditButtons.forEach((button) => {
@@ -5416,6 +5549,7 @@
         queueReturnFocus = document.activeElement;
         overlay.classList.add("open");
         overlay.setAttribute("aria-hidden", "false");
+        setDrawerBackgroundIsolated(true, "queue");
         if (openButton) {
           openButton.setAttribute("aria-expanded", "true");
         }
@@ -5428,6 +5562,7 @@
         if (openButton) {
           openButton.setAttribute("aria-expanded", "false");
         }
+        setDrawerBackgroundIsolated(false, "queue");
         if (restoreFocus) {
           (queueReturnFocus || openButton)?.focus({ preventScroll: true });
         }
@@ -5444,6 +5579,7 @@
         historyReturnFocus = document.activeElement;
         historyOverlay.classList.add("open");
         historyOverlay.setAttribute("aria-hidden", "false");
+        setDrawerBackgroundIsolated(true, "history");
         if (historyOpenButton) {
           historyOpenButton.setAttribute("aria-expanded", "true");
         }
@@ -5456,6 +5592,7 @@
         if (historyOpenButton) {
           historyOpenButton.setAttribute("aria-expanded", "false");
         }
+        setDrawerBackgroundIsolated(false, "history");
         if (restoreFocus) {
           (historyReturnFocus || historyOpenButton)?.focus({ preventScroll: true });
         }
@@ -5675,6 +5812,14 @@
         }
         if (event.key === "Tab" && waitingOverlay && !waitingOverlay.hidden) {
           trapModalFocus(event, waitingPane);
+          return;
+        }
+        if (event.key === "Tab" && overlay.classList.contains("open")) {
+          trapModalFocus(event, queueDialog);
+          return;
+        }
+        if (event.key === "Tab" && historyOverlay.classList.contains("open")) {
+          trapModalFocus(event, historyDialog);
           return;
         }
         if (event.key === "Escape" && openDeleteModal) {

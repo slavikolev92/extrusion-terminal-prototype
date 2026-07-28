@@ -592,6 +592,68 @@ def test_terminal_v8_non_focus_paused_card_cannot_own_machine_countdown(
     assert 'data-roll-change-overlay' in running_html
 
 
+def test_terminal_disables_start_when_another_card_occupies_selected_machine(connection):
+    pending_id = release_ready_card("26148-pending", machine_id=1, sequence=1)
+    running_id = release_ready_card("26148-running", machine_id=1, sequence=2)
+    assert db.start_production_timing(running_id, card_version(running_id)).ok
+
+    context = terminal_context(pending_id)
+    html = render_terminal(pending_id)
+    start_button = re.search(
+        r'<button[^>]+data-lifecycle-slot="start"[^>]*>.*?<span>Старт</span></button>',
+        html,
+        flags=re.S,
+    )
+
+    assert context["selected_machine_occupying_card"]["id"] == running_id
+    assert f'action="/terminal/cards/{pending_id}/timing/start"' not in html
+    assert start_button is not None
+    assert "disabled" in start_button.group(0)
+    assert 'aria-describedby="machine-occupied-reason"' in start_button.group(0)
+    assert (
+        '<p class="action-disabled-reason" id="machine-occupied-reason" role="note">'
+        'Машина 1 е заета от поръчка 26148-running.</p>'
+    ) in html
+
+
+def test_terminal_disables_resume_when_another_card_occupies_selected_machine(connection):
+    paused_id = release_ready_card("26148-paused", machine_id=2, sequence=1)
+    running_id = release_ready_card("26148-occupant", machine_id=2, sequence=2)
+    assert db.start_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.pause_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.start_production_timing(running_id, card_version(running_id)).ok
+
+    context = terminal_context(paused_id)
+    html = render_terminal(paused_id)
+    continue_button = re.search(
+        r'<button[^>]+data-lifecycle-slot="pause"[^>]*>.*?<span>Продължи</span></button>',
+        html,
+        flags=re.S,
+    )
+
+    assert context["selected_machine_occupying_card"]["id"] == running_id
+    assert f'action="/terminal/cards/{paused_id}/timing/resume"' not in html
+    assert continue_button is not None
+    assert "disabled" in continue_button.group(0)
+    assert 'aria-describedby="machine-occupied-reason"' in continue_button.group(0)
+    assert f'action="/terminal/cards/{paused_id}/finish"' in html
+
+
+def test_terminal_keeps_start_enabled_when_other_card_is_only_paused(connection):
+    paused_id = release_ready_card("26148-only-paused", machine_id=3, sequence=1)
+    pending_id = release_ready_card("26148-free-pending", machine_id=3, sequence=2)
+    assert db.start_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.pause_production_timing(paused_id, card_version(paused_id)).ok
+
+    context = terminal_context(pending_id)
+    html = render_terminal(pending_id)
+
+    assert context["selected_machine_occupying_card"] is None
+    start_form = form_block(html, f"/terminal/cards/{pending_id}/timing/start")
+    assert ">Старт</span>" in start_form
+    assert "machine-occupied-reason" not in html
+
+
 def test_terminal_v8_renders_only_accepted_selected_card_details(connection):
     card_id = release_ready_card("26101", machine_id=1, sequence=1)
 
@@ -633,6 +695,28 @@ def test_terminal_v8_renders_only_accepted_selected_card_details(connection):
         "Третиране",
         "Опаковка",
     ] == re.findall(r'<span class="field-label">([^<]+)</span>', second_row)
+
+
+def test_terminal_roll_correction_controls_have_unique_accessible_names(connection):
+    card_id = release_ready_card("26101-accessible-roll", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.25").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "25.00").ok
+
+    html = render_terminal(card_id)
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    roll = card["roll_entries"][0]
+    row = form_block(html, f"/terminal/cards/{card_id}/rolls/{roll['id']}")
+
+    for name, label in (
+        ("gross_weight", "Ролка 1, бруто"),
+        ("tare_weight", "Ролка 1, шпула"),
+        ("pallet_number", "Ролка 1, палет"),
+    ):
+        tag = re.search(rf'<input[^>]+name="{name}"[^>]*>', row)
+        assert tag is not None
+        assert f'aria-label="{label}"' in tag.group(0)
 
 
 def test_terminal_v8_details_panel_labels_and_values_are_deemphasized(connection):
@@ -1565,6 +1649,32 @@ def test_terminal_v8_waiting_and_rewinding_scripts_coordinate_modal_lifecycle(co
     assert "#waiting-open" in html
     assert "[data-rewinding-open]" in html
     assert "[data-waiting-row]" in html
+
+
+def test_terminal_queue_produced_and_finish_overlays_render_modal_semantics(connection):
+    card_id = release_ready_card("26194-modal-semantics", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+
+    html = render_terminal(card_id)
+    queue = html_between_ids(html, "queue-overlay", "waiting-overlay")
+    produced = html_between_ids(html, "history-overlay", "finish-confirm-modal")
+    finish_start = html.find('id="finish-confirm-modal"')
+    finish_end = html.find("<script>", finish_start)
+    assert finish_start != -1 and finish_end != -1
+    finish = html[finish_start:finish_end]
+
+    assert 'role="dialog"' in queue
+    assert 'aria-modal="true"' in queue
+    assert 'aria-labelledby="queue-title"' in queue
+    assert 'tabindex="-1"' in queue
+    assert '<h2 id="queue-title">Опашка по машини</h2>' in queue
+    assert 'role="dialog"' in produced
+    assert 'aria-modal="true"' in produced
+    assert 'aria-labelledby="history-title"' in produced
+    assert 'tabindex="-1"' in produced
+    assert '<h2 id="history-title">Произведени поръчки</h2>' in produced
+    assert 'role="dialog"' in finish
+    assert 'aria-modal="true"' in finish
 
 
 def test_terminal_v8_recipe_inputs_are_named_for_all_rows(connection):
