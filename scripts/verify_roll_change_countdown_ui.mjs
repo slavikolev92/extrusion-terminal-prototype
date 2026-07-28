@@ -1595,6 +1595,155 @@ async function assertModalFocusContainment(_context, page, _late, viewport) {
 }
 
 
+async function assertRound5ToastModalIsolation(_context, page, _late, viewport) {
+  const cardId = fixture.cards.machine_1_running;
+
+  const navigateWithSuccessToast = async () => {
+    const response = await page.goto(
+      `${baseURL}/terminal/cards/${cardId}?notice=tare_saved`,
+      { waitUntil: "networkidle" },
+    );
+    assert(response?.ok(), `Toast terminal navigation returned HTTP ${response?.status() || "unknown"}.`);
+    const toast = page.locator(".terminal-toast");
+    const toastClose = toast.locator(".terminal-toast-close");
+    assert(await toast.isVisible(), "Success toast was not visible before opening the modal.");
+    assert(await toastClose.isVisible(), "Success toast dismiss action was not visible before opening the modal.");
+    assert(await toastClose.isEnabled(), "Success toast dismiss action was not enabled before opening the modal.");
+    assertEqual(await toast.getAttribute("inert"), null, "success toast initial inert state");
+    assertEqual(await toast.getAttribute("aria-hidden"), null, "success toast initial aria-hidden state");
+    assertEqual(await page.getByRole("status").count(), 1, "success toast initial accessibility-tree exposure");
+    return { toast, toastClose };
+  };
+
+  const captureBackgroundState = async (selectors) => Promise.all(
+    selectors.map(async (selector) => {
+      const element = page.locator(selector);
+      assertEqual(await element.count(), 1, `${selector} background target count`);
+      return {
+        selector,
+        inert: await element.getAttribute("inert"),
+        ariaHidden: await element.getAttribute("aria-hidden"),
+      };
+    }),
+  );
+
+  const assertBackgroundRestored = async (state, label) => {
+    for (const { selector, inert, ariaHidden } of state) {
+      const element = page.locator(selector);
+      assertEqual(await element.getAttribute("inert"), inert, `${label} restored ${selector} inert state`);
+      assertEqual(await element.getAttribute("aria-hidden"), ariaHidden, `${label} restored ${selector} aria-hidden state`);
+    }
+  };
+
+  const assertModalPath = async ({ opener, modal, dialog, backgroundSelectors, label, screenshot }) => {
+    const { toast, toastClose } = await navigateWithSuccessToast();
+    const priorBackgroundState = await captureBackgroundState(backgroundSelectors);
+    const openerControl = page.locator(opener);
+    await openerControl.focus();
+    await openerControl.click();
+    const modalControl = page.locator(modal);
+    const dialogControl = page.locator(dialog);
+    assert(await modalControl.isVisible(), `${label} did not open.`);
+    assert(await toast.isVisible(), `${label} did not retain the visible success toast.`);
+    for (const selector of backgroundSelectors) {
+      const element = page.locator(selector);
+      assert(await element.getAttribute("inert") !== null, `${label} left ${selector} keyboard-reachable.`);
+      assertEqual(await element.getAttribute("aria-hidden"), "true", `${label} ${selector} assistive isolation`);
+    }
+    assertEqual(await page.getByRole("status").count(), 0, `${label} toast accessibility-tree isolation`);
+    assertEqual(await page.getByRole("button", { name: "Затвори", exact: true }).count(), 0, `${label} toast close accessibility-tree isolation`);
+    assert(
+      await dialogControl.evaluate((element) => element.contains(document.activeElement)),
+      `${label} did not initially contain focus.`,
+    );
+    await toastClose.evaluate((element) => element.focus());
+    assert(
+      await dialogControl.evaluate((element) => element.contains(document.activeElement)),
+      `${label} allowed focus to escape to the inert toast.`,
+    );
+    await page.screenshot({
+      path: screenshotPath(`${screenshot}-${viewport.width}x${viewport.height}.png`),
+      fullPage: true,
+    });
+    await page.keyboard.press("Escape");
+    assert(await modalControl.isHidden(), `${label} Escape did not close.`);
+    assert(
+      await openerControl.evaluate((element) => document.activeElement === element),
+      `${label} did not restore opener focus.`,
+    );
+    await assertBackgroundRestored(priorBackgroundState, label);
+    assert(await toast.isVisible(), `${label} restore hid the success toast.`);
+    assertEqual(await page.getByRole("status").count(), 1, `${label} restored toast accessibility-tree exposure`);
+    await toastClose.focus();
+    assert(
+      await toastClose.evaluate((element) => document.activeElement === element),
+      `${label} did not restore toast focusability.`,
+    );
+  };
+
+  const modalPaths = [
+    {
+      opener: "#queue-open",
+      modal: "#queue-overlay",
+      dialog: "#queue-overlay [role='dialog']",
+      backgroundSelectors: [".terminal-toast", ".terminal-header", ".machine-nav", ".main"],
+      label: "Queue dialog with toast",
+      screenshot: "round5-queue-toast-isolation",
+    },
+    {
+      opener: "#history-open",
+      modal: "#history-overlay",
+      dialog: "#history-overlay [role='dialog']",
+      backgroundSelectors: [".terminal-toast", ".terminal-header", ".machine-nav", ".main"],
+      label: "Produced dialog with toast",
+      screenshot: "round5-produced-toast-isolation",
+    },
+    {
+      opener: 'form[data-lifecycle-slot="finish"] button[type="submit"]',
+      modal: "[data-finish-confirm-modal]",
+      dialog: "[data-finish-confirm-modal] [role='dialog']",
+      backgroundSelectors: [".terminal-toast", ".app"],
+      label: "Finish dialog with toast",
+      screenshot: "round5-finish-toast-isolation",
+    },
+  ];
+  const failures = [];
+  for (const modalPath of modalPaths) {
+    try {
+      await assertModalPath(modalPath);
+    } catch (error) {
+      failures.push(`${modalPath.label}: ${error.message}`);
+    }
+  }
+  assertEqual(failures, [], "round5 modal toast isolation paths");
+
+  passed(`${viewport.width}x${viewport.height}: queue, Produced, and Finish toast focus and accessibility isolation`);
+}
+
+
+async function assertRound5AdminNewTimingNames(_context, page, _late, viewport) {
+  const response = await page.goto(
+    `${baseURL}/admin/cards/${fixture.cards.completed}`,
+    { waitUntil: "networkidle" },
+  );
+  assert(response?.ok(), `Admin timing-name navigation returned HTTP ${response?.status() || "unknown"}.`);
+
+  for (const [selector, accessibleName, label] of [
+    ['input[name="new_started_at"]', "Нов сегмент, начало", "new timing start"],
+    ['input[name="new_ended_at"]', "Нов сегмент, край", "new timing end"],
+    ['select[name="new_end_reason"]', "Нов сегмент, причина", "new timing reason"],
+  ]) {
+    const control = page.locator(selector);
+    assertEqual(await control.count(), 1, `${label} control count`);
+    assertEqual(await control.getAttribute("aria-label"), accessibleName, `${label} accessible name`);
+  }
+  await page.locator("#timing").screenshot({
+    path: screenshotPath(`round5-admin-new-timing-names-${viewport.width}x${viewport.height}.png`),
+  });
+  passed(`${viewport.width}x${viewport.height}: Admin new timing-row controls have unique accessible names`);
+}
+
+
 async function assertRound4AdminAndAffordances(context, page, _late, viewport) {
   page.removeAllListeners("dialog");
   const dialogDecisions = [];
@@ -1968,6 +2117,8 @@ const bootstrapCases = {
   "correction-close-reload-latched": assertCorrectionClosePreservesReloadLatch,
   "round4-modal-containment": assertModalFocusContainment,
   "round4-admin-and-affordances": assertRound4AdminAndAffordances,
+  "round5-toast-modal-isolation": assertRound5ToastModalIsolation,
+  "round5-admin-new-timing-names": assertRound5AdminNewTimingNames,
   replacement: assertDelayedReplacementBootstrap,
   empty: assertDelayedEmptyMachineBootstrap,
   malformed: (context, current, late) => assertLifecycleSchemaTolerance(

@@ -399,10 +399,10 @@
           </div>
         {% endfor %}
         <div class="admin-ledger-row admin-timing-ledger-row new-row">
-          <div><input name="new_started_at" placeholder="YYYY-MM-DD HH:MM:SS" {% if production_fields_disabled %}disabled{% endif %}></div>
-          <div><input name="new_ended_at" placeholder="YYYY-MM-DD HH:MM:SS" {% if production_fields_disabled %}disabled{% endif %}></div>
+          <div><input name="new_started_at" placeholder="YYYY-MM-DD HH:MM:SS" aria-label="Нов сегмент, начало" {% if production_fields_disabled %}disabled{% endif %}></div>
+          <div><input name="new_ended_at" placeholder="YYYY-MM-DD HH:MM:SS" aria-label="Нов сегмент, край" {% if production_fields_disabled %}disabled{% endif %}></div>
           <div>
-            <select name="new_end_reason" {% if production_fields_disabled %}disabled{% endif %}>
+            <select name="new_end_reason" aria-label="Нов сегмент, причина" {% if production_fields_disabled %}disabled{% endif %}>
               <option value="">В ход</option>
               <option value="pause">пауза</option>
               <option value="finish">приключване</option>

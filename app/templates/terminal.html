@@ -4912,7 +4912,9 @@
       const finishConfirmBack = finishConfirmModal?.querySelector("[data-finish-confirm-cancel]");
       const finishConfirmSubmit = finishConfirmModal?.querySelector("[data-finish-confirm-submit]");
       const finishConfirmDialog = finishConfirmModal?.querySelector("[role='dialog']");
-      const finishBackground = document.querySelector(".app");
+      const finishBackgroundTargets = Array.from(
+        document.querySelectorAll(".app, .terminal-toast"),
+      );
       let pendingFinishForm = null;
       let finishConfirmReturnFocus = null;
       let finishConfirmSubmitting = false;
@@ -4923,33 +4925,38 @@
       }
 
       const setFinishBackgroundIsolated = (isolated) => {
-        if (!finishBackground) {
+        if (finishBackgroundTargets.length === 0) {
           return;
         }
         if (isolated) {
           if (!finishBackgroundState) {
-            finishBackgroundState = {
-              inert: finishBackground.hasAttribute("inert"),
-              ariaHidden: finishBackground.getAttribute("aria-hidden"),
-            };
+            finishBackgroundState = finishBackgroundTargets.map((element) => ({
+              element,
+              inert: element.hasAttribute("inert"),
+              ariaHidden: element.getAttribute("aria-hidden"),
+            }));
           }
-          finishBackground.setAttribute("inert", "");
-          finishBackground.setAttribute("aria-hidden", "true");
+          finishBackgroundTargets.forEach((element) => {
+            element.setAttribute("inert", "");
+            element.setAttribute("aria-hidden", "true");
+          });
           return;
         }
         if (!finishBackgroundState) {
           return;
         }
-        if (finishBackgroundState.inert) {
-          finishBackground.setAttribute("inert", "");
-        } else {
-          finishBackground.removeAttribute("inert");
-        }
-        if (finishBackgroundState.ariaHidden === null) {
-          finishBackground.removeAttribute("aria-hidden");
-        } else {
-          finishBackground.setAttribute("aria-hidden", finishBackgroundState.ariaHidden);
-        }
+        finishBackgroundState.forEach(({ element, inert, ariaHidden }) => {
+          if (inert) {
+            element.setAttribute("inert", "");
+          } else {
+            element.removeAttribute("inert");
+          }
+          if (ariaHidden === null) {
+            element.removeAttribute("aria-hidden");
+          } else {
+            element.setAttribute("aria-hidden", ariaHidden);
+          }
+        });
         finishBackgroundState = null;
       };
 
@@ -5358,7 +5365,7 @@
       const rollDeleteModals = Array.from(document.querySelectorAll("[data-roll-delete-modal-for]"));
       const rollBody = document.querySelector("[data-roll-body]");
       const drawerBackgroundTargets = Array.from(
-        document.querySelectorAll(".terminal-header, .machine-nav, .main"),
+        document.querySelectorAll(".terminal-toast, .terminal-header, .machine-nav, .main"),
       );
       const correctionBlockedControls = document.querySelectorAll(
         ".actions form button, .roll-add-button, .add-roll-form input, .tare-form input, .pallet-form input, .recipe-table input, #queue-open, #waiting-open, #history-open, [data-rewinding-open], [data-roll-change-open], [data-roll-change-advance]"

@@ -609,14 +609,18 @@ def test_roll_change_verifier_uses_directional_spacing_and_accepted_geometry_che
     assert '[data-roll-row-cancel]' in source
 
 
-def test_roll_change_verifier_covers_round4_guarded_workflows_at_both_viewports():
+def test_roll_change_verifier_covers_round4_and_round5_guarded_workflows_at_both_viewports():
     source = VERIFIER_SCRIPT.read_text(encoding="utf-8")
 
     assert '"correction-close-pending"' in source
     assert '"correction-close-reload-latched"' in source
     assert '"round4-modal-containment"' in source
     assert '"round4-admin-and-affordances"' in source
+    assert '"round5-toast-modal-isolation"' in source
+    assert '"round5-admin-new-timing-names"' in source
     assert "assertRound4AdminAndAffordances" in source
+    assert "assertRound5ToastModalIsolation" in source
+    assert "assertRound5AdminNewTimingNames" in source
     assert "beforeunload" in source
     assert "restored-started unrelease" in source
     assert "imported operational rejection" in source
@@ -624,6 +628,10 @@ def test_roll_change_verifier_covers_round4_guarded_workflows_at_both_viewports(
     assert "occupied paused Continue" in source
     assert "terminal roll accessible name" in source
     assert "admin timing accessible name" in source
+    assert "toast accessibility-tree isolation" in source
+    assert "Нов сегмент, начало" in source
+    assert "Нов сегмент, край" in source
+    assert "Нов сегмент, причина" in source
 
 
 def test_due_selected_countdown_accessible_name_includes_expected_time():

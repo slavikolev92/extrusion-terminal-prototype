@@ -698,6 +698,15 @@ def test_admin_roll_and_timing_row_controls_have_unique_accessible_names(connect
             assert tag is not None
             assert f'aria-label="Сегмент {index}, {label}"' in tag.group(0)
 
+    for element, field, accessible_name in (
+        ("input", "new_started_at", "Нов сегмент, начало"),
+        ("input", "new_ended_at", "Нов сегмент, край"),
+        ("select", "new_end_reason", "Нов сегмент, причина"),
+    ):
+        tag = re.search(rf'<{element}[^>]+name="{field}"[^>]*>', html)
+        assert tag is not None
+        assert f'aria-label="{accessible_name}"' in tag.group(0)
+
 
 def test_admin_detail_permanent_delete_uses_safe_order_confirmation_hook(connection):
     order_number = "27120' + confirm('unsafe') + '"
