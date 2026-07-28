@@ -187,11 +187,12 @@ Every migration test set must cover, where applicable:
 
 | Version | Name | Purpose | Development | Snapshot rehearsal | Production |
 | --- | --- | --- | --- | --- | --- |
-| M001 | `shift_manager_import_fields` | Add the eight final ordered/route columns without guessing legacy values | 9 focused tests passed | Not run | Not run |
+| M001 | `shift_manager_import_fields` | Add the eight final ordered/route columns without guessing legacy values | 9 focused tests passed | Profile complete; approved values are normalized by M006 | Not run |
 | M002 | `shift_management` | Add shift configuration, durable occurrences, and nullable roll attribution without historical backfill | 14 focused migration tests and 560 full-suite tests passed | Not run | Not run |
 | M003 | `roll_pallet_assignment` | Add nullable constrained current-card and per-roll pallet numbers without historical backfill | 28 focused migration, 78 focused print/verifier-safety, and 686 full-suite tests passed | Not needed for M003 itself; final release rehearsal still required | Not run |
 | M004 | `rewinding_return_workflow` | Rebuild `cards` for the waiting status, constrained nullable marker, and nullable final-shift foreign key without historical inference | 44 migration, 622 focused affected-workflow, and 825 full-suite tests passed | Not needed for M004 itself; final release rehearsal still required | Not run |
 | M005 | `shift_schema_contract` | Bound the persisted singleton shift count to the accepted integer range 1..99 and validate the recorded shift tables/indexes without changing valid values | 61 migration, 114 focused affected-workflow, and 876 full-suite tests passed | Not needed for M005 itself; final release rehearsal still required | Not run |
+| M006 | `legacy_import_normalization` | Populate blank ordered-amount and route fields only for the proven production legacy shape | 3 M006 tests, 64 migration tests, and 915 full-suite tests passed | Production-clone migration, invariants, smokes, idempotence, safe restore, and previous-revision rollback smokes passed | Not run |
 
 ### M001: Shift Manager Import Fields
 
@@ -236,9 +237,62 @@ git diff --check
 # passed
 ```
 
-No production snapshot has been profiled or rehearsed. Do not deploy M001 alone:
-current views expect final fields while historical production rows retain legacy
-quantity/unit pairs.
+Production profile evidence from July 28, 2026:
+
+- SQLite-safe backup fingerprint: 282,624 bytes, SHA-256
+  `de409738df588db73a769b71ad545865d05e055a45a015eee7eaccfca1bb80bc`;
+  deployed revision `f6123c8669c1b0ab11698ba5ecf7ee8e4f7ce32d`;
+  SQLite 3.45.1; integrity `ok`; no foreign-key violations and no recorded
+  migrations.
+- The backup contains 35 cards and 35 matching import-source rows. Their four
+  legacy G/H/I/J values disagree zero times. All 35 populated G values and all
+  15 populated H/I/J values are numeric; no legacy unit label occurs in this
+  production snapshot.
+- The pre-correction contract identifies G as gross kilograms and preserves
+  H/I/J as the original workbook fields. The corrected contract identifies
+  G/H/I/J as gross kilograms, rolls, metres, and units. This proves the exact
+  mapping `quantity_1 -> ordered_gross_kg`, `unit_1 -> ordered_rolls`,
+  `quantity_2 -> ordered_meters`, and `unit_2 -> ordered_units` for this
+  production database without relying on position alone.
+- A current 71-row Shift Manager export independently matches 33 of the 35
+  production order numbers. The two absent rows and later workbook value
+  changes do not make the stored legacy meanings ambiguous; a migration must
+  copy the stored texts, not replace them with current CSV values.
+- The normalized CSV directly proves 33 routes, the retained workbook proves
+  one additional route, and the remaining blank-next-operation row matches all
+  28 other proven extrusion-only rows. The complete approved route distribution
+  is 29 extrusion-only, five extrusion-then-confection, and one
+  extrusion-then-printing-then-confection.
+
+M006 `legacy_import_normalization` is implemented with the user's approval. It
+copies exact stored amount texts into blank destinations only when the card and
+import-source legacy values agree and match the profiled numeric shape. It
+populates blank routes from the three proven signatures, preserves any existing
+nonblank destination, skips old unit-label fixtures, and aborts atomically for
+an unfamiliar corroborated route or unsupported numeric shape. It does not
+change legacy fields or any production status, assignment, queue, version,
+timestamp, roll, weight, timing, shift, pallet, recipe, or material actual.
+
+Production-clone evidence: M001-M006 applied in 0.023 seconds; all original
+production columns and rows matched exactly before/after; amount mismatches and
+card/source route disagreements were zero; integrity was `ok`; foreign-key
+violations were empty; health, Admin, Terminal, and completed-card print smokes
+returned HTTP 200; and a second initialization took 0.007 seconds with an
+identical logical database hash and no new migration record. A SQLite-safe
+restore reproduced the pre-migration file exactly before startup, and deployed
+revision `f6123c8` passed the same four rollback smokes. Its known startup
+behavior refreshed only the four fixed-machine `updated_at` values.
+
+Migration assessment
+- Decision: Data migration
+- Why: legacy ordered amounts and route evidence must populate the final M001 columns.
+- Existing production data affected: only blank final ordered-amount and route columns in `cards` and `card_import_sources`.
+- Proposed migration: M006 `legacy_import_normalization` (implemented).
+- Transformation: exact legacy G/H/I/J texts plus the three proven route signatures described above.
+- Unknowns or ambiguous rows: none in the profiled snapshot; unfamiliar final-snapshot shapes fail closed.
+- Required tests: preservation, literal mappings, existing destinations, ambiguous values, atomic rejection, idempotence, integrity, and foreign keys; all pass.
+- Production snapshot needed now: No; a final safe backup is required after workers stop.
+- Deployment constraint: deploy the exact integrated candidate and M006 together only after the final SQLite-safe backup.
 
 ### M002: Shift Management
 
@@ -555,7 +609,9 @@ Migration assessment
 | 2026-07-28 | Final verifier maintenance fix round 1 | No migration | Hardened only verifier evidence-output leaf guards, deterministic current-UI History navigation, verifier safety/regression tests, and harness documentation. No application route, template, database service, table, column, index, constraint, migration record, persisted production meaning, or historical value changed. 23 focused, 61 migration, and 910 full-suite tests pass; the roll verifier and three fresh complete shift-verifier runs pass against temporary databases with integrity `ok` and zero foreign-key errors. No production snapshot is needed for this harness-only fix. |
 | 2026-07-28 | Release-candidate verdict and audit documentation | No migration | Added the Task 10 `NO-GO` verdict, refreshed audit status/evidence, and changed documentation only. No application code, persistent structure, stored-data meaning, historical value, or migration registry entry changed. Stage A is `PASS WITH DOCUMENTED NON-BLOCKING LIMITATIONS`; production remains blocked until Tasks 8-9 run from a user-supplied immutable SQLite-safe backup and exact deployed revision. |
 | 2026-07-28 | Final whole-branch roll-verifier artifact guard fix | No migration | Hardened only the roll/pallet Playwright verifier's pre-mutation evidence-path guard and added two sentinel-preservation regressions for a symlinked guard root and intermediate component. No application route, template, database service, table, column, index, constraint, migration record, persisted meaning, or historical value changed. 12 focused roll-verifier safety, 61 migration, 912 full-suite Python, and 19 Node tests pass; fresh guarded roll/pallet verification passes both supported viewports with Admin, normal/overflow PDFs, integrity `ok`, zero foreign-key violations, and zero console/page errors. No production snapshot is needed for this harness-only fix; Tasks 8-9 and both product decisions remain open production gates. |
+| 2026-07-28 | Task 8 immutable production backup profile | Deterministic data migration proposed | Profiled only a clone of the SQLite-safe backup from deployed revision `f6123c8`: 35 card/source pairs agree on all legacy G/H/I/J texts, every populated value is numeric, and the documented old/new workbook contracts prove their gross/roll/metre/unit meanings. Proposed M006 `legacy_ordered_amounts` copies exact stored texts into blank final destinations without changing legacy values; route sequences remain blank because `extrusion_flag` cannot prove Q:T order. Awaiting user approval before implementation and Task 9 rehearsal. |
 | 2026-07-28 | Scheduled countdown cadence and solid machine-state dots | No migration | Changed only browser-local countdown arithmetic, Terminal presentation CSS, the guarded browser verifier, tests, and documentation. No SQLite table, column, index, constraint, migration record, persisted meaning, or historical value changed; no production snapshot is needed. 20 Node schedule tests, 253 focused Python tests including all 61 migration tests, and 912 full-suite Python tests pass. The guarded countdown verifier passes at `1920x768` and `1366x768` with zero console/page errors and no production-database access. Tasks 8-9 remain deployment gates; Task 15 is explicitly deferred and is not a production prerequisite. |
+| 2026-07-28 | M006 implementation and production-clone rehearsal | Deterministic data migration | M006 populated only approved blank destinations. 64 migration and 915 full-suite tests passed; production-clone preservation, integrity, foreign keys, smokes, second-run idempotence, safe restore, and previous-revision rollback smokes passed. The previous revision's known startup behavior refreshed only the four fixed-machine `updated_at` values. |
 
 Append one row after every use of the trigger command, including when no
 migration is required.
