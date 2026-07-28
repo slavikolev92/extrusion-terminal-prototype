@@ -208,7 +208,10 @@ strictly below `.test-runtime/` and contains only the fresh `shift-ui.sqlite3`
 database plus generated `shift-management-orders.csv`. `ARTIFACT_DIR` must be a
 real directory strictly below `artifacts/ui-checks/` and contains screenshots,
 the JSON summary, and optional server logs. Missing, outside-root, or
-symlink-escaping paths are rejected before verifier mutation.
+symlink-escaping paths are rejected before verifier mutation. Every known JSON
+and screenshot output leaf is also checked before `/health`: an existing
+symlink, directory, or other non-regular leaf is rejected, while an existing
+regular evidence file may be replaced by a fresh run.
 
 Before its first HTTP mutation, the verifier requires `/health` to report the
 exact canonical `RUNTIME_DIR/shift-ui.sqlite3` path. It then writes a
@@ -216,6 +219,11 @@ deterministic two-field marker only to that runtime database, observes the
 marker through a read-only `/admin/settings` response, restores the original
 configuration exactly, and verifies that the server observes the restoration.
 A server backed by any other database is rejected before import or release.
+After the allowed completed-roll correction, the verifier derives the History
+URL from the current visible `Виж всички` link and proves the transition three
+times. Direct navigation to that captured current-UI URL prevents the terminal
+snapshot poll from swallowing the link event while retaining the existing
+History and corrected-summary assertions.
 
 The 2026-07-26 fixed-HEAD evidence is in
 `artifacts/ui-checks/shift-unified-final-dCYNkc/`: `admin-shift-count.png`,

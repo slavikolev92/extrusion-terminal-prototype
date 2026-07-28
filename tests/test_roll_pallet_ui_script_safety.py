@@ -85,6 +85,25 @@ def temporary_server(database_path: Path):
             process.wait(timeout=5)
 
 
+def create_roll_pallet_fixture(database_path: Path, fixture_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(FIXTURE_SCRIPT),
+            "--db-path",
+            str(database_path),
+            "--output",
+            str(fixture_path),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_roll_pallet_fixture_rejects_database_path_outside_test_runtime(tmp_path):
     unsafe_database = tmp_path / "unsafe.sqlite3"
     unsafe_output = tmp_path / "fixture.json"
@@ -152,6 +171,112 @@ def test_roll_pallet_verifier_requires_every_explicit_input_before_browser_use(
 
     assert result.returncode != 0
     assert f"Required environment variable {missing_name} is missing." in result.stderr
+
+
+def test_roll_pallet_verifier_rejects_summary_leaf_symlink_and_preserves_sentinel(
+    tmp_path: Path,
+):
+    case_root = (
+        REPO_ROOT
+        / ".test-runtime"
+        / "release-candidate-audit"
+        / "final-verifier-fix-round-1"
+        / f"roll-summary-leaf-{tmp_path.name}"
+    )
+    runtime_dir = case_root / "runtime"
+    database_path = runtime_dir / "fixture.sqlite3"
+    fixture_path = runtime_dir / "fixture.json"
+    sentinel_path = case_root / "outside-summary-sentinel.json"
+    artifact_dir = (
+        REPO_ROOT
+        / "artifacts"
+        / "ui-checks"
+        / "release-candidate-audit"
+        / "final-verifier-fix-round-1"
+        / f"roll-summary-leaf-{tmp_path.name}"
+    )
+    sentinel = "sentinel: must remain unchanged\n"
+
+    try:
+        create_roll_pallet_fixture(database_path, fixture_path)
+        artifact_dir.mkdir(parents=True)
+        sentinel_path.write_text(sentinel, encoding="utf-8")
+        (artifact_dir / "verification-summary.json").symlink_to(sentinel_path)
+
+        result = subprocess.run(
+            ["node", str(VERIFIER_SCRIPT)],
+            cwd=REPO_ROOT,
+            env=verifier_environment(
+                BASE_URL="http://127.0.0.1:9",
+                FIXTURE_JSON=str(fixture_path),
+                ARTIFACT_DIR=str(artifact_dir),
+            ),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        sentinel_after = sentinel_path.read_text(encoding="utf-8")
+    finally:
+        shutil.rmtree(case_root, ignore_errors=True)
+        shutil.rmtree(artifact_dir, ignore_errors=True)
+
+    assert result.returncode != 0
+    assert sentinel_after == sentinel
+    assert "Evidence output path must not be a symlink" in result.stderr
+
+
+def test_roll_pallet_verifier_rejects_non_regular_screenshot_leaf_before_health(
+    tmp_path: Path,
+):
+    case_root = (
+        REPO_ROOT
+        / ".test-runtime"
+        / "release-candidate-audit"
+        / "final-verifier-fix-round-1"
+        / f"roll-screenshot-leaf-{tmp_path.name}"
+    )
+    runtime_dir = case_root / "runtime"
+    database_path = runtime_dir / "fixture.sqlite3"
+    fixture_path = runtime_dir / "fixture.json"
+    artifact_dir = (
+        REPO_ROOT
+        / "artifacts"
+        / "ui-checks"
+        / "release-candidate-audit"
+        / "final-verifier-fix-round-1"
+        / f"roll-screenshot-leaf-{tmp_path.name}"
+    )
+
+    try:
+        create_roll_pallet_fixture(database_path, fixture_path)
+        artifact_dir.mkdir(parents=True)
+        (artifact_dir / "terminal-pallet-entry-1536x1024.png").mkdir()
+        database_before = database_path.read_bytes()
+
+        result = subprocess.run(
+            ["node", str(VERIFIER_SCRIPT)],
+            cwd=REPO_ROOT,
+            env=verifier_environment(
+                BASE_URL="http://127.0.0.1:9",
+                FIXTURE_JSON=str(fixture_path),
+                ARTIFACT_DIR=str(artifact_dir),
+            ),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        database_after = database_path.read_bytes()
+        summary_exists = (artifact_dir / "verification-summary.json").exists()
+    finally:
+        shutil.rmtree(case_root, ignore_errors=True)
+        shutil.rmtree(artifact_dir, ignore_errors=True)
+
+    assert result.returncode != 0
+    assert database_after == database_before
+    assert not summary_exists
+    assert "Evidence output path must be absent or a regular file" in result.stderr
 
 
 def test_roll_pallet_fixture_creates_only_the_four_required_card_kinds(tmp_path):

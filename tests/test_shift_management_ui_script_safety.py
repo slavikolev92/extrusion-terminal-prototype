@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import socket
@@ -33,14 +34,18 @@ def verifier_environment(**overrides: str) -> dict[str, str]:
     return environment
 
 
-def run_verifier(environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def run_verifier(
+    environment: dict[str, str],
+    *,
+    timeout: int = 30,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["node", str(VERIFICATION_SCRIPT)],
         cwd=REPO_ROOT,
         env=environment,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=timeout,
         check=False,
     )
 
@@ -103,7 +108,7 @@ def temporary_server(database_path: Path):
         ],
         cwd=REPO_ROOT,
         env=environment,
-        stdout=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
         stderr=subprocess.STDOUT,
         text=True,
     )
@@ -119,17 +124,17 @@ def temporary_server(database_path: Path):
                 time.sleep(0.05)
         else:
             process.terminate()
-            output, _ = process.communicate(timeout=5)
-            pytest.fail(f"temporary server did not start:\n{output}")
+            process.wait(timeout=5)
+            pytest.fail("temporary server did not start")
         yield base_url
     finally:
         if process.poll() is None:
             process.terminate()
         try:
-            process.communicate(timeout=5)
+            process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.communicate(timeout=5)
+            process.wait(timeout=5)
 
 
 @pytest.mark.parametrize(
@@ -256,6 +261,99 @@ def test_verifier_rejects_guard_path_symlink_escape_before_mutation(
     assert list(outside_dir.iterdir()) == []
 
 
+def test_verifier_rejects_summary_leaf_symlink_and_preserves_sentinel_before_health(
+    tmp_path: Path,
+):
+    case_root = (
+        REPO_ROOT
+        / ".test-runtime"
+        / "release-candidate-audit"
+        / "final-verifier-fix-round-1"
+        / f"shift-summary-leaf-{tmp_path.name}"
+    )
+    runtime_dir = case_root / "runtime"
+    database_path = runtime_dir / "shift-ui.sqlite3"
+    sentinel_path = case_root / "outside-summary-sentinel.json"
+    artifact_dir = (
+        REPO_ROOT
+        / "artifacts"
+        / "ui-checks"
+        / "release-candidate-audit"
+        / "final-verifier-fix-round-1"
+        / f"shift-summary-leaf-{tmp_path.name}"
+    )
+    sentinel = "sentinel: must remain unchanged\n"
+
+    try:
+        initialize_database(database_path)
+        artifact_dir.mkdir(parents=True)
+        sentinel_path.write_text(sentinel, encoding="utf-8")
+        (artifact_dir / "shift-management-ui-summary.json").symlink_to(sentinel_path)
+        before = database_counts(database_path)
+
+        result = run_verifier(
+            verifier_environment(
+                BASE_URL="http://127.0.0.1:9",
+                RUNTIME_DIR=str(runtime_dir),
+                ARTIFACT_DIR=str(artifact_dir),
+            )
+        )
+        sentinel_after = sentinel_path.read_text(encoding="utf-8")
+        after = database_counts(database_path)
+    finally:
+        shutil.rmtree(case_root, ignore_errors=True)
+        shutil.rmtree(artifact_dir, ignore_errors=True)
+
+    assert result.returncode != 0
+    assert "Evidence output path must not be a symlink" in result.stderr
+    assert sentinel_after == sentinel
+    assert after == before
+
+
+def test_verifier_rejects_non_regular_screenshot_leaf_before_health(
+    tmp_path: Path,
+):
+    case_root = (
+        REPO_ROOT
+        / ".test-runtime"
+        / "release-candidate-audit"
+        / "final-verifier-fix-round-1"
+        / f"shift-screenshot-leaf-{tmp_path.name}"
+    )
+    runtime_dir = case_root / "runtime"
+    database_path = runtime_dir / "shift-ui.sqlite3"
+    artifact_dir = (
+        REPO_ROOT
+        / "artifacts"
+        / "ui-checks"
+        / "release-candidate-audit"
+        / "final-verifier-fix-round-1"
+        / f"shift-screenshot-leaf-{tmp_path.name}"
+    )
+
+    try:
+        initialize_database(database_path)
+        artifact_dir.mkdir(parents=True)
+        (artifact_dir / "admin-shift-count.png").mkdir()
+        before = database_counts(database_path)
+
+        result = run_verifier(
+            verifier_environment(
+                BASE_URL="http://127.0.0.1:9",
+                RUNTIME_DIR=str(runtime_dir),
+                ARTIFACT_DIR=str(artifact_dir),
+            )
+        )
+        after = database_counts(database_path)
+    finally:
+        shutil.rmtree(case_root, ignore_errors=True)
+        shutil.rmtree(artifact_dir, ignore_errors=True)
+
+    assert result.returncode != 0
+    assert "Evidence output path must be absent or a regular file" in result.stderr
+    assert after == before
+
+
 def test_verifier_rejects_runtime_database_symlink_before_mutation(tmp_path: Path):
     outside_database = tmp_path / "outside.sqlite3"
     initialize_database(outside_database)
@@ -351,3 +449,60 @@ def test_verifier_rejects_server_backed_by_different_database_before_mutation(tm
     assert "server database identity" in result.stderr
     assert server_counts_after == (0, 0, 0, 4, 1)
     assert verifier_counts_after == (0, 0, 0, 4, 1)
+
+
+def test_verifier_repeats_post_correction_history_transition(tmp_path: Path):
+    runtime_root = (
+        REPO_ROOT
+        / ".test-runtime"
+        / "release-candidate-audit"
+        / "final-verifier-fix-round-1"
+    )
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    runtime_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f"shift-history-regression-{tmp_path.name}-",
+            dir=runtime_root,
+        )
+    )
+    database_path = runtime_dir / "shift-ui.sqlite3"
+    artifact_root = (
+        REPO_ROOT
+        / "artifacts"
+        / "ui-checks"
+        / "release-candidate-audit"
+        / "final-verifier-fix-round-1"
+    )
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    artifact_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f"shift-history-regression-{tmp_path.name}-",
+            dir=artifact_root,
+        )
+    )
+
+    try:
+        initialize_database(database_path)
+        with temporary_server(database_path) as base_url:
+            result = run_verifier(
+                verifier_environment(
+                    BASE_URL=base_url,
+                    RUNTIME_DIR=str(runtime_dir),
+                    ARTIFACT_DIR=str(artifact_dir),
+                ),
+                timeout=300,
+            )
+
+        assert result.returncode == 0, result.stderr
+        summary = json.loads(
+            (artifact_dir / "shift-management-ui-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert summary["postCorrectionHistoryTransitions"] == 3
+        assert summary["integrityCheck"] == "ok"
+        assert summary["foreignKeyErrors"] == 0
+        assert len(summary["screenshots"]) == 11
+    finally:
+        shutil.rmtree(runtime_dir, ignore_errors=True)
+        shutil.rmtree(artifact_dir, ignore_errors=True)

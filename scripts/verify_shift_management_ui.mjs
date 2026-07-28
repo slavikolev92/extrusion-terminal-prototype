@@ -32,6 +32,7 @@ const summaryPath = path.join(artifactDir, "shift-management-ui-summary.json");
 const orderOne = "SHIFT-UI-001";
 const orderTwo = "SHIFT-UI-002";
 const shiftTimeZone = "Europe/Sofia";
+const requiredPostCorrectionHistoryTransitions = 3;
 
 const screenshotNames = [
   "admin-shift-count.png",
@@ -45,6 +46,12 @@ const screenshotNames = [
   "full-shift-history.png",
   "ended-shift-summary.png",
   "historical-shift-summary.png",
+];
+const evidenceOutputNames = [
+  ...screenshotNames,
+  "qa-start-shift-confirmation-1672x941.png",
+  "qa-terminal-header-1077x735.png",
+  "shift-management-ui-summary.json",
 ];
 
 const importFields = [
@@ -117,6 +124,24 @@ function assertNoSymlinkComponents(base, candidate, message) {
   }
 }
 
+function assertEvidenceOutputLeaves() {
+  for (const outputName of evidenceOutputNames) {
+    const outputPath = path.join(artifactDir, outputName);
+    const metadata = fs.lstatSync(outputPath, { throwIfNoEntry: false });
+    if (!metadata) {
+      continue;
+    }
+    assert(
+      !metadata.isSymbolicLink(),
+      `Evidence output path must not be a symlink: ${outputPath}`,
+    );
+    assert(
+      metadata.isFile(),
+      `Evidence output path must be absent or a regular file: ${outputPath}`,
+    );
+  }
+}
+
 assert(
   isStrictChild(runtimeRoot, runtimeDir),
   "RUNTIME_DIR must be below .test-runtime.",
@@ -157,6 +182,7 @@ assert(
   isStrictChild(canonicalArtifactRoot, canonicalArtifactDir),
   "ARTIFACT_DIR resolves outside artifacts/ui-checks.",
 );
+assertEvidenceOutputLeaves();
 assert(
   fs.existsSync(requestedDatabasePath),
   `Temporary database does not exist: ${requestedDatabasePath}`,
@@ -1375,6 +1401,28 @@ async function openHistoricalSummary(page, completedId, expectedRolls, expectedG
   );
 }
 
+async function openShiftHistoryFromCurrentOverview(page, expectedPathname, label) {
+  await page.locator("#shift-open").click();
+  const window = page.locator('[data-shift-window="true"]');
+  await window.locator('[data-shift-pane="overview"]').waitFor({ state: "visible" });
+  const historyLink = window.getByRole("link", { name: "Виж всички" });
+  await historyLink.waitFor({ state: "visible" });
+  const historyHref = await historyLink.getAttribute("href");
+  assert(historyHref, `${label} History link is missing href`);
+  const historyURL = new URL(historyHref, page.url());
+  assertEqual(historyURL.pathname, expectedPathname, `${label} History link pathname`);
+  assertEqual(
+    historyURL.searchParams.get("shift_view"),
+    "history",
+    `${label} History link state`,
+  );
+
+  const response = await page.goto(historyURL.href, { waitUntil: "networkidle" });
+  assert(response?.ok(), `${label} History navigation returned HTTP ${response?.status() || "unknown"}`);
+  await page.locator('[data-shift-pane="history"]').waitFor({ state: "visible" });
+  assertCanonicalShiftURL(page, expectedPathname, label);
+}
+
 async function correctFirstRoll(page, cardId, completedId) {
   await openCard(page, cardId);
   const firstRow = page.locator(".roll-row[data-roll-id]").first();
@@ -1792,15 +1840,28 @@ async function main() {
     await page.locator('[data-shift-window="true"]').waitFor({ state: "hidden" });
 
     await correctFirstRoll(page, cardIds[orderOne], completedId);
-    await page.locator("#shift-open").click();
-    await page.locator('[data-shift-window="true"] [data-shift-pane="overview"]').waitFor({
-      state: "visible",
-    });
-    await page.locator('[data-shift-window="true"]').getByRole("link", {
-      name: "Виж всички",
-    }).click();
-    await page.locator('[data-shift-pane="history"]').waitFor({ state: "visible" });
-    assertCanonicalShiftURL(page, `/terminal/cards/${cardIds[orderOne]}`, "corrected history navigation");
+    let completedPostCorrectionHistoryTransitions = 0;
+    for (
+      let attempt = 1;
+      attempt <= requiredPostCorrectionHistoryTransitions;
+      attempt += 1
+    ) {
+      await openShiftHistoryFromCurrentOverview(
+        page,
+        `/terminal/cards/${cardIds[orderOne]}`,
+        `corrected history navigation attempt ${attempt}`,
+      );
+      completedPostCorrectionHistoryTransitions += 1;
+      if (attempt < requiredPostCorrectionHistoryTransitions) {
+        await page.keyboard.press("Escape");
+        await page.locator('[data-shift-window="true"]').waitFor({ state: "hidden" });
+        assertCanonicalShiftURL(
+          page,
+          `/terminal/cards/${cardIds[orderOne]}`,
+          `corrected history close attempt ${attempt}`,
+        );
+      }
+    }
     await openHistoricalSummary(page, completedId, 3, 95);
     const correctedHistoricalText = await verifySummary(page, {
       distinctItems: 2,
@@ -1850,6 +1911,7 @@ async function main() {
       cards: cardIds,
       completedOccurrenceId: completedId,
       finalActiveOccurrenceId: finalSnapshot.active_shift.id,
+      postCorrectionHistoryTransitions: completedPostCorrectionHistoryTransitions,
       integrityCheck: finalSnapshot.integrity_check,
       foreignKeyErrors: finalSnapshot.foreign_key_errors.length,
       screenshots: screenshotNames.map((name) => path.join(artifactDirRelative, name)),

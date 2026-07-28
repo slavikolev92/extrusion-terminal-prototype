@@ -23,6 +23,18 @@ const runtimeRoot = path.resolve(repoRoot, ".test-runtime");
 const artifactRoot = path.resolve(repoRoot, "artifacts", "ui-checks");
 const requestedFixturePath = path.resolve(repoRoot, fixtureInput);
 const artifactDir = path.resolve(repoRoot, artifactInput);
+const summaryPath = path.join(artifactDir, "verification-summary.json");
+const evidenceOutputNames = [
+  "verification-summary.json",
+  "terminal-pallet-entry-1536x1024.png",
+  "terminal-pallet-correction-1366x768.png",
+  "terminal-pallet-only-notice-1536x1024.png",
+  "admin-pallet-ledger.png",
+  "normal-pallet-print.pdf",
+  "print-pallet-back-page.png",
+  "overflow-pallet-print.pdf",
+  "print-pallet-overflow-page-3.png",
+];
 
 
 function assert(condition, message) {
@@ -52,6 +64,25 @@ function isStrictChild(parent, candidate) {
 }
 
 
+function assertEvidenceOutputLeaves() {
+  for (const outputName of evidenceOutputNames) {
+    const outputPath = path.join(artifactDir, outputName);
+    const metadata = fs.lstatSync(outputPath, { throwIfNoEntry: false });
+    if (!metadata) {
+      continue;
+    }
+    assert(
+      !metadata.isSymbolicLink(),
+      `Evidence output path must not be a symlink: ${outputPath}`,
+    );
+    assert(
+      metadata.isFile(),
+      `Evidence output path must be absent or a regular file: ${outputPath}`,
+    );
+  }
+}
+
+
 assert(
   isStrictChild(runtimeRoot, requestedFixturePath),
   "FIXTURE_JSON must be under .test-runtime.",
@@ -75,6 +106,7 @@ assert(
   isStrictChild(fs.realpathSync(artifactRoot), fs.realpathSync(artifactDir)),
   "ARTIFACT_DIR resolves outside artifacts/ui-checks.",
 );
+assertEvidenceOutputLeaves();
 
 const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 const databasePath = fs.realpathSync(path.resolve(fixture.db_path));
@@ -85,7 +117,6 @@ assert(
 
 const require = createRequire(import.meta.url);
 const { chromium } = require("@playwright/test");
-const summaryPath = path.join(artifactDir, "verification-summary.json");
 const summary = {
   baseURL,
   fixture: path.relative(repoRoot, fixturePath),
