@@ -1054,6 +1054,35 @@ def test_print_route_front_page_preserves_requested_product_grid_cells(connectio
         assert rendered_text(cell) == expected_value
 
 
+@pytest.mark.parametrize(
+    ("stored_value", "display_value"),
+    [
+        ("Printing", "Печат"),
+        ("Rewinding / Slitting", "Разролване"),
+        ("Confection", "Конфекция"),
+    ],
+)
+def test_print_route_translates_next_operation_to_bulgarian(
+    connection,
+    stored_value,
+    display_value,
+):
+    card_id = make_completed_printable_card(
+        "27065",
+        extrusion_next_operation=stored_value,
+    )
+
+    response = get_print_page(card_id)
+
+    assert response.status_code == 200
+    cell = data_block(
+        response.text,
+        "data-front-template-cell",
+        "extrusion-next-operation",
+    )
+    assert rendered_text(cell) == display_value
+
+
 def test_print_route_front_page_preserves_planned_material_abc_grid(connection):
     card_id = make_completed_printable_card("27030")
 

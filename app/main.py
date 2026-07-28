@@ -88,6 +88,7 @@ from .db import (
 from .deployment import deployment_metadata
 from .importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
 from .printing import build_print_readiness
+from .presentation import next_operation_display
 from .recipe_parser import RECIPE_SOURCE_FIELDS
 from .recipe_parser import parse_recipe_source_fields
 from .rules import RECIPE_RELEASE_FIELD_LABELS, RuleResult, target_gross_weight_from_card
@@ -2944,6 +2945,9 @@ def enrich_machine_queues(
 
 def enrich_terminal_card_display(card: dict[str, Any]) -> dict[str, Any]:
     enrich_terminal_list_card(card, card)
+    card["extrusion_next_operation"] = next_operation_display(
+        card.get("extrusion_next_operation")
+    )
     gross_rolls = [
         roll for roll in card["roll_entries"] if roll["gross_weight"] is not None
     ]

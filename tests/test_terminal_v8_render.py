@@ -33,6 +33,7 @@ from app.main import (
     terminal_context,
     terminal_roll_corrections_from_form,
 )
+from app.presentation import next_operation_display
 from app.rules import RuleResult
 
 
@@ -1100,11 +1101,53 @@ def test_terminal_v8_shows_accepted_extrusion_details_only(connection):
     assert "Фалдиране" in html
     assert "folding detail" in html
     assert "Следваща операция" in html
-    assert "Printing" in html
+    assert "Печат" in html
     assert "Третиране" in html
     assert "corona" in html
     assert "Опаковка" in html
     assert "1 big pallet" in html
+
+
+@pytest.mark.parametrize(
+    ("stored_value", "display_value"),
+    [
+        ("Printing", "Печат"),
+        ("Rewinding / Slitting", "Разролване"),
+        ("Confection", "Конфекция"),
+    ],
+)
+def test_terminal_v8_translates_next_operation_to_bulgarian(
+    connection,
+    stored_value,
+    display_value,
+):
+    card_id = release_ready_card(
+        "26245",
+        machine_id=1,
+        sequence=1,
+        extrusion_next_operation=stored_value,
+    )
+
+    html = render_terminal(card_id)
+    match = re.search(
+        r'<span class="field-label">Следваща операция</span>\s*'
+        r'<div class="value">([^<]*)</div>',
+        html,
+    )
+
+    assert match is not None
+    assert match.group(1) == display_value
+    with db.connect() as stored_connection:
+        stored = stored_connection.execute(
+            "SELECT extrusion_next_operation FROM cards WHERE id = ?",
+            (card_id,),
+        ).fetchone()
+    assert stored["extrusion_next_operation"] == stored_value
+
+
+@pytest.mark.parametrize("value", ["  Unknown operation  ", "  Печат  "])
+def test_next_operation_display_preserves_unmapped_values_exactly(value):
+    assert next_operation_display(value) == value
 
 
 def test_terminal_v8_recipe_body_values_use_homogeneous_regular_style(connection):

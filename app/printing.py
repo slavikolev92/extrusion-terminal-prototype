@@ -5,6 +5,8 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
+from .presentation import next_operation_display
+
 from . import db
 from .constants import PRINTABLE_STATUSES
 from .recipe_parser import parse_recipe_cell
@@ -136,7 +138,9 @@ def assemble_print_data(card: dict[str, Any]) -> dict[str, Any]:
         "material": text_value(card.get("material")),
         "size_thickness": text_value(card.get("size_thickness")),
         "extrusion_folding": text_value(card.get("extrusion_folding")),
-        "extrusion_next_operation": text_value(card.get("extrusion_next_operation")),
+        "extrusion_next_operation": next_operation_display(
+            card.get("extrusion_next_operation")
+        ),
         "extrusion_treatment": text_value(card.get("extrusion_treatment")),
         "notes": text_value(card.get("notes")),
         "packaging_method": text_value(card.get("packaging_method")),
