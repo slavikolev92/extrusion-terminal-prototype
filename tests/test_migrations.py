@@ -805,6 +805,7 @@ def test_m002_adds_shift_schema_without_attributing_legacy_rolls(
         (3, "roll_pallet_assignment"),
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
+        (6, "legacy_import_normalization"),
     ]
     assert configuration == {"id": 1, "shift_count": 4, "version": 1}
     assert roll["shift_occurrence_id"] is None
@@ -988,6 +989,7 @@ def test_m002_preserves_existing_attribution_in_partially_upgraded_schema(
         (3, "roll_pallet_assignment"),
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
+        (6, "legacy_import_normalization"),
     ]
     assert integrity == "ok"
     assert foreign_key_violations == []
@@ -1116,14 +1118,15 @@ def test_m003_adds_nullable_pallet_columns_without_backfilling_legacy_data(
     second_migration_rows = second_snapshot.pop("schema_migrations")
     assert first_snapshot == before_snapshot
     assert second_snapshot == first_snapshot
-    assert first_migration_rows[:-3] == prior_migration_rows
+    assert first_migration_rows[:-4] == prior_migration_rows
     assert second_migration_rows == first_migration_rows
     assert legacy_card["current_pallet_number"] is None
     assert legacy_roll["pallet_number"] is None
-    assert migration_rows[-3:] == [
+    assert migration_rows[-4:] == [
         {"version": 3, "name": "roll_pallet_assignment"},
         {"version": 4, "name": "rewinding_return_workflow"},
         {"version": 5, "name": "shift_schema_contract"},
+        {"version": 6, "name": "legacy_import_normalization"},
     ]
     assert integrity == "ok"
     assert foreign_key_violations == []
@@ -1178,6 +1181,7 @@ def test_m003_accepts_a_valid_partially_upgraded_schema_and_preserves_values(
         (3, "roll_pallet_assignment"),
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
+        (6, "legacy_import_normalization"),
     ]
     assert second_rows == first_rows
     assert second_snapshot == first_snapshot
@@ -1347,6 +1351,7 @@ def test_m003_accepts_equivalent_nullable_pallet_constraints_and_preserves_value
         (3, "roll_pallet_assignment"),
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
+        (6, "legacy_import_normalization"),
     ]
 
 
@@ -1527,6 +1532,7 @@ def test_fresh_database_records_migrations_once_with_schema_parity(
         (3, "roll_pallet_assignment"),
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
+        (6, "legacy_import_normalization"),
     ]
     assert [(row["version"], row["name"]) for row in second_rows] == [
         (1, "shift_manager_import_fields"),
@@ -1534,6 +1540,7 @@ def test_fresh_database_records_migrations_once_with_schema_parity(
         (3, "roll_pallet_assignment"),
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
+        (6, "legacy_import_normalization"),
     ]
     assert configuration == {"id": 1, "shift_count": 4, "version": 1}
     assert set(FINAL_IMPORT_COLUMNS).issubset(card_columns)
@@ -1684,9 +1691,10 @@ def test_m004_upgrades_recorded_m003_without_inference_and_preserves_all_data(
 
     migration_rows = after.pop("schema_migrations")
     assert after == before
-    assert migration_rows[:-2] == prior_migrations
-    assert migration_rows[-2][:2] == (4, "rewinding_return_workflow")
-    assert migration_rows[-1][:2] == (5, "shift_schema_contract")
+    assert migration_rows[:-3] == prior_migrations
+    assert migration_rows[-3][:2] == (4, "rewinding_return_workflow")
+    assert migration_rows[-2][:2] == (5, "shift_schema_contract")
+    assert migration_rows[-1][:2] == (6, "legacy_import_normalization")
     assert card["rewinding_roll_count"] is None
     assert card["final_extrusion_shift_occurrence_id"] is None
     assert card["current_pallet_number"] == 17
@@ -1738,9 +1746,10 @@ def test_m004_upgrades_sparse_legacy_cards_before_creating_card_indexes(
         "idx_cards_active_machine_sequence",
         "idx_cards_status_machine_sequence",
     }.issubset(card_indexes)
-    assert [tuple(row) for row in migration_rows[-2:]] == [
+    assert [tuple(row) for row in migration_rows[-3:]] == [
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
+        (6, "legacy_import_normalization"),
     ]
 
 
@@ -1768,9 +1777,10 @@ def test_m004_preserves_valid_partially_deployed_values(
 
     assert card["rewinding_roll_count"] == 12
     assert card["final_extrusion_shift_occurrence_id"] == 1
-    assert [tuple(row) for row in migration_rows[-2:]] == [
+    assert [tuple(row) for row in migration_rows[-3:]] == [
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
+        (6, "legacy_import_normalization"),
     ]
 
 
@@ -2312,7 +2322,7 @@ def test_m005_fresh_database_records_bounded_shift_contract_once(
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
         foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
 
-    assert tuple(tuple(row) for row in migration_rows)[-1] == (
+    assert next(tuple(row) for row in migration_rows if row["version"] == 5) == (
         5,
         "shift_schema_contract",
     )
@@ -2373,7 +2383,10 @@ def test_m005_upgrades_recorded_m004_and_preserves_boundary_values_exactly(
 
     assert after_configuration == before_configuration
     assert after_occurrences == before_occurrences
-    assert migration_rows[-1][:2] == (5, "shift_schema_contract")
+    assert next(row[:2] for row in migration_rows if row[0] == 5) == (
+        5,
+        "shift_schema_contract",
+    )
     assert sum(1 for row in migration_rows if row[0] == 5) == 1
     assert integrity == "ok"
     assert foreign_keys == []
@@ -2737,6 +2750,189 @@ def test_m005_failure_after_configuration_copy_rolls_back_schema_data_and_record
     assert after_rows == before_rows
     assert after_migrations == before_migrations
     assert temporary_table is None
+
+
+def test_m006_normalizes_only_proven_legacy_amounts_and_routes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m006-proven-normalization.sqlite3"
+    create_legacy_database(database_path)
+    configure_database(monkeypatch, database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO cards (
+                id, order_number, quantity_1, unit_1, quantity_2, unit_2,
+                extrusion_flag, extrusion_next_operation
+            ) VALUES (3, 'LEGACY-25452', '200', '10', '', '', 'yes', 'Printing')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO card_import_sources (
+                card_id, order_number, quantity_1, unit_1, quantity_2, unit_2,
+                extrusion_flag, extrusion_next_operation
+            ) VALUES (3, 'LEGACY-25452', '200', '10', '', '', 'yes', 'Printing')
+            """
+        )
+        for table_name, key_name in (
+            ("cards", "id"),
+            ("card_import_sources", "card_id"),
+        ):
+            connection.execute(
+                f"""
+                UPDATE {table_name}
+                SET quantity_1 = '130', unit_1 = '',
+                    quantity_2 = '', unit_2 = '4 500',
+                    extrusion_flag = 'Да',
+                    extrusion_next_operation = ''
+                WHERE {key_name} = 1
+                """
+            )
+            connection.execute(
+                f"""
+                UPDATE {table_name}
+                SET quantity_1 = '240', unit_1 = '12',
+                    quantity_2 = '', unit_2 = '',
+                    extrusion_flag = 'yes',
+                    extrusion_next_operation = 'Confection'
+                WHERE {key_name} = 2
+                """
+            )
+
+    db.init_db()
+    db.init_db()
+
+    with db.connect() as connection:
+        card_rows = connection.execute(
+            """
+            SELECT id, quantity_1, unit_1, quantity_2, unit_2,
+                   ordered_gross_kg, ordered_rolls, ordered_meters, ordered_units,
+                   printing_sequence, extrusion_sequence,
+                   rewinding_slitting_sequence, confection_sequence,
+                   status, machine_id, machine_sequence, version,
+                   created_at, updated_at
+            FROM cards
+            ORDER BY id
+            """
+        ).fetchall()
+        source_rows = connection.execute(
+            """
+            SELECT card_id, quantity_1, unit_1, quantity_2, unit_2,
+                   ordered_gross_kg, ordered_rolls, ordered_meters, ordered_units,
+                   printing_sequence, extrusion_sequence,
+                   rewinding_slitting_sequence, confection_sequence,
+                   created_at, updated_at
+            FROM card_import_sources
+            ORDER BY card_id
+            """
+        ).fetchall()
+        migration_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+        roll = connection.execute(
+            "SELECT gross_weight, tare_weight, net_weight FROM roll_entries WHERE id = 1"
+        ).fetchone()
+        segment = connection.execute(
+            "SELECT started_at, ended_at, end_reason FROM production_time_segments WHERE id = 1"
+        ).fetchone()
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+
+    expected_values = (
+        (1, "130", "", "", "4 500", "130", None, None, "4 500",
+         None, "1", None, None),
+        (2, "240", "12", "", "", "240", "12", None, None,
+         None, "1", None, "2"),
+        (3, "200", "10", "", "", "200", "10", None, None,
+         "2", "1", None, "3"),
+    )
+    assert tuple(tuple(row[:13]) for row in card_rows) == expected_values
+    assert tuple(tuple(row[:13]) for row in source_rows) == expected_values
+    assert tuple(migration_rows[-1]) == (6, "legacy_import_normalization")
+    assert sum(row[0] == 6 for row in migration_rows) == 1
+    assert tuple(card_rows[0][13:]) == (
+        "running", 1, 1, 7,
+        "2026-07-20 06:10:00", "2026-07-20 08:00:00",
+    )
+    assert tuple(roll) == (50.25, 1.25, 49)
+    assert tuple(segment) == ("2026-07-20 07:00:00", None, None)
+    assert integrity == "ok"
+    assert foreign_keys == []
+
+
+def test_m006_preserves_existing_destinations_and_skips_ambiguous_legacy_pairs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m006-preservation.sqlite3"
+    create_legacy_database(database_path)
+    add_existing_final_values(database_path)
+    configure_database(monkeypatch, database_path)
+
+    db.init_db()
+
+    with db.connect() as connection:
+        card = read_row(connection, "cards", "id", 1)
+        source = read_row(connection, "card_import_sources", "card_id", 1)
+        ambiguous_card = read_row(connection, "cards", "id", 2)
+        ambiguous_source = read_row(connection, "card_import_sources", "card_id", 2)
+
+    assert tuple(card[column] for column in FINAL_IMPORT_COLUMNS) == (
+        "900", "90", "19000", "49000", "2", "1", "3", "4",
+    )
+    assert tuple(source[column] for column in FINAL_IMPORT_COLUMNS) == (
+        "910", "91", "19100", "49100", "2", "1", "3", "4",
+    )
+    assert tuple(ambiguous_card[column] for column in FINAL_IMPORT_COLUMNS) == (
+        None,
+    ) * 8
+    assert tuple(ambiguous_source[column] for column in FINAL_IMPORT_COLUMNS) == (
+        None,
+    ) * 8
+
+
+def test_m006_rejects_an_unknown_corroborated_route_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m006-unknown-route.sqlite3"
+    create_legacy_database(database_path)
+    configure_database(monkeypatch, database_path)
+    with sqlite3.connect(database_path) as connection:
+        for table_name, key_name in (
+            ("cards", "id"),
+            ("card_import_sources", "card_id"),
+        ):
+            connection.execute(
+                f"""
+                UPDATE {table_name}
+                SET quantity_1 = '500', unit_1 = '',
+                    quantity_2 = '', unit_2 = '',
+                    extrusion_flag = 'yes',
+                    extrusion_next_operation = 'Rewinding'
+                WHERE {key_name} = 1
+                """
+            )
+
+    with pytest.raises(RuntimeError, match="unsupported legacy extrusion route"):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        card_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(cards)").fetchall()
+        }
+        migration_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
+        ).fetchone()
+        legacy_row = connection.execute(
+            "SELECT quantity_1, extrusion_next_operation FROM cards WHERE id = 1"
+        ).fetchone()
+
+    assert "ordered_gross_kg" not in card_columns
+    assert migration_table is None
+    assert legacy_row == ("500", "Rewinding")
 
 
 @pytest.mark.parametrize(

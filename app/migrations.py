@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 
 from .constants import CARD_STATUSES, STATUS_AWAITING_REWINDING
 from .schema import (
@@ -995,12 +996,207 @@ def apply_m005_shift_schema_contract(connection: sqlite3.Connection) -> None:
     validate_shift_management_schema(connection)
 
 
+LEGACY_AMOUNT_MAPPING = (
+    ("quantity_1", "ordered_gross_kg"),
+    ("unit_1", "ordered_rolls"),
+    ("quantity_2", "ordered_meters"),
+    ("unit_2", "ordered_units"),
+)
+
+LEGACY_ROUTE_COLUMNS = (
+    "printing_sequence",
+    "extrusion_sequence",
+    "rewinding_slitting_sequence",
+    "confection_sequence",
+)
+
+
+def _blank_text(value: object) -> bool:
+    return value is None or not str(value).strip()
+
+
+def _legacy_amount_is_numeric(value: object) -> bool:
+    if _blank_text(value):
+        return True
+    normalized = "".join(str(value).split())
+    if "," in normalized and "." in normalized:
+        return False
+    try:
+        parsed = Decimal(normalized.replace(",", "."))
+    except InvalidOperation:
+        return False
+    return parsed.is_finite() and parsed >= 0
+
+
+def _legacy_row_matches_profiled_amount_contract(
+    card_values: tuple[object, ...],
+    source_values: tuple[object, ...],
+) -> bool:
+    combined_values = card_values + source_values
+    if any(
+        any(character.isalpha() for character in str(value))
+        for value in combined_values
+        if not _blank_text(value)
+    ):
+        return False
+    if card_values != source_values:
+        raise RuntimeError(
+            "legacy ordered amount values disagree between card and import source"
+        )
+    if not all(_legacy_amount_is_numeric(value) for value in card_values):
+        raise RuntimeError("unsupported legacy ordered amount format")
+    return True
+
+
+def _legacy_route_values(flag: object, next_operation: object) -> tuple[object, ...] | None:
+    normalized_flag = str(flag or "").strip().casefold()
+    if normalized_flag not in {"yes", "да"}:
+        return None
+    normalized_next = str(next_operation or "").strip().casefold()
+    if not normalized_next:
+        return (None, "1", None, None)
+    if normalized_next == "confection":
+        return (None, "1", None, "2")
+    if normalized_next == "printing":
+        return ("2", "1", None, "3")
+    raise RuntimeError(
+        f"unsupported legacy extrusion route: {str(next_operation).strip()!r}"
+    )
+
+
+def _update_blank_destination(
+    connection: sqlite3.Connection,
+    table_name: str,
+    key_name: str,
+    row_id: int,
+    destination: str,
+    value: object,
+) -> None:
+    if _blank_text(value):
+        return
+    connection.execute(
+        f"""
+        UPDATE {_quote_identifier(table_name)}
+        SET {_quote_identifier(destination)} = ?
+        WHERE {_quote_identifier(key_name)} = ?
+          AND trim(COALESCE({_quote_identifier(destination)}, '')) = ''
+        """,
+        (value, row_id),
+    )
+
+
+def apply_m006_legacy_import_normalization(
+    connection: sqlite3.Connection,
+) -> None:
+    required_legacy_columns = {
+        *(source for source, _destination in LEGACY_AMOUNT_MAPPING),
+        "extrusion_flag",
+        "extrusion_next_operation",
+    }
+    required_final_columns = {
+        *(destination for _source, destination in LEGACY_AMOUNT_MAPPING),
+        *LEGACY_ROUTE_COLUMNS,
+    }
+    for table_name in ("cards", "card_import_sources"):
+        columns = _table_columns(connection, table_name)
+        if columns is None or not required_legacy_columns.issubset(columns):
+            return
+        if not required_final_columns.issubset(columns):
+            raise RuntimeError(
+                f"{table_name} is missing required normalized import columns"
+            )
+
+    rows = connection.execute(
+        """
+        SELECT c.id,
+               c.quantity_1, c.unit_1, c.quantity_2, c.unit_2,
+               s.quantity_1, s.unit_1, s.quantity_2, s.unit_2,
+               c.extrusion_flag, c.extrusion_next_operation,
+               s.extrusion_flag, s.extrusion_next_operation,
+               c.printing_sequence, c.extrusion_sequence,
+               c.rewinding_slitting_sequence, c.confection_sequence,
+               s.printing_sequence, s.extrusion_sequence,
+               s.rewinding_slitting_sequence, s.confection_sequence
+        FROM cards AS c
+        JOIN card_import_sources AS s ON s.card_id = c.id
+        ORDER BY c.id
+        """
+    ).fetchall()
+    for row in rows:
+        card_id = int(row[0])
+        card_amounts = tuple(row[1:5])
+        source_amounts = tuple(row[5:9])
+        if not _legacy_row_matches_profiled_amount_contract(
+            card_amounts,
+            source_amounts,
+        ):
+            continue
+
+        for (source_column, destination), value in zip(
+            LEGACY_AMOUNT_MAPPING,
+            card_amounts,
+            strict=True,
+        ):
+            _update_blank_destination(
+                connection,
+                "cards",
+                "id",
+                card_id,
+                destination,
+                value,
+            )
+            _update_blank_destination(
+                connection,
+                "card_import_sources",
+                "card_id",
+                card_id,
+                destination,
+                value,
+            )
+
+        card_route_source = (row[9], row[10])
+        import_route_source = (row[11], row[12])
+        normalized_card_route_source = tuple(
+            str(value or "").strip().casefold() for value in card_route_source
+        )
+        normalized_import_route_source = tuple(
+            str(value or "").strip().casefold() for value in import_route_source
+        )
+        if normalized_card_route_source != normalized_import_route_source:
+            raise RuntimeError(
+                "legacy extrusion route values disagree between card and import source"
+            )
+        route_values = _legacy_route_values(*card_route_source)
+        if route_values is None:
+            continue
+        for table_name, key_name, existing_values in (
+            ("cards", "id", tuple(row[13:17])),
+            ("card_import_sources", "card_id", tuple(row[17:21])),
+        ):
+            if not all(_blank_text(value) for value in existing_values):
+                continue
+            for destination, value in zip(
+                LEGACY_ROUTE_COLUMNS,
+                route_values,
+                strict=True,
+            ):
+                _update_blank_destination(
+                    connection,
+                    table_name,
+                    key_name,
+                    card_id,
+                    destination,
+                    value,
+                )
+
+
 MIGRATIONS = (
     Migration(1, "shift_manager_import_fields", _apply_shift_manager_import_fields),
     Migration(2, "shift_management", _apply_shift_management),
     Migration(3, "roll_pallet_assignment", _apply_roll_pallet_assignment),
     Migration(4, "rewinding_return_workflow", apply_m004_rewinding_return_workflow),
     Migration(5, "shift_schema_contract", apply_m005_shift_schema_contract),
+    Migration(6, "legacy_import_normalization", apply_m006_legacy_import_normalization),
 )
 
 
