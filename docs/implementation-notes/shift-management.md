@@ -174,15 +174,16 @@ the complete isolated run (including initialization and an isolated server on
 port 8011), use this exact single-shell workflow from the feature worktree:
 
 ```bash
-mkdir -p artifacts/ui-checks
-UI_REDESIGN_DIR="$(mktemp -d "$PWD/artifacts/ui-checks/shift-redesign-XXXXXX")"
-EXTRUSION_DATA_DIR="$UI_REDESIGN_DIR" \
-EXTRUSION_DB_PATH="$UI_REDESIGN_DIR/shift-ui.sqlite3" \
+mkdir -p .test-runtime artifacts/ui-checks
+UI_REDESIGN_RUNTIME_DIR="$(mktemp -d "$PWD/.test-runtime/shift-redesign-XXXXXX")"
+UI_REDESIGN_ARTIFACT_DIR="$(mktemp -d "$PWD/artifacts/ui-checks/shift-redesign-XXXXXX")"
+EXTRUSION_DATA_DIR="$UI_REDESIGN_RUNTIME_DIR" \
+EXTRUSION_DB_PATH="$UI_REDESIGN_RUNTIME_DIR/shift-ui.sqlite3" \
   .venv/bin/python -c "from app.db import init_db; init_db()"
-EXTRUSION_DATA_DIR="$UI_REDESIGN_DIR" \
-EXTRUSION_DB_PATH="$UI_REDESIGN_DIR/shift-ui.sqlite3" \
+EXTRUSION_DATA_DIR="$UI_REDESIGN_RUNTIME_DIR" \
+EXTRUSION_DB_PATH="$UI_REDESIGN_RUNTIME_DIR/shift-ui.sqlite3" \
   .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8011 \
-  >"$UI_REDESIGN_DIR/server.log" 2>&1 &
+  >"$UI_REDESIGN_ARTIFACT_DIR/server.log" 2>&1 &
 UI_REDESIGN_SERVER_PID=$!
 trap 'kill "$UI_REDESIGN_SERVER_PID" 2>/dev/null || true' EXIT
 for attempt in $(seq 1 100); do
@@ -193,19 +194,28 @@ for attempt in $(seq 1 100); do
 done
 curl -fsS http://127.0.0.1:8011/health >/dev/null
 BASE_URL=http://127.0.0.1:8011 \
-ARTIFACT_DIR="$UI_REDESIGN_DIR" \
+RUNTIME_DIR="$UI_REDESIGN_RUNTIME_DIR" \
+ARTIFACT_DIR="$UI_REDESIGN_ARTIFACT_DIR" \
   node scripts/verify_shift_management_ui.mjs
 kill "$UI_REDESIGN_SERVER_PID"
 wait "$UI_REDESIGN_SERVER_PID" || true
 trap - EXIT
 ```
 
-`BASE_URL` and `ARTIFACT_DIR` are mandatory; the script has no server or
-artifact defaults. Before its first HTTP mutation, it writes a deterministic
-two-field marker only to the artifact database, observes that marker through a
-read-only `/admin/settings` response, restores the original configuration
-exactly, and verifies that the server observes the restoration. A server backed
-by any other database is rejected before import or release.
+`BASE_URL`, `RUNTIME_DIR`, and `ARTIFACT_DIR` are mandatory; the script has no
+server, runtime, or artifact defaults. `RUNTIME_DIR` must be a real directory
+strictly below `.test-runtime/` and contains only the fresh `shift-ui.sqlite3`
+database plus generated `shift-management-orders.csv`. `ARTIFACT_DIR` must be a
+real directory strictly below `artifacts/ui-checks/` and contains screenshots,
+the JSON summary, and optional server logs. Missing, outside-root, or
+symlink-escaping paths are rejected before verifier mutation.
+
+Before its first HTTP mutation, the verifier requires `/health` to report the
+exact canonical `RUNTIME_DIR/shift-ui.sqlite3` path. It then writes a
+deterministic two-field marker only to that runtime database, observes the
+marker through a read-only `/admin/settings` response, restores the original
+configuration exactly, and verifies that the server observes the restoration.
+A server backed by any other database is rejected before import or release.
 
 The 2026-07-26 fixed-HEAD evidence is in
 `artifacts/ui-checks/shift-unified-final-dCYNkc/`: `admin-shift-count.png`,

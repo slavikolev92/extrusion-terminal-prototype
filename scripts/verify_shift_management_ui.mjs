@@ -17,12 +17,17 @@ function requiredEnvironment(name) {
 }
 
 const baseURL = requiredEnvironment("BASE_URL").replace(/\/+$/, "");
+const runtimeInput = requiredEnvironment("RUNTIME_DIR");
+const artifactInput = requiredEnvironment("ARTIFACT_DIR");
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(scriptDir, "..");
-const artifactDir = path.resolve(requiredEnvironment("ARTIFACT_DIR"));
+const repoRoot = fs.realpathSync(path.resolve(scriptDir, ".."));
+const runtimeRoot = path.resolve(repoRoot, ".test-runtime");
+const artifactRoot = path.resolve(repoRoot, "artifacts", "ui-checks");
+const runtimeDir = path.resolve(repoRoot, runtimeInput);
+const artifactDir = path.resolve(repoRoot, artifactInput);
 const artifactDirRelative = path.relative(repoRoot, artifactDir);
-const databasePath = path.join(artifactDir, "shift-ui.sqlite3");
-const fixturePath = path.join(artifactDir, "shift-management-orders.csv");
+const requestedDatabasePath = path.join(runtimeDir, "shift-ui.sqlite3");
+const fixturePath = path.join(runtimeDir, "shift-management-orders.csv");
 const summaryPath = path.join(artifactDir, "shift-management-ui-summary.json");
 const orderOne = "SHIFT-UI-001";
 const orderTwo = "SHIFT-UI-002";
@@ -92,13 +97,97 @@ function assertEqual(actual, expected, label) {
   }
 }
 
+function isStrictChild(parent, candidate) {
+  const relative = path.relative(parent, candidate);
+  return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function assertNoSymlinkComponents(base, candidate, message) {
+  const relative = path.relative(base, candidate);
+  assert(
+    relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative)),
+    message,
+  );
+  let current = base;
+  for (const component of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    if (fs.existsSync(current)) {
+      assert(!fs.lstatSync(current).isSymbolicLink(), message);
+    }
+  }
+}
+
+assert(
+  isStrictChild(runtimeRoot, runtimeDir),
+  "RUNTIME_DIR must be below .test-runtime.",
+);
+assert(
+  isStrictChild(artifactRoot, artifactDir),
+  "ARTIFACT_DIR must be below artifacts/ui-checks.",
+);
+assertNoSymlinkComponents(
+  repoRoot,
+  runtimeRoot,
+  ".test-runtime guard root must not be a symlink.",
+);
+assertNoSymlinkComponents(
+  repoRoot,
+  runtimeDir,
+  "RUNTIME_DIR guard path must not contain symlinks.",
+);
+assertNoSymlinkComponents(
+  repoRoot,
+  artifactDir,
+  "ARTIFACT_DIR guard path must not contain symlinks.",
+);
+assert(fs.existsSync(runtimeDir), `RUNTIME_DIR does not exist: ${runtimeDir}`);
+assert(fs.statSync(runtimeDir).isDirectory(), `RUNTIME_DIR is not a directory: ${runtimeDir}`);
+assert(fs.existsSync(artifactDir), `ARTIFACT_DIR does not exist: ${artifactDir}`);
+assert(fs.statSync(artifactDir).isDirectory(), `ARTIFACT_DIR is not a directory: ${artifactDir}`);
+
+const canonicalRuntimeRoot = fs.realpathSync(runtimeRoot);
+const canonicalRuntimeDir = fs.realpathSync(runtimeDir);
+const canonicalArtifactRoot = fs.realpathSync(artifactRoot);
+const canonicalArtifactDir = fs.realpathSync(artifactDir);
+assert(
+  isStrictChild(canonicalRuntimeRoot, canonicalRuntimeDir),
+  "RUNTIME_DIR resolves outside .test-runtime.",
+);
+assert(
+  isStrictChild(canonicalArtifactRoot, canonicalArtifactDir),
+  "ARTIFACT_DIR resolves outside artifacts/ui-checks.",
+);
+assert(
+  fs.existsSync(requestedDatabasePath),
+  `Temporary database does not exist: ${requestedDatabasePath}`,
+);
+const databasePath = fs.realpathSync(requestedDatabasePath);
+assert(
+  isStrictChild(canonicalRuntimeDir, databasePath),
+  "Temporary database must resolve inside RUNTIME_DIR.",
+);
+assert(
+  fs.statSync(databasePath).isFile(),
+  `Temporary database is not a regular file: ${databasePath}`,
+);
+assertNoSymlinkComponents(
+  runtimeDir,
+  fixturePath,
+  "CSV fixture path must not be a symlink.",
+);
+
 async function verifyTerminalHeader(page, expectedLabel, expectedActive) {
   const header = page.locator(".terminal-header");
   const logo = page.locator(".terminal-brand");
-  const actions = page.locator(".terminal-header-action");
   const centerNav = page.locator(".terminal-global-nav");
+  const actions = centerNav.locator(".terminal-header-action");
   await header.waitFor({ state: "visible" });
-  assertEqual(await actions.count(), 3, "terminal header action count");
+  assertEqual(
+    await page.locator(".terminal-header .terminal-header-action").count(),
+    4,
+    "terminal header total action count",
+  );
+  assertEqual(await actions.count(), 3, "centered terminal header action count");
 
   const widths = [];
   for (let index = 0; index < await actions.count(); index += 1) {
@@ -179,13 +268,14 @@ async function verifyTerminalHeader(page, expectedLabel, expectedActive) {
     "Shift action is not aligned to the header right content edge",
   );
 
-  assertEqual(normalizeText(await shiftAction.textContent()), expectedLabel, "shift header label");
+  const shiftHeaderLabel = shiftAction.locator("[data-shift-header-label]");
+  assertEqual(await shiftHeaderLabel.count(), 1, "shift header status label count");
+  const actualShiftLabel = normalizeText(await shiftHeaderLabel.textContent());
+  assertEqual(actualShiftLabel, expectedLabel, "shift header label");
   assertEqual(
-    await shiftAction.locator(".shift-status-dot").evaluate((element) =>
-      element.classList.contains("is-active")
-    ),
+    /^Смяна\s+\d+$/.test(actualShiftLabel),
     expectedActive,
-    "shift header active-dot state",
+    "shift header active-label state",
   );
 }
 
@@ -412,20 +502,14 @@ async function verifyFullRecipeRemainsReachable(page, cardId) {
   await page.setViewportSize({ width: 1536, height: 1024 });
 }
 
-function assertArtifactDatabaseSafety() {
-  const relativeDatabasePath = path.relative(artifactDir, databasePath);
-  const artifactRoot = path.join(repoRoot, "artifacts", "ui-checks");
-  const canonicalArtifactRoot = fs.realpathSync(artifactRoot);
-  const canonicalArtifactDir = fs.realpathSync(artifactDir);
-  const canonicalDatabasePath = fs.realpathSync(databasePath);
+function assertGuardedPathSafety() {
+  const relativeRuntimePath = path.relative(canonicalRuntimeRoot, canonicalRuntimeDir);
   const relativeArtifactPath = path.relative(canonicalArtifactRoot, canonicalArtifactDir);
-  const canonicalDatabaseRelative = path.relative(
-    canonicalArtifactDir,
-    canonicalDatabasePath,
-  );
+  const canonicalDatabaseRelative = path.relative(canonicalRuntimeDir, databasePath);
+  const fixtureRelative = path.relative(canonicalRuntimeDir, fixturePath);
   assert(
-    relativeDatabasePath === "shift-ui.sqlite3",
-    `Temporary database must be ${path.join(artifactDir, "shift-ui.sqlite3")}`,
+    relativeRuntimePath && !relativeRuntimePath.startsWith("..") && !path.isAbsolute(relativeRuntimePath),
+    `Runtime directory must remain below .test-runtime: ${runtimeDir}`,
   );
   assert(
     relativeArtifactPath && !relativeArtifactPath.startsWith("..") && !path.isAbsolute(relativeArtifactPath),
@@ -433,7 +517,11 @@ function assertArtifactDatabaseSafety() {
   );
   assert(
     canonicalDatabaseRelative === "shift-ui.sqlite3",
-    `Temporary database must be a regular file inside ARTIFACT_DIR: ${databasePath}`,
+    `Temporary database must be a regular file inside RUNTIME_DIR: ${databasePath}`,
+  );
+  assert(
+    fixtureRelative === "shift-management-orders.csv",
+    `CSV fixture must be inside RUNTIME_DIR: ${fixturePath}`,
   );
   assert(
     databasePath !== path.join(repoRoot, "data", "extrusion_terminal.sqlite3"),
@@ -665,6 +753,17 @@ async function readServerConfiguration(page) {
   };
 }
 
+async function verifyHealthDatabaseIdentity() {
+  const response = await fetch(`${baseURL}/health`);
+  assert(response.ok, `Health preflight returned HTTP ${response.status || "unknown"}.`);
+  const health = await response.json();
+  assertEqual(
+    fs.realpathSync(path.resolve(health.database_path)),
+    databasePath,
+    "server database identity",
+  );
+}
+
 async function verifyServerDatabaseIdentity(page, initialConfiguration) {
   const marker = databaseIdentityMarker(initialConfiguration);
   let observed;
@@ -676,13 +775,13 @@ async function verifyServerDatabaseIdentity(page, initialConfiguration) {
   }
 
   const restored = databaseSnapshot().configuration;
-  assertEqual(restored, initialConfiguration, "artifact configuration restored after identity preflight");
+  assertEqual(restored, initialConfiguration, "runtime configuration restored after identity preflight");
   if (
     observed.shift_count !== marker.shift_count
     || observed.version !== marker.version
   ) {
     throw new Error(
-      "Selected HTTP server is not backed by the required artifact database.",
+      "Selected HTTP server is not backed by the required runtime database.",
     );
   }
 
@@ -727,13 +826,28 @@ async function importAndReleaseOrders(page) {
   for (const [orderNumber, machineId] of releases) {
     const row = page.locator(`#draft-card-${cardIds[orderNumber]}`);
     await row.waitFor();
-    await row.locator('select[name="machine_id"]').selectOption(machineId);
-    await row.locator('input[name="machine_sequence"]').fill("1");
-    await row.getByRole("button", { name: "Изпрати" }).click();
-    await page.waitForLoadState("networkidle");
+    await row.getByRole("button", { name: "Планирай", exact: true }).click();
+    const modal = page.locator("#planning-modal");
+    await modal.waitFor({ state: "visible" });
+    assertEqual(
+      await modal.locator("#planning-modal-order").textContent(),
+      orderNumber,
+      `${orderNumber} planning modal order`,
+    );
+    assertEqual(
+      await modal.locator("#planning-modal-form").getAttribute("action"),
+      `/admin/cards/${cardIds[orderNumber]}/release`,
+      `${orderNumber} planning modal action`,
+    );
+    await modal.locator("#planning-modal-machine").selectOption(machineId);
+    await modal.locator("#planning-modal-sequence").fill("1");
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "networkidle" }),
+      modal.getByRole("button", { name: "Запази", exact: true }).click(),
+    ]);
     assertEqual(await page.locator(`#draft-card-${cardIds[orderNumber]}`).count(), 0, `${orderNumber} draft row after release`);
-    const machineQueue = page.locator(".machine-column", {
-      has: page.getByRole("heading", { name: `Машина ${machineId}` }),
+    const machineQueue = page.locator("article", {
+      has: page.getByRole("heading", { name: `Машина ${machineId}`, exact: true }),
     });
     await machineQueue.locator(`a[href="/admin/cards/${cardIds[orderNumber]}"]`).waitFor();
   }
@@ -1263,17 +1377,29 @@ async function openHistoricalSummary(page, completedId, expectedRolls, expectedG
 
 async function correctFirstRoll(page, cardId, completedId) {
   await openCard(page, cardId);
-  await page.getByRole("button", { name: "Още действия" }).click();
-  await page.locator('[data-roll-correction-open]').click();
   const firstRow = page.locator(".roll-row[data-roll-id]").first();
-  const grossInput = firstRow.locator('input[name^="gross_weight__"]');
+  const firstRollId = await firstRow.getAttribute("data-roll-id");
+  assert(firstRollId !== null, "First roll row is missing its row id");
+  await firstRow.getByRole("button", {
+    name: "Редактирай ролка 1",
+    exact: true,
+  }).click();
+  const firstRollActions = page.locator(`[data-roll-actions-for="${firstRollId}"]`);
+  await firstRollActions.waitFor({ state: "visible" });
+  assertEqual(await firstRow.getAttribute("data-roll-edit-open"), "true", "first roll editor state");
+  assertEqual(
+    await page.locator(".roll-row[data-roll-edit-open='true']").count(),
+    1,
+    "one open roll editor during historical correction",
+  );
+  const grossInput = firstRow.locator('input[name="gross_weight"]');
   assertEqual(await grossInput.inputValue(), "20", "first roll gross before correction");
   await grossInput.fill("25");
   await Promise.all([
-    page.waitForURL((url) => url.searchParams.get("notice") === "rolls_saved", {
+    page.waitForURL((url) => url.searchParams.get("notice") === "roll_updated", {
       waitUntil: "networkidle",
     }),
-    page.getByRole("button", { name: "Запази данните" }).click(),
+    firstRollActions.locator("[data-roll-row-save]").click(),
   ]);
   const corrected = databaseSnapshot();
   assertEqual(Number(corrected.cards[orderOne].rolls[0].gross_weight), 25, "corrected roll gross");
@@ -1463,9 +1589,8 @@ async function verifyConfirmedFinishSuspendsPolling(page, cardId) {
 }
 
 async function main() {
-  assert(fs.existsSync(artifactDir), `ARTIFACT_DIR does not exist: ${artifactDir}`);
-  assert(fs.existsSync(databasePath), `Temporary database does not exist: ${databasePath}`);
-  assertArtifactDatabaseSafety();
+  assertGuardedPathSafety();
+  await verifyHealthDatabaseIdentity();
 
   const initial = databaseSnapshot();
   assertEqual(initial.card_count, 0, "fresh temporary database card count");

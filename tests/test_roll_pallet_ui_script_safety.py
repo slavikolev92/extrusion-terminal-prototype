@@ -3,9 +3,14 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
+import time
+import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -22,6 +27,62 @@ def verifier_environment(**overrides: str) -> dict[str, str]:
         environment.pop(name, None)
     environment.update(overrides)
     return environment
+
+
+def unused_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+@contextmanager
+def temporary_server(database_path: Path):
+    port = unused_local_port()
+    environment = os.environ.copy()
+    environment.update(
+        EXTRUSION_DATA_DIR=str(database_path.parent),
+        EXTRUSION_DB_PATH=str(database_path),
+    )
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "app.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ],
+        cwd=REPO_ROOT,
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(
+                    f"{base_url}/health", timeout=0.5
+                ) as response:
+                    if response.status == 200:
+                        break
+            except OSError:
+                time.sleep(0.05)
+        else:
+            pytest.fail("temporary roll/pallet server did not start")
+        yield base_url
+    finally:
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
 
 
 def test_roll_pallet_fixture_rejects_database_path_outside_test_runtime(tmp_path):
@@ -188,6 +249,74 @@ def test_roll_pallet_fixture_creates_only_the_four_required_card_kinds(tmp_path)
     for card_id, components in recipe_components_by_card.items():
         assert components == expected_recipe_components, card_id
         assert sum(component[4] for component in components) == 100
+
+
+def test_roll_pallet_verifier_completes_current_pencil_editor_workflow(tmp_path):
+    runtime_dir = (
+        REPO_ROOT
+        / ".test-runtime"
+        / f"roll-pallet-verifier-safety-{tmp_path.name}"
+    )
+    database_path = runtime_dir / "fixture.sqlite3"
+    fixture_path = runtime_dir / "fixture.json"
+    artifact_root = REPO_ROOT / "artifacts" / "ui-checks"
+    artifact_root.mkdir(parents=True, exist_ok=True)
+
+    try:
+        fixture_result = subprocess.run(
+            [
+                sys.executable,
+                str(FIXTURE_SCRIPT),
+                "--db-path",
+                str(database_path),
+                "--output",
+                str(fixture_path),
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        assert fixture_result.returncode == 0, fixture_result.stderr
+
+        with tempfile.TemporaryDirectory(
+            prefix="roll-pallet-verifier-safety-",
+            dir=artifact_root,
+        ) as artifact_dir_value:
+            artifact_dir = Path(artifact_dir_value)
+            with temporary_server(database_path) as base_url:
+                result = subprocess.run(
+                    ["node", str(VERIFIER_SCRIPT)],
+                    cwd=REPO_ROOT,
+                    env=verifier_environment(
+                        BASE_URL=base_url,
+                        FIXTURE_JSON=str(fixture_path),
+                        ARTIFACT_DIR=str(artifact_dir),
+                    ),
+                    capture_output=True,
+                    text=True,
+                    timeout=240,
+                    check=False,
+                )
+
+            assert result.returncode == 0, result.stderr
+            summary = json.loads(
+                (artifact_dir / "verification-summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            assert summary["status"] == "passed"
+            assert summary["consoleErrors"] == []
+            assert summary["browserErrors"] == []
+            assert len(summary["interactions"]) == 2
+            assert all(
+                interaction["pencilEditorUsed"]
+                and interaction["oneEditorAtATime"]
+                for interaction in summary["interactions"]
+            )
+    finally:
+        shutil.rmtree(runtime_dir, ignore_errors=True)
 
 
 def test_roll_pallet_verifier_rejects_fixture_symlink_resolving_outside_test_runtime(

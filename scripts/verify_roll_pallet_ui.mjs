@@ -155,6 +155,57 @@ function boxesDoNotOverlap(left, right, label) {
 }
 
 
+async function openRollEditor(page, rollId, rollNumber) {
+  const row = page.locator(`.roll-row[data-roll-id='${rollId}']`);
+  const openButton = row.getByRole("button", {
+    name: `Редактирай ролка ${rollNumber}`,
+    exact: true,
+  });
+  await openButton.click();
+  const actions = page.locator(`[data-roll-actions-for='${rollId}']`);
+  await actions.waitFor({ state: "visible" });
+  assertEqual(await row.getAttribute("data-roll-edit-open"), "true", `roll ${rollNumber} editor state`);
+  assertEqual(
+    await page.locator(".roll-row[data-roll-edit-open='true']").count(),
+    1,
+    `roll ${rollNumber} only open row`,
+  );
+  assertEqual(
+    await page.locator("[data-roll-actions-for]:visible").count(),
+    1,
+    `roll ${rollNumber} only visible action panel`,
+  );
+  assertEqual(
+    await row.locator("[data-roll-correction-input]:visible:not([disabled])").count(),
+    3,
+    `roll ${rollNumber} enabled correction inputs`,
+  );
+  assertEqual(
+    await page.locator("button[data-roll-edit-open]:disabled").count(),
+    Math.max(0, await page.locator("button[data-roll-edit-open]").count() - 1),
+    `roll ${rollNumber} other pencil controls disabled`,
+  );
+  return { row, actions };
+}
+
+
+async function closeRollEditor(page, rollId, rollNumber) {
+  await page.locator(`[data-roll-actions-for='${rollId}'] [data-roll-row-cancel]`).click();
+  const row = page.locator(`.roll-row[data-roll-id='${rollId}']`);
+  assertEqual(await row.getAttribute("data-roll-edit-open"), "false", `roll ${rollNumber} closed editor state`);
+  assertEqual(
+    await page.locator(".roll-row[data-roll-edit-open='true']").count(),
+    0,
+    `roll ${rollNumber} no open row after cancel`,
+  );
+  assertEqual(
+    await page.locator("[data-roll-correction-input]:visible").count(),
+    0,
+    `roll ${rollNumber} hidden correction inputs after cancel`,
+  );
+}
+
+
 async function verifyTerminalLayout(page, viewport) {
   await page.setViewportSize(viewport);
   await page.goto(
@@ -184,8 +235,15 @@ async function verifyTerminalLayout(page, viewport) {
     );
   }
 
+  assertEqual(
+    await page.locator("[data-roll-correction-input]:visible").count(),
+    0,
+    "read-only roll rows before pencil activation",
+  );
+  const firstRollId = fixture.running_roll_ids[0];
+  const { row: firstRoll } = await openRollEditor(page, firstRollId, 1);
   const currentPalletInput = page.locator("[data-current-pallet-input='true']");
-  const rowPalletInput = page.locator("input[name^='pallet_number__']").first();
+  const rowPalletInput = firstRoll.locator("[data-roll-correction-input][name='pallet_number']");
   for (const [input, label] of [
     [currentPalletInput, "terminal current pallet"],
     [rowPalletInput, "terminal roll pallet"],
@@ -196,6 +254,28 @@ async function verifyTerminalLayout(page, viewport) {
       assertEqual(await input.getAttribute(attribute), null, `${label} ${attribute}`);
     }
   }
+  const rowPalletGeometry = await rowPalletInput.evaluate((element) => {
+    const inputBox = element.getBoundingClientRect();
+    const cellBox = element.parentElement.getBoundingClientRect();
+    return {
+      inputLeft: inputBox.left,
+      inputRight: inputBox.right,
+      cellLeft: cellBox.left,
+      cellRight: cellBox.right,
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth,
+    };
+  });
+  assert(
+    rowPalletGeometry.inputLeft >= rowPalletGeometry.cellLeft - 1
+      && rowPalletGeometry.inputRight <= rowPalletGeometry.cellRight + 1,
+    `Terminal roll pallet input is clipped at ${viewport.width}x${viewport.height}.`,
+  );
+  assert(
+    rowPalletGeometry.scrollWidth <= rowPalletGeometry.clientWidth + 1,
+    `Terminal roll pallet value is clipped at ${viewport.width}x${viewport.height}.`,
+  );
+  await closeRollEditor(page, firstRollId, 1);
 
   const recipe = page.locator(".recipe-table");
   const recipeRows = recipe.locator(".recipe-row");
@@ -255,12 +335,29 @@ async function verifyTerminalLayout(page, viewport) {
   assert(recipeGeometry.scrollWidth <= recipeGeometry.width + 1, "Recipe is horizontally clipped.");
   assert(normalizeText(recipeGeometry.text).includes("Chalk C"), "The complete structured recipe is not readable.");
   assert(lastRowBox !== null, "The final recipe row is not reachable.");
+  const overflow = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    rollClientWidth: document.querySelector(".roll-list")?.clientWidth || 0,
+    rollScrollWidth: document.querySelector(".roll-list")?.scrollWidth || 0,
+  }));
+  assert(
+    overflow.scrollWidth <= overflow.clientWidth + 1,
+    `Terminal has horizontal overflow at ${viewport.width}x${viewport.height}.`,
+  );
+  assert(
+    overflow.rollScrollWidth <= overflow.rollClientWidth + 1,
+    `Roll list has horizontal overflow at ${viewport.width}x${viewport.height}.`,
+  );
   summary.viewports.push({
     width: viewport.width,
     height: viewport.height,
     controlOrder: ["gross", "tare", "pallet", "add"],
+    pencilEditor: true,
+    oneEditorAtATime: true,
     structuredRecipeRows: true,
     recipeReachable: true,
+    horizontalOverflow: false,
   });
 }
 
@@ -312,7 +409,6 @@ async function verifyTerminalBehavior(page, viewport) {
         pallet: row.querySelector("[data-roll-display='pallet']")?.textContent.trim(),
         gross: row.querySelector("[data-roll-display='gross']")?.textContent.trim(),
         tare: row.querySelector("[data-roll-display='tare']")?.textContent.trim(),
-        text: row.textContent.replace(/\s+/g, " ").trim(),
       })),
     ),
   });
@@ -459,35 +555,32 @@ async function verifyTerminalBehavior(page, viewport) {
     recordArtifact("terminal-pallet-entry-1536x1024.png");
   }
 
-  await page.locator(".menu-btn").click();
-  await page.locator("[data-roll-correction-open]").click();
   const firstRollId = fixture.running_roll_ids[0];
   const clearCandidateRollId = fixture.clear_candidate_roll_id;
-
   const malformedCorrectionBefore = await terminalCardSnapshot();
-  await page.locator(`input[name='pallet_number__${firstRollId}']`).fill("15+1");
-  await page.locator(`input[name='gross_weight__${firstRollId}']`).fill("99.99");
+  let { row: firstRow, actions: firstActions } = await openRollEditor(page, firstRollId, 1);
+  const firstRollLoadedVersion = await firstRow.locator("input[name='loaded_version']").inputValue();
+  const firstRollTare = await firstRow.locator("input[name='tare_weight']").inputValue();
+  await firstRow.locator("input[name='pallet_number']").fill("15+1");
+  await firstRow.locator("input[name='gross_weight']").fill("99.99");
   const malformedCorrectionPostStart = mutationPosts.length;
-  await submitAndWait(page, () => page.locator(".roll-correction-save").click());
+  await submitAndWait(page, () => firstActions.locator("[data-roll-row-save]").click());
   const malformedCorrectionPosts = mutationPosts.slice(malformedCorrectionPostStart);
-  assertEqual(malformedCorrectionPosts.length, 1, "malformed roll correction request count");
   assertEqual(
-    malformedCorrectionPosts[0].pathname,
-    `/terminal/cards/${fixture.cards.running}/rolls/corrections`,
-    "malformed roll correction path",
-  );
-  assertEqual(
-    malformedCorrectionPosts[0].fields[`pallet_number__${firstRollId}`],
-    "15+1",
-    "malformed roll pallet request literal",
-  );
-  assertEqual(
-    malformedCorrectionPosts[0].fields[`gross_weight__${firstRollId}`],
-    "99.99",
-    "co-submitted gross literal in malformed correction",
+    malformedCorrectionPosts,
+    [{
+      pathname: `/terminal/cards/${fixture.cards.running}/rolls/${firstRollId}`,
+      fields: {
+        loaded_version: firstRollLoadedVersion,
+        gross_weight: "99.99",
+        tare_weight: firstRollTare,
+        pallet_number: "15+1",
+      },
+    }],
+    "malformed row-scoped roll correction request",
   );
   assert(
-    normalizeText(await page.locator("[data-feedback-target='roll_corrections']").textContent())
+    normalizeText(await page.locator(`[data-feedback-roll-id='${firstRollId}']`).textContent())
       .includes("Палетът трябва да бъде цяло число от 1 до 999."),
     "Malformed roll pallet error is not shown.",
   );
@@ -497,21 +590,30 @@ async function verifyTerminalBehavior(page, viewport) {
     "state after malformed roll correction",
   );
 
-  await page.locator(`input[name='pallet_number__${firstRollId}']`).fill("22");
-  assertEqual(
-    await page.locator(`input[name='pallet_number__${clearCandidateRollId}']`).inputValue(),
-    "6",
-    "assigned pallet before clear",
-  );
-  await page.locator(`input[name='pallet_number__${clearCandidateRollId}']`).fill("");
-  await submitAndWait(page, () => page.locator(".roll-correction-save").click());
-  const firstRow = page.locator(`.roll-row[data-roll-id='${firstRollId}']`);
-  let clearedRow = page.locator(`.roll-row[data-roll-id='${clearCandidateRollId}']`);
+  firstRow = page.locator(`.roll-row[data-roll-id='${firstRollId}']`);
+  firstActions = page.locator(`[data-roll-actions-for='${firstRollId}']`);
+  assertEqual(await firstRow.getAttribute("data-roll-edit-open"), "true", "malformed row remains open");
+  await firstRow.locator("input[name='pallet_number']").fill("22");
+  await submitAndWait(page, () => firstActions.locator("[data-roll-row-save]").click());
   assertEqual(
     normalizeText(await firstRow.locator("[data-roll-display='pallet']").textContent()),
     "22",
     "corrected pallet display",
   );
+
+  let { row: clearedRow, actions: clearedActions } = await openRollEditor(
+    page,
+    clearCandidateRollId,
+    2,
+  );
+  assertEqual(
+    await clearedRow.locator("input[name='pallet_number']").inputValue(),
+    "6",
+    "assigned pallet before clear",
+  );
+  await clearedRow.locator("input[name='pallet_number']").fill("");
+  await submitAndWait(page, () => clearedActions.locator("[data-roll-row-save]").click());
+  clearedRow = page.locator(`.roll-row[data-roll-id='${clearCandidateRollId}']`);
   assertEqual(
     normalizeText(await clearedRow.locator("[data-roll-display='pallet']").textContent()),
     "-",
@@ -524,8 +626,7 @@ async function verifyTerminalBehavior(page, viewport) {
     "-",
     "cleared pallet display after reload",
   );
-  await page.locator(".menu-btn").click();
-  await page.locator("[data-roll-correction-open]").click();
+  ({ row: clearedRow } = await openRollEditor(page, clearCandidateRollId, 2));
   if (viewport.width === 1366 && viewport.height === 768) {
     await page.screenshot({
       path: path.join(artifactDir, "terminal-pallet-correction-1366x768.png"),
@@ -533,7 +634,7 @@ async function verifyTerminalBehavior(page, viewport) {
     });
     recordArtifact("terminal-pallet-correction-1366x768.png");
   }
-  await page.locator("[data-roll-correction-cancel]").click();
+  await closeRollEditor(page, clearCandidateRollId, 2);
 
   // A pallet-only defaults save uses an accurate generic success notice.
   palletInput = page.locator("[data-current-pallet-input='true']");
@@ -591,9 +692,14 @@ async function verifyTerminalBehavior(page, viewport) {
   assertEqual(requests.length, requestCountBefore, "requests after choosing Не");
   assertEqual(page.url(), urlBefore, "URL after choosing Не");
   assertEqual(
-    await page.locator("[data-roll-correction-root]").getAttribute("data-correction-open"),
-    "false",
-    "correction state after choosing Не",
+    await page.locator(".roll-row[data-roll-edit-open='true']").count(),
+    0,
+    "open row editors after choosing Не",
+  );
+  assertEqual(
+    await page.locator("[data-roll-actions-for]:visible").count(),
+    0,
+    "visible row action panels after choosing Не",
   );
   page.off("request", requestListener);
   summary.interactions.push({
@@ -606,6 +712,8 @@ async function verifyTerminalBehavior(page, viewport) {
     autosaveSurvivedReload: true,
     addCopiedCurrentTareAndPallet: true,
     beforeUnloadDialogCount: beforeUnloadDialogs.length,
+    pencilEditorUsed: true,
+    oneEditorAtATime: true,
     assignedPalletClearedAndPersisted: true,
     clearedDisplayAfterReload: "-",
     palletOnlyToastExact: true,
@@ -892,11 +1000,15 @@ async function verifyPrints(page) {
 async function main() {
   let browser;
   const browserErrors = [];
+  const consoleErrors = [];
   try {
     browser = await chromium.launch();
     const context = await browser.newContext();
     const page = await context.newPage();
     page.on("pageerror", (error) => browserErrors.push(error.message));
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
     for (const viewport of [
       { width: 1536, height: 1024 },
       { width: 1366, height: 768 },
@@ -909,7 +1021,9 @@ async function main() {
     }
     await verifyAdminLayout(page);
     await verifyPrints(page);
+    assertEqual(consoleErrors, [], "error-level browser console messages");
     assertEqual(browserErrors, [], "browser page errors");
+    summary.consoleErrors = consoleErrors;
     summary.browserErrors = browserErrors;
     summary.status = "passed";
     fs.writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
