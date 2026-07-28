@@ -40,6 +40,13 @@ def create_backup(
     backup_path = next_backup_path(resolved_backup_dir, timestamp)
 
     backup_sqlite_database(source_path, backup_path)
+    try:
+        validate_sqlite_database(backup_path)
+    except Exception:
+        assert_path_inside_directory(backup_path, resolved_backup_dir)
+        if backup_path.exists():
+            backup_path.unlink()
+        raise
     retained_paths, removed_paths = apply_retention(resolved_backup_dir, keep_count)
     return BackupResult(
         source_path=source_path,
@@ -128,11 +135,20 @@ def backup_sqlite_database(source_path: Path, target_path: Path) -> None:
 def validate_sqlite_database(database_path: Path) -> None:
     connection = sqlite3.connect(database_path)
     try:
-        result = connection.execute("PRAGMA integrity_check").fetchone()
+        integrity_results = connection.execute("PRAGMA integrity_check").fetchall()
+        if integrity_results != [("ok",)]:
+            raise sqlite3.DatabaseError(
+                f"SQLite integrity check failed for {database_path}"
+            )
+        foreign_key_violations = connection.execute(
+            "PRAGMA foreign_key_check"
+        ).fetchall()
+        if foreign_key_violations:
+            raise sqlite3.DatabaseError(
+                f"SQLite foreign key check failed for {database_path}"
+            )
     finally:
         connection.close()
-    if not result or result[0] != "ok":
-        raise sqlite3.DatabaseError(f"SQLite integrity check failed for {database_path}")
 
 
 def next_backup_path(

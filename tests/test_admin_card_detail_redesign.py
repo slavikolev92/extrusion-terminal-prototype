@@ -2088,7 +2088,7 @@ def test_admin_timing_ledger_blocks_open_segment_on_paused_card(connection):
     assert after["version"] == loaded_version
 
 
-def test_admin_timing_ledger_allows_swapping_open_segment_order_independently(connection):
+def test_admin_timing_ledger_allows_swapping_open_segment_without_overlap(connection):
     card_id = import_ready_card("27034")
     assert db.release_card(
         card_id,
@@ -2114,7 +2114,7 @@ def test_admin_timing_ledger_allows_swapping_open_segment_order_independently(co
         loaded_version=loaded_version,
         segment_updates={
             int(closed_segment["id"]): {
-                "started_at": closed_segment["started_at"],
+                "started_at": "2026-06-18 08:01:00",
                 "ended_at": "",
                 "end_reason": "",
             },

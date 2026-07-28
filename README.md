@@ -930,7 +930,7 @@ Create a SQLite-safe backup:
 .\.test-runtime\codex-venv\Scripts\python.exe -m app.backups backup
 ```
 
-The backup command uses SQLite's backup API, creates the backup directory if needed, and keeps the newest `144` matching backup files by default. Milestone 8 does not install a scheduler; if recurring 10-minute backups are needed before pilot use, run this command from the deployment's approved scheduler. To change retention for a run:
+The backup command uses SQLite's backup API, creates the backup directory if needed, and requires both a successful SQLite integrity check and an empty foreign-key check before retaining the new image or pruning older backups. It keeps the newest `144` matching backup files by default. Restore applies the same checks to a temporary image before replacing the target database. Milestone 8 does not install a scheduler; if recurring 10-minute backups are needed before pilot use, run this command from the deployment's approved scheduler. To change retention for a run:
 
 ```powershell
 .\.test-runtime\codex-venv\Scripts\python.exe -m app.backups backup --keep 288

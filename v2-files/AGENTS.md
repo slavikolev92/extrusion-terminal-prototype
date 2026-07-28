@@ -191,6 +191,7 @@ Every migration test set must cover, where applicable:
 | M002 | `shift_management` | Add shift configuration, durable occurrences, and nullable roll attribution without historical backfill | 14 focused migration tests and 560 full-suite tests passed | Not run | Not run |
 | M003 | `roll_pallet_assignment` | Add nullable constrained current-card and per-roll pallet numbers without historical backfill | 28 focused migration, 78 focused print/verifier-safety, and 686 full-suite tests passed | Not needed for M003 itself; final release rehearsal still required | Not run |
 | M004 | `rewinding_return_workflow` | Rebuild `cards` for the waiting status, constrained nullable marker, and nullable final-shift foreign key without historical inference | 44 migration, 622 focused affected-workflow, and 825 full-suite tests passed | Not needed for M004 itself; final release rehearsal still required | Not run |
+| M005 | `shift_schema_contract` | Bound the persisted singleton shift count to the accepted integer range 1..99 and validate the recorded shift tables/indexes without changing valid values | 61 migration, 114 focused affected-workflow, and 876 full-suite tests passed | Not needed for M005 itself; final release rehearsal still required | Not run |
 
 ### M001: Shift Manager Import Fields
 
@@ -421,6 +422,107 @@ Migration assessment
   SQLite-safe backup; retain the unresolved M001 production profile and final
   release-candidate rehearsal as independent release gates.
 
+### M005: Shift Schema Contract
+
+M005, `shift_schema_contract`, makes the already accepted product bound for
+`terminal_configuration.shift_count` a durable SQLite contract:
+
+```text
+shift_count INTEGER NOT NULL DEFAULT 4
+    CHECK SQLite integer and BETWEEN 1 AND 99
+```
+
+The migration accepts only the exact recorded M002/M004 shift table shape or
+the exact current bounded shape. Before any rebuild it requires exactly one
+configuration row with `id = 1`, a SQLite integer `shift_count` from `1`
+through `99`, a positive integer version, and a text timestamp. It also
+validates the exact `shift_occurrences` table contract and its persisted value
+types, the roll-attribution foreign key, and these required indexes:
+
+```text
+idx_shift_occurrences_one_active
+idx_shift_occurrences_completed
+idx_roll_entries_shift_card
+```
+
+A missing required index is recreated only from its deterministic canonical
+definition after the tables and values pass validation. An incompatible
+same-name index, malformed table, extra partial rebuild table, out-of-range
+count, or non-integer stored count fails closed. Recorded M005 databases receive
+the same startup validation and safe missing-index repair.
+
+M005 is schema-only. For a recorded M004 database it copies `id`,
+`shift_count`, `version`, and `updated_at` exactly through a temporary bounded
+table, recreates the canonical singleton table, copies those fields back, and
+removes the temporary table in the same caller-owned transaction/savepoint.
+It never clamps, parses, defaults, or infers an existing value. Historical
+`shift_occurrences.shift_number` values remain governed by their existing
+positive-integer contract and are not rewritten when the configured count is
+lowered.
+
+Development evidence from July 28, 2026:
+
+```bash
+.venv/bin/python -m compileall -q app scripts tests
+# exited 0
+
+node --check app/static/js/roll_change_countdown.mjs
+node --check scripts/verify_roll_change_countdown_ui.mjs
+node --check scripts/verify_shift_management_ui.mjs
+# exited 0
+
+node --test tests/js/roll_change_countdown_core.test.mjs
+# 19 passed, 0 failed
+
+.venv/bin/python -m pytest tests/test_migrations.py -q
+# 61 passed in 4.42s
+
+.venv/bin/python -m pytest \
+  tests/test_admin_production_corrections.py \
+  tests/test_admin_planning.py \
+  tests/test_backup_recovery.py \
+  tests/test_shift_management.py \
+  tests/test_shift_routes.py -q
+# 114 passed in 7.90s
+
+.venv/bin/python -m pytest -q
+# 876 passed in 71.32s
+```
+
+The focused migration matrix covers fresh initialization, recorded M004,
+valid and malformed partial M005, valid and malformed recorded M005, boundary
+values `1` and `99`, rejection of `0`, `100`, text and real values, exact
+configuration/occurrence/index contracts, deterministic missing-index repair,
+preservation, second-run idempotence, integrity, foreign keys, and injected
+rollback. All fixtures use temporary databases.
+
+The guarded countdown Playwright verifier also passed every bootstrap and
+workflow case at `1920x768` and `1366x768`, including the new held-snapshot
+roll-correction interleaving, with zero console or page errors. Evidence is
+under `artifacts/ui-checks/task7-fix-round-3-final/`; the database was the
+ignored `.test-runtime/task7-round3/countdown.sqlite3` fixture.
+
+Migration assessment
+- Decision: Schema-only
+- Why: the accepted `shift_count` integer range `1..99` must be enforced by
+  SQLite, and recorded/current shift tables plus required indexes must be
+  validated at startup.
+- Existing production data affected: none; every valid configuration value,
+  version, timestamp, occurrence, roll attribution, and production row is
+  preserved exactly.
+- Proposed migration: M005 `shift_schema_contract` (implemented).
+- Transformation: no values changed.
+- Unknowns or ambiguous rows: none known; an out-of-range or malformed existing
+  configuration is rejected for explicit repair rather than guessed.
+- Required tests: fresh, recorded-M004, valid/malformed partial and recorded
+  M005, boundary/type rejection, exact schemas/indexes, preservation,
+  idempotence, integrity, foreign keys, and injected rollback; all pass on
+  temporary databases.
+- Production snapshot needed now: No.
+- Deployment constraint: deploy the application and M005 together only after a
+  SQLite-safe backup; retain the unresolved M001 production profile and final
+  release-candidate rehearsal as independent release gates.
+
 ## Migration Assessment Log
 
 | Date | Feature/change | Decision | Result |
@@ -447,6 +549,7 @@ Migration assessment
 | 2026-07-27 | Release-candidate adversarial audit fixes | No migration | Atomic compare-and-set guards now enforce existing card version/status rules before dependent lifecycle and imported-field mutations. Countdown changes affect only browser-local versioned schedules and client rendering. No table, column, constraint, persisted meaning, or historical value changes; M001 production profiling and the final production-snapshot rehearsal remain deployment gates. |
 | 2026-07-27 | Task 7 fix round 1 cross-tab lifecycle synchronization | No migration | Added server-rendered-context-derived, versioned browser-local lifecycle records and an accessible client reload latch for stale countdown tabs. No backend route, table, column, constraint, stored production meaning, historical value, or migration registry change; M001 production profiling and the final production-snapshot rehearsal remain deployment gates. |
 | 2026-07-27 | Task 7 fix round 2 causal countdown bootstrap | No migration | Added existing card-version data to rendered countdown context, upgraded browser-local lifecycle payloads to schema v2, and reused the existing read-only transactional terminal snapshot for divergent bootstrap validation. Changes are limited to template data attributes, browser-local storage/control behavior, verifier coverage, and tests; no SQLite structure, persisted production meaning, historical value, or migration registry entry changed. 44 migration and 852 full-suite tests pass; M001 production profiling and the final production-snapshot rehearsal remain deployment gates. |
+| 2026-07-28 | Task 7 fix round 3 integrity corrections and shift constraint | Schema-only M005 | Added the durable `shift_count` integer range `1..99`, exact shift schema/index validation, and safe missing-index repair without changing valid values. The same slice composes the countdown/correction locks, rejects timing overlap against an unbounded open segment, protects pallet-bearing cards from planning deletion, and validates backup/restore images with integrity plus foreign-key checks. 61 migration, 114 affected-workflow, and 876 full-suite tests pass; guarded browser verification passes both supported viewports. No M005 production snapshot is needed now; M001 profiling and the final release rehearsal remain deployment gates. |
 
 Append one row after every use of the trigger command, including when no
 migration is required.

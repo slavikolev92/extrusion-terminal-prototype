@@ -63,6 +63,21 @@ def import_sample_card(order_number: str = "25700") -> int:
         )
 
 
+def add_dangling_timing_foreign_key(database_path: Path) -> None:
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute(
+            """
+            INSERT INTO production_time_segments (
+                card_id, started_at, ended_at, end_reason
+            )
+            VALUES (999999, '2026-06-13 08:00:00', '2026-06-13 09:00:00', 'correction')
+            """
+        )
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert connection.execute("PRAGMA foreign_key_check").fetchall()
+
+
 def test_backup_creates_timestamped_sqlite_file(temp_db_path: Path):
     backup_dir = temp_db_path.parent / "backups"
     import_sample_card("25701")
@@ -178,6 +193,51 @@ def test_failed_restore_leaves_existing_target_database_untouched(temp_db_path: 
         value = target.execute("SELECT value FROM sentinel").fetchone()[0]
 
     assert value == "keep"
+
+
+def test_foreign_key_invalid_backup_is_removed_before_retention(temp_db_path: Path):
+    backup_dir = temp_db_path.parent / "backups"
+    good_backup = create_backup(
+        temp_db_path,
+        backup_dir,
+        keep_count=1,
+        timestamp=datetime(2026, 6, 13, 8, 0, 0),
+    ).backup_path
+    add_dangling_timing_foreign_key(temp_db_path)
+
+    with pytest.raises(sqlite3.DatabaseError, match="foreign key check failed"):
+        create_backup(
+            temp_db_path,
+            backup_dir,
+            keep_count=1,
+            timestamp=datetime(2026, 6, 13, 9, 0, 0),
+        )
+
+    assert good_backup.exists()
+    assert tuple(backup_dir.glob(f"{BACKUP_FILENAME_PREFIX}*{BACKUP_FILENAME_SUFFIX}")) == (
+        good_backup,
+    )
+
+
+def test_foreign_key_invalid_restore_leaves_target_and_removes_temporary_image(
+    temp_db_path: Path,
+):
+    add_dangling_timing_foreign_key(temp_db_path)
+    target_path = temp_db_path.parent / "existing-fk-target.sqlite3"
+    with sqlite3.connect(target_path) as target:
+        target.execute("CREATE TABLE sentinel (value TEXT NOT NULL)")
+        target.execute("INSERT INTO sentinel (value) VALUES ('keep-fk-target')")
+
+    with pytest.raises(sqlite3.DatabaseError, match="foreign key check failed"):
+        restore_backup(temp_db_path, target_path)
+
+    with sqlite3.connect(target_path) as target:
+        value = target.execute("SELECT value FROM sentinel").fetchone()[0]
+    temporary_images = tuple(
+        target_path.parent.glob(f".{target_path.name}.restore-*.sqlite3")
+    )
+    assert value == "keep-fk-target"
+    assert temporary_images == ()
 
 
 def test_retention_keeps_newest_matching_backups_only(temp_db_path: Path):

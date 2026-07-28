@@ -426,6 +426,42 @@ def test_delete_blocks_pending_card_with_tare_weight(connection):
     assert db.fetch_admin_card_detail(card_id) is not None
 
 
+def test_delete_blocks_pending_card_with_only_current_pallet_without_queue_effects(connection):
+    first_id = release_ready_card("25840", machine_id=1, machine_sequence=1)
+    protected_id = release_ready_card("25841", machine_id=1, machine_sequence=2)
+    third_id = release_ready_card("25842", machine_id=1, machine_sequence=3)
+    assert db.update_current_pallet_number(
+        protected_id,
+        card_version(protected_id),
+        "7",
+    ).ok
+    card_ids = (first_id, protected_id, third_id)
+    before = {
+        card_id: {
+            "machine_sequence": db.fetch_admin_card_detail(card_id)["machine_sequence"],
+            "version": db.fetch_admin_card_detail(card_id)["version"],
+            "current_pallet_number": db.fetch_admin_card_detail(card_id)["current_pallet_number"],
+        }
+        for card_id in card_ids
+    }
+
+    result = db.delete_admin_planning_card(protected_id, card_version(protected_id))
+
+    assert not result.ok
+    assert result.messages == (
+        "Технологични карти с производствени данни не могат да се изтриват.",
+    )
+    after = {
+        card_id: {
+            "machine_sequence": db.fetch_admin_card_detail(card_id)["machine_sequence"],
+            "version": db.fetch_admin_card_detail(card_id)["version"],
+            "current_pallet_number": db.fetch_admin_card_detail(card_id)["current_pallet_number"],
+        }
+        for card_id in card_ids
+    }
+    assert after == before
+
+
 def test_delete_blocks_pending_card_with_legacy_actual_material_fields(connection):
     card_id = release_ready_card("25838", machine_id=1, machine_sequence=1)
     assert db.update_terminal_material_fields(

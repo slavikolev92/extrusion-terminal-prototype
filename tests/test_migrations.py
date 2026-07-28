@@ -21,6 +21,31 @@ FINAL_IMPORT_COLUMNS = (
 )
 
 
+LEGACY_TERMINAL_CONFIGURATION_SQL = """
+CREATE TABLE terminal_configuration (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    shift_count INTEGER NOT NULL DEFAULT 4
+        CHECK (typeof(shift_count) = 'integer' AND shift_count >= 1),
+    version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+
+BOUNDED_TERMINAL_CONFIGURATION_SQL = """
+CREATE TABLE terminal_configuration (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    shift_count INTEGER NOT NULL DEFAULT 4
+        CHECK (
+            typeof(shift_count) = 'integer'
+            AND shift_count BETWEEN 1 AND 99
+        ),
+    version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+
 def create_legacy_database(database_path: Path) -> None:
     with sqlite3.connect(database_path) as connection:
         connection.executescript(
@@ -465,6 +490,62 @@ def create_recorded_m003_database(database_path: Path) -> None:
     add_recorded_m003(database_path)
 
 
+def replace_terminal_configuration(
+    database_path: Path,
+    table_sql: str,
+    *,
+    shift_count: object,
+    version: int = 7,
+    updated_at: str = "2026-07-27 07:05:00",
+) -> None:
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("DROP TABLE terminal_configuration")
+        connection.execute(table_sql)
+        connection.execute(
+            """
+            INSERT INTO terminal_configuration (
+                id, shift_count, version, updated_at
+            )
+            VALUES (1, ?, ?, ?)
+            """,
+            (shift_count, version, updated_at),
+        )
+
+
+def create_recorded_m004_database(
+    database_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_database(monkeypatch, database_path)
+    db.init_db()
+    with sqlite3.connect(database_path) as connection:
+        configuration = connection.execute(
+            """
+            SELECT shift_count, version, updated_at
+            FROM terminal_configuration
+            WHERE id = 1
+            """
+        ).fetchone()
+        connection.execute("DELETE FROM schema_migrations WHERE version > 4")
+    replace_terminal_configuration(
+        database_path,
+        LEGACY_TERMINAL_CONFIGURATION_SQL,
+        shift_count=configuration[0],
+        version=configuration[1],
+        updated_at=configuration[2],
+    )
+
+
+def record_m005(database_path: Path) -> None:
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO schema_migrations (version, name)
+            VALUES (5, 'shift_schema_contract')
+            """
+        )
+
+
 def clear_legacy_production_rows(database_path: Path) -> None:
     with sqlite3.connect(database_path) as connection:
         for table_name in (
@@ -723,6 +804,7 @@ def test_m002_adds_shift_schema_without_attributing_legacy_rolls(
         (2, "shift_management"),
         (3, "roll_pallet_assignment"),
         (4, "rewinding_return_workflow"),
+        (5, "shift_schema_contract"),
     ]
     assert configuration == {"id": 1, "shift_count": 4, "version": 1}
     assert roll["shift_occurrence_id"] is None
@@ -905,6 +987,7 @@ def test_m002_preserves_existing_attribution_in_partially_upgraded_schema(
         (2, "shift_management"),
         (3, "roll_pallet_assignment"),
         (4, "rewinding_return_workflow"),
+        (5, "shift_schema_contract"),
     ]
     assert integrity == "ok"
     assert foreign_key_violations == []
@@ -1033,13 +1116,14 @@ def test_m003_adds_nullable_pallet_columns_without_backfilling_legacy_data(
     second_migration_rows = second_snapshot.pop("schema_migrations")
     assert first_snapshot == before_snapshot
     assert second_snapshot == first_snapshot
-    assert first_migration_rows[:-2] == prior_migration_rows
+    assert first_migration_rows[:-3] == prior_migration_rows
     assert second_migration_rows == first_migration_rows
     assert legacy_card["current_pallet_number"] is None
     assert legacy_roll["pallet_number"] is None
-    assert migration_rows[-2:] == [
+    assert migration_rows[-3:] == [
         {"version": 3, "name": "roll_pallet_assignment"},
         {"version": 4, "name": "rewinding_return_workflow"},
+        {"version": 5, "name": "shift_schema_contract"},
     ]
     assert integrity == "ok"
     assert foreign_key_violations == []
@@ -1093,6 +1177,7 @@ def test_m003_accepts_a_valid_partially_upgraded_schema_and_preserves_values(
         (2, "shift_management"),
         (3, "roll_pallet_assignment"),
         (4, "rewinding_return_workflow"),
+        (5, "shift_schema_contract"),
     ]
     assert second_rows == first_rows
     assert second_snapshot == first_snapshot
@@ -1261,6 +1346,7 @@ def test_m003_accepts_equivalent_nullable_pallet_constraints_and_preserves_value
         (2, "shift_management"),
         (3, "roll_pallet_assignment"),
         (4, "rewinding_return_workflow"),
+        (5, "shift_schema_contract"),
     ]
 
 
@@ -1440,12 +1526,14 @@ def test_fresh_database_records_migrations_once_with_schema_parity(
         (2, "shift_management"),
         (3, "roll_pallet_assignment"),
         (4, "rewinding_return_workflow"),
+        (5, "shift_schema_contract"),
     ]
     assert [(row["version"], row["name"]) for row in second_rows] == [
         (1, "shift_manager_import_fields"),
         (2, "shift_management"),
         (3, "roll_pallet_assignment"),
         (4, "rewinding_return_workflow"),
+        (5, "shift_schema_contract"),
     ]
     assert configuration == {"id": 1, "shift_count": 4, "version": 1}
     assert set(FINAL_IMPORT_COLUMNS).issubset(card_columns)
@@ -1596,8 +1684,9 @@ def test_m004_upgrades_recorded_m003_without_inference_and_preserves_all_data(
 
     migration_rows = after.pop("schema_migrations")
     assert after == before
-    assert migration_rows[:-1] == prior_migrations
-    assert migration_rows[-1][:2] == (4, "rewinding_return_workflow")
+    assert migration_rows[:-2] == prior_migrations
+    assert migration_rows[-2][:2] == (4, "rewinding_return_workflow")
+    assert migration_rows[-1][:2] == (5, "shift_schema_contract")
     assert card["rewinding_roll_count"] is None
     assert card["final_extrusion_shift_occurrence_id"] is None
     assert card["current_pallet_number"] == 17
@@ -1649,7 +1738,10 @@ def test_m004_upgrades_sparse_legacy_cards_before_creating_card_indexes(
         "idx_cards_active_machine_sequence",
         "idx_cards_status_machine_sequence",
     }.issubset(card_indexes)
-    assert tuple(migration_rows[-1]) == (4, "rewinding_return_workflow")
+    assert [tuple(row) for row in migration_rows[-2:]] == [
+        (4, "rewinding_return_workflow"),
+        (5, "shift_schema_contract"),
+    ]
 
 
 def test_m004_preserves_valid_partially_deployed_values(
@@ -1676,7 +1768,10 @@ def test_m004_preserves_valid_partially_deployed_values(
 
     assert card["rewinding_roll_count"] == 12
     assert card["final_extrusion_shift_occurrence_id"] == 1
-    assert tuple(migration_rows[-1]) == (4, "rewinding_return_workflow")
+    assert [tuple(row) for row in migration_rows[-2:]] == [
+        (4, "rewinding_return_workflow"),
+        (5, "shift_schema_contract"),
+    ]
 
 
 def test_m004_preserves_cards_autoincrement_high_water_mark(
@@ -2171,6 +2266,477 @@ def test_m002_failure_rolls_back_schema_and_migration_record(
     assert "shift_occurrences" not in table_names
     assert "schema_migrations" not in table_names
     assert "shift_occurrence_id" not in roll_columns
+
+
+def test_m005_fresh_database_records_bounded_shift_contract_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m005-fresh.sqlite3"
+    configure_database(monkeypatch, database_path)
+
+    db.init_db()
+    db.init_db()
+
+    with db.connect() as connection:
+        migration_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+        schema_sql = connection.execute(
+            """
+            SELECT sql
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'terminal_configuration'
+            """
+        ).fetchone()["sql"]
+        for accepted in (1, 99):
+            connection.execute("SAVEPOINT m005_accepted")
+            connection.execute(
+                "UPDATE terminal_configuration SET shift_count = ? WHERE id = 1",
+                (accepted,),
+            )
+            assert connection.execute(
+                "SELECT shift_count FROM terminal_configuration WHERE id = 1"
+            ).fetchone()[0] == accepted
+            connection.execute("ROLLBACK TO SAVEPOINT m005_accepted")
+            connection.execute("RELEASE SAVEPOINT m005_accepted")
+        for rejected in (0, 100, "invalid", 1.5):
+            connection.execute("SAVEPOINT m005_rejected")
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(
+                    "UPDATE terminal_configuration SET shift_count = ? WHERE id = 1",
+                    (rejected,),
+                )
+            connection.execute("ROLLBACK TO SAVEPOINT m005_rejected")
+            connection.execute("RELEASE SAVEPOINT m005_rejected")
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+
+    assert tuple(tuple(row) for row in migration_rows)[-1] == (
+        5,
+        "shift_schema_contract",
+    )
+    assert sum(1 for row in migration_rows if row["version"] == 5) == 1
+    assert "shift_count BETWEEN 1 AND 99" in schema_sql
+    assert integrity == "ok"
+    assert foreign_keys == []
+
+
+@pytest.mark.parametrize("shift_count", (1, 99))
+def test_m005_upgrades_recorded_m004_and_preserves_boundary_values_exactly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    shift_count: int,
+) -> None:
+    database_path = tmp_path / f"m005-recorded-m004-{shift_count}.sqlite3"
+    create_recorded_m004_database(database_path, monkeypatch)
+    replace_terminal_configuration(
+        database_path,
+        LEGACY_TERMINAL_CONFIGURATION_SQL,
+        shift_count=shift_count,
+        version=11,
+        updated_at="2026-07-27 11:22:33",
+    )
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO shift_occurrences (
+                shift_number, started_at, ended_at, version,
+                created_at, updated_at
+            )
+            VALUES (120, '2026-07-27 06:00:00', '2026-07-27 14:00:00', 9,
+                    '2026-07-27 06:00:00', '2026-07-27 14:00:00')
+            """
+        )
+        before_configuration = connection.execute(
+            "SELECT * FROM terminal_configuration"
+        ).fetchall()
+        before_occurrences = connection.execute(
+            "SELECT * FROM shift_occurrences ORDER BY id"
+        ).fetchall()
+
+    db.init_db()
+    db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        after_configuration = connection.execute(
+            "SELECT * FROM terminal_configuration"
+        ).fetchall()
+        after_occurrences = connection.execute(
+            "SELECT * FROM shift_occurrences ORDER BY id"
+        ).fetchall()
+        migration_rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+
+    assert after_configuration == before_configuration
+    assert after_occurrences == before_occurrences
+    assert migration_rows[-1][:2] == (5, "shift_schema_contract")
+    assert sum(1 for row in migration_rows if row[0] == 5) == 1
+    assert integrity == "ok"
+    assert foreign_keys == []
+
+
+@pytest.mark.parametrize("invalid_value", (0, 100, "invalid", 1.5))
+def test_m005_rejects_invalid_existing_shift_count_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_value: object,
+) -> None:
+    database_path = tmp_path / f"m005-invalid-value-{invalid_value}.sqlite3"
+    create_recorded_m004_database(database_path, monkeypatch)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(
+            "UPDATE terminal_configuration SET shift_count = ? WHERE id = 1",
+            (invalid_value,),
+        )
+        connection.execute("PRAGMA ignore_check_constraints = OFF")
+        before_value = connection.execute(
+            "SELECT shift_count, typeof(shift_count) FROM terminal_configuration"
+        ).fetchone()
+        before_schema = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'terminal_configuration'"
+        ).fetchone()[0]
+
+    with pytest.raises(RuntimeError, match="shift_count"):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        after_value = connection.execute(
+            "SELECT shift_count, typeof(shift_count) FROM terminal_configuration"
+        ).fetchone()
+        after_schema = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'terminal_configuration'"
+        ).fetchone()[0]
+        m005_count = connection.execute(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 5"
+        ).fetchone()[0]
+        temporary_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'terminal_configuration_m005'"
+        ).fetchone()
+
+    assert after_value == before_value
+    assert after_schema == before_schema
+    assert m005_count == 0
+    assert temporary_table is None
+
+
+def test_m005_accepts_valid_partial_bounded_schema_and_recreates_missing_index(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m005-valid-partial.sqlite3"
+    create_recorded_m004_database(database_path, monkeypatch)
+    replace_terminal_configuration(
+        database_path,
+        BOUNDED_TERMINAL_CONFIGURATION_SQL,
+        shift_count=8,
+        version=13,
+        updated_at="2026-07-27 13:14:15",
+    )
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("DROP INDEX idx_shift_occurrences_completed")
+        before = connection.execute(
+            "SELECT * FROM terminal_configuration"
+        ).fetchall()
+
+    db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        after = connection.execute("SELECT * FROM terminal_configuration").fetchall()
+        index_sql = connection.execute(
+            """
+            SELECT sql FROM sqlite_master
+            WHERE type = 'index' AND name = 'idx_shift_occurrences_completed'
+            """
+        ).fetchone()[0]
+        migration_row = connection.execute(
+            "SELECT version, name FROM schema_migrations WHERE version = 5"
+        ).fetchone()
+
+    assert after == before
+    assert "ended_at DESC, id DESC" in index_sql
+    assert migration_row == (5, "shift_schema_contract")
+
+
+@pytest.mark.parametrize("recorded_m005", (False, True), ids=("pending", "recorded"))
+def test_m005_rejects_leftover_temporary_table_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    recorded_m005: bool,
+) -> None:
+    database_path = tmp_path / f"m005-leftover-temporary-{recorded_m005}.sqlite3"
+    create_recorded_m004_database(database_path, monkeypatch)
+    replace_terminal_configuration(
+        database_path,
+        BOUNDED_TERMINAL_CONFIGURATION_SQL,
+        shift_count=8,
+        version=13,
+        updated_at="2026-07-27 13:14:15",
+    )
+    if recorded_m005:
+        record_m005(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            migrations.terminal_configuration_table_sql(
+                "terminal_configuration_m005",
+                if_not_exists=False,
+            )
+        )
+        connection.execute(
+            """
+            INSERT INTO terminal_configuration_m005 (
+                id, shift_count, version, updated_at
+            )
+            VALUES (1, 9, 21, '2026-07-27 21:22:23')
+            """
+        )
+        before_configuration = connection.execute(
+            "SELECT * FROM terminal_configuration"
+        ).fetchall()
+        before_temporary = connection.execute(
+            "SELECT * FROM terminal_configuration_m005"
+        ).fetchall()
+        before_migrations = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+
+    with pytest.raises(RuntimeError, match="terminal_configuration_m005"):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        after_configuration = connection.execute(
+            "SELECT * FROM terminal_configuration"
+        ).fetchall()
+        after_temporary = connection.execute(
+            "SELECT * FROM terminal_configuration_m005"
+        ).fetchall()
+        after_migrations = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+
+    assert after_configuration == before_configuration
+    assert after_temporary == before_temporary
+    assert after_migrations == before_migrations
+
+
+def test_m005_rejects_malformed_partial_terminal_contract_without_recording(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m005-malformed-partial.sqlite3"
+    create_recorded_m004_database(database_path, monkeypatch)
+    malformed_sql = BOUNDED_TERMINAL_CONFIGURATION_SQL.replace(
+        "BETWEEN 1 AND 99",
+        "BETWEEN 1 AND 100",
+    )
+    replace_terminal_configuration(
+        database_path,
+        malformed_sql,
+        shift_count=4,
+    )
+
+    with pytest.raises(RuntimeError, match="terminal_configuration"):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        m005_count = connection.execute(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 5"
+        ).fetchone()[0]
+        schema_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'terminal_configuration'"
+        ).fetchone()[0]
+    assert m005_count == 0
+    assert "BETWEEN 1 AND 100" in schema_sql
+
+
+def test_recorded_m005_recreates_only_missing_required_indexes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m005-recorded-missing-indexes.sqlite3"
+    create_recorded_m004_database(database_path, monkeypatch)
+    replace_terminal_configuration(
+        database_path,
+        BOUNDED_TERMINAL_CONFIGURATION_SQL,
+        shift_count=6,
+    )
+    record_m005(database_path)
+    required_indexes = (
+        "idx_shift_occurrences_one_active",
+        "idx_shift_occurrences_completed",
+        "idx_roll_entries_shift_card",
+    )
+    with sqlite3.connect(database_path) as connection:
+        for index_name in required_indexes:
+            connection.execute(f"DROP INDEX {index_name}")
+
+    db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        restored_indexes = {
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'index' AND name IN (?, ?, ?)
+                """,
+                required_indexes,
+            ).fetchall()
+        }
+        migration_count = connection.execute(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 5"
+        ).fetchone()[0]
+    assert restored_indexes == set(required_indexes)
+    assert migration_count == 1
+
+
+@pytest.mark.parametrize(
+    ("index_name", "malformed_sql"),
+    (
+        (
+            "idx_shift_occurrences_one_active",
+            "CREATE UNIQUE INDEX idx_shift_occurrences_one_active "
+            "ON shift_occurrences(shift_number) WHERE ended_at IS NULL",
+        ),
+        (
+            "idx_shift_occurrences_completed",
+            "CREATE INDEX idx_shift_occurrences_completed "
+            "ON shift_occurrences(shift_number)",
+        ),
+        (
+            "idx_roll_entries_shift_card",
+            "CREATE INDEX idx_roll_entries_shift_card ON roll_entries(card_id)",
+        ),
+    ),
+)
+def test_recorded_m005_rejects_malformed_required_index_contracts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    index_name: str,
+    malformed_sql: str,
+) -> None:
+    database_path = tmp_path / f"m005-malformed-{index_name}.sqlite3"
+    create_recorded_m004_database(database_path, monkeypatch)
+    replace_terminal_configuration(
+        database_path,
+        BOUNDED_TERMINAL_CONFIGURATION_SQL,
+        shift_count=6,
+    )
+    record_m005(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(f"DROP INDEX {index_name}")
+        connection.execute(malformed_sql)
+
+    with pytest.raises(RuntimeError, match=index_name):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        retained_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+            (index_name,),
+        ).fetchone()[0]
+    assert retained_sql == malformed_sql
+
+
+def test_recorded_m005_rejects_malformed_shift_occurrences_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m005-malformed-shift-occurrences.sqlite3"
+    create_recorded_m004_database(database_path, monkeypatch)
+    replace_terminal_configuration(
+        database_path,
+        BOUNDED_TERMINAL_CONFIGURATION_SQL,
+        shift_count=6,
+    )
+    record_m005(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute("DROP INDEX idx_shift_occurrences_one_active")
+        connection.execute("DROP INDEX idx_shift_occurrences_completed")
+        connection.execute("DROP TABLE shift_occurrences")
+        connection.execute(
+            """
+            CREATE TABLE shift_occurrences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                shift_number INTEGER NOT NULL
+                    CHECK (typeof(shift_number) = 'integer' AND shift_number >= 1),
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.execute(migrations.SHIFT_ONE_ACTIVE_INDEX_SQL)
+        connection.execute(migrations.SHIFT_COMPLETED_INDEX_SQL)
+
+    with pytest.raises(RuntimeError, match="shift_occurrences"):
+        db.init_db()
+
+
+def test_m005_failure_after_configuration_copy_rolls_back_schema_data_and_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m005-injected-rollback.sqlite3"
+    create_recorded_m004_database(database_path, monkeypatch)
+    replace_terminal_configuration(
+        database_path,
+        LEGACY_TERMINAL_CONFIGURATION_SQL,
+        shift_count=6,
+        version=17,
+        updated_at="2026-07-27 17:18:19",
+    )
+    with sqlite3.connect(database_path) as connection:
+        before_schema = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'terminal_configuration'"
+        ).fetchone()[0]
+        before_rows = connection.execute(
+            "SELECT * FROM terminal_configuration"
+        ).fetchall()
+        before_migrations = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+
+    original_validate = migrations.validate_shift_management_schema
+
+    def fail_after_rebuild(connection: sqlite3.Connection) -> None:
+        schema_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'terminal_configuration'"
+        ).fetchone()[0]
+        if "BETWEEN 1 AND 99" in schema_sql:
+            raise RuntimeError("injected M005 validation failure")
+        original_validate(connection)
+
+    monkeypatch.setattr(migrations, "validate_shift_management_schema", fail_after_rebuild)
+
+    with pytest.raises(RuntimeError, match="injected M005 validation failure"):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        after_schema = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'terminal_configuration'"
+        ).fetchone()[0]
+        after_rows = connection.execute(
+            "SELECT * FROM terminal_configuration"
+        ).fetchall()
+        after_migrations = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+        temporary_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'terminal_configuration_m005'"
+        ).fetchone()
+
+    assert after_schema == before_schema
+    assert after_rows == before_rows
+    assert after_migrations == before_migrations
+    assert temporary_table is None
 
 
 @pytest.mark.parametrize(

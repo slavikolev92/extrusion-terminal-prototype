@@ -32,15 +32,29 @@ FINAL_IMPORT_COLUMNS = (
 )
 
 
-TERMINAL_CONFIGURATION_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS terminal_configuration (
+def terminal_configuration_table_sql(
+    table_name: str = "terminal_configuration",
+    *,
+    bounded: bool = True,
+    if_not_exists: bool = True,
+) -> str:
+    existence_clause = " IF NOT EXISTS" if if_not_exists else ""
+    range_clause = "shift_count BETWEEN 1 AND 99" if bounded else "shift_count >= 1"
+    return f"""
+CREATE TABLE{existence_clause} {table_name} (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     shift_count INTEGER NOT NULL DEFAULT 4
-        CHECK (typeof(shift_count) = 'integer' AND shift_count >= 1),
+        CHECK (typeof(shift_count) = 'integer' AND {range_clause}),
     version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 """
+
+
+TERMINAL_CONFIGURATION_TABLE_SQL = terminal_configuration_table_sql()
+LEGACY_TERMINAL_CONFIGURATION_TABLE_SQL = terminal_configuration_table_sql(
+    bounded=False,
+)
 
 SHIFT_OCCURRENCES_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS shift_occurrences (
@@ -138,7 +152,152 @@ def _roll_shift_foreign_key_is_valid(connection: sqlite3.Connection) -> bool:
     )
 
 
-def validate_shift_management_schema(connection: sqlite3.Connection) -> None:
+def _normalized_contract_sql(sql: str) -> str:
+    normalized = "".join(_strip_sql_comments(sql).lower().split())
+    return normalized.replace("ifnotexists", "").rstrip(";")
+
+
+def _schema_object_sql(
+    connection: sqlite3.Connection,
+    object_type: str,
+    object_name: str,
+) -> str | None:
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = ? AND name = ?",
+        (object_type, object_name),
+    ).fetchone()
+    return None if row is None or row[0] is None else str(row[0])
+
+
+def _validate_exact_table_contract(
+    connection: sqlite3.Connection,
+    table_name: str,
+    accepted_definitions: tuple[str, ...],
+) -> str:
+    actual_sql = _schema_object_sql(connection, "table", table_name)
+    if actual_sql is None:
+        raise RuntimeError(f"{table_name} is missing")
+    normalized_actual = _normalized_contract_sql(actual_sql)
+    normalized_definitions = {
+        _normalized_contract_sql(definition): definition
+        for definition in accepted_definitions
+    }
+    matched_definition = normalized_definitions.get(normalized_actual)
+    if matched_definition is None:
+        raise RuntimeError(f"{table_name} does not match the required schema contract")
+    return matched_definition
+
+
+def _validate_terminal_configuration_values(
+    connection: sqlite3.Connection,
+) -> None:
+    rows = connection.execute(
+        """
+        SELECT id, shift_count, typeof(shift_count),
+               version, typeof(version),
+               updated_at, typeof(updated_at)
+        FROM terminal_configuration
+        """
+    ).fetchall()
+    if len(rows) != 1 or rows[0][0] != 1:
+        raise RuntimeError(
+            "terminal_configuration must contain exactly the singleton row id=1"
+        )
+    row = rows[0]
+    if row[2] != "integer" or not 1 <= row[1] <= 99:
+        raise RuntimeError(
+            "terminal_configuration.shift_count must be a SQLite integer from 1 to 99"
+        )
+    if row[4] != "integer" or row[3] < 1:
+        raise RuntimeError(
+            "terminal_configuration.version must be a positive SQLite integer"
+        )
+    if row[6] != "text" or not str(row[5]):
+        raise RuntimeError(
+            "terminal_configuration.updated_at must be non-empty text"
+        )
+
+
+def _validate_shift_occurrence_values(connection: sqlite3.Connection) -> None:
+    rows = connection.execute(
+        """
+        SELECT shift_number, typeof(shift_number),
+               started_at, typeof(started_at),
+               ended_at, typeof(ended_at),
+               version, typeof(version),
+               created_at, typeof(created_at),
+               updated_at, typeof(updated_at)
+        FROM shift_occurrences
+        """
+    ).fetchall()
+    for row in rows:
+        if row[1] != "integer" or row[0] < 1:
+            raise RuntimeError(
+                "shift_occurrences.shift_number must be a positive SQLite integer"
+            )
+        if row[3] != "text" or not str(row[2]):
+            raise RuntimeError("shift_occurrences.started_at must be non-empty text")
+        if row[4] is not None and (
+            row[5] != "text" or not str(row[4]) or str(row[4]) < str(row[2])
+        ):
+            raise RuntimeError("shift_occurrences.ended_at contains an invalid value")
+        if row[7] != "integer" or row[6] < 1:
+            raise RuntimeError(
+                "shift_occurrences.version must be a positive SQLite integer"
+            )
+        if row[9] != "text" or not str(row[8]):
+            raise RuntimeError("shift_occurrences.created_at must be non-empty text")
+        if row[11] != "text" or not str(row[10]):
+            raise RuntimeError("shift_occurrences.updated_at must be non-empty text")
+
+
+def _required_shift_index_contracts() -> tuple[tuple[str, str], ...]:
+    return (
+        ("idx_shift_occurrences_one_active", SHIFT_ONE_ACTIVE_INDEX_SQL),
+        ("idx_shift_occurrences_completed", SHIFT_COMPLETED_INDEX_SQL),
+        ("idx_roll_entries_shift_card", ROLL_SHIFT_CARD_INDEX_SQL),
+    )
+
+
+def _ensure_required_shift_indexes(connection: sqlite3.Connection) -> None:
+    for index_name, required_sql in _required_shift_index_contracts():
+        actual_sql = _schema_object_sql(connection, "index", index_name)
+        if actual_sql is None:
+            connection.execute(required_sql)
+            actual_sql = _schema_object_sql(connection, "index", index_name)
+        if (
+            actual_sql is None
+            or _normalized_contract_sql(actual_sql)
+            != _normalized_contract_sql(required_sql)
+        ):
+            raise RuntimeError(
+                f"{index_name} does not match the required index contract"
+            )
+
+
+def _validate_shift_management_tables(
+    connection: sqlite3.Connection,
+    *,
+    allow_legacy_configuration: bool,
+) -> str:
+    accepted_configuration_definitions = (TERMINAL_CONFIGURATION_TABLE_SQL,)
+    if allow_legacy_configuration:
+        accepted_configuration_definitions += (
+            LEGACY_TERMINAL_CONFIGURATION_TABLE_SQL,
+        )
+    matched_configuration = _validate_exact_table_contract(
+        connection,
+        "terminal_configuration",
+        accepted_configuration_definitions,
+    )
+    _validate_exact_table_contract(
+        connection,
+        "shift_occurrences",
+        (SHIFT_OCCURRENCES_TABLE_SQL,),
+    )
+    _validate_terminal_configuration_values(connection)
+    _validate_shift_occurrence_values(connection)
+
     roll_columns = _table_columns(connection, "roll_entries")
     if roll_columns is None or "shift_occurrence_id" not in roll_columns:
         raise RuntimeError(
@@ -150,6 +309,30 @@ def validate_shift_management_schema(connection: sqlite3.Connection) -> None:
             "foreign key to shift_occurrences(id); restore a known-good backup "
             "or repair the partial schema before retrying M002"
         )
+    return (
+        "legacy"
+        if _normalized_contract_sql(matched_configuration)
+        == _normalized_contract_sql(LEGACY_TERMINAL_CONFIGURATION_TABLE_SQL)
+        else "current"
+    )
+
+
+def _reject_m005_temporary_table(connection: sqlite3.Connection) -> None:
+    temporary_table = "terminal_configuration_m005"
+    if _table_columns(connection, temporary_table) is not None:
+        raise RuntimeError(
+            f"{temporary_table} already exists; repair the partial M005 schema "
+            "before retrying"
+        )
+
+
+def validate_shift_management_schema(connection: sqlite3.Connection) -> None:
+    _reject_m005_temporary_table(connection)
+    _validate_shift_management_tables(
+        connection,
+        allow_legacy_configuration=False,
+    )
+    _ensure_required_shift_indexes(connection)
 
 
 def _pallet_column_has_required_metadata(
@@ -698,13 +881,15 @@ def _apply_shift_management(connection: sqlite3.Connection) -> None:
             "REFERENCES shift_occurrences(id) ON DELETE RESTRICT"
         )
         roll_columns.add("shift_occurrence_id")
-    if roll_columns is not None:
-        validate_shift_management_schema(connection)
-
     connection.execute(SHIFT_ONE_ACTIVE_INDEX_SQL)
     connection.execute(SHIFT_COMPLETED_INDEX_SQL)
     if roll_columns is not None:
         connection.execute(ROLL_SHIFT_CARD_INDEX_SQL)
+        _validate_shift_management_tables(
+            connection,
+            allow_legacy_configuration=True,
+        )
+        _ensure_required_shift_indexes(connection)
 
 
 def _apply_roll_pallet_assignment(connection: sqlite3.Connection) -> None:
@@ -770,11 +955,52 @@ def apply_m004_rewinding_return_workflow(
         connection.execute(index_sql)
 
 
+def apply_m005_shift_schema_contract(connection: sqlite3.Connection) -> None:
+    _reject_m005_temporary_table(connection)
+    configuration_contract = _validate_shift_management_tables(
+        connection,
+        allow_legacy_configuration=True,
+    )
+    _ensure_required_shift_indexes(connection)
+    if configuration_contract == "legacy":
+        temporary_table = "terminal_configuration_m005"
+        connection.execute(
+            terminal_configuration_table_sql(
+                temporary_table,
+                if_not_exists=False,
+            )
+        )
+        connection.execute(
+            f"""
+            INSERT INTO {temporary_table} (
+                id, shift_count, version, updated_at
+            )
+            SELECT id, shift_count, version, updated_at
+            FROM terminal_configuration
+            """
+        )
+        connection.execute("DROP TABLE terminal_configuration")
+        connection.execute(TERMINAL_CONFIGURATION_TABLE_SQL)
+        connection.execute(
+            f"""
+            INSERT INTO terminal_configuration (
+                id, shift_count, version, updated_at
+            )
+            SELECT id, shift_count, version, updated_at
+            FROM {temporary_table}
+            """
+        )
+        connection.execute(f"DROP TABLE {temporary_table}")
+
+    validate_shift_management_schema(connection)
+
+
 MIGRATIONS = (
     Migration(1, "shift_manager_import_fields", _apply_shift_manager_import_fields),
     Migration(2, "shift_management", _apply_shift_management),
     Migration(3, "roll_pallet_assignment", _apply_roll_pallet_assignment),
     Migration(4, "rewinding_return_workflow", apply_m004_rewinding_return_workflow),
+    Migration(5, "shift_schema_contract", apply_m005_shift_schema_contract),
 )
 
 

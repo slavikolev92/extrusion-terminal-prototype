@@ -1370,6 +1370,53 @@ async function assertDelayedSameCardBootstrap(context, current, late, viewport) 
 }
 
 
+async function assertCorrectionLockDuringDelayedBootstrap(context, current, late) {
+  const machineId = 1;
+  const cardId = fixture.cards.machine_1_running;
+  await navigate(current, cardId);
+  await removeSchedule(current, machineId, false);
+  const currentHtml = await captureTerminalHtml(context, cardId);
+  const expected = await lifecycleCandidateFromMarkup(current, machineId);
+  await setRawLifecycle(current, machineId, "{not-json");
+
+  let snapshotRequested;
+  let releaseSnapshot;
+  const snapshotSeen = new Promise((resolve) => { snapshotRequested = resolve; });
+  const snapshotRelease = new Promise((resolve) => { releaseSnapshot = resolve; });
+  await late.route("**/terminal/snapshot*", async (route) => {
+    snapshotRequested();
+    await snapshotRelease;
+    await route.continue();
+  });
+  await installCapturedTerminalRoute(late, cardId, currentHtml);
+  await navigateCapturedTerminal(late, cardId);
+  await Promise.race([
+    snapshotSeen,
+    late.waitForTimeout(3_000).then(() => {
+      throw new Error("Correction-lock bootstrap did not request authoritative snapshot.");
+    }),
+  ]);
+
+  const row = late.locator(".roll-row[data-roll-id]").first();
+  await row.locator("[data-roll-edit-open]").click();
+  assertEqual(await row.getAttribute("data-roll-edit-open"), "true", "pending correction edit state");
+  assert(await late.locator("[data-roll-change-open]").isDisabled(), "Pending correction left editor action enabled.");
+  assert(await late.locator("[data-roll-change-advance]").isDisabled(), "Pending correction left quick acknowledgement enabled.");
+
+  releaseSnapshot();
+  await waitForLifecycle(late, machineId, expected);
+  assert(await late.locator("[data-roll-change-reload-alert]").isHidden(), "Current authority incorrectly required reload.");
+  assert(await late.locator("[data-roll-change-open]").isDisabled(), "Authority completion undid the active correction editor lock.");
+  assert(await late.locator("[data-roll-change-advance]").isDisabled(), "Authority completion undid the active correction quick-action lock.");
+
+  const rollId = await row.getAttribute("data-roll-id");
+  await late.locator(`[data-roll-actions-for="${rollId}"] [data-roll-row-cancel]`).click();
+  assertEqual(await row.getAttribute("data-roll-edit-open"), "false", "closed correction edit state");
+  assert(await late.locator("[data-roll-change-open]").isEnabled(), "Closing correction did not restore editor action.");
+  assert(await late.locator("[data-roll-change-advance]").isEnabled(), "Closing correction did not restore quick acknowledgement.");
+}
+
+
 async function assertDelayedReplacementBootstrap(context, current, late) {
   const machineId = 1;
   const cardId = fixture.cards.machine_1_running;
@@ -1474,6 +1521,7 @@ async function assertLifecycleRequestFailure(context, current, late) {
 
 const bootstrapCases = {
   "same-card": assertDelayedSameCardBootstrap,
+  "correction-lock": assertCorrectionLockDuringDelayedBootstrap,
   replacement: assertDelayedReplacementBootstrap,
   empty: assertDelayedEmptyMachineBootstrap,
   malformed: (context, current, late) => assertLifecycleSchemaTolerance(

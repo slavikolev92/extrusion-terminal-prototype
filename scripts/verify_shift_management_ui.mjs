@@ -646,8 +646,11 @@ function databaseIdentityMarker(configuration) {
   const digest = createHash("sha256")
     .update(`${fs.realpathSync(databasePath)}\0${configuration.version}\0${configuration.updated_at}`)
     .digest();
+  const candidateShiftCount = 1 + (digest.readUInt32BE(0) % 99);
   return {
-    shift_count: 100_000 + (digest.readUInt32BE(0) % 900_000),
+    shift_count: candidateShiftCount === configuration.shift_count
+      ? (candidateShiftCount % 99) + 1
+      : candidateShiftCount,
     version: 100_000 + (digest.readUInt32BE(4) % 900_000),
     updated_at: configuration.updated_at,
   };

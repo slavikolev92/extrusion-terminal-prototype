@@ -169,11 +169,14 @@ export function bootstrapRollChangeCountdown({
       return;
     }
     if (lifecycleReloadRequired) return;
+    const correctionOpen = hasOpenRollCorrection();
     if (openControl) {
-      openControl.disabled = openControl.dataset.correctionInitiallyDisabled === "true";
+      openControl.disabled = correctionOpen
+        || openControl.dataset.correctionInitiallyDisabled === "true";
     }
     if (advanceControl) {
-      advanceControl.disabled = advanceControl.dataset.correctionInitiallyDisabled === "true";
+      advanceControl.disabled = correctionOpen
+        || advanceControl.dataset.correctionInitiallyDisabled === "true";
     }
   }
 

@@ -1099,6 +1099,121 @@ def test_admin_timing_ledger_rejects_overlapping_closed_segments(connection):
     assert result.messages == ("Времевите сегменти не могат да се застъпват.",)
 
 
+def prepare_running_card_with_closed_and_open_timing(order_number: str) -> tuple[int, int]:
+    card_id = release_ready_card(order_number)
+    start_card(card_id)
+    with db.connect() as timing_connection:
+        open_segment_id = int(
+            timing_connection.execute(
+                """
+                SELECT id
+                FROM production_time_segments
+                WHERE card_id = ? AND ended_at IS NULL
+                """,
+                (card_id,),
+            ).fetchone()["id"]
+        )
+        timing_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = '2026-06-14 10:00:00'
+            WHERE id = ?
+            """,
+            (open_segment_id,),
+        )
+        timing_connection.execute(
+            """
+            INSERT INTO production_time_segments (
+                card_id, started_at, ended_at, end_reason
+            )
+            VALUES (?, '2026-06-14 08:00:00', '2026-06-14 09:00:00', 'correction')
+            """,
+            (card_id,),
+        )
+    return card_id, open_segment_id
+
+
+def assert_timing_overlap_rejection_preserves_ledger(card_id: int, before, result) -> None:
+    after = db.fetch_admin_card_detail(card_id)
+    assert not result.ok
+    assert result.messages == ("Времевите сегменти не могат да се застъпват.",)
+    assert after["version"] == before["version"]
+    assert after["timing_segments"] == before["timing_segments"]
+
+
+def test_individual_timing_edit_rejects_open_segment_moved_across_closed_segment(connection):
+    card_id, open_segment_id = prepare_running_card_with_closed_and_open_timing("26071")
+    before = db.fetch_admin_card_detail(card_id)
+
+    result = db.update_timing_segment(
+        card_id,
+        open_segment_id,
+        before["version"],
+        "2026-06-14 08:30:00",
+        "",
+        "",
+    )
+
+    assert_timing_overlap_rejection_preserves_ledger(card_id, before, result)
+
+
+def test_individual_timing_add_rejects_closed_segment_crossing_open_segment(connection):
+    card_id, _ = prepare_running_card_with_closed_and_open_timing("26072")
+    before = db.fetch_admin_card_detail(card_id)
+
+    result = db.add_timing_segment(
+        card_id,
+        before["version"],
+        "2026-06-14 09:30:00",
+        "2026-06-14 10:30:00",
+        "correction",
+    )
+
+    assert_timing_overlap_rejection_preserves_ledger(card_id, before, result)
+
+
+def test_bulk_timing_edit_rejects_open_segment_moved_across_closed_segment(connection):
+    card_id, open_segment_id = prepare_running_card_with_closed_and_open_timing("26073")
+    before = db.fetch_admin_card_detail(card_id)
+
+    result = db.update_admin_timing_ledger(
+        card_id,
+        before["version"],
+        {
+            open_segment_id: {
+                "started_at": "2026-06-14 08:30:00",
+                "ended_at": "",
+                "end_reason": "",
+            }
+        },
+        set(),
+        [],
+    )
+
+    assert_timing_overlap_rejection_preserves_ledger(card_id, before, result)
+
+
+def test_bulk_timing_add_rejects_closed_segment_crossing_open_segment(connection):
+    card_id, _ = prepare_running_card_with_closed_and_open_timing("26074")
+    before = db.fetch_admin_card_detail(card_id)
+
+    result = db.update_admin_timing_ledger(
+        card_id,
+        before["version"],
+        {},
+        set(),
+        [
+            {
+                "started_at": "2026-06-14 09:30:00",
+                "ended_at": "2026-06-14 10:30:00",
+                "end_reason": "correction",
+            }
+        ],
+    )
+
+    assert_timing_overlap_rejection_preserves_ledger(card_id, before, result)
+
+
 def test_admin_timing_correction_allows_adjacent_closed_segments(connection):
     card_id = release_ready_card("26052")
     assert db.add_timing_segment(

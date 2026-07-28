@@ -2294,7 +2294,7 @@ def _update_admin_timing_ledger(
             )
         )
     final_segments.extend(parsed_new)
-    overlap_result = validate_no_overlapping_closed_segments(final_segments)
+    overlap_result = validate_no_overlapping_timing_segments(final_segments)
     if not overlap_result.ok:
         return overlap_result
 
@@ -2414,24 +2414,28 @@ def _update_admin_timing_ledger(
     return RuleResult(True, ("Времето е записано.",))
 
 
-def validate_no_overlapping_closed_segments(
+def validate_no_overlapping_timing_segments(
     segments: list[dict[str, str | None]],
 ) -> RuleResult:
-    closed_segments = sorted(
-        (
-            segment
-            for segment in segments
-            if segment.get("ended_at") is not None
+    ordered_segments = sorted(
+        segments,
+        key=lambda segment: (
+            str(segment["started_at"]),
+            str(segment.get("ended_at") or ""),
         ),
-        key=lambda segment: (str(segment["started_at"]), str(segment["ended_at"])),
     )
+    has_previous = False
     previous_end: str | None = None
-    for segment in closed_segments:
+    for segment in ordered_segments:
         started_at = str(segment["started_at"])
-        ended_at = str(segment["ended_at"])
-        if previous_end is not None and started_at < previous_end:
+        if has_previous and (previous_end is None or started_at < previous_end):
             return RuleResult(False, ("Времевите сегменти не могат да се застъпват.",))
-        previous_end = ended_at
+        previous_end = (
+            str(segment["ended_at"])
+            if segment.get("ended_at") is not None
+            else None
+        )
+        has_previous = True
     return RuleResult(True)
 
 
@@ -2522,22 +2526,31 @@ def validate_timing_segment_change(
         if open_segment_count == 0:
             return RuleResult(False, ("Картите в изработване трябва да запазят отворен времеви сегмент.",))
 
-    if ended_at is not None:
-        overlap = connection.execute(
-            """
-            SELECT id
-            FROM production_time_segments
-            WHERE card_id = ?
-              AND ended_at IS NOT NULL
-              AND started_at < ?
-              AND ended_at > ?
-              AND (? IS NULL OR id <> ?)
-            LIMIT 1
-            """,
-            (card["id"], ended_at, started_at, segment_id, segment_id),
-        ).fetchone()
-        if overlap:
-            return RuleResult(False, ("Времевите сегменти не могат да се застъпват.",))
+    query = """
+        SELECT started_at, ended_at
+        FROM production_time_segments
+        WHERE card_id = ?
+    """
+    values: list[Any] = [card["id"]]
+    if segment_id is not None:
+        query += " AND id <> ?"
+        values.append(segment_id)
+    proposed_segments = [
+        {
+            "started_at": str(row["started_at"]),
+            "ended_at": row["ended_at"],
+        }
+        for row in connection.execute(query, values).fetchall()
+    ]
+    proposed_segments.append(
+        {
+            "started_at": started_at,
+            "ended_at": ended_at,
+        }
+    )
+    overlap_result = validate_no_overlapping_timing_segments(proposed_segments)
+    if not overlap_result.ok:
+        return overlap_result
 
     return RuleResult(True)
 
@@ -4250,8 +4263,8 @@ def delete_admin_planning_card(card_id: int, loaded_version: int) -> RuleResult:
         card = connection.execute(
             """
             SELECT id, order_number, status, version, machine_id, first_started_at,
-                   tare_weight, actual_raw_material_used, raw_material_brand_grade,
-                   raw_material_batch_lot
+                   tare_weight, current_pallet_number, actual_raw_material_used,
+                   raw_material_brand_grade, raw_material_batch_lot
             FROM cards
             WHERE id = ?
             """,
@@ -4297,7 +4310,7 @@ def card_has_entered_production_data(
     connection: sqlite3.Connection,
     card: sqlite3.Row,
 ) -> bool:
-    if card["tare_weight"] is not None:
+    if card["tare_weight"] is not None or card["current_pallet_number"] is not None:
         return True
 
     material_fields = (
