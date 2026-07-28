@@ -5,21 +5,23 @@ Date: 2026-07-28 UTC
 ## Revision provenance
 
 - Executable application/verifier candidate:
-  `48fc57b7fd111707b65fa42be07baadb2d48b3c9`.
+  `bfe1e417b4fa1605b700fa119ff4f0a1f8477421`.
 - Initial Task 10 verdict commit:
   `231f780386a7a3eeeeff2ea1aae2a0aa09fd20f9`. That commit is
   documentation-only and changes exactly `v2-files/AGENTS.md`,
   `v2-files/RELEASE-CANDIDATE-AUDIT.md`, and
   `v2-files/RELEASE-CANDIDATE-VERDICT.md`.
-- This review correction also changes tracked documentation only. Its own
-  commit SHA cannot be embedded in the commit it identifies; inspect the Git
-  revision containing this text for that follow-up SHA. Therefore `231f780` is
-  the initial verdict commit, not the final documentation HEAD after this
-  correction.
+- The first provenance correction is
+  `ea493dcc2367bfc5650529b515f3fb83502e030b`; it changes only this verdict and
+  the release-candidate audit plan.
+- The revision containing this update is also documentation-only. Its own
+  commit SHA cannot be embedded recursively; inspect the Git revision
+  containing this text for that final documentation SHA. Neither `231f780` nor
+  `ea493dc` is the executable candidate.
 
-The cited 910 Python, 61 migration, and 19 Node results were run on executable
-candidate `48fc57b`. They were not rerun for documentation-only commit
-`231f780` and are not represented as results of this documentation correction.
+The cited 912 Python, 61 migration, and 19 Node results were run on executable
+candidate `bfe1e41`. They are not represented as results of the later
+documentation-only lineage.
 
 Production deployment is not authorized. Stage A passed, but the mandatory
 production gates in Tasks 8 and 9 were not and cannot be performed without a
@@ -30,15 +32,20 @@ currently deployed with that database.
 
 `PASS WITH DOCUMENTED NON-BLOCKING LIMITATIONS`
 
-There is no open Stage A technical or data-integrity defect. The final scoped
-reviews closed with 0 Critical, 0 Important, and 0 Minor findings. Verification
-for the exact candidate includes:
+There is no open Stage A technical or data-integrity defect. The final
+whole-branch review reported one Important roll-verifier path-boundary finding;
+candidate `bfe1e41` closes it with two RED/GREEN sentinel regressions and fresh
+live verification. There are now 0 open Critical, Important, or Minor findings.
+Verification for the exact candidate includes:
 
-- 910 passing Python tests, including 61 migration tests, and 19 passing Node
+- 912 passing Python tests, including 61 migration tests, and 19 passing Node
   tests;
 - all required live rewinding and countdown verifiers at both required
   viewports, followed by the repaired final auxiliary roll/pallet verifier and
   three fresh complete shift-management verifier runs;
+- the refreshed roll/pallet verifier at `1536x1024` and `1366x768`, including
+  Admin, normal 2-page A4 output, 5-page overflow output, zero console/page
+  errors, `integrity_check = ok`, and zero foreign-key violations;
 - the complete 71-row real CSV import, with eight real cards exercised across
   four machines and two shifts;
 - release/resequence/replan, start/pause/resume, exact roll/tare/pallet work,
@@ -57,8 +64,8 @@ substitute for the missing production-backup and production-clone evidence.
 
 | Gate | Result | Deployment ruling |
 | --- | --- | --- |
-| Committed executable candidate and clean tracked code tree | Pass at `48fc57b7fd111707b65fa42be07baadb2d48b3c9`; the initial verdict commit `231f780386a7a3eeeeff2ea1aae2a0aa09fd20f9` and this correction are documentation-only | Satisfies the candidate-freeze prerequisite only. |
-| Complete automated suites | Pass: 910 Python, 61 migration, 19 Node | Satisfies Stage A only. |
+| Committed executable candidate and clean tracked code tree | Pass at `bfe1e417b4fa1605b700fa119ff4f0a1f8477421`; `231f780386a7a3eeeeff2ea1aae2a0aa09fd20f9`, `ea493dcc2367bfc5650529b515f3fb83502e030b`, and the revision containing this update are documentation-only | Satisfies the candidate-freeze prerequisite only. |
+| Complete automated suites | Pass: 912 Python, 61 migration, 19 Node | Satisfies Stage A only. |
 | Stage A combined workflow and final live verifiers | `PASS WITH DOCUMENTED NON-BLOCKING LIMITATIONS` | Satisfies Stage A only. |
 | Immutable production backup and deployed-revision identity | Missing | Blocking. Task 8 must not start from a live database or an unsafe raw copy. |
 | Production M001 legacy-data profile and treatment decision | Not run | Blocking. No legacy mapping may be guessed. |
@@ -85,9 +92,13 @@ substitute for the missing production-backup and production-clone evidence.
   `.superpowers/sdd/RELEASE-CANDIDATE-AUDIT/final-ui-report.md`,
   `final-verifier-maintenance-report.md`, and
   `final-verifier-maintenance-fix-round-1-review.md`
+- final whole-branch review and closure:
+  `.superpowers/sdd/RELEASE-CANDIDATE-AUDIT/final-whole-branch-review.md` and
+  `final-whole-branch-fix-report.md`
 - machine-readable Stage A evidence:
   `artifacts/ui-checks/release-candidate-audit/final-refresh/`, `final-ui/`,
-  `final-verifier-fix/`, and `final-verifier-fix-round-1/`
+  `final-verifier-fix/`, `final-verifier-fix-round-1/`, and
+  `final-whole-review-fix/roll-pallet-live/`
 - final Task 7 and verifier reviews: every reported Critical, Important, and
   Minor finding is closed; the parked countdown product decision is unchanged.
 

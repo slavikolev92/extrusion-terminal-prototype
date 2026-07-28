@@ -10,9 +10,19 @@
 
 ## Execution Status — 2026-07-28
 
-- Tasks 1-7 and the final verifier-maintenance closure are complete. Stage A
-  is `PASS WITH DOCUMENTED NON-BLOCKING LIMITATIONS` on application candidate
-  `48fc57b7fd111707b65fa42be07baadb2d48b3c9`.
+- Tasks 1-7 and the final whole-branch verifier-fix closure are complete. Stage
+  A is `PASS WITH DOCUMENTED NON-BLOCKING LIMITATIONS` on executable candidate
+  `bfe1e417b4fa1605b700fa119ff4f0a1f8477421`.
+- The final whole-branch review found one Important artifact-path guard defect.
+  Candidate `bfe1e41` closes it before evidence mutation with two sentinel
+  RED/GREEN regressions. The exact candidate passes 12 focused roll-verifier
+  safety tests, 912 complete Python tests including 61 migration tests, and 19
+  Node tests. Its fresh roll/pallet live verifier passes at `1536x1024` and
+  `1366x768`, including Admin, normal/overflow A4 PDFs, zero console/page
+  errors, integrity `ok`, and zero foreign-key violations. Evidence is under
+  `artifacts/ui-checks/release-candidate-audit/final-whole-review-fix/roll-pallet-live/`.
+- Later verdict/audit record updates are documentation-only and do not create a
+  different executable candidate.
 - Task 8 is pending. It requires a user-supplied immutable SQLite-safe
   production backup and the exact deployed application revision; neither was
   supplied during this audit.
