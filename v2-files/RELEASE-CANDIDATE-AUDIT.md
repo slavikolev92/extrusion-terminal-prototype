@@ -8,6 +8,19 @@
 
 **Tech Stack:** Python 3.12, FastAPI, direct `sqlite3`, Pytest, Node.js, Playwright 1.61.0, HTML/CSS print output, SQLite-safe `app.backups` commands.
 
+## Execution Status — 2026-07-28
+
+- Tasks 1-7 and the final verifier-maintenance closure are complete. Stage A
+  is `PASS WITH DOCUMENTED NON-BLOCKING LIMITATIONS` on application candidate
+  `48fc57b7fd111707b65fa42be07baadb2d48b3c9`.
+- Task 8 is pending. It requires a user-supplied immutable SQLite-safe
+  production backup and the exact deployed application revision; neither was
+  supplied during this audit.
+- Task 9 is pending and cannot begin until Task 8 produces the approved M001
+  treatment and a fresh production-backup clone.
+- Task 10 issued `NO-GO` in `v2-files/RELEASE-CANDIDATE-VERDICT.md`. This does
+  not mark Tasks 8-9 complete and does not authorize deployment.
+
 ## Global Constraints
 
 - Treat the candidate as frozen during the audit; any functional fix creates a new candidate and requires rerunning the affected checks plus the complete suite.
