@@ -2,8 +2,24 @@
 
 Date: 2026-07-28 UTC
 
-Audited application candidate:
-`48fc57b7fd111707b65fa42be07baadb2d48b3c9`
+## Revision provenance
+
+- Executable application/verifier candidate:
+  `48fc57b7fd111707b65fa42be07baadb2d48b3c9`.
+- Initial Task 10 verdict commit:
+  `231f780386a7a3eeeeff2ea1aae2a0aa09fd20f9`. That commit is
+  documentation-only and changes exactly `v2-files/AGENTS.md`,
+  `v2-files/RELEASE-CANDIDATE-AUDIT.md`, and
+  `v2-files/RELEASE-CANDIDATE-VERDICT.md`.
+- This review correction also changes tracked documentation only. Its own
+  commit SHA cannot be embedded in the commit it identifies; inspect the Git
+  revision containing this text for that follow-up SHA. Therefore `231f780` is
+  the initial verdict commit, not the final documentation HEAD after this
+  correction.
+
+The cited 910 Python, 61 migration, and 19 Node results were run on executable
+candidate `48fc57b`. They were not rerun for documentation-only commit
+`231f780` and are not represented as results of this documentation correction.
 
 Production deployment is not authorized. Stage A passed, but the mandatory
 production gates in Tasks 8 and 9 were not and cannot be performed without a
@@ -41,12 +57,12 @@ substitute for the missing production-backup and production-clone evidence.
 
 | Gate | Result | Deployment ruling |
 | --- | --- | --- |
-| Committed candidate and clean tracked code tree | Pass at `48fc57b7fd111707b65fa42be07baadb2d48b3c9` before this documentation slice | Satisfies the candidate-freeze prerequisite only. |
+| Committed executable candidate and clean tracked code tree | Pass at `48fc57b7fd111707b65fa42be07baadb2d48b3c9`; the initial verdict commit `231f780386a7a3eeeeff2ea1aae2a0aa09fd20f9` and this correction are documentation-only | Satisfies the candidate-freeze prerequisite only. |
 | Complete automated suites | Pass: 910 Python, 61 migration, 19 Node | Satisfies Stage A only. |
 | Stage A combined workflow and final live verifiers | `PASS WITH DOCUMENTED NON-BLOCKING LIMITATIONS` | Satisfies Stage A only. |
 | Immutable production backup and deployed-revision identity | Missing | Blocking. Task 8 must not start from a live database or an unsafe raw copy. |
 | Production M001 legacy-data profile and treatment decision | Not run | Blocking. No legacy mapping may be guessed. |
-| Full M001-M005 migration on a production-backup clone | Not run | Blocking. Schema/data preservation and migration timing are unproven for production. |
+| Full current M001-M005 migration chain, extended through M006 only if Task 8 approves that new migration, on a production-backup clone | Not run | Blocking. Schema/data preservation and migration timing are unproven for production. |
 | Production-clone second-run idempotence, integrity, and foreign keys | Not run | Blocking. Disposable-database evidence is insufficient. |
 | Production-clone health, Admin, Terminal, representative-card, correction, and print smoke | Not run | Blocking. |
 | Previous-revision rollback rehearsal and observed recovery timing | Not run | Blocking. No production deployment runbook may claim rehearsed rollback yet. |
@@ -57,7 +73,7 @@ substitute for the missing production-backup and production-clone evidence.
 | --- | --- | --- | --- |
 | No immutable SQLite-safe production backup or exact deployed revision was supplied. | User / production system owner supplies both; release engineer fingerprints and protects them. | Tasks 8 and 9 cannot be performed safely or reproducibly. | Mandatory blocker. Do not deploy or profile the live runtime database. |
 | M001 legacy quantity/unit values and card/import-source disagreements are unprofiled. | Release engineer after the immutable evidence is supplied; user decides any ambiguous business mapping. | Existing production rows may require explicit remediation, and guessing could misstate ordered values or route meaning. | Mandatory blocker. Complete Task 8 and obtain any required mapping approval before migration rehearsal. |
-| The full M001-M005 chain, timing, invariant comparison, production-clone smoke, repeat-run idempotence, and rollback are unproved on production-shaped data. | Release engineer performs Task 9; production operator confirms the maintenance and recovery procedure. | Migration duration, production-data preservation, startup behavior, and recovery time are unknown for the real database. | Mandatory blocker. Complete Task 9 before any production `GO`. |
+| The full current M001-M005 chain—or M001-M006 only if Task 8 approves the next migration—plus timing, invariant comparison, production-clone smoke, repeat-run idempotence, and rollback are unproved on production-shaped data. | Release engineer performs Task 9; production operator confirms the maintenance and recovery procedure. | Migration duration, production-data preservation, startup behavior, and recovery time are unknown for the real database. | Mandatory blocker. Complete Task 9 before any production `GO`. |
 | Accepted documents conflict on whether countdown quick acknowledgement anchors to the prior scheduled time or to the operator click time. Current click-time behavior is tested and unchanged. | User / product owner. | Operators will continue receiving the next interval from click time; changing the anchor later would change reminder behavior and requires updated tests and documentation. | Decision remains open for morning review. Before production approval, explicitly accept click-time behavior or authorize, implement, and reverify a different anchor. No semantic change or waiver is made here. |
 | Task 15, the state-based lifecycle buttons and split terminal action header, remains deferred and unimplemented even though `v2-files/PLAN.md` names it before pilot use. | User / product owner chooses implementation or waiver; implementation owner completes and verifies it if retained. | The pilot otherwise ships the current tested action-header presentation rather than the approved Task 15 presentation. Backend lifecycle rules remain unchanged. | Unresolved production prerequisite. Implement and verify Task 15, or explicitly waive it before pilot production. This verdict records no waiver. |
 

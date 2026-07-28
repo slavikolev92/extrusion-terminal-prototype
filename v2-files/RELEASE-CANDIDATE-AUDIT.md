@@ -188,7 +188,7 @@
 - Create: `artifacts/ui-checks/release-candidate-audit/real-order-import.json`
 
 **Interfaces:**
-- Consumes: the exact current Shift Manager CSV export and a fresh M001-M004 schema.
+- Consumes: the exact current Shift Manager CSV export and a fresh M001-M005 schema.
 - Produces: complete import counts, skipped/error categories, order/card invariants, and a reusable disposable database for lifecycle rehearsal.
 
 - [ ] **Step 1: Fingerprint the CSV**
@@ -197,7 +197,7 @@
 
 - [ ] **Step 2: Initialize a fresh temporary database**
 
-  Set both `EXTRUSION_DB_PATH` and `EXTRUSION_DATA_DIR` under `.test-runtime/release-candidate-audit/`, run `app.db.init_db()`, and confirm migrations `(1, 2, 3, 4)` are recorded once.
+  Set both `EXTRUSION_DB_PATH` and `EXTRUSION_DATA_DIR` under `.test-runtime/release-candidate-audit/`, run `app.db.init_db()`, and confirm migrations `(1, 2, 3, 4, 5)` are recorded once.
 
 - [ ] **Step 3: Import every CSV row**
 
@@ -363,7 +363,11 @@
 
 - [ ] **Step 4: Decide the M001 data treatment**
 
-  If every category maps provably, specify M005 with a literal deterministic mapping and obtain user approval before implementation. If any category is ambiguous, leave values unchanged and define counted manual-remediation categories.
+  If every category maps provably and a data migration is required, specify the
+  next available migration (currently M006) with a literal deterministic
+  mapping and obtain user approval before implementation. If no data migration
+  is required, record that decision explicitly. If any category is ambiguous,
+  leave values unchanged and define counted manual-remediation categories.
 
 - [ ] **Step 5: Append migration maintenance evidence**
 
@@ -379,7 +383,9 @@
 - Create: `v2-files/PRODUCTION-DEPLOYMENT-RUNBOOK.md`
 
 **Interfaces:**
-- Consumes: frozen committed candidate, approved M001/M005 decision, and fresh production backup clone.
+- Consumes: frozen committed executable candidate, the approved M001 treatment
+  decision (no new migration or an approved next migration, currently M006),
+  and a fresh production backup clone.
 - Produces: observed migration timing, invariant comparison, smoke results, repeat-run proof, and exact deployment/rollback commands.
 
 - [ ] **Step 1: Capture pre-migration invariants**
@@ -388,7 +394,10 @@
 
 - [ ] **Step 2: Run the complete initialization/migration chain**
 
-  Record applied versions, duration, logs, exit status, integrity, and foreign-key results. Require only approved schema/value transformations.
+  Run M001-M005 when Task 8 approves no new migration, or run through M006 if
+  Task 8 approves and implements that next migration. Record applied versions,
+  duration, logs, exit status, integrity, and foreign-key results. Require only
+  approved schema/value transformations.
 
 - [ ] **Step 3: Run production-clone smoke workflows**
 
