@@ -221,10 +221,3 @@ Before pilot use, this repository must include:
 - basic troubleshooting notes for failed imports, duplicate releases, and server restart
 
 Do not expose the app directly to the public internet. Remote access, if used, should follow the confirmed Tailscale direction from `README.md`.
-
-## Active V2 Update Workspace
-
-For work in the July 25-26, 2026 update, read `v2-files/AGENTS.md` and follow its
-routing. The phrase “maintain the database migration system” activates the full
-assessment, implementation, testing, and recordkeeping workflow defined there.
-Do not require the user to repeat technical migration instructions.
