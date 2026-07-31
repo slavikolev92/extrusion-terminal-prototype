@@ -402,7 +402,7 @@ def test_roll_pallet_verifier_rejects_symlinked_intermediate_artifact_component_
     assert "ARTIFACT_DIR guard path must not contain symlinks." in result.stderr
 
 
-def test_roll_pallet_fixture_creates_only_the_four_required_card_kinds(tmp_path):
+def test_roll_pallet_fixture_creates_only_the_six_required_card_kinds(tmp_path):
     runtime_dir = REPO_ROOT / ".test-runtime" / f"roll-pallet-safety-{tmp_path.name}"
     database_path = runtime_dir / "fixture.sqlite3"
     output_path = runtime_dir / "fixture.json"
@@ -428,9 +428,11 @@ def test_roll_pallet_fixture_creates_only_the_four_required_card_kinds(tmp_path)
         "running",
         "completed_mixed",
         "completed_all_blank",
+        "completed_one_pallet",
+        "completed_two_pallets",
         "completed_overflow",
     }
-    assert len(set(payload["cards"].values())) == 4
+    assert len(set(payload["cards"].values())) == 6
 
     with sqlite3.connect(database_path) as connection:
         statuses = dict(
@@ -449,6 +451,17 @@ def test_roll_pallet_fixture_creates_only_the_four_required_card_kinds(tmp_path)
             """,
             (payload["cards"]["completed_overflow"],),
         ).fetchone()[0]
+        sparse_pallet_counts = {
+            key: connection.execute(
+                """
+                SELECT COUNT(DISTINCT pallet_number)
+                FROM roll_entries
+                WHERE card_id = ? AND pallet_number IS NOT NULL
+                """,
+                (payload["cards"][key],),
+            ).fetchone()[0]
+            for key in ("completed_one_pallet", "completed_two_pallets")
+        }
         clear_candidate_pallet = connection.execute(
             "SELECT pallet_number FROM roll_entries WHERE id = ?",
             (payload["clear_candidate_roll_id"],),
@@ -478,8 +491,16 @@ def test_roll_pallet_fixture_creates_only_the_four_required_card_kinds(tmp_path)
     assert statuses[payload["cards"]["running"]] == "running"
     assert statuses[payload["cards"]["completed_mixed"]] == "completed"
     assert statuses[payload["cards"]["completed_all_blank"]] == "completed"
+    assert statuses[payload["cards"]["completed_one_pallet"]] == "completed"
+    assert statuses[payload["cards"]["completed_two_pallets"]] == "completed"
     assert statuses[payload["cards"]["completed_overflow"]] == "completed"
     assert active_shift_count == 1
+    assert sparse_pallet_counts == {
+        "completed_one_pallet": 1,
+        "completed_two_pallets": 2,
+    }
+    assert payload["expected_summary_rows"]["completed_one_pallet"] == 1
+    assert payload["expected_summary_rows"]["completed_two_pallets"] == 2
     assert overflow_pallet_count == payload["expected_summary_rows"]["completed_overflow"]
     assert overflow_pallet_count > payload["measured_capacities"]["overflow_page"] * 2
     assert clear_candidate_pallet is not None
@@ -563,6 +584,61 @@ def test_roll_pallet_verifier_completes_current_pencil_editor_workflow(tmp_path)
                 and interaction["oneEditorAtATime"]
                 for interaction in summary["interactions"]
             )
+            fixed_geometry = summary["print"]["fixedTableGeometry"]
+            assert fixed_geometry["onePallet"]["bodyRowCount"] == 1
+            assert fixed_geometry["twoPallets"]["bodyRowCount"] == 2
+            assert fixed_geometry["onePallet"]["pdfPages"] == 2
+            assert fixed_geometry["twoPallets"]["pdfPages"] == 2
+            assert fixed_geometry["overflow"]["lastPageBodyRowCount"] == 1
+            assert fixed_geometry["overflow"]["pdfPages"] == 5
+            assert fixed_geometry["widthsStable"] is True
+            assert fixed_geometry["pageTwoRowsStable"] is True
+            assert fixed_geometry["productionRowsStable"] is True
+            assert fixed_geometry["overflowRowsStable"] is True
+    finally:
+        shutil.rmtree(runtime_dir, ignore_errors=True)
+
+
+def test_roll_pallet_verifier_reports_pdfinfo_launch_error(tmp_path):
+    runtime_dir = (
+        REPO_ROOT
+        / ".test-runtime"
+        / f"roll-pallet-verifier-pdfinfo-{tmp_path.name}"
+    )
+    database_path = runtime_dir / "fixture.sqlite3"
+    fixture_path = runtime_dir / "fixture.json"
+    artifact_root = REPO_ROOT / "artifacts" / "ui-checks"
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    node_path = shutil.which("node")
+    assert node_path is not None
+
+    try:
+        create_roll_pallet_fixture(database_path, fixture_path)
+        with tempfile.TemporaryDirectory(
+            prefix="roll-pallet-verifier-pdfinfo-",
+            dir=artifact_root,
+        ) as artifact_dir_value:
+            artifact_dir = Path(artifact_dir_value)
+            with tempfile.TemporaryDirectory() as empty_path:
+                with temporary_server(database_path) as base_url:
+                    result = subprocess.run(
+                        [node_path, str(VERIFIER_SCRIPT)],
+                        cwd=REPO_ROOT,
+                        env=verifier_environment(
+                            BASE_URL=base_url,
+                            FIXTURE_JSON=str(fixture_path),
+                            ARTIFACT_DIR=str(artifact_dir),
+                            PATH=empty_path,
+                        ),
+                        capture_output=True,
+                        text=True,
+                        timeout=240,
+                        check=False,
+                    )
+
+            assert result.returncode != 0
+            assert "Could not inspect" in result.stderr
+            assert "spawnSync pdfinfo ENOENT" in result.stderr
     finally:
         shutil.rmtree(runtime_dir, ignore_errors=True)
 

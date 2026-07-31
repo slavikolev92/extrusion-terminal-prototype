@@ -32,8 +32,13 @@ const evidenceOutputNames = [
   "admin-pallet-ledger.png",
   "normal-pallet-print.pdf",
   "print-pallet-back-page.png",
+  "one-pallet-print.pdf",
+  "one-pallet-back-page.png",
+  "two-pallet-print.pdf",
+  "two-pallet-back-page.png",
   "overflow-pallet-print.pdf",
   "print-pallet-overflow-page-3.png",
+  "print-pallet-overflow-last-page.png",
 ];
 
 
@@ -837,6 +842,45 @@ async function verifyAdminLayout(page) {
 }
 
 
+const GEOMETRY_TOLERANCE_PX = 0.5;
+
+
+function assertNear(actual, expected, label) {
+  assert(
+    Math.abs(actual - expected) <= GEOMETRY_TOLERANCE_PX,
+    `${label}: expected ${expected}px ± ${GEOMETRY_TOLERANCE_PX}px, found ${actual}px.`,
+  );
+}
+
+
+function assertEveryHeight(heights, expected, label) {
+  assert(heights.length > 0, `${label} has no rows.`);
+  heights.forEach((height, index) => {
+    assertNear(height, expected, `${label} row ${index + 1}`);
+  });
+}
+
+
+function pdfPageCount(pdfPath) {
+  const result = spawnSync("pdfinfo", [pdfPath], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  assert(
+    result.status === 0,
+    `Could not inspect ${pdfPath}: ${normalizeText(
+      result.error?.message
+        || result.stderr
+        || result.stdout
+        || `exit status ${result.status ?? "unknown"}`
+    )}`,
+  );
+  const match = result.stdout.match(/^Pages:\s+(\d+)$/m);
+  assert(match, `pdfinfo did not report a page count for ${pdfPath}.`);
+  return Number(match[1]);
+}
+
+
 async function injectCalibrationTables(page) {
   return await page.evaluate(() => {
     const makeTable = (className) => {
@@ -893,6 +937,45 @@ async function injectCalibrationTables(page) {
 }
 
 
+async function measurePageTwoTables(page, cardId) {
+  await page.goto(`${baseURL}/cards/${cardId}/print`, {
+    waitUntil: "networkidle",
+  });
+  await page.emulateMedia({ media: "print" });
+  return await page.evaluate(() => {
+    const geometry = (table) => {
+      const tableBox = table.getBoundingClientRect();
+      return {
+        width: tableBox.width,
+        headerHeights: Array.from(table.querySelectorAll("thead tr"), (row) =>
+          row.getBoundingClientRect().height
+        ),
+        bodyHeights: Array.from(table.querySelectorAll("tbody tr"), (row) =>
+          row.getBoundingClientRect().height
+        ),
+        columnWidths: Array.from(table.querySelectorAll("thead th"), (cell) =>
+          cell.getBoundingClientRect().width
+        ),
+      };
+    };
+    const pallet = document.querySelector(
+      ".print-page-back [data-pallet-summary-table='middle']",
+    );
+    const production = document.querySelector(
+      ".print-page-back [data-summary-table='production']",
+    );
+    if (!pallet || !production) {
+      throw new Error("Expected page-2 production and middle pallet tables.");
+    }
+    return {
+      pageContainers: document.querySelectorAll(".print-page").length,
+      pallet: geometry(pallet),
+      production: geometry(production),
+    };
+  });
+}
+
+
 async function inspectActualPrint(page, expectedRows, kind) {
   return await page.evaluate(({ expectedRows, kind }) => {
     const tolerance = 0.5;
@@ -921,6 +1004,30 @@ async function inspectActualPrint(page, expectedRows, kind) {
     const middleRows = middle ? Array.from(middle.querySelectorAll("tbody tr")) : [];
     const rightRows = right ? Array.from(right.querySelectorAll("tbody tr")) : [];
     const overflowPages = Array.from(document.querySelectorAll(".print-page-pallet-overflow"));
+    const tableGeometry = (table) => {
+      const tableBox = table.getBoundingClientRect();
+      return {
+        width: tableBox.width,
+        headerHeights: Array.from(table.querySelectorAll("thead tr"), (row) =>
+          row.getBoundingClientRect().height
+        ),
+        bodyHeights: Array.from(table.querySelectorAll("tbody tr"), (row) =>
+          row.getBoundingClientRect().height
+        ),
+        columnWidths: Array.from(table.querySelectorAll("thead th"), (cell) =>
+          cell.getBoundingClientRect().width
+        ),
+      };
+    };
+    const overflowGeometry = overflowPages.map((printPage) => {
+      const table = printPage.querySelector(
+        "[data-pallet-summary-table='overflow']",
+      );
+      if (!table) {
+        throw new Error("Expected an overflow pallet table on every overflow page.");
+      }
+      return tableGeometry(table);
+    });
     const overflow = overflowPages.map((printPage) => {
       const table = printPage.querySelector("[data-pallet-summary-table='overflow']");
       const rows = Array.from(table.querySelectorAll("tbody tr"));
@@ -948,6 +1055,7 @@ async function inspectActualPrint(page, expectedRows, kind) {
       rightCount: rightRows.length,
       back,
       overflow,
+      overflowGeometry,
       overflowPageCount: overflowPages.length,
       backHasPalletTables: Boolean(middle || right),
       headersFit,
@@ -991,6 +1099,72 @@ async function verifyPrints(page) {
   assert(calibration.overflow.count > 0, "Measured overflow-page capacity is not positive.");
   summary.print.measuredBackColumnCapacity = calibration.back.count;
   summary.print.measuredOverflowPageCapacity = calibration.overflow.count;
+
+  const onePallet = await measurePageTwoTables(
+    page,
+    fixture.cards.completed_one_pallet,
+  );
+  const twoPallets = await measurePageTwoTables(
+    page,
+    fixture.cards.completed_two_pallets,
+  );
+  const fullPageTwo = await measurePageTwoTables(
+    page,
+    fixture.cards.completed_mixed,
+  );
+
+  const pageTwoRowHeight = fullPageTwo.pallet.bodyHeights[0];
+  const pageTwoHeaderHeight = fullPageTwo.pallet.headerHeights[0];
+  const productionRowHeight = onePallet.production.bodyHeights[0];
+
+  assertEqual(onePallet.pageContainers, 2, "one-pallet page containers");
+  assertEqual(twoPallets.pageContainers, 2, "two-pallet page containers");
+  assertEqual(onePallet.pallet.bodyHeights.length, 1, "one-pallet body row count");
+  assertEqual(twoPallets.pallet.bodyHeights.length, 2, "two-pallet body row count");
+
+  for (const [label, measured] of [
+    ["one-pallet", onePallet],
+    ["two-pallet", twoPallets],
+    ["full page-2", fullPageTwo],
+  ]) {
+    assertEveryHeight(measured.pallet.headerHeights, pageTwoHeaderHeight, `${label} header`);
+    assertEveryHeight(measured.pallet.bodyHeights, pageTwoRowHeight, `${label} pallet`);
+    assertNear(measured.pallet.width, fullPageTwo.pallet.width, `${label} table width`);
+    assertEqual(
+      measured.pallet.columnWidths.length,
+      fullPageTwo.pallet.columnWidths.length,
+      `${label} column count`,
+    );
+    measured.pallet.columnWidths.forEach((width, index) => {
+      assertNear(width, fullPageTwo.pallet.columnWidths[index], `${label} column ${index + 1}`);
+    });
+    assertEveryHeight(
+      measured.production.bodyHeights,
+      productionRowHeight,
+      `${label} production`,
+    );
+  }
+
+  const sparseCases = [
+    ["onePallet", fixture.cards.completed_one_pallet, "one-pallet"],
+    ["twoPallets", fixture.cards.completed_two_pallets, "two-pallet"],
+  ];
+  const sparsePdfPages = {};
+  for (const [key, cardId, artifactStem] of sparseCases) {
+    await page.goto(`${baseURL}/cards/${cardId}/print`, { waitUntil: "networkidle" });
+    await page.emulateMedia({ media: "print" });
+    const pdfPath = path.join(artifactDir, `${artifactStem}-print.pdf`);
+    await page.pdf({
+      path: pdfPath,
+      format: "A4",
+      printBackground: true,
+      margin: { top: "0", right: "0", bottom: "0", left: "0" },
+    });
+    recordArtifact(`${artifactStem}-print.pdf`);
+    sparsePdfPages[key] = pdfPageCount(pdfPath);
+    assertEqual(sparsePdfPages[key], 2, `${artifactStem} PDF page count`);
+    pdfToPng(pdfPath, 2, `${artifactStem}-back-page.png`);
+  }
 
   await page.goto(
     `${baseURL}/cards/${fixture.cards.completed_mixed}/print`,
@@ -1047,10 +1221,49 @@ async function verifyPrints(page) {
   for (let index = 0; index < overflow.overflow.length; index += 1) {
     assertRowsFit(overflow.overflow[index], `overflow page ${index + 3}`);
   }
+  const firstOverflow = overflow.overflowGeometry[0];
+  const lastOverflow = overflow.overflowGeometry.at(-1);
+  const overflowRowHeight = firstOverflow.bodyHeights[0];
+  const overflowHeaderHeight = firstOverflow.headerHeights[0];
+
+  for (const [pageIndex, measured] of overflow.overflowGeometry.entries()) {
+    assertEveryHeight(
+      measured.headerHeights,
+      overflowHeaderHeight,
+      `overflow page ${pageIndex + 3} header`,
+    );
+    assertEveryHeight(
+      measured.bodyHeights,
+      overflowRowHeight,
+      `overflow page ${pageIndex + 3} pallet`,
+    );
+    assertNear(measured.width, firstOverflow.width, `overflow page ${pageIndex + 3} width`);
+    assertEqual(
+      measured.columnWidths.length,
+      firstOverflow.columnWidths.length,
+      `overflow page ${pageIndex + 3} column count`,
+    );
+    measured.columnWidths.forEach((width, index) => {
+      assertNear(
+        width,
+        firstOverflow.columnWidths[index],
+        `overflow page ${pageIndex + 3} column ${index + 1}`,
+      );
+    });
+  }
+
+  assertEqual(lastOverflow.bodyHeights.length, 1, "last overflow body row count");
   const overflowPdf = path.join(artifactDir, "overflow-pallet-print.pdf");
   await page.pdf({ path: overflowPdf, format: "A4", printBackground: true, margin: { top: "0", right: "0", bottom: "0", left: "0" } });
   recordArtifact("overflow-pallet-print.pdf");
   pdfToPng(overflowPdf, 3, "print-pallet-overflow-page-3.png");
+  const overflowPdfPages = pdfPageCount(overflowPdf);
+  assertEqual(overflowPdfPages, 5, "overflow PDF page count");
+  pdfToPng(
+    overflowPdf,
+    overflowPdfPages,
+    "print-pallet-overflow-last-page.png",
+  );
 
   summary.print.normal = normal;
   summary.print.overflow = overflow;
@@ -1059,6 +1272,24 @@ async function verifyPrints(page) {
     backBoundaryPlusOneMovesWholeSummaryToOverflow: true,
     overflowBoundaryRowsPerPage: calibration.overflow.count,
     overflowBoundaryPlusOneCreatesNextPage: true,
+  };
+  summary.print.fixedTableGeometry = {
+    onePallet: {
+      bodyRowCount: onePallet.pallet.bodyHeights.length,
+      pdfPages: sparsePdfPages.onePallet,
+    },
+    twoPallets: {
+      bodyRowCount: twoPallets.pallet.bodyHeights.length,
+      pdfPages: sparsePdfPages.twoPallets,
+    },
+    overflow: {
+      lastPageBodyRowCount: lastOverflow.bodyHeights.length,
+      pdfPages: overflowPdfPages,
+    },
+    widthsStable: true,
+    pageTwoRowsStable: true,
+    productionRowsStable: true,
+    overflowRowsStable: true,
   };
 }
 

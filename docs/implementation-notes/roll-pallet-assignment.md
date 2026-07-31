@@ -117,6 +117,13 @@ Every overflow page repeats order number, customer, product, and the pallet
 headings. See [Print Output Reference](print-output-reference.md) for the full
 geometry and validation contract.
 
+Pallet print tables use fixed physical widths and fixed header/data-row
+heights. The CSS grid containers top-align each table so a sparse table ends
+after its final row instead of distributing unused height into its cells. The
+same rule applies to the production-summary peer and to partially filled final
+overflow pages. Guarded Chromium/PDF verification covers one row, two rows,
+full page-2 blocks, and a one-row final overflow page.
+
 ## Recovery, Deployment, And Rollback
 
 M003 and the application code that reads/writes these columns must deploy

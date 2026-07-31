@@ -273,6 +273,17 @@ Back-page pallet summary:
   the same pallet headings. Rows remain whole; no row may be split or omitted.
 - Corrections are reflected on reprint because the summary is derived from the
   current roll rows rather than persisted as a separate aggregate.
+- Every pallet block is a content-height table: one fixed-height header and one
+  fixed-height row per rendered pallet. One or two pallets therefore render one
+  or two data rows only; no filler row or table-cell stretching is permitted.
+- Page-2 pallet tables, the adjacent production summary, and every overflow
+  table are top-aligned independently. A short table leaves blank page space
+  below it, and a taller table must not stretch a neighboring table.
+- Table and column widths remain fixed within their established page-2 and
+  overflow layouts and never depend on the number of pallet rows.
+- A partially filled final overflow page repeats the identification and pallet
+  headings, renders only its remaining fixed-height rows, and leaves the rest
+  of the page blank.
 
 Measured Chromium/PDF renderer capacities, recorded on 2026-07-26:
 

@@ -1553,6 +1553,33 @@ def test_print_css_centers_roll_gross_and_reduces_date_shift_width():
     )
 
 
+def test_print_css_summary_grids_do_not_stretch_child_tables():
+    css = PRINT_CSS_PATH.read_text(encoding="utf-8")
+
+    for selector in (".print-summary", ".print-page-pallet-overflow"):
+        assert re.search(
+            rf"{re.escape(selector)}\s*\{{[^}}]*align-items:\s*start;",
+            css,
+            flags=re.DOTALL,
+        ), selector
+
+    assert re.search(
+        r"\.print-summary\s*\{[^}]*grid-template-columns:\s*63mm\s+53\.5mm\s+53\.5mm;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.print-pallet-summary th,\s*\.print-pallet-summary td\s*\{[^}]*height:\s*4\.6mm;",
+        css,
+        flags=re.DOTALL,
+    )
+    assert re.search(
+        r"\.print-pallet-overflow-table th,\s*\.print-pallet-overflow-table td\s*\{[^}]*height:\s*5mm;",
+        css,
+        flags=re.DOTALL,
+    )
+
+
 def test_print_css_front_page_uses_measured_dense_recipe_layout():
     css = PRINT_CSS_PATH.read_text(encoding="utf-8")
 

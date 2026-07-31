@@ -275,6 +275,40 @@ def create_fixture(database_path: Path) -> dict[str, object]:
         )
         add_timing(connection, completed_all_blank_id, running=False)
 
+        completed_one_pallet_id = insert_card(
+            connection,
+            order_number="PALLET-UI-ONE",
+            status=STATUS_COMPLETED,
+            machine_id=2,
+            machine_sequence=None,
+            current_pallet_number=1,
+        )
+        add_rolls(
+            connection,
+            card_id=completed_one_pallet_id,
+            order_number="PALLET-UI-ONE",
+            pallet_numbers=[1, 1],
+            shift_occurrence_id=None,
+        )
+        add_timing(connection, completed_one_pallet_id, running=False)
+
+        completed_two_pallets_id = insert_card(
+            connection,
+            order_number="PALLET-UI-TWO",
+            status=STATUS_COMPLETED,
+            machine_id=3,
+            machine_sequence=None,
+            current_pallet_number=2,
+        )
+        add_rolls(
+            connection,
+            card_id=completed_two_pallets_id,
+            order_number="PALLET-UI-TWO",
+            pallet_numbers=[1, 2],
+            shift_occurrence_id=None,
+        )
+        add_timing(connection, completed_two_pallets_id, running=False)
+
         completed_overflow_id = insert_card(
             connection,
             order_number="PALLET-UI-OVERFLOW",
@@ -300,6 +334,8 @@ def create_fixture(database_path: Path) -> dict[str, object]:
             "running": running_id,
             "completed_mixed": completed_mixed_id,
             "completed_all_blank": completed_all_blank_id,
+            "completed_one_pallet": completed_one_pallet_id,
+            "completed_two_pallets": completed_two_pallets_id,
             "completed_overflow": completed_overflow_id,
         },
         "running_roll_ids": running_roll_ids,
@@ -308,6 +344,8 @@ def create_fixture(database_path: Path) -> dict[str, object]:
         "expected_summary_rows": {
             "completed_mixed": fitting_summary_count,
             "completed_all_blank": 0,
+            "completed_one_pallet": 1,
+            "completed_two_pallets": 2,
             "completed_overflow": overflow_summary_count,
         },
         "measured_capacities": {
