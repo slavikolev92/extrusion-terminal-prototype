@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
@@ -10,6 +9,7 @@ from .presentation import next_operation_display
 from . import db
 from .constants import PRINTABLE_STATUSES
 from .recipe_parser import parse_recipe_cell
+from .timekeeping import StoredTimestampError, format_print_datetime, parse_stored_utc
 
 MAX_PRINT_ROLLS = 120
 PALLET_BACK_COLUMN_CAPACITY = 8
@@ -53,6 +53,22 @@ def validate_print_readiness(card: dict[str, Any]) -> list[str]:
         messages.append("Началният час на производство е задължителен преди печат.")
     if not card.get("finished_at"):
         messages.append("Крайният час на производство е задължителен преди печат.")
+    for field, invalid_message in (
+        (
+            "first_started_at",
+            "Началният час на производство е невалиден и печатът е блокиран.",
+        ),
+        (
+            "finished_at",
+            "Крайният час на производство е невалиден и печатът е блокиран.",
+        ),
+    ):
+        if not card.get(field):
+            continue
+        try:
+            parse_stored_utc(card[field], required=True)
+        except StoredTimestampError:
+            messages.append(invalid_message)
 
     timing_segments = card.get("timing_segments") or []
     if not timing_segments:
@@ -150,8 +166,8 @@ def assemble_print_data(card: dict[str, Any]) -> dict[str, Any]:
         "order_number": text_value(card.get("order_number")),
         "customer": text_value(card.get("customer")),
         "product_type": text_value(card.get("product_type")),
-        "start_display": format_datetime(card.get("first_started_at")),
-        "stop_display": format_datetime(card.get("finished_at")),
+        "start_display": format_print_datetime(card.get("first_started_at")),
+        "stop_display": format_print_datetime(card.get("finished_at")),
         "duration_display": format_duration(
             int(card.get("total_production_seconds") or 0)
         ),
@@ -346,30 +362,6 @@ def tare_summary_display(card: dict[str, Any]) -> str:
     if lowest == highest:
         return format_weight(lowest)
     return f"{format_weight(lowest)}-{format_weight(highest)}"
-
-
-def format_datetime(value: Any) -> str:
-    if value is None:
-        return ""
-    raw_value = str(value).strip()
-    if not raw_value:
-        return ""
-
-    for candidate in (raw_value, raw_value.replace(" ", "T")):
-        try:
-            parsed = datetime.fromisoformat(candidate)
-            return parsed.strftime("%d.%m.%Y %H:%M")
-        except ValueError:
-            continue
-
-    for pattern in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
-        try:
-            parsed = datetime.strptime(raw_value, pattern)
-            return parsed.strftime("%d.%m.%Y %H:%M")
-        except ValueError:
-            continue
-
-    return raw_value
 
 
 def format_duration(seconds: int) -> str:

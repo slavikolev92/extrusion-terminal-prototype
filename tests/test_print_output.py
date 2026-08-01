@@ -28,10 +28,10 @@ from app.main import app
 from app.printing import (
     PrintReadiness,
     build_print_readiness,
-    format_datetime,
     format_duration,
     format_weight,
 )
+from app.timekeeping import format_print_datetime
 
 PRINT_CSS_PATH = Path(__file__).resolve().parent.parent / "app/static/css/print.css"
 
@@ -233,8 +233,8 @@ def test_completed_card_with_required_production_data_is_printable(connection):
         "confection_sequence",
     ):
         assert route_field not in result.data["front"]
-    assert result.data["back"]["start_display"] == "18.06.2026 08:05"
-    assert result.data["back"]["stop_display"] == "18.06.2026 10:45"
+    assert result.data["back"]["start_display"] == "18.06.2026 11:05"
+    assert result.data["back"]["stop_display"] == "18.06.2026 13:45"
     assert result.data["back"]["duration_display"] == "2 ч 25 мин"
     assert result.data["back"]["tare_display"] == "1.3"
     assert result.data["back"]["total_gross_display"] == "51.3"
@@ -250,6 +250,46 @@ def test_completed_card_with_required_production_data_is_printable(connection):
         "gross_display": "",
         "date_shift_display": "",
     }
+
+
+def test_print_time_conversion_can_cross_the_bulgarian_date_boundary(connection):
+    card_id = make_completed_printable_card("270-time-rollover")
+    with db.connect() as connection:
+        connection.execute(
+            "UPDATE cards SET first_started_at = ?, finished_at = ? WHERE id = ?",
+            ("2026-06-18 21:35:00", "2026-06-18 22:45:00", card_id),
+        )
+        connection.commit()
+
+    before = db.fetch_admin_card_detail(card_id)
+    readiness = build_print_readiness(card_id)
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert readiness.ok
+    assert readiness.data["back"]["start_display"] == "19.06.2026 00:35"
+    assert readiness.data["back"]["stop_display"] == "19.06.2026 01:45"
+    assert after["first_started_at"] == before["first_started_at"]
+    assert after["finished_at"] == before["finished_at"]
+
+
+@pytest.mark.parametrize(
+    ("field", "message"),
+    [
+        ("first_started_at", "Началният час на производство е невалиден и печатът е блокиран."),
+        ("finished_at", "Крайният час на производство е невалиден и печатът е блокиран."),
+    ],
+)
+def test_print_blocks_malformed_required_timestamp(connection, field, message):
+    card_id = make_completed_printable_card(f"270-invalid-{field}")
+    with db.connect() as connection:
+        connection.execute(f"UPDATE cards SET {field} = ? WHERE id = ?", ("broken", card_id))
+        connection.commit()
+
+    result = build_print_readiness(card_id)
+
+    assert not result.ok
+    assert result.data is None
+    assert message in result.messages
 
 
 def test_build_pallet_summary_returns_no_rows_when_every_saved_gross_roll_is_unassigned():
@@ -513,7 +553,7 @@ def test_waiting_rewinding_card_uses_active_print_block_and_prints_after_complet
 
     assert completed_readiness.ok
     assert completed_readiness.data is not None
-    assert completed_readiness.data["back"]["stop_display"] == format_datetime(
+    assert completed_readiness.data["back"]["stop_display"] == format_print_datetime(
         original_finished_at
     )
     assert "Пренавиване: 7" not in completed_response.text
@@ -653,7 +693,6 @@ def test_completed_card_with_negative_net_total_is_blocked(connection):
 
 
 def test_print_formatting_helpers():
-    assert format_datetime("2026-06-18 14:35:29") == "18.06.2026 14:35"
     assert format_duration(27000) == "7 ч 30 мин"
     assert format_weight("51.25") == "51.3"
     assert format_weight("150") == "150.0"
