@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import json
+import subprocess
 from pathlib import Path
 
 from app import db
@@ -201,6 +203,35 @@ def test_terminal_shift_clock_uses_server_adjusted_current_time():
 
     assert "Date.now() + shiftClockOffsetMs" in template
     assert "const now = new Date();" not in shift_clock_block
+
+
+def test_terminal_shift_clock_rejects_impossible_calendar_date_without_changing_offset():
+    template = Path("app/templates/terminal.html").read_text(encoding="utf-8")
+    clock_start = template.index("let shiftClockOffsetMs = 0;")
+    clock_end = template.index("const updateShiftClocks = () => {", clock_start)
+    clock_source = template[clock_start:clock_end]
+    execution = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            clock_source
+            + """
+const updateShiftClocks = () => {};
+Date.now = () => Date.parse("2026-07-31T07:59:59Z");
+synchronizeShiftClock("2026-07-31 08:00:00");
+const validOffset = shiftClockOffsetMs;
+synchronizeShiftClock("2026-02-31 08:00:00");
+console.log(JSON.stringify({ validOffset, finalOffset: shiftClockOffsetMs }));
+""",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    observed = json.loads(execution.stdout)
+    assert observed == {"validOffset": 1000, "finalOffset": 1000}
 
 
 def test_terminal_snapshot_marks_unreleased_selected_card_missing(connection):
