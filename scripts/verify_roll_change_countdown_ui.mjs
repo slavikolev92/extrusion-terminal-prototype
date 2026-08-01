@@ -331,9 +331,9 @@ async function seedSchedules(page) {
   await navigate(page, fixture.cards.machine_1_running);
   const now = Date.now();
   const records = [
-    schedule({ machineId: 1, cardId: fixture.cards.machine_1_running, previousChangeAtMs: now - 50 * 60_000, intervalMinutes: 60, nextExpectedAtMs: now + 10 * 60_000, status: "running" }),
-    schedule({ machineId: 2, cardId: fixture.cards.machine_2_running, previousChangeAtMs: now - 57 * 60_000, intervalMinutes: 60, nextExpectedAtMs: now + 3 * 60_000, status: "running" }),
-    schedule({ machineId: 3, cardId: fixture.cards.machine_3_running, previousChangeAtMs: now - 60 * 60_000, intervalMinutes: 60, nextExpectedAtMs: now - 1_000, status: "running" }),
+    schedule({ machineId: 1, cardId: fixture.cards.machine_1_running, previousChangeAtMs: now - 40 * 60_000, intervalMinutes: 60, nextExpectedAtMs: now + 20 * 60_000, status: "running" }),
+    schedule({ machineId: 2, cardId: fixture.cards.machine_2_running, previousChangeAtMs: now - 50 * 60_000, intervalMinutes: 60, nextExpectedAtMs: now + 10 * 60_000, status: "running" }),
+    schedule({ machineId: 3, cardId: fixture.cards.machine_3_running, previousChangeAtMs: now - 56 * 60_000, intervalMinutes: 60, nextExpectedAtMs: now + 4 * 60_000, status: "running" }),
     schedule({ machineId: 4, cardId: fixture.cards.machine_4_paused, previousChangeAtMs: now - 60 * 60_000, intervalMinutes: 60, nextExpectedAtMs: now - 1_000, status: "paused", frozenRemainingMs: 0, pauseNeedsResolution: true }),
   ];
   await page.evaluate(({ prefix, values }) => {
@@ -345,6 +345,35 @@ async function seedSchedules(page) {
     }
   }, { prefix: storagePrefix, values: records });
   await navigate(page, fixture.cards.machine_1_running);
+}
+
+
+async function assertThresholdTones(page, viewport) {
+  const toneClasses = ["normal", "warning", "urgent", "paused", "resync"];
+  const cases = [
+    { machineId: 1, cardId: fixture.cards.machine_1_running, tone: "normal" },
+    { machineId: 2, cardId: fixture.cards.machine_2_running, tone: "warning" },
+    { machineId: 3, cardId: fixture.cards.machine_3_running, tone: "urgent" },
+    { machineId: 4, cardId: fixture.cards.machine_4_paused, tone: "paused" },
+  ];
+
+  for (const { machineId, cardId, tone } of cases) {
+    await navigate(page, cardId);
+    const machineTones = await page
+      .locator(`[data-roll-change-machine][data-machine-id="${machineId}"]`)
+      .evaluate((host, classes) => {
+        const timer = host.querySelector("[data-roll-change-machine-timer]");
+        return classes.filter((name) => timer && timer.classList.contains(name));
+      }, toneClasses);
+    const selectedTones = await page
+      .locator("[data-roll-change-open]")
+      .evaluate((element, classes) => classes.filter((name) => element.classList.contains(name)), toneClasses);
+    assertEqual(machineTones, [tone], `machine ${machineId} threshold tone`);
+    assertEqual(selectedTones, [tone], `selected machine ${machineId} threshold tone`);
+  }
+
+  await navigate(page, fixture.cards.machine_1_running);
+  passed(`${viewport.width}x${viewport.height}: normal, warning, urgent, and paused tones on both countdown surfaces`);
 }
 
 
@@ -489,7 +518,7 @@ async function assertLayoutAndInactiveState(page, viewport) {
     cardId: fixture.cards.machine_1_running,
     previousChangeAtMs: now - 20 * 60_000,
     intervalMinutes: 30,
-    nextExpectedAtMs: now + 10 * 60_000,
+    nextExpectedAtMs: now + 20 * 60_000,
     status: "running",
   }));
   await quick.waitFor({ state: "visible" });
@@ -907,6 +936,10 @@ async function assertStorageEventsDueAndCorrection(context, page, mutationReques
   const selectedTimer = page.locator("[data-roll-change-control-value]");
   await selectedTimer.filter({ hasText: "00:00" }).waitFor({ state: "visible" });
   assert(await page.locator('[data-machine-id="1"] [data-roll-change-machine-timer]').evaluate((element) => element.classList.contains("urgent")), "Due timer is not red/urgent.");
+  assert(
+    await page.locator("[data-roll-change-open]").evaluate((element) => element.classList.contains("urgent")),
+    "Due selected countdown is not red/urgent.",
+  );
   const dueRaw = await rawSchedule(page, 1);
   await page.waitForTimeout(2_200);
   assertEqual(normalized(await selectedTimer.textContent()), "00:00", "due timer after display ticks");
@@ -2323,6 +2356,7 @@ async function runViewport(browser, viewport) {
   instrumentPage(page, mutationRequests);
   try {
     await seedSchedules(page);
+    await assertThresholdTones(page, viewport);
     const timerSnapshotBefore = databaseSnapshot();
     assert(timerSnapshotBefore.recipe_actuals.length > 0, "Guarded fixture has no recipe actual row to preserve.");
     assert(timerSnapshotBefore.recipe_actuals.some((row) => (

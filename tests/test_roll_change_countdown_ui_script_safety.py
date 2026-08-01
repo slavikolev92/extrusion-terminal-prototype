@@ -609,6 +609,19 @@ def test_roll_change_verifier_uses_directional_spacing_and_accepted_geometry_che
     assert '[data-roll-row-cancel]' in source
 
 
+def test_roll_change_verifier_covers_approved_indicator_thresholds_on_both_surfaces():
+    source = VERIFIER_SCRIPT.read_text(encoding="utf-8")
+
+    assert "async function assertThresholdTones(page, viewport)" in source
+    assert 'tone: "normal"' in source
+    assert 'tone: "warning"' in source
+    assert 'tone: "urgent"' in source
+    assert 'tone: "paused"' in source
+    assert 'host.querySelector("[data-roll-change-machine-timer]")' in source
+    assert 'page.locator("[data-roll-change-open]")' in source
+    assert "await assertThresholdTones(page, viewport);" in source
+
+
 def test_roll_change_verifier_covers_round4_and_round5_guarded_workflows_at_both_viewports():
     source = VERIFIER_SCRIPT.read_text(encoding="utf-8")
 
