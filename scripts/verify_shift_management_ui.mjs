@@ -334,6 +334,12 @@ function utcMinute(value) {
   return Math.floor(timestamp / 60_000);
 }
 
+function utcDatetimeAttribute(value) {
+  const raw = String(value || "").trim();
+  assert(Number.isFinite(Date.parse(`${raw.replace(" ", "T")}Z`)), `Could not parse UTC timestamp: ${value}`);
+  return `${raw.replace(" ", "T")}Z`;
+}
+
 function assertSavedShiftMinuteMatchesPreview(preview, saved) {
   if (preview.text === saved.text) {
     return;
@@ -1183,7 +1189,11 @@ async function changeShiftNumberAndVerifyInvariants(page, cardId, before) {
   const occurrenceIdBefore = await window.locator('input[name="shift_occurrence_id"]').first().inputValue();
   const startTimeBefore = await window.locator(".shift-start-time time").getAttribute("datetime");
   assertEqual(Number(occurrenceIdBefore), before.active_shift.id, "displayed occurrence id before relabel");
-  assertEqual(startTimeBefore, before.active_shift.started_at, "displayed start time before relabel");
+  assertEqual(
+    startTimeBefore,
+    utcDatetimeAttribute(before.active_shift.started_at),
+    "displayed start time before relabel",
+  );
 
   await Promise.all([
     page.waitForURL((url) => url.searchParams.get("notice") === "shift_changed", {
@@ -1216,7 +1226,7 @@ async function changeShiftNumberAndVerifyInvariants(page, cardId, before) {
   );
   assertEqual(
     await reloadedWindow.locator(".shift-start-time time").getAttribute("datetime"),
-    before.active_shift.started_at,
+    utcDatetimeAttribute(before.active_shift.started_at),
     "displayed start time after relabel",
   );
   assertEqual(
