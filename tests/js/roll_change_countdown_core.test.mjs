@@ -105,17 +105,33 @@ test("scheduled acknowledgement catches up across midnight", () => {
   assert.equal(advanced.nextExpectedAtMs, localAt(2026, 7, 28, 1, 30));
 });
 
-test("warning boundaries and rounded display use exact milliseconds", () => {
+test("running indicator thresholds and rounded display use exact milliseconds", () => {
   const schedule = runningSchedule();
-  assert.equal(countdownView(schedule, "running", schedule.nextExpectedAtMs - 5 * minute - 1).tone, "normal");
-  assert.equal(countdownView(schedule, "running", schedule.nextExpectedAtMs - 5 * minute).tone, "warning");
-  assert.equal(countdownView(schedule, "running", schedule.nextExpectedAtMs - minute - 1).tone, "warning");
-  assert.equal(countdownView(schedule, "running", schedule.nextExpectedAtMs - minute).tone, "urgent");
-  assert.equal(countdownView(schedule, "running", schedule.nextExpectedAtMs - 1).display, "00:01");
-  assert.deepEqual(
-    { display: countdownView(schedule, "running", schedule.nextExpectedAtMs + minute).display, due: countdownView(schedule, "running", schedule.nextExpectedAtMs + minute).due },
-    { display: "00:00", due: true },
-  );
+  for (const [remainingMs, tone, display] of [
+    [15 * minute + 1, "normal", "00:16"],
+    [15 * minute, "warning", "00:15"],
+    [5 * minute + 1, "warning", "00:06"],
+    [5 * minute, "urgent", "00:05"],
+    [1, "urgent", "00:01"],
+  ]) {
+    const view = countdownView(
+      schedule,
+      "running",
+      schedule.nextExpectedAtMs - remainingMs,
+    );
+    assert.deepEqual(
+      { tone: view.tone, display: view.display, due: view.due },
+      { tone, display, due: false },
+    );
+  }
+
+  for (const nowMs of [schedule.nextExpectedAtMs, schedule.nextExpectedAtMs + minute]) {
+    const view = countdownView(schedule, "running", nowMs);
+    assert.deepEqual(
+      { tone: view.tone, display: view.display, due: view.due },
+      { tone: "urgent", display: "00:00", due: true },
+    );
+  }
 });
 
 test("pause, unresolved resume, and acknowledgement preserve the approved state machine", () => {

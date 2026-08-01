@@ -2,6 +2,8 @@ export const STORAGE_VERSION = 1;
 export const STORAGE_KEY_PREFIX = "extrusion-terminal.roll-change.v1.machine.";
 
 const MINUTE_MS = 60_000;
+const WARNING_THRESHOLD_MS = 15 * MINUTE_MS;
+const URGENT_THRESHOLD_MS = 5 * MINUTE_MS;
 const MAX_INTERVAL_MINUTES = 23 * 60 + 59;
 const TRACKABLE = new Set(["running", "paused"]);
 const DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
@@ -93,8 +95,8 @@ export function countdownView(schedule, status, nowMs) {
   let tone = "normal";
   if (status === "paused") tone = "paused";
   else if (unresolved && !due) tone = "resync";
-  else if (remainingMs <= MINUTE_MS) tone = "urgent";
-  else if (remainingMs <= 5 * MINUTE_MS) tone = "warning";
+  else if (remainingMs <= URGENT_THRESHOLD_MS) tone = "urgent";
+  else if (remainingMs <= WARNING_THRESHOLD_MS) tone = "warning";
   return {
     remainingMs,
     display: formatRemaining(remainingMs),
