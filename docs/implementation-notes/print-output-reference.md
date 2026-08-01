@@ -253,6 +253,12 @@ Back page summary:
 | `Произведено кол. бруто /кг/` | sum of roll gross weights, one decimal |
 | `Произведено кол. нето /кг/` | total net weight, one decimal |
 
+The start and stop values are canonical stored UTC values converted through
+`app.timekeeping.format_print_datetime()` to `DD.MM.YYYY HH:MM` in
+`Europe/Sofia`. If either required stored value is malformed, print generation
+is blocked with a user-visible validation error; it must never print the raw
+value or fabricate a replacement.
+
 Back-page pallet summary:
 
 - The lower area is three side-by-side blocks: the six-row production summary

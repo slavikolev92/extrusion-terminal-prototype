@@ -77,13 +77,14 @@ The no-active gate is a compact, non-dismissible shift-number selection. Start
 and end use the same confirmation-card structure. Both show a live Bulgarian
 clock without visible seconds, but the occurrence is created only after the
 final `Потвърди`; the persisted server timestamp is the authoritative start or
-end time. SQLite values remain unchanged UTC timestamps. Both the browser live
-preview and the server-rendered persisted timestamp use the explicit
-`Europe/Sofia` display convention, including the applicable summer or winter
-offset. The gate, start/end confirmations, and just-ended handoff summary stay
-open on Escape and backdrop interaction and move only through explicit actions.
-The active overview, full history, and historical summary close on Escape or
-backdrop and return focus to the shift header action.
+end time. Persisted shift actions use SQLite UTC, and shift displays use the
+shared Sofia formatter. The live clock interpolates from `server_now_utc`,
+refreshes its offset on every snapshot poll, and never participates in a
+snapshot signature or production write. SQLite values remain unchanged UTC
+timestamps. The gate, start/end confirmations, and just-ended handoff summary
+stay open on Escape and backdrop interaction and move only through explicit
+actions. The active overview, full history, and historical summary close on
+Escape or backdrop and return focus to the shift header action.
 
 The active overview contains the single editable shift-number control,
 formatted start time, a separate end action, and at most the five most recent

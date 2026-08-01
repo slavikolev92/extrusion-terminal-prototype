@@ -879,6 +879,15 @@ Backup approach:
 - Backups should use SQLite-safe backup behavior rather than unsafe raw copying while writes may be active.
 - Retention policy can be simple, for example frequent backups for recent days and fewer older backups.
 
+## Time handling
+
+- SQLite/server `CURRENT_TIMESTAMP` is the source of truth for production and shift actions.
+- Production instants are stored as UTC text in `YYYY-MM-DD HH:MM:SS` form.
+- Operators, admins, and printed cards see `Europe/Sofia` civil time; the host and browser timezone do not select the business timezone.
+- Admin timing corrections are entered as Sofia local `YYYY-MM-DD HH:MM:SS`. Repeated autumn-hour values require `+02:00` or `+03:00`; skipped spring-hour values are rejected.
+- Order and delivery dates are date-only and are not timezone converted. The roll-change countdown is a non-persisted workstation reminder.
+- This contract requires no schema or production-data migration. Do not shift existing stored timestamps.
+
 ## Operational Backup And Recovery
 
 Current local startup command:
@@ -906,6 +915,7 @@ Production deployment:
 - Use `docs/production-deployment.md` for the production VM update procedure.
 - The reusable command is `bash scripts/deploy_production.sh` from `/opt/extrusion-terminal/app`.
 - A successful deploy backs up SQLite, fetches the latest GitHub `main`, restarts `extrusion-terminal.service`, and verifies `/health` reports the deployed Git revision.
+- Before rollout, take the normal SQLite-safe backup, then compare one known completed card's admin detail and print output in Sofia time.
 
 Shutdown and restart:
 
