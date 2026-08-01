@@ -5,6 +5,7 @@ import csv
 import io
 from datetime import datetime, timedelta
 
+import pytest
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app import db
@@ -726,6 +727,73 @@ def test_admin_successful_timing_segment_add_delete_redirect_and_get_refresh_is_
     assert delete_response.headers["location"] == f"/admin/cards/{card_id}#timing"
     assert delete_refresh.status_code == 200
     assert after["timing_segments"] == []
+
+
+def test_admin_timing_add_route_converts_sofia_summer_input_to_utc(connection):
+    card_id = release_ready_card("26018-sofia-add")
+    card = db.fetch_admin_card_detail(card_id)
+
+    response = asyncio.run(
+        add_admin_timing_segment(
+            FormRequest({}),
+            card_id,
+            loaded_version=str(card["version"]),
+            started_at="2026-06-18 11:05:00",
+            ended_at="2026-06-18 12:05:00",
+            end_reason="correction",
+        )
+    )
+    stored = db.fetch_admin_card_detail(card_id)["timing_segments"][-1]
+
+    assert response.status_code == 303
+    assert stored["started_at"] == "2026-06-18 08:05:00"
+    assert stored["ended_at"] == "2026-06-18 09:05:00"
+
+
+@pytest.mark.parametrize(
+    ("case_name", "original_started_at", "original_ended_at", "expected_offset"),
+    (
+        ("summer", "2026-10-25 00:30:00", "2026-10-25 00:45:00", "+03:00"),
+        ("winter", "2026-10-25 01:30:00", "2026-10-25 01:45:00", "+02:00"),
+    ),
+)
+def test_admin_timing_update_route_round_trips_repeated_hour_input_exactly(
+    connection,
+    case_name,
+    original_started_at,
+    original_ended_at,
+    expected_offset,
+):
+    card_id = release_ready_card(f"26018-sofia-repeat-{case_name}")
+    assert db.add_timing_segment(
+        card_id,
+        card_version(card_id),
+        original_started_at,
+        original_ended_at,
+        "correction",
+    ).ok
+    context = admin_card_detail_context(card_id)
+    assert context is not None
+    segment = context["card"]["timing_segments"][0]
+    assert segment["started_at_input"] == f"2026-10-25 03:30:00{expected_offset}"
+    assert segment["ended_at_input"] == f"2026-10-25 03:45:00{expected_offset}"
+
+    response = asyncio.run(
+        save_admin_timing_segment(
+            FormRequest({}),
+            card_id,
+            int(segment["id"]),
+            str(context["card"]["version"]),
+            segment["started_at_input"],
+            segment["ended_at_input"],
+            segment["end_reason"],
+        )
+    )
+    stored = db.fetch_admin_card_detail(card_id)["timing_segments"][0]
+
+    assert response.status_code == 303
+    assert stored["started_at"] == original_started_at
+    assert stored["ended_at"] == original_ended_at
 
 
 def test_admin_successful_cancel_restore_redirect_and_get_refresh_does_not_toggle(connection):

@@ -92,10 +92,12 @@ from .recipe_parser import RECIPE_SOURCE_FIELDS
 from .recipe_parser import parse_recipe_source_fields
 from .rules import RECIPE_RELEASE_FIELD_LABELS, RuleResult, target_gross_weight_from_card
 from .timekeeping import (
+    LocalTimeInputError,
     format_display_datetime,
     format_shift_datetime,
     format_sofia_input,
     format_utc_datetime_attribute,
+    parse_sofia_input,
 )
 
 APP_DIR = Path(__file__).resolve().parent
@@ -799,16 +801,18 @@ def terminal_roll_corrections_from_form(form: Any) -> dict[int, dict[str, str]]:
     return roll_updates
 
 
+def canonical_timing_values(started_at: Any, ended_at: Any) -> tuple[str, str]:
+    return (
+        parse_sofia_input(started_at, label="Начало", required=True),
+        parse_sofia_input(ended_at, label="Край", required=False),
+    )
+
+
 def timing_ledger_from_form(
     form: Any,
 ) -> tuple[dict[int, dict[str, str]], set[int], list[dict[str, str]]]:
-    segment_updates: dict[int, dict[str, str]] = {}
+    raw_updates: dict[int, dict[str, str]] = {}
     delete_segment_ids: set[int] = set()
-    new_segment = {
-        "started_at": str(form.get("new_started_at") or ""),
-        "ended_at": str(form.get("new_ended_at") or ""),
-        "end_reason": str(form.get("new_end_reason") or ""),
-    }
 
     for key, value in form.multi_items():
         text_value = str(value or "")
@@ -818,8 +822,34 @@ def timing_ledger_from_form(
             field_name, segment_id_text = key.split("__", 1)
             if field_name in {"started_at", "ended_at", "end_reason"}:
                 segment_id = int(segment_id_text)
-                segment_updates.setdefault(segment_id, {})[field_name] = text_value
+                raw_updates.setdefault(segment_id, {})[field_name] = text_value
 
+    segment_updates: dict[int, dict[str, str]] = {}
+    for segment_id, values in raw_updates.items():
+        if segment_id in delete_segment_ids:
+            continue
+        canonical_start, canonical_end = canonical_timing_values(
+            values.get("started_at", ""), values.get("ended_at", "")
+        )
+        segment_updates[segment_id] = {
+            "started_at": canonical_start,
+            "ended_at": canonical_end,
+            "end_reason": values.get("end_reason", ""),
+        }
+
+    new_started_at = str(form.get("new_started_at") or "")
+    new_ended_at = str(form.get("new_ended_at") or "")
+    if new_started_at.strip() or new_ended_at.strip():
+        canonical_start, canonical_end = canonical_timing_values(
+            new_started_at, new_ended_at
+        )
+    else:
+        canonical_start, canonical_end = "", ""
+    new_segment = {
+        "started_at": canonical_start,
+        "ended_at": canonical_end,
+        "end_reason": str(form.get("new_end_reason") or ""),
+    }
     return segment_updates, delete_segment_ids, [new_segment]
 
 
@@ -1166,6 +1196,15 @@ def save_all_admin_card_changes(
         ):
             return RuleResult(False, (IMPORTED_OPERATIONAL_PAYLOAD_MESSAGE,))
 
+        try:
+            segment_updates, delete_segment_ids, new_segments = (
+                timing_ledger_from_form(form)
+            )
+        except LocalTimeInputError as exc:
+            return RuleResult(False, (str(exc),))
+        except ValueError:
+            return RuleResult(False, ("Формата съдържа невалиден времеви сегмент.",))
+
         result = update_admin_imported_fields(
             card_id=card_id,
             loaded_version=loaded_version,
@@ -1242,11 +1281,6 @@ def save_all_admin_card_changes(
             return result
         assert current_version is not None
 
-        try:
-            segment_updates, delete_segment_ids, new_segments = timing_ledger_from_form(form)
-        except ValueError:
-            connection.rollback()
-            return RuleResult(False, ("Формата съдържа невалиден времеви сегмент.",))
         result = update_admin_timing_ledger(
             card_id=card_id,
             loaded_version=current_version,
@@ -1642,13 +1676,20 @@ async def add_admin_timing_segment(
 ):
     parsed_version, timing_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        timing_result = add_timing_segment(
-            card_id=card_id,
-            loaded_version=parsed_version,
-            started_at=started_at,
-            ended_at=ended_at,
-            end_reason=end_reason,
-        )
+        try:
+            canonical_start, canonical_end = canonical_timing_values(
+                started_at, ended_at
+            )
+        except LocalTimeInputError as exc:
+            timing_result = RuleResult(False, (str(exc),))
+        else:
+            timing_result = add_timing_segment(
+                card_id=card_id,
+                loaded_version=parsed_version,
+                started_at=canonical_start,
+                ended_at=canonical_end,
+                end_reason=end_reason,
+            )
 
     return admin_card_post_response(
         request,
@@ -1670,6 +1711,8 @@ async def save_admin_timing_ledger(request: Request, card_id: int):
             segment_updates, delete_segment_ids, new_segments = (
                 timing_ledger_from_form(form)
             )
+        except LocalTimeInputError as exc:
+            timing_result = RuleResult(False, (str(exc),))
         except ValueError:
             timing_result = RuleResult(False, ("Формата съдържа невалиден времеви сегмент.",))
         else:
@@ -1702,14 +1745,21 @@ async def save_admin_timing_segment(
 ):
     parsed_version, timing_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        timing_result = update_timing_segment(
-            card_id=card_id,
-            segment_id=segment_id,
-            loaded_version=parsed_version,
-            started_at=started_at,
-            ended_at=ended_at,
-            end_reason=end_reason,
-        )
+        try:
+            canonical_start, canonical_end = canonical_timing_values(
+                started_at, ended_at
+            )
+        except LocalTimeInputError as exc:
+            timing_result = RuleResult(False, (str(exc),))
+        else:
+            timing_result = update_timing_segment(
+                card_id=card_id,
+                segment_id=segment_id,
+                loaded_version=parsed_version,
+                started_at=canonical_start,
+                ended_at=canonical_end,
+                end_reason=end_reason,
+            )
 
     return admin_card_post_response(
         request,

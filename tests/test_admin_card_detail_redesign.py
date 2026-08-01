@@ -1466,6 +1466,77 @@ def test_admin_global_save_rolls_back_all_sections_when_timing_is_invalid(connec
     assert after_segments == before_segments
 
 
+@pytest.mark.parametrize(
+    ("case_name", "new_started_at", "message_fragments"),
+    (
+        (
+            "nonexistent",
+            "2026-03-29 03:30:00",
+            ("не съществува в Europe/Sofia",),
+        ),
+        (
+            "ambiguous",
+            "2026-10-25 03:30:00",
+            ("+02:00", "+03:00"),
+        ),
+    ),
+)
+def test_admin_global_save_rejects_invalid_sofia_time_before_any_mutation(
+    connection,
+    case_name,
+    new_started_at,
+    message_fragments,
+):
+    card_id = prepare_dense_completed_card(f"TIME-ATOMIC-{case_name}", roll_count=1)
+    before = db.fetch_admin_card_detail(card_id)
+    context = admin_card_detail_context(card_id)
+    assert before is not None
+    assert context is not None
+    roll = before["roll_entries"][0]
+    form_items = [
+        ("loaded_version", str(before["version"])),
+        *[
+            (field, "Must Not Persist" if field == "customer" else str(before[field] or ""))
+            for field in IMPORT_FIELDS
+        ],
+        *admin_material_form_items(card_id),
+        ("tare_weight", str(before["tare_weight"] or "")),
+        ("current_pallet_number", str(before["current_pallet_number"] or "")),
+        (f"gross_weight__{roll['id']}", "60.00"),
+        (f"tare_weight__{roll['id']}", str(roll["tare_weight"] or "")),
+        (f"pallet_number__{roll['id']}", str(roll["pallet_number"] or "")),
+    ]
+    for segment in context["card"]["timing_segments"]:
+        segment_id = int(segment["id"])
+        form_items.extend(
+            [
+                (f"started_at__{segment_id}", str(segment["started_at_input"] or "")),
+                (f"ended_at__{segment_id}", str(segment["ended_at_input"] or "")),
+                (f"end_reason__{segment_id}", str(segment["end_reason"] or "")),
+            ]
+        )
+    form_items.extend(
+        [
+            ("new_started_at", new_started_at),
+            ("new_ended_at", "2026-10-25 04:30:00"),
+            ("new_end_reason", "correction"),
+        ]
+    )
+
+    response = asyncio.run(
+        save_admin_card_changes(
+            FormRequest(MultiItemForm(form_items)),
+            card_id,
+        )
+    )
+
+    assert response.status_code == 200
+    body = response.body.decode("utf-8")
+    for fragment in message_fragments:
+        assert fragment in body
+    assert db.fetch_admin_card_detail(card_id) == before
+
+
 @pytest.mark.parametrize("failure", ("invalid_pallet", "foreign_roll", "stale_version"))
 def test_admin_ledger_failure_rolls_back_prior_global_save_sections_in_caller_transaction(
     connection,
