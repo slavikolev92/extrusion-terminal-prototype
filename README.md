@@ -187,6 +187,11 @@ Confirmed workstation screen structure:
   advances from the saved scheduled time. It always advances at least one
   interval and, when several intervals are overdue, catches up to the first
   scheduled time strictly after the acknowledgement.
+- For a resolved running countdown, more than `15:00` remaining uses the normal
+  treatment, from exactly `15:00` down to more than `05:00` uses yellow, and
+  exactly `05:00` through the due/overdue `00:00` hold uses red. Tone boundaries
+  use the unrounded internal duration, while the visible positive minute remains
+  rounded up.
 - The pace clock belongs to the current machine/card pair and is stored only in
   versioned browser local storage. It survives refreshes in the same browser
   profile/origin, clears when the card stops owning active production, and is

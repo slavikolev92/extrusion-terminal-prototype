@@ -34,6 +34,20 @@ planning state, moves out of the machine's current-card position, or is
 replaced by a different current card. An unsupported, malformed, or wrong-card
 record is also removed instead of guessed.
 
+## Running Indicator Thresholds
+
+Resolved running schedules use the unrounded internal remaining duration:
+
+| Remaining duration | Tone |
+| --- | --- |
+| Greater than `15:00` | Normal |
+| At most `15:00` and greater than `05:00` | Yellow warning |
+| At most `05:00`, due, or overdue | Red urgent |
+
+Positive partial minutes continue to round up for the visible `HH:MM` value, so
+the visible transitions occur at yellow `00:15` and red `00:05`. Paused and
+unresolved-resume precedence remains defined below.
+
 ## Pause And Resume States
 
 | Card state | Schedule resolution | Display behavior |

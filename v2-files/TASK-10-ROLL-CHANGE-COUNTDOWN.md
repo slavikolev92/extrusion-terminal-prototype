@@ -170,19 +170,19 @@ two-hour intervals until the next expected time is strictly in the future.
 
 - The machine card and selected-card control show the remaining countdown.
 - The selected-card control also exposes the next expected wall-clock time.
-- More than five minutes remaining uses the normal countdown treatment.
+- More than fifteen minutes remaining uses the normal countdown treatment.
 
 ### Approaching
 
-- From exactly `05:00` remaining through `01:01` remaining, the countdown uses
-  the yellow warning treatment.
+- From exactly `15:00` remaining while the unrounded duration is greater than
+  `05:00`, the countdown uses the yellow warning treatment.
 - Color is accompanied by the numeric time; warning meaning is never conveyed
   by color alone.
 
 ### Urgent
 
-- From exactly `01:00` remaining through the due instant, the countdown uses
-  the red urgent treatment.
+- From exactly `05:00` remaining through the due instant and overdue hold, the
+  countdown uses the red urgent treatment.
 - At the due instant, the display becomes `00:00`.
 
 ### Due and unacknowledged
@@ -461,7 +461,8 @@ Cover:
 - manual next-time override remains editable and becomes the anchor for a
   later quick action;
 - midnight/date rollover;
-- normal, five-minute warning, one-minute urgent, and due boundaries;
+- normal above fifteen minutes, yellow at fifteen minutes, red at five minutes,
+  exact millisecond boundaries, visible rounding, and due/overdue behavior;
 - no negative countdown;
 - pause freezing at positive remaining time and at `00:00`;
 - yellow pause override of red urgency;
