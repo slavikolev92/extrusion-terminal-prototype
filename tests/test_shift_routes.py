@@ -5,10 +5,13 @@ import csv
 import io
 from urllib.parse import urlencode
 
+import pytest
+
 from app import db
 import app.main as main_module
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 from app.main import app, terminal_context
+from app.timekeeping import StoredTimestampError, format_shift_datetime
 
 
 def csv_bytes(*rows: dict[str, str]) -> bytes:
@@ -180,14 +183,15 @@ def test_no_active_shift_context_is_blocking_gate(connection):
 
 
 def test_shift_display_helpers_convert_utc_to_sofia_without_raw_seconds():
-    assert main_module.format_shift_datetime("2026-07-26 18:30:59") == (
+    assert format_shift_datetime("2026-07-26 18:30:59") == (
         "26 юли 2026, 21:30"
     )
-    assert main_module.format_shift_datetime("2026-01-26 19:30:59") == (
+    assert format_shift_datetime("2026-01-26 19:30:59") == (
         "26 януари 2026, 21:30"
     )
-    assert main_module.format_shift_datetime(None) == "-"
-    assert main_module.format_shift_datetime("not-a-timestamp") == "-"
+    assert format_shift_datetime(None) == "-"
+    with pytest.raises(StoredTimestampError):
+        format_shift_datetime("not-a-timestamp")
 
     display = main_module.build_shift_display(
         {
@@ -211,6 +215,8 @@ def test_shift_display_helpers_convert_utc_to_sofia_without_raw_seconds():
 
     assert display["started_at_display"] == "26 юли 2026, 21:30"
     assert display["ended_at_display"] == "27 юли 2026, 06:05"
+    assert display["started_at_iso_utc"] == "2026-07-26T18:30:59Z"
+    assert display["ended_at_iso_utc"] == "2026-07-27T03:05:02Z"
     assert display["total_gross_weight_display"] == "550.0"
     assert display["orders"][0]["gross_weight_display"] == "550.0"
 

@@ -123,11 +123,11 @@
             </div>
             <div class="shift-summary-meta-item">
               <img src="{{ url_for('static', path='/images/shift-ui/play-circle.svg') }}" alt="" aria-hidden="true">
-              <span><small>Начало</small><strong><time datetime="{{ selected_shift_summary.started_at }}">{{ selected_shift_summary.started_at_display }}</time></strong></span>
+              <span><small>Начало</small><strong><time datetime="{{ selected_shift_summary.started_at_iso_utc }}">{{ selected_shift_summary.started_at_display }}</time></strong></span>
             </div>
             <div class="shift-summary-meta-item">
               <img src="{{ url_for('static', path='/images/shift-ui/stop-square.svg') }}" alt="" aria-hidden="true">
-              <span><small>Край</small><strong><time datetime="{{ selected_shift_summary.ended_at }}">{{ selected_shift_summary.ended_at_display }}</time></strong></span>
+              <span><small>Край</small><strong><time datetime="{{ selected_shift_summary.ended_at_iso_utc }}">{{ selected_shift_summary.ended_at_display }}</time></strong></span>
             </div>
           </div>
           <div class="shift-table-scroll">
@@ -188,8 +188,8 @@
                 {% for shift in history_shifts %}
                   <tr data-shift-history-id="{{ shift.id }}">
                     <td><span class="shift-number-badge">{{ shift.shift_number }}</span></td>
-                    <td><time datetime="{{ shift.started_at }}">{{ shift.started_at_display }}</time></td>
-                    <td><time datetime="{{ shift.ended_at }}">{{ shift.ended_at_display }}</time></td>
+                    <td><time datetime="{{ shift.started_at_iso_utc }}">{{ shift.started_at_display }}</time></td>
+                    <td><time datetime="{{ shift.ended_at_iso_utc }}">{{ shift.ended_at_display }}</time></td>
                     <td>{{ shift.distinct_item_count }}</td>
                     <td>{{ shift.roll_count }}</td>
                     <td class="shift-weight-cell">{{ shift.total_gross_weight_display }}</td>
@@ -245,7 +245,7 @@
               </form>
               <div class="shift-start-time">
                 <img src="{{ url_for('static', path='/images/shift-ui/play-circle.svg') }}" alt="" aria-hidden="true">
-                <span><small>Начало</small><strong><time datetime="{{ active_shift.started_at }}">{{ active_shift.started_at_display }}</time></strong></span>
+                <span><small>Начало</small><strong><time datetime="{{ active_shift.started_at_iso_utc }}">{{ active_shift.started_at_display }}</time></strong></span>
               </div>
               <form class="shift-end-section" id="shift-end-form" action="/terminal/shifts/current/end" method="post" data-shift-end-form>
                 <input type="hidden" name="shift_occurrence_id" value="{{ active_shift.id }}">
@@ -286,8 +286,8 @@
                   {% for shift in recent_completed_shifts %}
                     <tr data-shift-history-preview-id="{{ shift.id }}">
                       <td><span class="shift-number-badge">{{ shift.shift_number }}</span></td>
-                      <td><time datetime="{{ shift.started_at }}">{{ shift.started_at_display }}</time></td>
-                      <td><time datetime="{{ shift.ended_at }}">{{ shift.ended_at_display }}</time></td>
+                      <td><time datetime="{{ shift.started_at_iso_utc }}">{{ shift.started_at_display }}</time></td>
+                      <td><time datetime="{{ shift.ended_at_iso_utc }}">{{ shift.ended_at_display }}</time></td>
                       <td>{{ shift.distinct_item_count }}</td>
                       <td>{{ shift.roll_count }}</td>
                       <td class="shift-weight-cell">{{ shift.total_gross_weight_display }}</td>

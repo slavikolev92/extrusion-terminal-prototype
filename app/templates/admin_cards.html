@@ -74,7 +74,7 @@
               <td>{{ card.customer or "-" }}</td>
               <td>{{ card.product_type or "-" }}</td>
               <td>{{ card.machine_id or "-" }} / {{ card.machine_sequence or "-" }}</td>
-              <td>{{ card.updated_at }}</td>
+              <td><time datetime="{{ card.updated_at_iso_utc }}">{{ card.updated_at_display }}</time></td>
               <td>
                 <a href="/admin/cards/{{ card.id }}">Отвори</a>
               </td>

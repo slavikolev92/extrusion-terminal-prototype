@@ -88,6 +88,34 @@ def test_admin_import_explains_overwrite_scope(connection):
     assert "По-стари CSV редове, които биха заменили админ корекции, се блокират за преглед." in html
 
 
+def test_admin_lists_present_local_timestamps_with_utc_datetime_attributes(connection):
+    card_id = import_route_card("TIME-LISTS")
+    connection.execute(
+        "UPDATE cards SET updated_at = ? WHERE id = ?",
+        ("2026-06-18 08:05:00", card_id),
+    )
+    connection.execute(
+        "UPDATE import_batches SET created_at = ?",
+        ("2026-06-18 08:05:00",),
+    )
+    connection.commit()
+
+    cards_response = asyncio.run(
+        admin_cards(
+            make_request("/admin/cards", method="GET"),
+            order_number="",
+            customer="",
+            product="",
+            status="",
+        )
+    )
+    import_response = asyncio.run(admin_import(make_request("/admin/import", method="GET")))
+
+    expected = '<time datetime="2026-06-18T08:05:00Z">18.06.2026 11:05:00</time>'
+    assert expected in cards_response.body.decode("utf-8")
+    assert expected in import_response.body.decode("utf-8")
+
+
 def make_request(path: str, method: str = "POST") -> Request:
     return Request(
         {

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 import re
 from typing import Any
 from urllib.parse import urlencode
-from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import PlainTextResponse, RedirectResponse
@@ -92,6 +91,12 @@ from .presentation import next_operation_display
 from .recipe_parser import RECIPE_SOURCE_FIELDS
 from .recipe_parser import parse_recipe_source_fields
 from .rules import RECIPE_RELEASE_FIELD_LABELS, RuleResult, target_gross_weight_from_card
+from .timekeeping import (
+    format_display_datetime,
+    format_shift_datetime,
+    format_sofia_input,
+    format_utc_datetime_attribute,
+)
 
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
@@ -210,10 +215,38 @@ app = FastAPI(title="Терминал Екструдиране", lifespan=lifesp
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
 
+def add_time_presentation(record: dict[str, Any], *fields: str) -> dict[str, Any]:
+    for field in fields:
+        raw_value = record.get(field)
+        record[f"{field}_display"] = format_display_datetime(raw_value)
+        record[f"{field}_iso_utc"] = format_utc_datetime_attribute(raw_value)
+    return record
+
+
+def enrich_admin_card_times(card: dict[str, Any]) -> dict[str, Any]:
+    add_time_presentation(
+        card,
+        "first_started_at",
+        "finished_at",
+        "created_at",
+        "updated_at",
+    )
+    card["first_started_at_input"] = format_sofia_input(card.get("first_started_at"))
+    card["finished_at_input"] = format_sofia_input(card.get("finished_at"))
+    for segment in card.get("timing_segments") or []:
+        add_time_presentation(segment, "started_at", "ended_at")
+        segment["started_at_input"] = format_sofia_input(segment.get("started_at"))
+        segment["ended_at_input"] = format_sofia_input(segment.get("ended_at"))
+    return card
+
+
 def admin_import_context(**extra: Any) -> dict[str, Any]:
     context: dict[str, Any] = {
         "admin_section": "import",
-        "recent_imports": fetch_recent_import_batches(),
+        "recent_imports": [
+            add_time_presentation(batch, "created_at")
+            for batch in fetch_recent_import_batches()
+        ],
         "summary": database_summary(),
     }
     context.update(extra)
@@ -279,6 +312,7 @@ def admin_card_detail_context(card_id: int, **extra: Any) -> dict[str, Any] | No
     card = fetch_admin_card_detail(card_id)
     if not card:
         return None
+    enrich_admin_card_times(card)
     card["total_production_duration"] = format_duration(
         card["total_production_seconds"],
     )
@@ -945,12 +979,16 @@ async def admin_cards(
         "product": product,
         "status": status,
     }
+    cards = [
+        add_time_presentation(card, "updated_at")
+        for card in fetch_admin_cards(filters)
+    ]
     return templates.TemplateResponse(
         request,
         "admin_cards.html",
         {
             "admin_section": "cards",
-            "cards": fetch_admin_cards(filters),
+            "cards": cards,
             "filters": filters,
             "card_statuses": CARD_STATUSES,
             "status_labels": STATUS_LABELS,
@@ -2996,6 +3034,7 @@ def enrich_terminal_list_card(
     card: dict[str, Any],
     selected_card: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    add_time_presentation(card, "finished_at")
     card["status_label"] = STATUS_LABELS.get(card.get("status"), str(card.get("status") or ""))
     card["status_display_class"] = (
         "idle" if card.get("status") == STATUS_PENDING else str(card.get("status") or "")
@@ -3091,45 +3130,12 @@ def one_decimal_weight_display(value: Any, blank: str = "-") -> str:
     return format(decimal_value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP), "f")
 
 
-BULGARIAN_MONTH_NAMES = (
-    "",
-    "януари",
-    "февруари",
-    "март",
-    "април",
-    "май",
-    "юни",
-    "юли",
-    "август",
-    "септември",
-    "октомври",
-    "ноември",
-    "декември",
-)
-SHIFT_DISPLAY_TIME_ZONE = ZoneInfo("Europe/Sofia")
-
-
-def format_shift_datetime(value: Any) -> str:
-    raw_value = str(value or "").strip()
-    if not raw_value:
-        return "-"
-    try:
-        parsed_utc = datetime.strptime(raw_value, "%Y-%m-%d %H:%M:%S").replace(
-            tzinfo=timezone.utc
-        )
-    except ValueError:
-        return "-"
-    parsed = parsed_utc.astimezone(SHIFT_DISPLAY_TIME_ZONE)
-    return (
-        f"{parsed.day} {BULGARIAN_MONTH_NAMES[parsed.month]} "
-        f"{parsed.year}, {parsed:%H:%M}"
-    )
-
-
 def build_shift_display(shift: dict[str, Any]) -> dict[str, Any]:
     display = dict(shift)
     display["started_at_display"] = format_shift_datetime(shift.get("started_at"))
     display["ended_at_display"] = format_shift_datetime(shift.get("ended_at"))
+    display["started_at_iso_utc"] = format_utc_datetime_attribute(shift.get("started_at"))
+    display["ended_at_iso_utc"] = format_utc_datetime_attribute(shift.get("ended_at"))
     if "total_gross_weight" in shift:
         display["total_gross_weight_display"] = one_decimal_weight_display(
             shift.get("total_gross_weight"),

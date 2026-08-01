@@ -1344,6 +1344,7 @@ def test_terminal_v8_sorts_produced_lookup_by_finished_at_descending(connection)
     html = render_terminal(newer_id)
 
     assert html.index("Newer Produced") < html.index("Older Produced")
+    assert '<time datetime="2026-07-24T15:00:00Z">24.07.2026 18:00:00</time>' in html
 
 
 def test_terminal_v8_renders_waiting_rewinding_header_badge_and_separate_rows(
@@ -1386,6 +1387,7 @@ def test_terminal_v8_renders_waiting_rewinding_header_badge_and_separate_rows(
         "UPDATE cards SET finished_at = ? WHERE id = ?",
         ("2026-07-24 10:00:00", newer_waiting_id),
     )
+    connection.commit()
 
     html = render_terminal(newer_waiting_id)
 
@@ -1408,6 +1410,7 @@ def test_terminal_v8_renders_waiting_rewinding_header_badge_and_separate_rows(
     assert '<h2 id="waiting-title">Изчакващи пренавиване</h2>' in waiting_pane
     assert 'aria-label="Затвори изчакващите пренавиване"' in waiting_pane
     assert waiting_pane.index("Newer Waiting") < waiting_pane.index("Older Waiting")
+    assert '<time datetime="2026-07-24T10:00:00Z">24.07.2026 13:00:00</time>' in waiting_pane
     assert f'href="/terminal/cards/{newer_waiting_id}"' in waiting_pane
     assert f'href="/terminal/cards/{older_waiting_id}"' in waiting_pane
     assert "12 ролки" in waiting_pane

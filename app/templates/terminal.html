@@ -4008,7 +4008,7 @@
                   <span class="history-row-details">
                     <span>{{ card.size_thickness or "-" }}</span>
                     <span>{{ card.material or "-" }}</span>
-                    <span>{{ card.finished_at or "-" }}</span>
+                    <time datetime="{{ card.finished_at_iso_utc }}">{{ card.finished_at_display }}</time>
                   </span>
                 </a>
               {% endfor %}
@@ -4049,7 +4049,7 @@
               <a class="history-row {% if card.is_selected %}selected{% endif %}" href="/terminal/cards/{{ card.id }}" data-customer="{{ (card.customer or '')|lower }}" data-product="{{ (card.product_type or '')|lower }}" data-size="{{ (card.size_thickness or '')|lower }}" data-material="{{ (card.material or '')|lower }}">
                 <span class="history-row-top"><span class="history-row-title">{{ card.customer or "-" }} (№{{ card.order_number }})</span><span class="status completed">{{ card.status_label }}</span></span>
                 <span class="history-row-product">{{ card.product_type or "-" }}</span>
-                <span class="history-row-details"><span>{{ card.size_thickness or "-" }}</span><span>{{ card.material or "-" }}</span><span>{% if card.produced_gross_weight %}{{ card.produced_gross_weight }} кг{% else %}-{% endif %}</span><span>{{ card.finished_at or "-" }}</span></span>
+                <span class="history-row-details"><span>{{ card.size_thickness or "-" }}</span><span>{{ card.material or "-" }}</span><span>{% if card.produced_gross_weight %}{{ card.produced_gross_weight }} кг{% else %}-{% endif %}</span><time datetime="{{ card.finished_at_iso_utc }}">{{ card.finished_at_display }}</time></span>
               </a>
             {% endfor %}
             <div class="history-empty" id="history-empty" {% if archive_cards %}hidden{% endif %}>Няма намерени произведени поръчки.</div>

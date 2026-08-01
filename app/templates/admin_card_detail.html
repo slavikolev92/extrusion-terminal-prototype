@@ -366,11 +366,11 @@
         </div>
         <div>
           <dt>Първи старт</dt>
-          <dd>{{ card.first_started_at or "-" }}</dd>
+          <dd><time datetime="{{ card.first_started_at_iso_utc }}">{{ card.first_started_at_display }}</time></dd>
         </div>
         <div>
           <dt>{{ status_labels.completed }}</dt>
-          <dd>{{ card.finished_at or "-" }}</dd>
+          <dd><time datetime="{{ card.finished_at_iso_utc }}">{{ card.finished_at_display }}</time></dd>
         </div>
       </dl>
 
@@ -383,8 +383,8 @@
         </div>
         {% for segment in card.timing_segments %}
           <div class="admin-ledger-row admin-timing-ledger-row">
-            <div><input name="started_at__{{ segment.id }}" value="{{ segment.started_at }}" aria-label="Сегмент {{ loop.index }}, начало" {% if production_fields_disabled %}disabled{% endif %}></div>
-            <div><input name="ended_at__{{ segment.id }}" value="{{ segment.ended_at or '' }}" aria-label="Сегмент {{ loop.index }}, край" {% if production_fields_disabled %}disabled{% endif %}></div>
+            <div><input name="started_at__{{ segment.id }}" value="{{ segment.started_at_input }}" aria-label="Сегмент {{ loop.index }}, начало" {% if production_fields_disabled %}disabled{% endif %}></div>
+            <div><input name="ended_at__{{ segment.id }}" value="{{ segment.ended_at_input }}" aria-label="Сегмент {{ loop.index }}, край" {% if production_fields_disabled %}disabled{% endif %}></div>
             <div>
               <select name="end_reason__{{ segment.id }}" aria-label="Сегмент {{ loop.index }}, причина" {% if production_fields_disabled %}disabled{% endif %}>
                 <option value="" {% if not segment.end_reason %}selected{% endif %}>В ход</option>
@@ -422,7 +422,7 @@
     </form>
   {% endfor %}
   {% for segment in card.timing_segments %}
-    <form id="timing-delete-{{ segment.id }}" class="ledger-delete-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}/delete" method="post" data-action-confirm="Да се изтрие ли времеви сегмент {{ loop.index }}: {{ segment.started_at }} - {{ segment.ended_at or 'в ход' }}?">
+    <form id="timing-delete-{{ segment.id }}" class="ledger-delete-form" action="/admin/cards/{{ card.id }}/timing-segments/{{ segment.id }}/delete" method="post" data-action-confirm="Да се изтрие ли времеви сегмент {{ loop.index }}: {{ segment.started_at_display }} - {{ segment.ended_at_display if segment.ended_at else 'в ход' }}?">
       <input type="hidden" name="loaded_version" value="{{ card.version }}">
     </form>
   {% endfor %}
@@ -445,11 +445,11 @@
         </div>
         <div>
           <dt>Създадена</dt>
-          <dd>{{ card.created_at }}</dd>
+          <dd><time datetime="{{ card.created_at_iso_utc }}">{{ card.created_at_display }}</time></dd>
         </div>
         <div>
           <dt>Обновена</dt>
-          <dd>{{ card.updated_at }}</dd>
+          <dd><time datetime="{{ card.updated_at_iso_utc }}">{{ card.updated_at_display }}</time></dd>
         </div>
       </dl>
       {% if card.status == "imported" and not card.roll_entries and not card.timing_segments %}

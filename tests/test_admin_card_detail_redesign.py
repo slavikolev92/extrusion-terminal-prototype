@@ -17,6 +17,7 @@ from app.constants import (
 )
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
 from app.main import (
+    add_time_presentation,
     admin_card_detail_context,
     roll_ledger_from_form,
     save_admin_card_changes,
@@ -186,7 +187,10 @@ def render_admin_cards_list(**extra: object) -> str:
     )
     env.globals["url_for"] = lambda name, **kwargs: f"/static{kwargs.get('path', '')}"
     context = {
-        "cards": db.fetch_admin_cards({}),
+        "cards": [
+            add_time_presentation(card, "updated_at")
+            for card in db.fetch_admin_cards({})
+        ],
         "filters": {"order_number": "", "customer": "", "product": "", "status": ""},
         "card_statuses": CARD_STATUSES,
         "status_labels": STATUS_LABELS,
@@ -194,6 +198,49 @@ def render_admin_cards_list(**extra: object) -> str:
     }
     context.update(extra)
     return env.get_template("admin_cards.html").render(**context)
+
+
+def test_admin_detail_enriches_utc_timestamps_without_changing_raw_values(connection):
+    card_id = prepare_dense_completed_card("TIME-DETAIL", roll_count=1)
+    connection.execute(
+        """
+        UPDATE cards
+        SET first_started_at = ?, finished_at = ?, created_at = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            "2026-06-18 08:05:00",
+            "2026-06-18 09:05:00",
+            "2026-06-18 07:05:00",
+            "2026-06-18 10:05:00",
+            card_id,
+        ),
+    )
+    connection.execute(
+        """
+        UPDATE production_time_segments
+        SET started_at = ?, ended_at = ?
+        WHERE card_id = ?
+        """,
+        ("2026-06-18 08:05:00", "2026-06-18 09:05:00", card_id),
+    )
+    connection.commit()
+
+    context = admin_card_detail_context(card_id)
+
+    assert context is not None
+    card = context["card"]
+    assert card["first_started_at"] == "2026-06-18 08:05:00"
+    assert card["first_started_at_display"] == "18.06.2026 11:05:00"
+    assert card["first_started_at_input"] == "2026-06-18 11:05:00"
+    assert card["first_started_at_iso_utc"] == "2026-06-18T08:05:00Z"
+    segment = card["timing_segments"][0]
+    assert segment["started_at"] == "2026-06-18 08:05:00"
+    assert segment["started_at_input"] == "2026-06-18 11:05:00"
+
+    html = render_admin_detail(card_id)
+    assert '<time datetime="2026-06-18T08:05:00Z">18.06.2026 11:05:00</time>' in html
+    assert 'value="2026-06-18 11:05:00"' in html
 
 
 class MultiItemForm:

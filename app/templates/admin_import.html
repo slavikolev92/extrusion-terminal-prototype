@@ -101,7 +101,7 @@
               <td>{{ batch.source_filename or "-" }}</td>
               <td>{{ batch.rows_seen }}</td>
               <td>{{ batch.rows_imported }}</td>
-              <td>{{ batch.created_at }}</td>
+              <td><time datetime="{{ batch.created_at_iso_utc }}">{{ batch.created_at_display }}</time></td>
             </tr>
           {% endfor %}
         </tbody>
