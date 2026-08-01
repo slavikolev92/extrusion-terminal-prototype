@@ -33,8 +33,30 @@ def test_parse_stored_utc_rejects_noncanonical_or_invalid_values(value):
 def test_optional_stored_time_is_distinct_from_malformed_time():
     assert parse_stored_utc(None) is None
     assert parse_stored_utc("   ") is None
+    with pytest.raises(
+        StoredTimestampError,
+        match="required stored UTC timestamp is missing",
+    ):
+        parse_stored_utc(" \t\n ", required=True)
     with pytest.raises(StoredTimestampError):
         parse_stored_utc("broken")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        " 2026-06-18 21:35:29",
+        "2026-06-18 21:35:29 ",
+        "\t2026-06-18 21:35:29\n",
+    ],
+)
+@pytest.mark.parametrize("required", [False, True])
+def test_parse_stored_utc_rejects_padding_around_nonblank_timestamp(
+    value,
+    required,
+):
+    with pytest.raises(StoredTimestampError, match="not canonical"):
+        parse_stored_utc(value, required=required)
 
 
 @pytest.mark.parametrize(

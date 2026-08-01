@@ -27,11 +27,14 @@ class LocalTimeInputError(ValueError):
 
 
 def parse_stored_utc(value: Any, *, required: bool = False) -> datetime | None:
-    raw = str(value or "").strip()
-    if not raw:
+    raw = str(value or "")
+    stripped = raw.strip()
+    if not stripped:
         if required:
             raise StoredTimestampError("A required stored UTC timestamp is missing.")
         return None
+    if raw != stripped:
+        raise StoredTimestampError("Stored UTC timestamp is not canonical.")
     if not CANONICAL_UTC_PATTERN.fullmatch(raw):
         raise StoredTimestampError("Stored UTC timestamp is not canonical.")
     try:

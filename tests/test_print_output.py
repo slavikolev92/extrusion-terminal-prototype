@@ -292,6 +292,102 @@ def test_print_blocks_malformed_required_timestamp(connection, field, message):
     assert message in result.messages
 
 
+@pytest.mark.parametrize(
+    ("field", "padded_value", "message"),
+    [
+        (
+            "first_started_at",
+            " 2026-06-18 08:05:00",
+            "Началният час на производство е невалиден и печатът е блокиран.",
+        ),
+        (
+            "finished_at",
+            "2026-06-18 10:45:00 ",
+            "Крайният час на производство е невалиден и печатът е блокиран.",
+        ),
+    ],
+)
+def test_print_blocks_padded_required_timestamp(
+    connection,
+    field,
+    padded_value,
+    message,
+):
+    card_id = make_completed_printable_card(f"270-padded-{field}")
+    with db.connect() as connection:
+        connection.execute(
+            f"UPDATE cards SET {field} = ? WHERE id = ?",
+            (padded_value, card_id),
+        )
+        connection.commit()
+
+    result = build_print_readiness(card_id)
+
+    assert not result.ok
+    assert result.data is None
+    assert message in result.messages
+
+
+@pytest.mark.parametrize(
+    ("field", "malformed_value"),
+    [
+        ("started_at", "0000-00-00 00:00:00"),
+        ("ended_at", "broken"),
+    ],
+)
+def test_print_blocks_malformed_timing_segment_timestamp(
+    connection,
+    field,
+    malformed_value,
+):
+    card_id = make_completed_printable_card(f"270-invalid-segment-{field}")
+    with db.connect() as connection:
+        connection.execute(
+            f"UPDATE production_time_segments SET {field} = ? WHERE card_id = ?",
+            (malformed_value, card_id),
+        )
+        connection.commit()
+
+    result = build_print_readiness(card_id)
+
+    assert not result.ok
+    assert result.data is None
+    assert result.messages == [
+        "Времевият регистър съдържа невалиден начален или краен час и печатът е блокиран."
+    ]
+
+
+def test_print_blocks_mixed_valid_and_malformed_timing_ledger(connection):
+    card_id = make_completed_printable_card("270-mixed-invalid-segment")
+    with db.connect() as connection:
+        corrupt_segment_id = connection.execute(
+            """
+            SELECT id
+            FROM production_time_segments
+            WHERE card_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (card_id,),
+        ).fetchone()["id"]
+        connection.execute(
+            "UPDATE production_time_segments SET started_at = ? WHERE id = ?",
+            ("0000-00-00 00:00:00", corrupt_segment_id),
+        )
+        connection.commit()
+
+    result = build_print_readiness(card_id)
+    response = get_print_page(card_id)
+
+    assert not result.ok
+    assert result.data is None
+    assert result.messages == [
+        "Времевият регистър съдържа невалиден начален или краен час и печатът е блокиран."
+    ]
+    assert "Печатът е блокиран" in response.text
+    assert result.messages[0] in response.text
+
+
 def test_build_pallet_summary_returns_no_rows_when_every_saved_gross_roll_is_unassigned():
     rows = printing.build_pallet_summary(
         [

@@ -75,6 +75,17 @@ def validate_print_readiness(card: dict[str, Any]) -> list[str]:
         messages.append("Времето трябва да бъде стартирано преди печат.")
     elif any(segment.get("ended_at") is None for segment in timing_segments):
         messages.append("Всички времеви сегменти трябва да са затворени преди печат.")
+    for segment in timing_segments:
+        try:
+            parse_stored_utc(segment.get("started_at"), required=True)
+            if segment.get("ended_at") is not None:
+                parse_stored_utc(segment.get("ended_at"), required=True)
+        except StoredTimestampError:
+            messages.append(
+                "Времевият регистър съдържа невалиден начален или краен час "
+                "и печатът е блокиран."
+            )
+            break
 
     gross_rolls = gross_roll_entries(card)
     if not gross_rolls:
