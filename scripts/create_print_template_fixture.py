@@ -120,8 +120,8 @@ def create_dense_completed_card(order_number: str = "PRINT-TEMPLATE-001") -> int
                 '0%',
                 'Палетизиране и стреч фолио',
                 1.25,
-                '2026-06-18 08:05:00',
-                '2026-06-18 14:45:00'
+                '2026-06-18 21:35:00',
+                '2026-06-19 04:15:00'
             )
             """,
             (order_number, STATUS_COMPLETED),
@@ -163,10 +163,17 @@ def create_dense_completed_card(order_number: str = "PRINT-TEMPLATE-001") -> int
             VALUES (?, ?, ?, ?)
             """,
             (
-                (card_id, "2026-06-18 08:05:00", "2026-06-18 10:10:00", "pause"),
-                (card_id, "2026-06-18 10:30:00", "2026-06-18 12:20:00", "pause"),
-                (card_id, "2026-06-18 12:50:00", "2026-06-18 14:45:00", "finish"),
+                (card_id, "2026-06-18 21:35:00", "2026-06-18 23:40:00", "pause"),
+                (card_id, "2026-06-19 00:00:00", "2026-06-19 01:50:00", "pause"),
+                (card_id, "2026-06-19 02:20:00", "2026-06-19 04:15:00", "finish"),
             ),
+        )
+
+        connection.execute(
+            """
+            INSERT INTO shift_occurrences (shift_number, started_at, ended_at)
+            VALUES (1, '2026-06-19 04:00:00', NULL)
+            """
         )
 
         tare = Decimal("1.25")
