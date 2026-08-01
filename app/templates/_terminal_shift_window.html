@@ -19,6 +19,7 @@
      data-shift-window="true"
      data-shift-state="{{ shift_window_state }}"
      data-shift-blocking="{{ 'true' if shift_blocking else 'false' }}"
+     data-server-now-utc="{{ terminal_snapshot.server_now_utc }}"
      data-shift-overview-url="{{ shift_overview_url }}"
      aria-hidden="{{ 'true' if shift_window_state == 'closed' else 'false' }}"
      {% if shift_window_state == "closed" %}hidden{% endif %}>

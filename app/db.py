@@ -957,6 +957,7 @@ def terminal_snapshot(
 
     with connect() as connection:
         connection.execute("BEGIN")
+        server_now_utc = current_database_timestamp(connection)
         if known_shift_signature is None:
             configuration = connection.execute(
                 "SELECT shift_count, version FROM terminal_configuration WHERE id = 1"
@@ -1057,6 +1058,7 @@ def terminal_snapshot(
     )
 
     return {
+        "server_now_utc": server_now_utc,
         "active_signature": active_signature,
         "waiting_signature": waiting_signature,
         "shift_signature": shift_signature,

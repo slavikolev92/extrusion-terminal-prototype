@@ -182,6 +182,19 @@ def test_no_active_shift_context_is_blocking_gate(connection):
     assert context["shift_blocking"] is True
 
 
+def test_initial_shift_overlay_includes_raw_database_utc_sample(connection, monkeypatch):
+    monkeypatch.setattr(
+        db,
+        "current_database_timestamp",
+        lambda connection: "2026-07-31 08:00:00",
+    )
+
+    status, body = asyncio.run(get_page("/terminal"))
+
+    assert status == 200
+    assert 'data-server-now-utc="2026-07-31 08:00:00"' in body
+
+
 def test_shift_display_helpers_convert_utc_to_sofia_without_raw_seconds():
     assert format_shift_datetime("2026-07-26 18:30:59") == (
         "26 юли 2026, 21:30"

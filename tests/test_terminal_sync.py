@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+from pathlib import Path
 
 from app import db
 from app.constants import STATUS_AWAITING_REWINDING, STATUS_COMPLETED, STATUS_IMPORTED
@@ -65,6 +66,20 @@ def release_ready_card(order_number: str, machine_id: int, machine_sequence: int
 
 def card_version(card_id: int) -> int:
     return int(db.fetch_terminal_card_detail(card_id)["version"])
+
+
+def test_terminal_snapshot_samples_database_utc_without_signing_it(connection, monkeypatch):
+    samples = iter(("2026-07-31 08:00:00", "2026-07-31 08:00:10"))
+    monkeypatch.setattr(db, "current_database_timestamp", lambda connection: next(samples))
+
+    before = db.terminal_snapshot()
+    after = db.terminal_snapshot()
+
+    assert before["server_now_utc"] == "2026-07-31 08:00:00"
+    assert after["server_now_utc"] == "2026-07-31 08:00:10"
+    assert before["signature"] == after["signature"]
+    assert before["active_signature"] == after["active_signature"]
+    assert before["waiting_signature"] == after["waiting_signature"]
 
 
 def test_terminal_snapshot_includes_active_released_cards(connection):
@@ -146,15 +161,46 @@ def test_terminal_snapshot_marks_cancelled_selected_card_missing(connection):
     assert f"missing:{card_id}" in snapshot["signature"]
 
 
-def test_terminal_snapshot_route_is_registered_and_returns_snapshot(connection):
+def test_terminal_snapshot_route_is_registered_and_returns_snapshot(connection, monkeypatch):
     card_id = release_ready_card("25906", machine_id=1, machine_sequence=1)
     route_paths = {route.path for route in app.routes}
+    monkeypatch.setattr(
+        db,
+        "current_database_timestamp",
+        lambda connection: "2026-07-31 08:00:00",
+    )
 
     snapshot = asyncio.run(terminal_snapshot_route(selected_card_id=card_id))
 
     assert "/terminal/snapshot" in route_paths
+    assert snapshot["server_now_utc"] == "2026-07-31 08:00:00"
     assert snapshot["selected_card"]["id"] == card_id
     assert snapshot["active_cards"][0]["order_number"] == "25906"
+
+
+def test_terminal_poll_synchronizes_clock_before_unchanged_signature_return():
+    template = Path("app/templates/terminal.html").read_text(encoding="utf-8")
+    poll_start = template.index("const pollSnapshot = async () => {")
+    poll_end = template.index("window.setInterval(pollSnapshot, 10000);", poll_start)
+    polling_block = template[poll_start:poll_end]
+    event_text = 'document.dispatchEvent(new CustomEvent("terminal:server-time"'
+
+    assert event_text in template
+    assert template.index(event_text) < template.index(
+        "if (snapshot.signature === currentSignature)"
+    )
+    catch_block = polling_block[polling_block.index("} catch {") :]
+    assert "shiftClockOffsetMs =" not in catch_block
+
+
+def test_terminal_shift_clock_uses_server_adjusted_current_time():
+    template = Path("app/templates/terminal.html").read_text(encoding="utf-8")
+    shift_clock_start = template.index("const shiftLiveClocks = Array.from(")
+    shift_clock_end = template.index("const isBlockingShiftWindow", shift_clock_start)
+    shift_clock_block = template[shift_clock_start:shift_clock_end]
+
+    assert "Date.now() + shiftClockOffsetMs" in template
+    assert "const now = new Date();" not in shift_clock_block
 
 
 def test_terminal_snapshot_marks_unreleased_selected_card_missing(connection):

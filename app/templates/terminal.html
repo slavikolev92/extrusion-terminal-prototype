@@ -4673,8 +4673,26 @@
         minute: "2-digit",
         hourCycle: "h23",
       });
+      let shiftClockOffsetMs = 0;
+
+      const parseDatabaseUtc = (value) => {
+        if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) {
+          return Number.NaN;
+        }
+        return Date.parse(`${value.replace(" ", "T")}Z`);
+      };
+
+      const synchronizeShiftClock = (serverNowUtc) => {
+        const serverMillis = parseDatabaseUtc(serverNowUtc);
+        if (!Number.isFinite(serverMillis)) {
+          return;
+        }
+        shiftClockOffsetMs = serverMillis - Date.now();
+        updateShiftClocks();
+      };
+
       const updateShiftClocks = () => {
-        const now = new Date();
+        const now = new Date(Date.now() + shiftClockOffsetMs);
         const parts = Object.fromEntries(
           shiftClockFormatter.formatToParts(now).map((part) => [part.type, part.value]),
         );
@@ -4687,7 +4705,12 @@
           clock.dateTime = now.toISOString();
         });
       };
-      updateShiftClocks();
+
+      document.addEventListener("terminal:server-time", (event) => {
+        synchronizeShiftClock(event.detail?.serverNowUtc);
+      });
+
+      synchronizeShiftClock(shiftWindow.dataset.serverNowUtc);
       window.setInterval(updateShiftClocks, 1000);
 
       const isBlockingShiftWindow = () => (
@@ -5314,6 +5337,9 @@
             return;
           }
           const snapshot = await response.json();
+          document.dispatchEvent(new CustomEvent("terminal:server-time", {
+            detail: { serverNowUtc: snapshot.server_now_utc },
+          }));
           if (snapshot.signature === currentSignature) {
             return;
           }
