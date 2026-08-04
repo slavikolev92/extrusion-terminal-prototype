@@ -526,6 +526,14 @@ async function verifyRunningSummary(page, state, viewportDir) {
     [`${rewindingActionLabel}: 1`, "Палети"],
     "running secondary action order",
   );
+  const secondaryActionHeights = await page
+    .locator("[data-roll-secondary-actions] button")
+    .evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().height));
+  assertEqual(
+    secondaryActionHeights[1],
+    secondaryActionHeights[0],
+    "pallet action height matches rewinding action",
+  );
 
   await clientOnly(page, state, "running summary open", async () => openSummary(page, expected));
   const headings = await page.locator("[data-pallet-summary-dialog] thead th").allTextContents();
