@@ -3,8 +3,10 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import logging
 from pathlib import Path
 import re
+import traceback
 from typing import Any
 from urllib.parse import urlencode
 
@@ -86,6 +88,7 @@ from .db import (
 )
 from .deployment import deployment_metadata
 from .importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
+from .pallet_summary import build_terminal_pallet_summary
 from .printing import build_print_readiness
 from .presentation import next_operation_display
 from .recipe_parser import RECIPE_SOURCE_FIELDS
@@ -102,6 +105,7 @@ from .timekeeping import (
 
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+logger = logging.getLogger(__name__)
 
 CARD_NOT_FOUND_MESSAGE = "Картата не е намерена."
 INVALID_LOADED_VERSION_MESSAGE = "Версията на заредената карта е невалидна. Презаредете картата."
@@ -2614,6 +2618,26 @@ def terminal_notice_result(notice_code: str | None) -> RuleResult | None:
     return RuleResult(True, messages)
 
 
+def attach_terminal_pallet_summary(card: dict[str, Any]) -> None:
+    try:
+        card["pallet_summary"] = build_terminal_pallet_summary(
+            card.get("roll_entries", [])
+        )
+    except Exception as error:
+        logger.error(
+            "Terminal pallet summary failed for card_id=%s "
+            "exception_type=%s\n%s",
+            card.get("id"),
+            type(error).__name__,
+            "".join(traceback.format_tb(error.__traceback__)),
+        )
+        card["pallet_summary"] = {
+            "state": "error",
+            "rows": [],
+            "total": None,
+        }
+
+
 def terminal_context(
     selected_card_id: int | None = None,
     selected_machine_id: int | None = None,
@@ -2657,6 +2681,7 @@ def terminal_context(
             selected_card["total_production_seconds"],
         )
         enrich_terminal_card_display(selected_card)
+        attach_terminal_pallet_summary(selected_card)
         selected_machine_id = selected_card["machine_id"]
 
     enriched_queues = enrich_machine_queues(machine_queues, selected_card, selected_machine_id)

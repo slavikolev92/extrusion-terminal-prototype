@@ -1939,6 +1939,142 @@
       background: #f6f9fc;
     }
 
+    .roll-secondary-button[data-pallet-summary-open] {
+      min-width: 44px;
+      min-height: 44px;
+    }
+
+    .pallet-summary-overlay {
+      position: fixed;
+      z-index: 86;
+      inset: 0;
+      padding: 1rem;
+      display: grid;
+      place-items: center;
+      background: rgba(31, 41, 51, .44);
+    }
+
+    .pallet-summary-overlay[hidden] {
+      display: none;
+    }
+
+    .pallet-summary-dialog {
+      width: min(42rem, calc(100vw - 2rem));
+      max-height: calc(100vh - 2rem);
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .pallet-summary-heading {
+      display: grid;
+      gap: 4px;
+    }
+
+    .pallet-summary-title {
+      margin: 0;
+      color: var(--primary-text);
+      font-size: 22px;
+      line-height: 1.15;
+      font-weight: 900;
+    }
+
+    .pallet-summary-context,
+    .pallet-summary-message {
+      margin: 0;
+      color: var(--secondary-text);
+      font-size: 14px;
+      line-height: 1.4;
+      font-weight: 700;
+    }
+
+    .pallet-summary-table-wrap {
+      min-width: 0;
+      min-height: 0;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .pallet-summary-table {
+      width: 100%;
+      min-width: 34rem;
+      border-collapse: collapse;
+      color: var(--primary-text);
+    }
+
+    .pallet-summary-table th,
+    .pallet-summary-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .pallet-summary-table thead th {
+      background: #f6f9fc;
+      color: var(--secondary-text);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .pallet-summary-table tbody th,
+    .pallet-summary-table tfoot th {
+      font-weight: 800;
+    }
+
+    .pallet-summary-table .numeric {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .pallet-summary-table tbody tr:last-child th,
+    .pallet-summary-table tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .pallet-summary-table tfoot {
+      border-top: 2px solid #b8c4d1;
+    }
+
+    .pallet-summary-table .pallet-summary-total th,
+    .pallet-summary-table .pallet-summary-total td {
+      border-bottom: 0;
+      background: var(--blue-soft);
+      font-weight: 900;
+    }
+
+    .pallet-summary-actions {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .pallet-summary-close {
+      min-width: 88px;
+      min-height: 44px;
+      border-color: #b8c4d1;
+      background: #fff;
+      color: #0b355f;
+      font-weight: 800;
+    }
+
+    @media (max-width: 560px) {
+      .pallet-summary-dialog {
+        padding: 14px;
+      }
+
+      .pallet-summary-table th,
+      .pallet-summary-table td {
+        padding: 9px 10px;
+      }
+    }
+
     .roll-secondary-button.is-marked {
       border-color: #d7a13f;
       background: #fff7e2;
@@ -4274,16 +4410,21 @@
             <section class="panel input-panel">
               <div class="panel-head">
                 <span>Ролки</span>
-                {% if selected_card.status in ["running", "paused", "awaiting_rewinding"] %}
-                  <div class="roll-secondary-actions" data-roll-secondary-actions>
+                <div class="roll-secondary-actions" data-roll-secondary-actions>
+                  {% if selected_card.status in ["running", "paused", "awaiting_rewinding"] %}
                     <button class="roll-secondary-button{% if selected_card.rewinding_roll_count %} is-marked{% endif %}"
                             type="button" data-rewinding-open
                             aria-controls="rewinding-overlay" aria-expanded="false">
                       {{ terminal_icon("awaiting-rewinding", "", "png") }}
                       Пренавиване{% if selected_card.rewinding_roll_count %}: {{ selected_card.rewinding_roll_count }}{% endif %}
                     </button>
-                  </div>
-                {% endif %}
+                  {% endif %}
+                  <button class="roll-secondary-button" type="button"
+                          data-pallet-summary-open
+                          aria-controls="pallet-summary-overlay" aria-expanded="false">
+                    Палети
+                  </button>
+                </div>
               </div>
               <div class="panel-body roll-body{% if terminal_feedback.open_roll_row_id %} roll-correction-mode{% endif %}" data-roll-body>
                 <div class="roll-entry">
@@ -4509,6 +4650,61 @@
     </div>
   </main>
   {% include "_terminal_shift_window.html" %}
+  {% if selected_card %}
+    <div class="pallet-summary-overlay" id="pallet-summary-overlay"
+         data-pallet-summary-overlay hidden aria-hidden="true">
+      <section class="pallet-summary-dialog" role="dialog" aria-modal="true"
+               aria-labelledby="pallet-summary-title"
+               aria-describedby="pallet-summary-context" tabindex="-1"
+               data-pallet-summary-dialog>
+        <header class="pallet-summary-heading">
+          <h2 class="pallet-summary-title" id="pallet-summary-title">Обобщение по палети</h2>
+          <p class="pallet-summary-context" id="pallet-summary-context">Поръчка №{{ selected_card.order_number }}</p>
+        </header>
+        {% if selected_card.pallet_summary.state == "ready" %}
+          <div class="pallet-summary-table-wrap" data-pallet-summary-scroll>
+            <table class="pallet-summary-table">
+              <thead>
+                <tr>
+                  <th scope="col">Палет</th>
+                  <th scope="col" class="numeric">Брой ролки</th>
+                  <th scope="col" class="numeric">Бруто, кг</th>
+                  <th scope="col" class="numeric">Нето, кг</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in selected_card.pallet_summary.rows %}
+                  <tr>
+                    <th scope="row">{{ row.pallet_label }}</th>
+                    <td class="numeric">{{ row.roll_count }}</td>
+                    <td class="numeric">{{ row.gross_display }}</td>
+                    <td class="numeric">{{ row.net_display }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+              <tfoot>
+                <tr class="pallet-summary-total" data-pallet-summary-total>
+                  <th scope="row">Общо</th>
+                  <td class="numeric">{{ selected_card.pallet_summary.total.roll_count }}</td>
+                  <td class="numeric">{{ selected_card.pallet_summary.total.gross_display }}</td>
+                  <td class="numeric">{{ selected_card.pallet_summary.total.net_display }}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        {% elif selected_card.pallet_summary.state == "empty" %}
+          <p class="pallet-summary-message" data-pallet-summary-empty>Няма въведени ролки.</p>
+        {% else %}
+          <p class="pallet-summary-message" role="alert" data-pallet-summary-error>
+            Обобщението по палети не може да бъде показано. Проверете данните за ролките.
+          </p>
+        {% endif %}
+        <div class="pallet-summary-actions">
+          <button class="pallet-summary-close" type="button" data-pallet-summary-close>Затвори</button>
+        </div>
+      </section>
+    </div>
+  {% endif %}
   {% if selected_card and selected_card.status in ["running", "paused", "awaiting_rewinding"] %}
     <div class="rewinding-overlay" id="rewinding-overlay" data-rewinding-overlay
          {% if not terminal_feedback.open_rewinding_dialog %}hidden{% endif %}
@@ -5374,6 +5570,7 @@
 
           currentSignature = snapshot.signature;
           showRefreshAlert();
+          document.dispatchEvent(new CustomEvent("terminal:card-stale"));
         } catch {
           // Manual refresh and server-side version checks still protect the workflow.
         }
@@ -5406,6 +5603,10 @@
       const rewindingOpenButton = document.querySelector("[data-rewinding-open]");
       const rewindingDismissButton = rewindingOverlay?.querySelector("[data-rewinding-cancel]");
       const rewindingInput = rewindingOverlay?.querySelector("[data-rewinding-input]");
+      const palletSummaryOpen = document.querySelector("[data-pallet-summary-open]");
+      const palletSummaryOverlay = document.querySelector("[data-pallet-summary-overlay]");
+      const palletSummaryDialog = palletSummaryOverlay?.querySelector("[data-pallet-summary-dialog]");
+      const palletSummaryClose = palletSummaryOverlay?.querySelector("[data-pallet-summary-close]");
       const rollRows = Array.from(document.querySelectorAll(".roll-row[data-roll-id]"));
       const rollEditButtons = Array.from(document.querySelectorAll("button[data-roll-edit-open]"));
       const rollActionPanels = Array.from(document.querySelectorAll("[data-roll-actions-for]"));
@@ -5415,7 +5616,7 @@
         document.querySelectorAll(".terminal-toast, .terminal-header, .machine-nav, .main"),
       );
       const correctionBlockedControls = document.querySelectorAll(
-        ".actions form button, .roll-add-button, .add-roll-form input, .tare-form input, .pallet-form input, .recipe-table input, #queue-open, #waiting-open, #history-open, [data-rewinding-open], [data-roll-change-open], [data-roll-change-advance]"
+        ".actions form button, .roll-add-button, .add-roll-form input, .tare-form input, .pallet-form input, .recipe-table input, #queue-open, #waiting-open, #history-open, [data-rewinding-open], [data-roll-change-open], [data-roll-change-advance], [data-pallet-summary-open]"
       );
       const correctionBlockedLinks = document.querySelectorAll(
         ".machine-tab, .queue-card, .history-row, [data-waiting-row]"
@@ -5428,6 +5629,7 @@
       let historyReturnFocus = null;
       let waitingReturnFocus = null;
       let rewindingReturnFocus = null;
+      let palletSummaryReturnFocus = null;
       let drawerBackgroundState = null;
       let drawerBackgroundOwner = null;
 
@@ -5567,6 +5769,7 @@
       const openRowEdit = (row, focusError = false) => {
         if (!row || row === activeRow) return;
         if (activeRow && hasDirtyRollCorrections()) return;
+        closePalletSummary(false);
         closeRowEdit();
         closeQueue(false);
         closeHistory(false);
@@ -5597,6 +5800,7 @@
         if (correctionModeOpen) {
           return;
         }
+        closePalletSummary(false);
         closeHistory(false);
         closeWaiting(false);
         closeRewinding(false);
@@ -5627,6 +5831,7 @@
         if (correctionModeOpen) {
           return;
         }
+        closePalletSummary(false);
         closeQueue(false);
         closeWaiting(false);
         closeRewinding(false);
@@ -5657,6 +5862,7 @@
         if (!waitingOverlay || correctionModeOpen) {
           return;
         }
+        closePalletSummary(false);
         closeQueue(false);
         closeHistory(false);
         closeRewinding(false);
@@ -5684,6 +5890,7 @@
         if (!rewindingOverlay || correctionModeOpen) {
           return;
         }
+        closePalletSummary(false);
         closeQueue(false);
         closeHistory(false);
         closeWaiting(false);
@@ -5711,6 +5918,36 @@
           (rewindingReturnFocus || rewindingOpenButton)?.focus({ preventScroll: true });
         }
         rewindingReturnFocus = null;
+      };
+
+      const openPalletSummary = (trigger) => {
+        if (!palletSummaryOverlay || correctionModeOpen || trigger.disabled) return;
+        closeQueue(false);
+        closeWaiting(false);
+        closeHistory(false);
+        closeRewinding(false);
+        palletSummaryReturnFocus = trigger;
+        palletSummaryOverlay.hidden = false;
+        palletSummaryOverlay.setAttribute("aria-hidden", "false");
+        trigger.setAttribute("aria-expanded", "true");
+        setDrawerBackgroundIsolated(true, "pallet-summary");
+        requestAnimationFrame(() => {
+          (palletSummaryClose || palletSummaryDialog).focus();
+        });
+      };
+
+      const closePalletSummary = (restoreFocus = true) => {
+        if (!palletSummaryOverlay || palletSummaryOverlay.hidden) return;
+        palletSummaryOverlay.hidden = true;
+        palletSummaryOverlay.setAttribute("aria-hidden", "true");
+        if (palletSummaryReturnFocus) {
+          palletSummaryReturnFocus.setAttribute("aria-expanded", "false");
+        }
+        setDrawerBackgroundIsolated(false, "pallet-summary");
+        if (restoreFocus && palletSummaryReturnFocus?.isConnected) {
+          palletSummaryReturnFocus.focus();
+        }
+        palletSummaryReturnFocus = null;
       };
 
       const filterHistory = () => {
@@ -5759,6 +5996,14 @@
       }
       if (rewindingDismissButton) {
         rewindingDismissButton.addEventListener("click", () => closeRewinding());
+      }
+      if (palletSummaryOpen) {
+        palletSummaryOpen.addEventListener("click", (event) => {
+          openPalletSummary(event.currentTarget);
+        });
+      }
+      if (palletSummaryClose) {
+        palletSummaryClose.addEventListener("click", () => closePalletSummary());
       }
       rollEditButtons.forEach((button) => {
         button.addEventListener("click", () => openRowEdit(button.closest(".roll-row")));
@@ -5823,6 +6068,11 @@
           closeRewinding();
         }
       });
+      palletSummaryOverlay?.addEventListener("click", (event) => {
+        if (event.target === palletSummaryOverlay) {
+          closePalletSummary();
+        }
+      });
       document.addEventListener("click", (event) => {
         if (!correctionModeOpen) {
           return;
@@ -5854,7 +6104,27 @@
       waitingRows.forEach((row) => row.addEventListener("click", () => closeWaiting(false)));
       historyFilters.forEach((filter) => filter.addEventListener("input", filterHistory));
       historyRows.forEach((row) => row.addEventListener("click", () => closeHistory(false)));
+      document.addEventListener("terminal:card-stale", () => {
+        closePalletSummary(false);
+        requestAnimationFrame(() => {
+          document.getElementById("terminal-refresh-alert-button")?.focus();
+        });
+      });
+      document.addEventListener("terminal:shift-stale", () => {
+        closePalletSummary(false);
+      }, { capture: true });
       document.addEventListener("keydown", (event) => {
+        if (palletSummaryOverlay && !palletSummaryOverlay.hidden) {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            closePalletSummary(true);
+            return;
+          }
+          if (event.key === "Tab") {
+            trapModalFocus(event, palletSummaryDialog);
+            return;
+          }
+        }
         const openDeleteModal = rollDeleteModals.find((modal) => !modal.hidden);
         if (event.key === "Tab" && openDeleteModal) {
           trapModalFocus(event, openDeleteModal.querySelector("[role='dialog']"));
