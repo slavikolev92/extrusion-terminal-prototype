@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
@@ -56,6 +57,13 @@ function assertNoSymlinkComponents(base, candidate, message) {
 }
 
 
+function assertSingleLink(filePath, message) {
+  if (fs.existsSync(filePath)) {
+    assert(fs.statSync(filePath).nlink === 1, message);
+  }
+}
+
+
 const baseURL = requiredEnvironment("BASE_URL").replace(/\/+$/, "");
 const baseOrigin = new URL(baseURL).origin;
 const fixtureInput = requiredEnvironment("FIXTURE_JSON");
@@ -92,6 +100,7 @@ assert(
   "FIXTURE_JSON must resolve below .test-runtime.",
 );
 assert(fs.statSync(fixturePath).isFile(), "FIXTURE_JSON must resolve to a regular file.");
+assertSingleLink(fixturePath, "FIXTURE_JSON must not be hard-linked.");
 
 let fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 const databaseInput = path.resolve(repoRoot, fixture.db_path);
@@ -102,6 +111,7 @@ assert(
   "Fixture database must resolve below .test-runtime.",
 );
 assert(fs.statSync(databasePath).isFile(), "Fixture database must be a regular file.");
+assertSingleLink(databasePath, "Fixture database must not be hard-linked.");
 
 let artifactDir;
 let summaryPath;
@@ -118,9 +128,65 @@ function guardedArtifactPath(...components) {
   );
   if (fs.existsSync(target)) {
     assert(fs.statSync(target).isFile(), "Existing artifact target must be a regular file.");
+    assertSingleLink(target, "Existing artifact target must not be hard-linked.");
   }
   return target;
 }
+
+
+function freshArtifactTempPath(target) {
+  const extension = path.extname(target);
+  const temporaryPath = path.join(
+    path.dirname(target),
+    `.${path.basename(target)}.${process.pid}.${randomUUID()}.tmp${extension}`,
+  );
+  const descriptor = fs.openSync(temporaryPath, "wx", 0o600);
+  fs.closeSync(descriptor);
+  return temporaryPath;
+}
+
+
+function atomicWriteArtifact(target, contents) {
+  const relativeTarget = path.relative(artifactDir, target);
+  const finalPath = guardedArtifactPath(relativeTarget);
+  let temporaryPath = freshArtifactTempPath(finalPath);
+  try {
+    fs.writeFileSync(temporaryPath, contents, "utf8");
+    assertSingleLink(temporaryPath, "Temporary artifact must not be hard-linked.");
+    const validatedFinalPath = guardedArtifactPath(relativeTarget);
+    fs.renameSync(temporaryPath, validatedFinalPath);
+    temporaryPath = null;
+  } finally {
+    if (temporaryPath && fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+  }
+}
+
+
+async function atomicScreenshot(page, target, options) {
+  const relativeTarget = path.relative(artifactDir, target);
+  const finalPath = guardedArtifactPath(relativeTarget);
+  let temporaryPath = freshArtifactTempPath(finalPath);
+  try {
+    await page.screenshot({ ...options, path: temporaryPath });
+    assertSingleLink(temporaryPath, "Temporary screenshot must not be hard-linked.");
+    const validatedFinalPath = guardedArtifactPath(relativeTarget);
+    fs.renameSync(temporaryPath, validatedFinalPath);
+    temporaryPath = null;
+  } finally {
+    if (temporaryPath && fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+  }
+}
+
+
+const VIEWPORTS = [
+  { name: "desktop-1366", width: 1366, height: 768 },
+  { name: "desktop-1920", width: 1920, height: 1080 },
+];
+const SCREENSHOT_NAMES = [
+  "running-mixed-open.png",
+  "pending-empty-open.png",
+  "awaiting-many-scrolled.png",
+];
 
 
 const summary = {
@@ -182,6 +248,11 @@ assert(
   "ARTIFACT_DIR resolves outside artifacts/ui-checks.",
 );
 summaryPath = guardedArtifactPath("verification-summary.json");
+for (const viewport of VIEWPORTS) {
+  for (const screenshotName of SCREENSHOT_NAMES) {
+    guardedArtifactPath(viewport.name, screenshotName);
+  }
+}
 
 const require = createRequire(import.meta.url);
 const localNodeModules = fs.realpathSync(path.join(repoRoot, "node_modules"));
@@ -465,10 +536,11 @@ async function verifyRunningSummary(page, state, viewportDir) {
   );
   assertEqual(await modalRows(page), expected.expected_rows, "running mixed ordered rows");
   assertEqual(await modalTotal(page), expected.expected_total, "running mixed total");
-  await page.screenshot({
-    path: guardedArtifactPath(viewportDir, "running-mixed-open.png"),
-    fullPage: true,
-  });
+  await atomicScreenshot(
+    page,
+    guardedArtifactPath(viewportDir, "running-mixed-open.png"),
+    { fullPage: true },
+  );
   summary.screenshots.push(`${viewportDir}/running-mixed-open.png`);
 
   for (let index = 0; index < 8; index += 1) {
@@ -525,10 +597,11 @@ async function verifyEmptyAndAllUnassigned(page, state, viewportDir) {
       "empty summary unexpectedly shows the data-error message.",
     );
   });
-  await page.screenshot({
-    path: guardedArtifactPath(viewportDir, "pending-empty-open.png"),
-    fullPage: true,
-  });
+  await atomicScreenshot(
+    page,
+    guardedArtifactPath(viewportDir, "pending-empty-open.png"),
+    { fullPage: true },
+  );
   summary.screenshots.push(`${viewportDir}/pending-empty-open.png`);
   await clientOnly(page, state, "pending empty summary close", async () => {
     await page.locator("[data-pallet-summary-close]").click();
@@ -609,10 +682,11 @@ async function verifyManyPalletScroll(page, state, viewportDir) {
     assert(await page.locator("[data-pallet-summary-close]").isVisible(), "close is not visible after scrolling.");
     await assertFocusOn(page, "[data-pallet-summary-close]", "many-pallet close reachability");
   });
-  await page.screenshot({
-    path: guardedArtifactPath(viewportDir, "awaiting-many-scrolled.png"),
-    fullPage: true,
-  });
+  await atomicScreenshot(
+    page,
+    guardedArtifactPath(viewportDir, "awaiting-many-scrolled.png"),
+    { fullPage: true },
+  );
   summary.screenshots.push(`${viewportDir}/awaiting-many-scrolled.png`);
   await clientOnly(page, state, "many-pallet summary close", async () => {
     await page.locator("[data-pallet-summary-close]").click();
@@ -709,10 +783,7 @@ async function main() {
       await dialog.dismiss();
     });
 
-    for (const viewport of [
-      { name: "desktop-1366", width: 1366, height: 768 },
-      { name: "desktop-1920", width: 1920, height: 1080 },
-    ]) {
+    for (const viewport of VIEWPORTS) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await parkBrowserAndResetFixture(page);
       const viewportDir = viewport.name;
@@ -742,7 +813,7 @@ async function main() {
     assertEqual(unsafeBrowserRequests, [], "mutation-capable or pallet-summary browser requests");
     passed(`browser requests remained on ${baseOrigin}; modal-only allowance is GET /terminal/snapshot`);
     summary.status = "passed";
-    fs.writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+    atomicWriteArtifact(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
     console.log("Terminal pallet-summary UI verification passed.");
     console.log(JSON.stringify(summary, null, 2));
   } finally {
@@ -755,7 +826,9 @@ main().catch((error) => {
   summary.status = "failed";
   summary.error = error.stack || String(error);
   try {
-    fs.writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+    if (summaryPath) {
+      atomicWriteArtifact(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
+    }
   } catch {
     // Preserve the original guard or verification failure.
   }

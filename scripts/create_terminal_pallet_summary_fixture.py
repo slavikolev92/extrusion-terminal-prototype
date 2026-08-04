@@ -4,7 +4,9 @@ import argparse
 import csv
 import io
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -22,6 +24,11 @@ SCENARIO_ORDER = (
     "awaiting_many_pallets",
     "completed_numbered",
 )
+
+
+def require_single_link(path: Path, *, label: str) -> None:
+    if path.exists() and path.stat().st_nlink != 1:
+        raise ValueError(f"{label} must not be hard-linked")
 
 
 def resolve_under_test_runtime(raw_path: str, *, label: str) -> Path:
@@ -60,15 +67,41 @@ def resolve_under_test_runtime(raw_path: str, *, label: str) -> Path:
         raise ValueError(f"{label} must be under .test-runtime")
     if resolved.exists() and not resolved.is_file():
         raise ValueError(f"{label} must be a regular file")
+    require_single_link(resolved, label=label)
     return resolved
 
 
 def reset_database(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
+    require_single_link(database_path, label="fixture DB path")
     database_path.unlink(missing_ok=True)
     db.DATA_DIR = database_path.parent
     db.DB_PATH = database_path
     db.init_db()
+
+
+def atomic_write_text(path: Path, contents: str, *, label: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(contents)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        require_single_link(path, label=label)
+        temporary_path.replace(path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def fixture_row(order_number: str) -> dict[str, str]:
@@ -378,10 +411,10 @@ def main() -> None:
         parser.error(str(exc))
 
     payload = create_fixture(database_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
+    atomic_write_text(
+        output_path,
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n",
-        encoding="utf-8",
+        label="fixture output path",
     )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 

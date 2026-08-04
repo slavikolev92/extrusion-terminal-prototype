@@ -41,8 +41,13 @@ def resolve_database_path(raw_path: str) -> Path:
         if current.is_symlink():
             raise ValueError("database must not be a symlink")
 
-    if not candidate.exists() or not stat.S_ISREG(candidate.stat().st_mode):
+    if not candidate.exists():
         raise ValueError("database must be an existing regular file")
+    candidate_stat = candidate.stat()
+    if not stat.S_ISREG(candidate_stat.st_mode):
+        raise ValueError("database must be an existing regular file")
+    if candidate_stat.st_nlink != 1:
+        raise ValueError("database must not be hard-linked")
 
     resolved_runtime = runtime_path.resolve()
     resolved_database = candidate.resolve(strict=True)

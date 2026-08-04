@@ -55,6 +55,25 @@ def tree_snapshot(root: Path) -> dict[str, str]:
     }
 
 
+def file_snapshot(path: Path) -> tuple[bytes, tuple[int, ...]]:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOATIME", 0))
+    with os.fdopen(descriptor, "rb") as file:
+        contents = file.read()
+    metadata = path.stat()
+    return contents, (
+        metadata.st_mode,
+        metadata.st_ino,
+        metadata.st_dev,
+        metadata.st_nlink,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_size,
+        metadata.st_atime_ns,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
 def run_fixture(database_path: Path, output_path: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
@@ -379,6 +398,30 @@ def test_audit_rejects_resolved_dotdot_escape_without_touching_target(tmp_path: 
     assert hashlib.sha256(target.read_bytes()).hexdigest() == before
 
 
+def test_audit_rejects_hard_link_input_without_touching_outside_sentinel(
+    tmp_path: Path,
+):
+    source_dir, source_database = create_audit_fixture(tmp_path)
+    outside_sentinel = tmp_path / "outside-safe-backup.sqlite3"
+    shutil.copy2(source_database, outside_sentinel)
+    alias_dir = REPO_ROOT / ".test-runtime" / f"pallet-audit-hardlink-{tmp_path.name}"
+    alias_dir.mkdir(parents=True)
+    database_alias = alias_dir / "copied-safe-backup.sqlite3"
+    os.link(outside_sentinel, database_alias)
+    before = file_snapshot(outside_sentinel)
+
+    try:
+        result = run_auditor(database_alias)
+        after = file_snapshot(outside_sentinel)
+    finally:
+        shutil.rmtree(source_dir, ignore_errors=True)
+        shutil.rmtree(alias_dir, ignore_errors=True)
+
+    assert result.returncode != 0
+    assert "must not be hard-linked" in result.stderr
+    assert after == before
+
+
 @contextmanager
 def health_server(database_path: Path):
     requests: list[tuple[str, str]] = []
@@ -510,6 +553,50 @@ def test_fixture_rejects_symlinked_test_runtime_root_without_mutation(tmp_path: 
     assert ".test-runtime guard root must not be a symlink" in result.stderr
     assert sentinel.read_bytes() == b"must survive"
     assert not (outside_dir / "fixture.json").exists()
+
+
+def test_fixture_rejects_hard_link_database_without_touching_outside_sentinel(
+    tmp_path: Path,
+):
+    runtime_dir = REPO_ROOT / ".test-runtime" / f"pallet-db-hardlink-{tmp_path.name}"
+    runtime_dir.mkdir(parents=True)
+    outside_sentinel = tmp_path / "outside-database-sentinel.sqlite3"
+    outside_sentinel.write_bytes(b"outside database sentinel")
+    database_alias = runtime_dir / "fixture.sqlite3"
+    os.link(outside_sentinel, database_alias)
+    before = file_snapshot(outside_sentinel)
+
+    try:
+        result = run_fixture(database_alias, runtime_dir / "fixture.json")
+        after = file_snapshot(outside_sentinel)
+    finally:
+        shutil.rmtree(runtime_dir, ignore_errors=True)
+
+    assert result.returncode != 0
+    assert "fixture DB path must not be hard-linked" in result.stderr
+    assert after == before
+
+
+def test_fixture_rejects_hard_link_json_output_without_touching_outside_sentinel(
+    tmp_path: Path,
+):
+    runtime_dir = REPO_ROOT / ".test-runtime" / f"pallet-json-hardlink-{tmp_path.name}"
+    runtime_dir.mkdir(parents=True)
+    outside_sentinel = tmp_path / "outside-json-sentinel.json"
+    outside_sentinel.write_bytes(b"outside JSON sentinel\n")
+    output_alias = runtime_dir / "fixture.json"
+    os.link(outside_sentinel, output_alias)
+    before = file_snapshot(outside_sentinel)
+
+    try:
+        result = run_fixture(runtime_dir / "fixture.sqlite3", output_alias)
+        after = file_snapshot(outside_sentinel)
+    finally:
+        shutil.rmtree(runtime_dir, ignore_errors=True)
+
+    assert result.returncode != 0
+    assert "fixture output path must not be hard-linked" in result.stderr
+    assert after == before
 
 
 def test_fixture_recreates_exact_deterministic_scenarios_and_preserves_runtime_data(
@@ -753,6 +840,105 @@ def test_verifier_rejects_direct_paths_outside_guard(
     assert expected in result.stderr
     if unsafe_input == "artifacts":
         assert not selected_artifacts.exists()
+
+
+def test_verifier_rejects_hard_link_fixture_without_touching_outside_sentinel(
+    tmp_path: Path,
+):
+    runtime_dir = REPO_ROOT / ".test-runtime" / f"pallet-fixture-hardlink-{tmp_path.name}"
+    artifact_dir = REPO_ROOT / "artifacts" / "ui-checks" / f"pallet-fixture-hardlink-{tmp_path.name}"
+    runtime_dir.mkdir(parents=True)
+    database_path = runtime_dir / "fixture.sqlite3"
+    database_path.write_bytes(b"fixture database sentinel")
+    outside_sentinel = tmp_path / "outside-fixture.json"
+    outside_sentinel.write_text(
+        json.dumps({"db_path": str(database_path), "scenarios": {}}) + "\n",
+        encoding="utf-8",
+    )
+    fixture_alias = runtime_dir / "fixture.json"
+    os.link(outside_sentinel, fixture_alias)
+    before = file_snapshot(outside_sentinel)
+
+    try:
+        with health_server(database_path) as (base_url, requests):
+            result = subprocess.run(
+                ["node", str(VERIFIER_SCRIPT)],
+                cwd=REPO_ROOT,
+                env=verifier_environment(
+                    BASE_URL=base_url,
+                    FIXTURE_JSON=str(fixture_alias),
+                    ARTIFACT_DIR=str(artifact_dir),
+                    PLAYWRIGHT_BROWSERS_PATH=str(tmp_path / "missing-browsers"),
+                ),
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        after = file_snapshot(outside_sentinel)
+    finally:
+        shutil.rmtree(runtime_dir, ignore_errors=True)
+        shutil.rmtree(artifact_dir, ignore_errors=True)
+
+    assert result.returncode != 0
+    assert "FIXTURE_JSON must not be hard-linked" in result.stderr
+    assert requests == []
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    "relative_artifact",
+    [
+        Path("verification-summary.json"),
+        Path("desktop-1366") / "running-mixed-open.png",
+    ],
+)
+def test_verifier_rejects_hard_link_artifact_without_touching_outside_sentinel(
+    tmp_path: Path,
+    relative_artifact: Path,
+):
+    runtime_dir = REPO_ROOT / ".test-runtime" / f"pallet-artifact-hardlink-{tmp_path.name}"
+    artifact_dir = REPO_ROOT / "artifacts" / "ui-checks" / f"pallet-artifact-hardlink-{tmp_path.name}"
+    runtime_dir.mkdir(parents=True)
+    database_path = runtime_dir / "fixture.sqlite3"
+    database_path.write_bytes(b"fixture database sentinel")
+    fixture_path = runtime_dir / "fixture.json"
+    fixture_path.write_text(
+        json.dumps({"db_path": str(database_path), "scenarios": {}}) + "\n",
+        encoding="utf-8",
+    )
+    outside_sentinel = tmp_path / f"outside-{relative_artifact.name}"
+    outside_sentinel.write_bytes(b"outside artifact sentinel\n")
+    artifact_alias = artifact_dir / relative_artifact
+    artifact_alias.parent.mkdir(parents=True)
+    os.link(outside_sentinel, artifact_alias)
+    before = file_snapshot(outside_sentinel)
+
+    try:
+        with health_server(database_path) as (base_url, requests):
+            result = subprocess.run(
+                ["node", str(VERIFIER_SCRIPT)],
+                cwd=REPO_ROOT,
+                env=verifier_environment(
+                    BASE_URL=base_url,
+                    FIXTURE_JSON=str(fixture_path),
+                    ARTIFACT_DIR=str(artifact_dir),
+                    PLAYWRIGHT_BROWSERS_PATH=str(tmp_path / "missing-browsers"),
+                ),
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        after = file_snapshot(outside_sentinel)
+    finally:
+        shutil.rmtree(runtime_dir, ignore_errors=True)
+        shutil.rmtree(artifact_dir, ignore_errors=True)
+
+    assert result.returncode != 0
+    assert "Existing artifact target must not be hard-linked" in result.stderr
+    assert requests == [("GET", "/health")]
+    assert after == before
 
 
 def test_verifier_health_mismatch_is_the_only_request_and_preserves_fixture(tmp_path: Path):
