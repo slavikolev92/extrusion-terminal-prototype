@@ -942,6 +942,17 @@
       gap: 8px;
     }
 
+    .timestamp-field {
+      min-width: 0;
+      display: grid;
+      align-content: start;
+      gap: 3px;
+    }
+
+    .timestamp-field input {
+      width: 100%;
+    }
+
     .timestamp-controls input[type="date"] {
       min-width: 142px;
     }
@@ -5241,6 +5252,7 @@
               }{% if not loop.last %},{% endif %}
             {% endfor %}
           ],
+          "messages": {{ (workflow_result.messages if workflow_result is defined and workflow_result else ()) | tojson }},
           "locked": {{ (finish_review_stale | default(false)) | tojson }},
           "preview": {% if finish_review_preview is defined and finish_review_preview %}{
             "production_seconds": {{ finish_review_preview.production_seconds | tojson }},
@@ -6149,7 +6161,7 @@
         document.querySelectorAll(".terminal-toast, .terminal-header, .machine-nav, .main"),
       );
       const correctionBlockedControls = document.querySelectorAll(
-        ".actions form button, .roll-add-button, .add-roll-form input, .tare-form input, .pallet-form input, .recipe-table input, #queue-open, #waiting-open, #history-open, [data-rewinding-open], [data-roll-change-open], [data-roll-change-advance], [data-pallet-summary-open]"
+        ".actions form button, [data-timing-menu-button], .roll-add-button, .add-roll-form input, .tare-form input, .pallet-form input, .recipe-table input, #queue-open, #waiting-open, #history-open, [data-rewinding-open], [data-roll-change-open], [data-roll-change-advance], [data-pallet-summary-open]"
       );
       const correctionBlockedLinks = document.querySelectorAll(
         ".machine-tab, .queue-card, .history-row, [data-waiting-row]"
@@ -6245,6 +6257,9 @@
       };
 
       const setCorrectionControlLock = (open) => {
+        if (open) {
+          document.dispatchEvent(new CustomEvent("terminal:roll-correction-open"));
+        }
         correctionModeOpen = open;
         rollBody?.classList.toggle("roll-correction-mode", open);
         correctionBlockedControls.forEach((control) => {

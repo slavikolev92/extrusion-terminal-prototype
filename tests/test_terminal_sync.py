@@ -616,3 +616,58 @@ console.log(JSON.stringify({{
     assert "signal," in controller
     assert "new Date(" not in controller
     assert "Date.parse(" not in controller
+
+
+def test_terminal_timing_generated_inputs_have_unique_accessible_names():
+    controller_path = Path("app/static/js/timing_interval_editor.mjs")
+    controller = controller_path.read_text(encoding="utf-8")
+    execution = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            f"""
+globalThis.document = {{
+  querySelector: () => null,
+  querySelectorAll: () => [],
+}};
+const {{ timingFieldAccessibleName }} = await import({json.dumps(controller_path.resolve().as_uri())});
+console.log(JSON.stringify([
+  timingFieldAccessibleName(2, "start_date"),
+  timingFieldAccessibleName(2, "start_time"),
+  timingFieldAccessibleName(2, "stop_date"),
+  timingFieldAccessibleName(2, "stop_time"),
+]));
+""",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(execution.stdout) == [
+        "Интервал 2, Начало, дата",
+        "Интервал 2, Начало, час",
+        "Интервал 2, Край, дата",
+        "Интервал 2, Край, час",
+    ]
+    assert "timingFieldAccessibleName(row.display_number, field)" in controller
+
+
+def test_terminal_timing_menu_outside_click_restores_only_hidden_panel_focus():
+    controller = Path(
+        "app/static/js/timing_interval_editor.mjs"
+    ).read_text(encoding="utf-8")
+    handler_start = controller.index('document.addEventListener("click", (event) => {')
+    handler_end = controller.index(
+        'document.addEventListener("terminal:roll-correction-open"', handler_start
+    )
+    handler = controller[handler_start:handler_end]
+
+    assert "if (!menu.contains(event.target))" in handler
+    assert (
+        "const restoreFocus = menuPanel.contains(document.activeElement);"
+        in handler
+    )
+    assert "closeMenu({ restoreFocus });" in handler
+    assert "closeMenu({ restoreFocus: true });" not in handler

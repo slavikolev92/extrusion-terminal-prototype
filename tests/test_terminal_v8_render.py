@@ -2269,7 +2269,7 @@ def test_terminal_timing_menu_visibility_icon_and_lifecycle_markup(connection):
         label="Старт",
         button_class="action-button action-primary",
     )
-    assert "data-timing-menu" not in pending_html
+    assert '<div class="timing-menu" data-timing-menu>' not in pending_html
 
     assert db.start_production_timing(card_id, pending_version).ok
     running_version = card_version(card_id)
@@ -2382,7 +2382,7 @@ def test_terminal_timing_menu_visibility_icon_and_lifecycle_markup(connection):
         button_class="action-button action-primary",
         finish_message=waiting_card["finish_confirmation_message"],
     )
-    assert "data-timing-menu" not in waiting_html
+    assert '<div class="timing-menu" data-timing-menu>' not in waiting_html
 
 
 def test_terminal_timing_dialog_matches_approved_v2_contract(connection):
@@ -2477,6 +2477,35 @@ def test_terminal_timing_dialog_matches_approved_v2_contract(connection):
     assert "Date.parse(" not in controller_source
     assert "Добави пауза" not in html
     assert "ongoing" not in html
+
+
+def test_terminal_timing_field_error_slots_preserve_timestamp_grid_columns(connection):
+    card_id = release_ready_card(
+        "26182-timing-error-slots",
+        machine_id=1,
+        sequence=1,
+    )
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    html = render_terminal(card_id)
+    controller = Path(
+        "app/static/js/timing_interval_editor.mjs"
+    ).read_text(encoding="utf-8")
+
+    wrapper_rules = css_rules(html, r"(?m)^    \.timestamp-field")
+    assert "min-width: 0;" in wrapper_rules
+    assert "display: grid;" in wrapper_rules
+    assert 'wrapper.dataset.timingFieldWrapper = "true"' in controller
+    assert 'error.dataset.timingFieldError = "true"' in controller
+    assert "error.hidden = true" in controller
+    assert "wrapper.append(input, error)" in controller
+    assert re.search(
+        r'input\.closest\("\[data-timing-field-wrapper\]"\)\?\.querySelector\(\s*'
+        r'"\[data-timing-field-error\]"',
+        controller,
+    )
+    assert 'input.setAttribute("aria-describedby", error.id)' in controller
+    assert "error.hidden = false" in controller
+    assert 'input.insertAdjacentElement("afterend", error)' not in controller
 
 
 def test_terminal_v8_finish_form_uses_app_native_confirmation_modal(connection):
@@ -2755,6 +2784,7 @@ def test_terminal_timing_errors_reopen_or_lock_the_submitted_draft(connection):
         "loaded_version": loaded_version,
         "draft": ordinary_model["timing"]["draft"],
         "issues": ordinary_model["issues"],
+        "messages": [hostile_message],
         "locked": True,
         "preview": {
             "production_seconds": 3600,
@@ -2789,7 +2819,71 @@ def test_terminal_timing_errors_reopen_or_lock_the_submitted_draft(connection):
     assert "finishConfirmButton.disabled = true" in begin_review
     assert "finishEditButton.disabled = true" in begin_review
     assert begin_review.count("focusFinishAlert();") == 2
-    assert "showFinishAlert(model.finish_review.issues.map((issue) => issue.message));\n      focusFinishAlert();" in controller_source
+    assert "showFinishAlert(summaryMessages);" in controller_source
+    assert "finishEditButton.disabled = summaryMessages.length > 0" in controller_source
+    assert "finishConfirmButton.disabled = summaryMessages.length > 0" in controller_source
+
+
+def test_terminal_finish_no_roll_failure_retains_message_in_review_model(connection):
+    card_id = release_ready_card(
+        "26184-reviewed-no-roll",
+        machine_id=1,
+        sequence=1,
+    )
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = '2026-01-15 08:00:37'
+            WHERE card_id = ?
+            """,
+            (card_id,),
+        )
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET first_started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+    loaded_version = card_version(card_id)
+    review_response = asyncio.run(
+        route_endpoint("/terminal/cards/{card_id}/finish-review")(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+
+    response = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=json.dumps(review_payload["preview"]["draft"]),
+        )
+    )
+
+    message = "Поне едно бруто тегло на ролка е задължително преди приключване."
+    html = response.body.decode("utf-8")
+    model = terminal_timing_model_from_html(html)
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (message,)
+    assert model["finish_review"]["open"] is True
+    assert model["finish_review"]["issues"] == []
+    assert model["finish_review"]["messages"] == [message]
+
+    controller_source = Path(
+        "app/static/js/timing_interval_editor.mjs"
+    ).read_text(encoding="utf-8")
+    assert "model.finish_review.messages" in controller_source
+    assert "finishEditButton.disabled = summaryMessages.length > 0" in controller_source
+    assert "finishConfirmButton.disabled = summaryMessages.length > 0" in controller_source
+    assert "focusFinishAlert();" in controller_source
 
 
 def test_terminal_finish_confirmation_warns_only_for_mixed_saved_gross_roll_pallets(
@@ -3520,6 +3614,39 @@ def test_terminal_roll_correction_script_blocks_other_actions_while_open(connect
     assert "initialCorrectionValues" in html
     assert "hasDirtyRollCorrections" in html
     assert "skipCorrectionBeforeUnload" in html
+
+
+def test_terminal_roll_correction_locks_and_closes_timing_menu(connection):
+    card_id = release_ready_card("26232-timing-lock", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "2.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "50.00").ok
+    html = render_terminal(card_id)
+    controller = Path(
+        "app/static/js/timing_interval_editor.mjs"
+    ).read_text(encoding="utf-8")
+
+    blocked_start = html.index("const correctionBlockedControls")
+    blocked_end = html.index("const correctionBlockedLinks", blocked_start)
+    assert "[data-timing-menu-button]" in html[blocked_start:blocked_end]
+
+    lock_start = html.index("const setCorrectionControlLock = (open) => {")
+    lock_end = html.index("const closeRollDeleteModal", lock_start)
+    lock_handler = html[lock_start:lock_end]
+    coordination = (
+        'document.dispatchEvent(new CustomEvent("terminal:roll-correction-open"));'
+    )
+    assert coordination in lock_handler
+    assert lock_handler.index(coordination) < lock_handler.index(
+        "correctionBlockedControls.forEach"
+    )
+
+    assert (
+        'document.addEventListener("terminal:roll-correction-open", () => {'
+        in controller
+    )
+    assert "closeMenu({ restoreFocus: menuPanel.contains(document.activeElement) });" in controller
+    assert "if (menuButton.disabled)" in controller
 
 
 def test_terminal_roll_correction_save_suppresses_dirty_exit_warning(connection):

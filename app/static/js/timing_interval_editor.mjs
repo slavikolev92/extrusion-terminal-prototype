@@ -60,6 +60,12 @@ export function createPreviewCoordinator({ apply = () => {} } = {}) {
   };
 }
 
+export function timingFieldAccessibleName(displayNumber, field) {
+  const boundary = field.startsWith("start_") ? "Начало" : "Край";
+  const fieldType = field.endsWith("_date") ? "дата" : "час";
+  return `Интервал ${displayNumber}, ${boundary}, ${fieldType}`;
+}
+
 const modelElement = document.querySelector("[data-terminal-timing-model]");
 const menu = document.querySelector("[data-timing-menu]");
 const menuButton = menu?.querySelector("[data-timing-menu-button]");
@@ -222,7 +228,10 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
 
   function renderServerErrors(issues, { finish = false } = {}) {
     intervalList.querySelectorAll("[data-timing-field-error]").forEach(
-      (element) => element.remove(),
+      (element) => {
+        element.replaceChildren();
+        element.hidden = true;
+      },
     );
     intervalList.querySelectorAll("[aria-invalid='true']").forEach((input) => {
       input.removeAttribute("aria-invalid");
@@ -230,7 +239,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     });
     const formMessages = [];
     let firstEditableTarget = null;
-    issues.forEach((issue, issueIndex) => {
+    issues.forEach((issue) => {
       if (!Number.isSafeInteger(issue.source_index) || issue.field === "form") {
         formMessages.push(issue.message);
         return;
@@ -240,14 +249,19 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         formMessages.push(issue.message);
         return;
       }
-      const error = document.createElement("span");
-      error.id = `timing-field-error-${issue.source_index}-${issue.field}-${issueIndex}`;
-      error.dataset.timingFieldError = "true";
-      error.className = "field-error-slot";
-      error.textContent = issue.message;
+      const error = input.closest("[data-timing-field-wrapper]")?.querySelector(
+        "[data-timing-field-error]",
+      );
+      if (!error) {
+        formMessages.push(issue.message);
+        return;
+      }
+      error.textContent = error.hidden
+        ? issue.message
+        : `${error.textContent} ${issue.message}`;
+      error.hidden = false;
       input.setAttribute("aria-invalid", "true");
       input.setAttribute("aria-describedby", error.id);
-      input.insertAdjacentElement("afterend", error);
       if (!input.disabled && !firstEditableTarget) {
         firstEditableTarget = input;
       }
@@ -290,7 +304,10 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     input.dataset.sourceIndex = String(sourceIndex);
     input.dataset.timingField = field;
     input.disabled = state.locked || row.deleted;
-    input.setAttribute("aria-label", field.startsWith("start_") ? "Начало" : "Край");
+    input.setAttribute(
+      "aria-label",
+      timingFieldAccessibleName(row.display_number, field),
+    );
     if (field.endsWith("_date")) {
       input.type = "date";
     } else {
@@ -330,10 +347,24 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     const controls = document.createElement("div");
     controls.className = "timestamp-controls";
     controls.append(
-      createFieldInput(row, sourceIndex, `${prefix}_date`),
-      createFieldInput(row, sourceIndex, `${prefix}_time`),
+      createTimestampField(row, sourceIndex, `${prefix}_date`),
+      createTimestampField(row, sourceIndex, `${prefix}_time`),
     );
     return controls;
+  }
+
+  function createTimestampField(row, sourceIndex, field) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "timestamp-field";
+    wrapper.dataset.timingFieldWrapper = "true";
+    const input = createFieldInput(row, sourceIndex, field);
+    const error = document.createElement("span");
+    error.id = `timing-field-error-${sourceIndex}-${field}`;
+    error.dataset.timingFieldError = "true";
+    error.className = "field-error-slot";
+    error.hidden = true;
+    wrapper.append(input, error);
+    return wrapper;
   }
 
   function renderRows() {
@@ -468,6 +499,9 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   }
 
   function openMenu({ focusItem = false } = {}) {
+    if (menuButton.disabled || shiftSuspended) {
+      return;
+    }
     menuPanel.hidden = false;
     menuButton.setAttribute("aria-expanded", "true");
     if (focusItem) {
@@ -866,13 +900,21 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     }
   });
   menuAction.addEventListener("click", () => {
+    if (menuButton.disabled) {
+      closeMenu();
+      return;
+    }
     closeMenu();
     openEditor({ opener: menuButton });
   });
   document.addEventListener("click", (event) => {
     if (!menu.contains(event.target)) {
-      closeMenu();
+      const restoreFocus = menuPanel.contains(document.activeElement);
+      closeMenu({ restoreFocus });
     }
+  });
+  document.addEventListener("terminal:roll-correction-open", () => {
+    closeMenu({ restoreFocus: menuPanel.contains(document.activeElement) });
   });
 
   addButton.addEventListener("click", () => {
@@ -1042,12 +1084,20 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
       }
       renderServerErrors(model.finish_review.issues, { finish: true });
     } else {
+      const summaryMessages = [...new Set([
+        ...(Array.isArray(model.finish_review.messages) ? model.finish_review.messages : []),
+        ...model.finish_review.issues.map((issue) => issue.message),
+      ].filter(Boolean))];
       openFinishSummary({
         opener: activeFinishForm.querySelector("button[type='submit']"),
         focusTarget: finishCancelButton,
       });
-      showFinishAlert(model.finish_review.issues.map((issue) => issue.message));
-      focusFinishAlert();
+      showFinishAlert(summaryMessages);
+      finishEditButton.disabled = summaryMessages.length > 0;
+      finishConfirmButton.disabled = summaryMessages.length > 0;
+      if (summaryMessages.length > 0) {
+        focusFinishAlert();
+      }
     }
   }
 }
