@@ -2551,8 +2551,8 @@ def _prepare_terminal_timing_ledger_for_card(
     transaction_time: str,
     finish_mode: bool,
 ) -> tuple[_TimingLedgerProposal | None, TimingLedgerOutcome | None]:
-
-    if str(card["status"]) not in {STATUS_RUNNING, STATUS_PAUSED}:
+    status = str(card["status"])
+    if status not in {STATUS_RUNNING, STATUS_PAUSED}:
         return (
             None,
             TimingLedgerOutcome(
@@ -2565,12 +2565,29 @@ def _prepare_terminal_timing_ledger_for_card(
                 )
             ),
         )
+    if (
+        finish_mode
+        and status == STATUS_RUNNING
+        and fetch_open_timing_segment(connection, card_id) is None
+    ):
+        return (
+            None,
+            TimingLedgerOutcome(
+                RuleResult(
+                    False,
+                    (
+                        "Картите в изработване трябва да имат активен времеви "
+                        "сегмент. Презаредете картата.",
+                    ),
+                )
+            ),
+        )
 
     proposal, build_issues = _build_terminal_timing_ledger_proposal(
         connection,
         card_id,
         draft_rows,
-        finish_mode=finish_mode and str(card["status"]) == STATUS_RUNNING,
+        finish_mode=finish_mode and status == STATUS_RUNNING,
         reviewed_at=transaction_time,
     )
     if build_issues:
@@ -2578,8 +2595,8 @@ def _prepare_terminal_timing_ledger_for_card(
 
     policy_status = (
         STATUS_COMPLETED
-        if finish_mode and str(card["status"]) == STATUS_RUNNING
-        else str(card["status"])
+        if finish_mode and status == STATUS_RUNNING
+        else status
     )
     validation_issues = _validate_timing_ledger_proposal(
         proposal,

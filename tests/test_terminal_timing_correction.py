@@ -1733,6 +1733,56 @@ def test_finish_review_freezes_time_and_writes_nothing(connection, monkeypatch):
     assert stored_finish_snapshot(card_id) == before
 
 
+def test_running_finish_initial_review_rejects_closed_only_stored_ledger_without_mutation(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("27024-closed-only-review", 1)
+    start_card(card_id)
+    set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:37",
+        ended_at="2026-01-15 09:00:29",
+        end_reason="correction",
+        status=STATUS_RUNNING,
+    )
+    loaded_version = card_version(card_id)
+    before = stored_finish_snapshot(card_id)
+    monkeypatch.setattr(
+        db,
+        "current_database_timestamp",
+        lambda connection: "2026-01-15 12:34:56",
+    )
+
+    response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+
+    assert response.status_code == 422
+    assert json.loads(response.body) == {
+        "ok": False,
+        "messages": [
+            "Картите в изработване трябва да имат активен времеви сегмент. "
+            "Презаредете картата."
+        ],
+        "field_errors": [
+            {
+                "source_index": None,
+                "field": "form",
+                "message": (
+                    "Картите в изработване трябва да имат активен времеви "
+                    "сегмент. Презаредете картата."
+                ),
+            }
+        ],
+    }
+    assert stored_finish_snapshot(card_id) == before
+
+
 def test_finish_review_returns_server_normalized_editable_stop(connection, monkeypatch):
     card_id = release_ready_card("27025", 1)
     start_card(card_id)
@@ -2046,6 +2096,64 @@ def test_finish_preview_recalculates_without_mutation(connection, monkeypatch):
     assert stored_finish_snapshot(card_id) == before
 
 
+def test_running_finish_review_preview_rejects_closed_only_stored_ledger_without_mutation(
+    connection,
+):
+    card_id = release_ready_card("27028-closed-only-preview", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:37",
+        ended_at="2026-01-15 09:00:29",
+        end_reason="correction",
+        status=STATUS_RUNNING,
+    )
+    loaded_version = card_version(card_id)
+    reviewed_at = "2026-01-15 12:34:56"
+    review_token = main.encode_finish_review_token(
+        card_id,
+        loaded_version,
+        reviewed_at,
+        key=main.FINISH_REVIEW_TOKEN_KEY,
+    )
+    submitted = db.TimingDraftRow(
+        segment_id,
+        "2026-01-15",
+        "10:00",
+        "2026-01-15",
+        "11:00",
+    )
+    before = stored_finish_snapshot(card_id)
+
+    response = asyncio.run(
+        finish_review_preview_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review/preview"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=review_token,
+            timing_draft=timing_draft_json(submitted),
+        )
+    )
+
+    expected_message = (
+        "Картите в изработване трябва да имат активен времеви сегмент. "
+        "Презаредете картата."
+    )
+    assert response.status_code == 422
+    assert json.loads(response.body) == {
+        "ok": False,
+        "messages": [expected_message],
+        "field_errors": [
+            {
+                "source_index": None,
+                "field": "form",
+                "message": expected_message,
+            }
+        ],
+    }
+    assert stored_finish_snapshot(card_id) == before
+
+
 @pytest.mark.parametrize(
     ("failure_kind", "expected_message"),
     [
@@ -2101,6 +2209,46 @@ def test_finish_with_timing_rolls_back_every_validation_failure(
 
     assert not outcome.result.ok
     assert expected_message in outcome.result.messages
+    assert stored_finish_snapshot(card_id) == before
+
+
+def test_running_reviewed_confirmation_rejects_closed_only_stored_ledger_without_mutation(
+    connection,
+):
+    card_id = release_ready_card("27029-closed-only-confirm", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:37",
+        ended_at="2026-01-15 09:00:29",
+        end_reason="correction",
+        status=STATUS_RUNNING,
+    )
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "25.00").ok
+    loaded_version = card_version(card_id)
+    before = stored_finish_snapshot(card_id)
+
+    outcome = db.finish_card_with_timing_ledger(
+        card_id,
+        loaded_version,
+        [
+            db.TimingDraftRow(
+                segment_id,
+                "2026-01-15",
+                "10:00",
+                "2026-01-15",
+                "11:00",
+            )
+        ],
+        "2026-01-15 12:34:56",
+    )
+
+    assert not outcome.result.ok
+    assert outcome.result.messages == (
+        "Картите в изработване трябва да имат активен времеви сегмент. "
+        "Презаредете картата.",
+    )
     assert stored_finish_snapshot(card_id) == before
 
 
