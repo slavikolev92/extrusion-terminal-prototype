@@ -618,6 +618,142 @@ console.log(JSON.stringify({{
     assert "Date.parse(" not in controller
 
 
+def test_terminal_timing_preview_rerender_restores_only_focused_row_control():
+    controller_path = Path("app/static/js/timing_interval_editor.mjs")
+    controller = controller_path.read_text(encoding="utf-8")
+    execution = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            f"""
+globalThis.document = {{
+  querySelector: () => null,
+  querySelectorAll: () => [],
+}};
+const module = await import({json.dumps(controller_path.resolve().as_uri())});
+const preserve = module.rerenderTimingRowsPreservingFocus;
+if (typeof preserve !== "function") {{
+  console.log(JSON.stringify(null));
+}} else {{
+  const body = {{ name: "BODY" }};
+  let activeElement = body;
+  let controls = [];
+  const makeInput = (name, sourceIndex, field, selection = null) => ({{
+    name,
+    dataset: {{ sourceIndex: String(sourceIndex), timingField: field }},
+    disabled: false,
+    selectionStart: selection?.[0] ?? null,
+    selectionEnd: selection?.[1] ?? null,
+    selectionDirection: selection?.[2] ?? null,
+    focus() {{ activeElement = this; }},
+    setSelectionRange(start, end, direction) {{
+      this.selectionStart = start;
+      this.selectionEnd = end;
+      this.selectionDirection = direction;
+    }},
+  }});
+  const intervalList = {{
+    contains: (element) => controls.includes(element),
+    querySelector: (selector) => controls.find((element) => (
+      selector === `[data-source-index="${{element.dataset.sourceIndex}}"]`
+        + `[data-timing-field="${{element.dataset.timingField}}"]`
+    )) || null,
+  }};
+  const replaceRows = (replacement) => {{
+    const replacedFocusedControl = intervalList.contains(activeElement);
+    controls = [replacement];
+    if (replacedFocusedControl) {{
+      activeElement = body;
+    }}
+  }};
+
+  const blurredDate = makeInput("blurred-date", 0, "start_date");
+  const nextInput = makeInput("next-input", 1, "start_time", [1, 4, "forward"]);
+  const nextReplacement = makeInput("next-replacement", 1, "start_time");
+  controls = [blurredDate, nextInput];
+  activeElement = blurredDate;
+  const previewResponse = Promise.resolve();
+  activeElement = nextInput;
+  await previewResponse;
+  let renderCount = 0;
+  const restored = preserve({{
+    activeElement,
+    intervalList,
+    renderRows: () => {{
+      renderCount += 1;
+      replaceRows(nextReplacement);
+    }},
+    shouldRestore: () => true,
+  }});
+  const activeAfterPreview = activeElement;
+
+  const footer = {{ name: "footer-save" }};
+  const outsideReplacement = makeInput("outside-replacement", 1, "start_time");
+  controls = [nextReplacement];
+  activeElement = footer;
+  const outsideRestored = preserve({{
+    activeElement,
+    intervalList,
+    renderRows: () => replaceRows(outsideReplacement),
+    shouldRestore: () => true,
+  }});
+  const activeAfterOutside = activeElement;
+
+  const blockedInput = makeInput("blocked-input", 2, "stop_time", [0, 2, "none"]);
+  const blockedReplacement = makeInput("blocked-replacement", 2, "stop_time");
+  controls = [blockedInput];
+  activeElement = blockedInput;
+  const blockedRestored = preserve({{
+    activeElement,
+    intervalList,
+    renderRows: () => replaceRows(blockedReplacement),
+    shouldRestore: () => false,
+  }});
+
+  console.log(JSON.stringify({{
+    restored,
+    activeAfterPreview: nextReplacement === activeAfterPreview
+      ? "next-replacement"
+      : activeAfterPreview.name,
+    selection: [
+      nextReplacement.selectionStart,
+      nextReplacement.selectionEnd,
+      nextReplacement.selectionDirection,
+    ],
+    renderCount,
+    outsideRestored,
+    outsideActive: activeAfterOutside === footer ? "footer-save" : null,
+    blockedRestored,
+    blockedActive: activeElement.name,
+  }}));
+}}
+""",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(execution.stdout) == {
+        "restored": True,
+        "activeAfterPreview": "next-replacement",
+        "selection": [1, 4, "forward"],
+        "renderCount": 1,
+        "outsideRestored": False,
+        "outsideActive": "footer-save",
+        "blockedRestored": False,
+        "blockedActive": "BODY",
+    }
+    apply_start = controller.index("function applyEditorPreview(preview)")
+    apply_end = controller.index("async function requestOrdinaryPreview()", apply_start)
+    apply_preview = controller[apply_start:apply_end]
+    assert "rerenderTimingRowsPreservingFocus" in apply_preview
+    assert "activeElement: document.activeElement" in apply_preview
+    assert "renderRows," in apply_preview
+    assert "shouldRestore:" in apply_preview
+
+
 def test_terminal_timing_generated_inputs_have_unique_accessible_names():
     controller_path = Path("app/static/js/timing_interval_editor.mjs")
     controller = controller_path.read_text(encoding="utf-8")

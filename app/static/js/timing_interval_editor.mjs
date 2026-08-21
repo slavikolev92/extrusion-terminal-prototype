@@ -74,6 +74,71 @@ export function retainedFinishReviewMessages(finishReview) {
   ].filter(Boolean))];
 }
 
+export function rerenderTimingRowsPreservingFocus({
+  activeElement,
+  intervalList,
+  renderRows,
+  shouldRestore = () => true,
+}) {
+  let focusIdentity = null;
+  if (activeElement && intervalList.contains(activeElement)) {
+    const sourceIndex = activeElement.dataset.sourceIndex;
+    const field = activeElement.dataset.timingField;
+    const numericSourceIndex = Number(sourceIndex);
+    if (
+      sourceIndex !== ""
+      && Number.isSafeInteger(numericSourceIndex)
+      && numericSourceIndex >= 0
+      && field
+    ) {
+      let selection = null;
+      try {
+        if (
+          Number.isSafeInteger(activeElement.selectionStart)
+          && Number.isSafeInteger(activeElement.selectionEnd)
+        ) {
+          selection = {
+            start: activeElement.selectionStart,
+            end: activeElement.selectionEnd,
+            direction: activeElement.selectionDirection,
+          };
+        }
+      } catch {
+        selection = null;
+      }
+      focusIdentity = { sourceIndex, field, selection };
+    }
+  }
+
+  renderRows();
+  if (!focusIdentity || !shouldRestore()) {
+    return false;
+  }
+  const replacement = intervalList.querySelector(
+    `[data-source-index="${focusIdentity.sourceIndex}"]`
+      + `[data-timing-field="${focusIdentity.field}"]`,
+  );
+  if (!replacement || replacement.disabled) {
+    return false;
+  }
+  replacement.focus({ preventScroll: true });
+  if (
+    focusIdentity.selection
+    && typeof replacement.setSelectionRange === "function"
+  ) {
+    try {
+      replacement.setSelectionRange(
+        focusIdentity.selection.start,
+        focusIdentity.selection.end,
+        focusIdentity.selection.direction,
+      );
+    } catch {
+      // Native date controls do not expose a text selection range.
+    }
+  }
+  return true;
+}
+
 const modelElement = document.querySelector("[data-terminal-timing-model]");
 const menu = document.querySelector("[data-timing-menu]");
 const menuButton = menu?.querySelector("[data-timing-menu-button]");
@@ -692,12 +757,23 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   }
 
   function applyEditorPreview(preview) {
+    const previewMode = state.mode;
     const mapped = mapServerPreview(state.rows, preview);
     state.rows = mapped.rows;
     state.productionSeconds = mapped.production_seconds;
     state.pausedSeconds = mapped.paused_seconds;
     clearAlert();
-    renderRows();
+    rerenderTimingRowsPreservingFocus({
+      activeElement: document.activeElement,
+      intervalList,
+      renderRows,
+      shouldRestore: () => (
+        !overlay.hidden
+        && !state.locked
+        && !shiftSuspended
+        && state.mode === previewMode
+      ),
+    });
     updateTotals();
     updateDraftInput();
   }
