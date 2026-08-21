@@ -66,6 +66,14 @@ export function timingFieldAccessibleName(displayNumber, field) {
   return `Интервал ${displayNumber}, ${boundary}, ${fieldType}`;
 }
 
+export function retainedFinishReviewMessages(finishReview) {
+  return [...new Set([
+    ...(Array.isArray(finishReview.messages) ? finishReview.messages : []),
+    ...(Array.isArray(finishReview.issues) ? finishReview.issues : [])
+      .map((issue) => issue.message),
+  ].filter(Boolean))];
+}
+
 const modelElement = document.querySelector("[data-terminal-timing-model]");
 const menu = document.querySelector("[data-timing-menu]");
 const menuButton = menu?.querySelector("[data-timing-menu-button]");
@@ -226,7 +234,10 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     );
   }
 
-  function renderServerErrors(issues, { finish = false } = {}) {
+  function renderServerErrors(
+    issues,
+    { finish = false, preserveAlert = false } = {},
+  ) {
     intervalList.querySelectorAll("[data-timing-field-error]").forEach(
       (element) => {
         element.replaceChildren();
@@ -266,21 +277,23 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         firstEditableTarget = input;
       }
     });
-    if (finish && finishOverlay.hidden === false) {
-      showFinishAlert(formMessages);
-    } else {
-      if (formMessages.length > 0) {
-        showAlert(formMessages, { stale: state.locked });
+    if (!preserveAlert) {
+      if (finish && finishOverlay.hidden === false) {
+        showFinishAlert(formMessages);
       } else {
-        clearAlert();
+        if (formMessages.length > 0) {
+          showAlert(formMessages, { stale: state.locked });
+        } else {
+          clearAlert();
+        }
       }
-    }
-    if (firstEditableTarget) {
-      window.requestAnimationFrame(() => firstEditableTarget.focus());
-    } else if (formMessages.length > 0) {
-      window.requestAnimationFrame(() => {
-        (finish && !finishOverlay.hidden ? finishAlert : alertBox).focus?.();
-      });
+      if (firstEditableTarget) {
+        window.requestAnimationFrame(() => firstEditableTarget.focus());
+      } else if (formMessages.length > 0) {
+        window.requestAnimationFrame(() => {
+          (finish && !finishOverlay.hidden ? finishAlert : alertBox).focus?.();
+        });
+      }
     }
   }
 
@@ -1060,6 +1073,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     const retainedDraft = model.finish_review.draft.length > 0
       ? model.finish_review.draft
       : timing.draft;
+    const retainedMessages = retainedFinishReviewMessages(model.finish_review);
     finishReview = {
       reviewToken: model.finish_review.review_token,
       draft: cloneRows(retainedDraft),
@@ -1080,22 +1094,21 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         preview: finishReview.preview,
       });
       if (model.finish_review.locked) {
-        lockTimingDraft(model.finish_review.issues.map((issue) => issue.message));
+        lockTimingDraft(retainedMessages);
       }
-      renderServerErrors(model.finish_review.issues, { finish: true });
+      renderServerErrors(model.finish_review.issues, {
+        finish: true,
+        preserveAlert: model.finish_review.locked,
+      });
     } else {
-      const summaryMessages = [...new Set([
-        ...(Array.isArray(model.finish_review.messages) ? model.finish_review.messages : []),
-        ...model.finish_review.issues.map((issue) => issue.message),
-      ].filter(Boolean))];
       openFinishSummary({
         opener: activeFinishForm.querySelector("button[type='submit']"),
         focusTarget: finishCancelButton,
       });
-      showFinishAlert(summaryMessages);
-      finishEditButton.disabled = summaryMessages.length > 0;
-      finishConfirmButton.disabled = summaryMessages.length > 0;
-      if (summaryMessages.length > 0) {
+      showFinishAlert(retainedMessages);
+      finishEditButton.disabled = retainedMessages.length > 0;
+      finishConfirmButton.disabled = retainedMessages.length > 0;
+      if (retainedMessages.length > 0) {
         focusFinishAlert();
       }
     }

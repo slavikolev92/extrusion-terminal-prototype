@@ -5,6 +5,7 @@ import csv
 import io
 import json
 import re
+import subprocess
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -2819,9 +2820,9 @@ def test_terminal_timing_errors_reopen_or_lock_the_submitted_draft(connection):
     assert "finishConfirmButton.disabled = true" in begin_review
     assert "finishEditButton.disabled = true" in begin_review
     assert begin_review.count("focusFinishAlert();") == 2
-    assert "showFinishAlert(summaryMessages);" in controller_source
-    assert "finishEditButton.disabled = summaryMessages.length > 0" in controller_source
-    assert "finishConfirmButton.disabled = summaryMessages.length > 0" in controller_source
+    assert "showFinishAlert(retainedMessages);" in controller_source
+    assert "finishEditButton.disabled = retainedMessages.length > 0" in controller_source
+    assert "finishConfirmButton.disabled = retainedMessages.length > 0" in controller_source
 
 
 def test_terminal_finish_no_roll_failure_retains_message_in_review_model(connection):
@@ -2880,10 +2881,118 @@ def test_terminal_finish_no_roll_failure_retains_message_in_review_model(connect
     controller_source = Path(
         "app/static/js/timing_interval_editor.mjs"
     ).read_text(encoding="utf-8")
-    assert "model.finish_review.messages" in controller_source
-    assert "finishEditButton.disabled = summaryMessages.length > 0" in controller_source
-    assert "finishConfirmButton.disabled = summaryMessages.length > 0" in controller_source
+    assert "retainedFinishReviewMessages(model.finish_review)" in controller_source
+    assert "finishEditButton.disabled = retainedMessages.length > 0" in controller_source
+    assert "finishConfirmButton.disabled = retainedMessages.length > 0" in controller_source
     assert "focusFinishAlert();" in controller_source
+
+
+def test_terminal_stale_confirmed_finish_retains_locked_alert_and_reload_focus(connection):
+    card_id = release_ready_card(
+        "26184-reviewed-stale",
+        machine_id=1,
+        sequence=1,
+    )
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "25.00").ok
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = '2026-01-15 08:00:37'
+            WHERE card_id = ?
+            """,
+            (card_id,),
+        )
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET first_started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+    loaded_version = card_version(card_id)
+    review_response = asyncio.run(
+        route_endpoint("/terminal/cards/{card_id}/finish-review")(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    assert db.update_tare_weight(card_id, loaded_version, "1.25").ok
+
+    response = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=json.dumps(review_payload["preview"]["draft"]),
+        )
+    )
+
+    model = terminal_timing_model_from_html(response.body.decode("utf-8"))
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (STALE_CARD_MESSAGE,)
+    assert db.fetch_terminal_card_detail(card_id)["status"] == "running"
+    assert model["finish_review"]["open"] is True
+    assert model["finish_review"]["locked"] is True
+    assert model["finish_review"]["issues"] == []
+    assert model["finish_review"]["messages"] == [STALE_CARD_MESSAGE]
+
+    controller_path = Path("app/static/js/timing_interval_editor.mjs")
+    controller_source = controller_path.read_text(encoding="utf-8")
+    execution = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            f"""
+globalThis.document = {{
+  querySelector: () => null,
+  querySelectorAll: () => [],
+}};
+const controller = await import({json.dumps(controller_path.resolve().as_uri())});
+const retained = typeof controller.retainedFinishReviewMessages === "function"
+  ? controller.retainedFinishReviewMessages({json.dumps(model["finish_review"])})
+  : null;
+console.log(JSON.stringify(retained));
+""",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(execution.stdout) == [STALE_CARD_MESSAGE]
+
+    hydration_start = controller_source.index("if (model.finish_review?.open)")
+    hydration = controller_source[hydration_start:]
+    retained_index = hydration.index(
+        "const retainedMessages = retainedFinishReviewMessages(model.finish_review);"
+    )
+    branch_index = hydration.index("const mustShowEditor")
+    lock_index = hydration.index("lockTimingDraft(retainedMessages)", branch_index)
+    row_errors_index = hydration.index(
+        "renderServerErrors(model.finish_review.issues, {\n"
+        "        finish: true,\n"
+        "        preserveAlert: model.finish_review.locked,\n"
+        "      });",
+        lock_index,
+    )
+    assert retained_index < branch_index < lock_index < row_errors_index
+
+    render_errors_start = controller_source.index("function renderServerErrors")
+    render_errors_end = controller_source.index(
+        "function lockTimingDraft", render_errors_start
+    )
+    render_errors = controller_source[render_errors_start:render_errors_end]
+    assert "preserveAlert = false" in render_errors
+    assert "if (!preserveAlert)" in render_errors
+    assert "firstEditableTarget.focus()" in render_errors
+    assert "reloadLink.focus();" in controller_source
 
 
 def test_terminal_finish_confirmation_warns_only_for_mixed_saved_gross_roll_pallets(
