@@ -796,7 +796,7 @@ async function verifyTerminalBehavior(page, viewport) {
     clearedDisplayAfterReload: "-",
     palletOnlyToastExact: true,
     mixedModalExact: true,
-    noRequestOnNo: true,
+    reviewOnlyRequestOnCancel: true,
     correctionClosedOnNo: true,
   });
 }

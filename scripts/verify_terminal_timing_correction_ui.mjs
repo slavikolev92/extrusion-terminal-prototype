@@ -34,14 +34,27 @@ function normalized(value) {
 
 function isStrictChild(parent, candidate) {
   const relative = path.relative(parent, candidate);
-  return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+  return Boolean(relative)
+    && relative !== ".."
+    && !relative.startsWith(`..${path.sep}`)
+    && !path.isAbsolute(relative);
+}
+
+
+function isAtOrBelow(parent, candidate) {
+  return candidate === parent || isStrictChild(parent, candidate);
 }
 
 
 function assertNoSymlinkComponents(base, candidate, message) {
   const relative = path.relative(base, candidate);
   assert(
-    relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative)),
+    relative === ""
+      || (
+        relative !== ".."
+        && !relative.startsWith(`..${path.sep}`)
+        && !path.isAbsolute(relative)
+      ),
     message,
   );
   let current = base;
@@ -57,9 +70,21 @@ function assertNoSymlinkComponents(base, candidate, message) {
 }
 
 
+function lstatIfPresent(filePath) {
+  try {
+    return fs.lstatSync(filePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+
 function assertSingleLink(filePath, message) {
-  if (fs.existsSync(filePath)) {
-    assert(fs.statSync(filePath).nlink === 1, message);
+  const linkStat = lstatIfPresent(filePath);
+  if (linkStat) {
+    assert(!linkStat.isSymbolicLink(), message);
+    assert(linkStat.nlink === 1, message);
   }
 }
 
@@ -70,23 +95,32 @@ const fixtureInput = requiredEnvironment("FIXTURE_JSON");
 const artifactInput = requiredEnvironment("ARTIFACT_DIR");
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = fs.realpathSync(path.resolve(scriptDir, ".."));
-const runtimeRoot = path.resolve(repoRoot, ".test-runtime");
-const artifactRoot = path.resolve(repoRoot, "artifacts", "ui-checks");
+const runtimeRoot = path.resolve(
+  repoRoot,
+  ".test-runtime",
+  "terminal-timing-correction",
+);
+const artifactRoot = path.resolve(
+  repoRoot,
+  "artifacts",
+  "ui-checks",
+  "terminal-timing-correction",
+);
 const requestedFixturePath = path.resolve(repoRoot, fixtureInput);
 const requestedArtifactDir = path.resolve(repoRoot, artifactInput);
 
 assertNoSymlinkComponents(
   repoRoot,
   runtimeRoot,
-  ".test-runtime guard root must not be a symlink.",
+  ".test-runtime/terminal-timing-correction guard root must not be a symlink.",
 );
 assert(
   isStrictChild(runtimeRoot, requestedFixturePath),
-  "FIXTURE_JSON must be under .test-runtime.",
+  "FIXTURE_JSON must be under .test-runtime/terminal-timing-correction.",
 );
 assert(
-  isStrictChild(artifactRoot, requestedArtifactDir),
-  "ARTIFACT_DIR must be below artifacts/ui-checks.",
+  isAtOrBelow(artifactRoot, requestedArtifactDir),
+  "ARTIFACT_DIR must be at or below artifacts/ui-checks/terminal-timing-correction.",
 );
 assertNoSymlinkComponents(
   repoRoot,
@@ -97,7 +131,7 @@ assert(fs.existsSync(requestedFixturePath), `Fixture JSON does not exist: ${requ
 const fixturePath = fs.realpathSync(requestedFixturePath);
 assert(
   isStrictChild(fs.realpathSync(runtimeRoot), fixturePath),
-  "FIXTURE_JSON must resolve below .test-runtime.",
+  "FIXTURE_JSON must resolve below .test-runtime/terminal-timing-correction.",
 );
 assert(fs.statSync(fixturePath).isFile(), "FIXTURE_JSON must resolve to a regular file.");
 assertSingleLink(fixturePath, "FIXTURE_JSON must not be hard-linked.");
@@ -108,7 +142,7 @@ assert(fs.existsSync(databaseInput), `Fixture database does not exist: ${databas
 const databasePath = fs.realpathSync(databaseInput);
 assert(
   isStrictChild(fs.realpathSync(runtimeRoot), databasePath),
-  "Fixture database must resolve below .test-runtime.",
+  "Fixture database must resolve below .test-runtime/terminal-timing-correction.",
 );
 assert(fs.statSync(databasePath).isFile(), "Fixture database must be a regular file.");
 assertSingleLink(databasePath, "Fixture database must not be hard-linked.");
@@ -126,55 +160,106 @@ function guardedArtifactPath(...components) {
     target,
     "Artifact target path must not contain symlinks.",
   );
-  if (fs.existsSync(target)) {
-    assert(fs.statSync(target).isFile(), "Existing artifact target must be a regular file.");
-    assertSingleLink(target, "Existing artifact target must not be hard-linked.");
-  }
+  assert(
+    !lstatIfPresent(target),
+    "Artifact target already exists in the dedicated run directory.",
+  );
   return target;
 }
 
 
-function freshArtifactTempPath(target) {
+function openFreshArtifactTemp(target) {
   const extension = path.extname(target);
-  const temporaryPath = path.join(
+  const temporaryPath = path.resolve(
     path.dirname(target),
     `.${path.basename(target)}.${process.pid}.${randomUUID()}.tmp${extension}`,
   );
-  const descriptor = fs.openSync(temporaryPath, "wx", 0o600);
-  fs.closeSync(descriptor);
-  return temporaryPath;
+  assert(isStrictChild(artifactDir, temporaryPath), "Temporary artifact escaped ARTIFACT_DIR.");
+  const noFollow = fs.constants.O_NOFOLLOW;
+  assert(typeof noFollow === "number", "This verifier requires O_NOFOLLOW support.");
+  const descriptor = fs.openSync(
+    temporaryPath,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
+    0o600,
+  );
+  const descriptorStat = fs.fstatSync(descriptor);
+  assert(descriptorStat.isFile(), "Temporary artifact descriptor must be a regular file.");
+  assert(descriptorStat.nlink === 1, "Temporary artifact descriptor must have one link.");
+  return { temporaryPath, descriptor, descriptorStat };
 }
 
 
-function atomicWriteArtifact(target, contents) {
+function sameInode(actual, expected) {
+  return actual.dev === expected.dev && actual.ino === expected.ino;
+}
+
+
+function writeAll(descriptor, contents) {
+  let offset = 0;
+  while (offset < contents.length) {
+    offset += fs.writeSync(descriptor, contents, offset, contents.length - offset);
+  }
+}
+
+
+function cleanupOwnedTemporary(temporaryPath, descriptorStat) {
+  if (!temporaryPath || !descriptorStat) return;
+  const entryStat = lstatIfPresent(temporaryPath);
+  if (
+    entryStat
+    && !entryStat.isSymbolicLink()
+    && sameInode(entryStat, descriptorStat)
+  ) {
+    fs.unlinkSync(temporaryPath);
+  }
+}
+
+
+function atomicWriteArtifactBuffer(target, contents) {
   const relativeTarget = path.relative(artifactDir, target);
   const finalPath = guardedArtifactPath(relativeTarget);
-  let temporaryPath = freshArtifactTempPath(finalPath);
+  const buffer = Buffer.isBuffer(contents) ? contents : Buffer.from(contents);
+  let temporaryPath;
+  let descriptor;
+  let descriptorStat;
   try {
-    fs.writeFileSync(temporaryPath, contents, "utf8");
-    assertSingleLink(temporaryPath, "Temporary artifact must not be hard-linked.");
+    ({ temporaryPath, descriptor, descriptorStat } = openFreshArtifactTemp(finalPath));
+    writeAll(descriptor, buffer);
+    const afterWrite = fs.fstatSync(descriptor);
+    assert(sameInode(afterWrite, descriptorStat), "Temporary artifact descriptor changed while writing.");
+    assert(afterWrite.nlink === 1, "Temporary artifact was hard-linked while writing.");
+    fs.fsyncSync(descriptor);
+    const afterSync = fs.fstatSync(descriptor);
+    assert(sameInode(afterSync, descriptorStat), "Temporary artifact descriptor changed after sync.");
+    assert(afterSync.nlink === 1, "Temporary artifact was hard-linked after sync.");
+    const entryStat = fs.lstatSync(temporaryPath);
+    assert(!entryStat.isSymbolicLink(), "Temporary artifact entry became a symlink.");
+    assert(sameInode(entryStat, descriptorStat), "Temporary artifact entry was substituted.");
+    assert(entryStat.nlink === 1, "Temporary artifact entry must have one link.");
     const validatedFinalPath = guardedArtifactPath(relativeTarget);
     fs.renameSync(temporaryPath, validatedFinalPath);
     temporaryPath = null;
+    const publishedStat = fs.lstatSync(validatedFinalPath);
+    assert(!publishedStat.isSymbolicLink(), "Published artifact became a symlink.");
+    assert(sameInode(publishedStat, descriptorStat), "Published artifact inode is not the written inode.");
+    const publishedDescriptorStat = fs.fstatSync(descriptor);
+    assert(sameInode(publishedDescriptorStat, descriptorStat), "Published descriptor inode changed.");
+    assert(publishedDescriptorStat.nlink === 1, "Published artifact must have one link.");
   } finally {
-    if (temporaryPath && fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    cleanupOwnedTemporary(temporaryPath, descriptorStat);
   }
 }
 
 
 async function atomicScreenshot(page, target) {
-  const relativeTarget = path.relative(artifactDir, target);
-  const finalPath = guardedArtifactPath(relativeTarget);
-  let temporaryPath = freshArtifactTempPath(finalPath);
-  try {
-    await page.screenshot({ path: temporaryPath, fullPage: false });
-    assertSingleLink(temporaryPath, "Temporary screenshot must not be hard-linked.");
-    const validatedFinalPath = guardedArtifactPath(relativeTarget);
-    fs.renameSync(temporaryPath, validatedFinalPath);
-    temporaryPath = null;
-  } finally {
-    if (temporaryPath && fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
-  }
+  const screenshotBuffer = await page.screenshot({ fullPage: false, type: "png" });
+  atomicWriteArtifactBuffer(target, screenshotBuffer);
+}
+
+
+function atomicWriteArtifact(target, contents) {
+  atomicWriteArtifactBuffer(target, Buffer.from(contents, "utf8"));
 }
 
 
@@ -187,15 +272,85 @@ const summary = {
   screenshots: [],
   viewports: [],
   requestCounts: {},
+  requestQuiescenceWindowMs: 300,
+  routeGateTimeouts: [],
+  routeGateCleanupErrors: [],
+  expectedHttpResponses: [],
+  unexpectedHttpResponses: [],
+  expectedConsoleErrors: [],
   consoleErrors: [],
   pageErrors: [],
   failedRequests: [],
   abortedPreviewRequests: [],
+  unmatchedAbortedPreviewRequests: [],
 };
 
 
 function passed(label) {
   summary.assertions.push(label);
+}
+
+
+function isPreviewRequest(request) {
+  if (request.method() !== "POST") return false;
+  const pathname = new URL(request.url()).pathname;
+  return pathname.endsWith("/timing-ledger/preview")
+    || pathname.endsWith("/finish-review/preview");
+}
+
+
+function isExpectedHttpFailure(record) {
+  if (
+    record.method === "POST"
+    && record.status === 422
+    && record.pathname.endsWith("/timing-ledger/preview")
+    && record.phase === "validation-failures"
+  ) return true;
+  if (
+    record.method === "POST"
+    && record.status === 409
+    && record.pathname.endsWith("/timing-ledger/preview")
+    && record.phase === "stale-takeover"
+  ) return true;
+  return false;
+}
+
+
+function correlateAbortedPreviews() {
+  for (const aborted of summary.abortedPreviewRequests) {
+    const superseding = [...previewRequestStates.values()].find(
+      (candidate) => candidate.sequence > aborted.sequence
+        && candidate.pathname === aborted.pathname
+        && candidate.phase === aborted.phase,
+    );
+    if (superseding) {
+      aborted.correlation = `superseded by preview request ${superseding.sequence}`;
+    } else if (aborted.expectedAbortReason) {
+      aborted.correlation = aborted.expectedAbortReason;
+    } else {
+      const allowance = explicitPreviewAbortAllowances.find(
+        (candidate) => !candidate.used
+          && candidate.phase === aborted.phase
+          && candidate.pathname === aborted.pathname,
+      );
+      if (allowance) {
+        allowance.used = true;
+        aborted.correlation = allowance.reason;
+      } else {
+        summary.unmatchedAbortedPreviewRequests.push(aborted);
+      }
+    }
+  }
+}
+
+
+async function runPhase(label, callback) {
+  currentPhase = label;
+  try {
+    await callback();
+  } finally {
+    currentPhase = `${label}:cleanup`;
+  }
 }
 
 
@@ -217,17 +372,31 @@ async function preflightDatabase() {
 
 await preflightDatabase();
 
-fs.mkdirSync(artifactRoot, { recursive: true });
 assertNoSymlinkComponents(
   repoRoot,
   requestedArtifactDir,
   "ARTIFACT_DIR guard path must not contain symlinks.",
 );
-fs.mkdirSync(requestedArtifactDir, { recursive: true });
+assert(
+  fs.existsSync(requestedArtifactDir) && fs.lstatSync(requestedArtifactDir).isDirectory(),
+  "ARTIFACT_DIR must be a pre-created, empty, dedicated run directory.",
+);
 artifactDir = fs.realpathSync(requestedArtifactDir);
 assert(
-  isStrictChild(fs.realpathSync(artifactRoot), artifactDir),
-  "ARTIFACT_DIR resolves outside artifacts/ui-checks.",
+  isAtOrBelow(fs.realpathSync(artifactRoot), artifactDir),
+  "ARTIFACT_DIR resolves outside artifacts/ui-checks/terminal-timing-correction.",
+);
+assert(
+  fs.readdirSync(artifactDir).length === 0,
+  "ARTIFACT_DIR must be an empty, dedicated run directory.",
+);
+const ownershipMarkerPath = path.join(
+  artifactDir,
+  ".terminal-timing-correction-owner.json",
+);
+atomicWriteArtifact(
+  ownershipMarkerPath,
+  `${JSON.stringify({ verifier: "terminal-timing-correction-v1" })}\n`,
 );
 summaryPath = guardedArtifactPath("verification-summary.json");
 const screenshot1366 = guardedArtifactPath("timing-editor-1366x768.png");
@@ -243,6 +412,29 @@ assert(
 const { chromium } = require("@playwright/test");
 const pythonExecutable = path.join(repoRoot, ".venv", "bin", "python");
 const fixtureScript = path.join(repoRoot, "scripts", "create_terminal_timing_correction_fixture.py");
+const REQUEST_QUIESCENCE_WINDOW_MS = 300;
+const REQUEST_TIMEOUT_MS = 15000;
+const ROUTE_GATE_TIMEOUT_MS = 5000;
+
+let currentPhase = "setup";
+let requestActivityVersion = 0;
+let previewSequence = 0;
+const requestPhases = new WeakMap();
+const previewRequestStates = new Map();
+const explicitPreviewAbortAllowances = [];
+const recentPostActivity = [];
+
+
+function recordPostActivity(event, request) {
+  if (request.method() !== "POST") return;
+  recentPostActivity.push({
+    event,
+    phase: requestPhases.get(request) || currentPhase,
+    pathname: new URL(request.url()).pathname,
+    at: Date.now(),
+  });
+  if (recentPostActivity.length > 20) recentPostActivity.shift();
+}
 
 
 function runPython(program, programArguments, label) {
@@ -287,6 +479,123 @@ function resetFixtureDatabase() {
 }
 
 
+async function withTimeout(promise, milliseconds, label) {
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`${label} timed out after ${milliseconds} ms.`)),
+          milliseconds,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+
+async function waitForRequestQuiescence(page, label) {
+  const deadline = Date.now() + REQUEST_TIMEOUT_MS;
+  let observedVersion = requestActivityVersion;
+  let stableSince = Date.now();
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(25);
+    if (requestActivityVersion !== observedVersion) {
+      observedVersion = requestActivityVersion;
+      stableSince = Date.now();
+    }
+    if (Date.now() - stableSince >= REQUEST_QUIESCENCE_WINDOW_MS) return;
+  }
+  throw new Error(
+    `${label} did not reach request quiescence within ${REQUEST_TIMEOUT_MS} ms; `
+      + `recent POST activity: ${JSON.stringify(recentPostActivity)}.`,
+  );
+}
+
+
+async function waitForPreviewSettlement(page, label) {
+  const deadline = Date.now() + REQUEST_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const pending = [...previewRequestStates.values()].filter((state) => !state.outcome);
+    if (pending.length === 0) {
+      await waitForRequestQuiescence(page, label);
+      if ([...previewRequestStates.values()].every((state) => state.outcome)) return;
+    }
+    await page.waitForTimeout(25);
+  }
+  throw new Error(`${label} did not settle previews within ${REQUEST_TIMEOUT_MS} ms.`);
+}
+
+
+function markOutstandingPreviewAbortsExpected(reason) {
+  for (const state of previewRequestStates.values()) {
+    if (!state.outcome) state.expectedAbortReason = reason;
+  }
+}
+
+
+function allowOneExplicitPreviewAbort({ phase, pathname, reason }) {
+  explicitPreviewAbortAllowances.push({ phase, pathname, reason, used: false });
+}
+
+
+function createRouteGate(label) {
+  let releaseGate;
+  let markEntered;
+  let released = false;
+  let entered = false;
+  let requestCount = 0;
+  const releasePromise = new Promise((resolve) => { releaseGate = resolve; });
+  const enteredPromise = new Promise((resolve) => { markEntered = resolve; });
+  const handler = async (route) => {
+    requestCount += 1;
+    if (!entered) {
+      entered = true;
+      markEntered();
+    }
+    try {
+      try {
+        await withTimeout(
+          releasePromise,
+          ROUTE_GATE_TIMEOUT_MS,
+          `${label} release`,
+        );
+      } catch (error) {
+        summary.routeGateTimeouts.push({
+          label,
+          error: error?.message || String(error),
+        });
+      }
+    } finally {
+      try {
+        await route.continue();
+      } catch (error) {
+        summary.routeGateCleanupErrors.push({
+          label,
+          error: error?.message || String(error),
+        });
+      }
+    }
+  };
+  return {
+    handler,
+    entered: enteredPromise,
+    release() {
+      if (!released) {
+        released = true;
+        releaseGate();
+      }
+    },
+    count() {
+      return requestCount;
+    },
+  };
+}
+
+
 function cardSnapshot(cardId) {
   const program = [
     "import json, sqlite3, sys",
@@ -315,6 +624,8 @@ function mutateCardVersion(cardId) {
 
 
 async function parkAndReset(page) {
+  await waitForRequestQuiescence(page, `${currentPhase}: before fixture reset`);
+  markOutstandingPreviewAbortsExpected(`${currentPhase}: explicit page reset`);
   await page.goto("about:blank");
   resetFixtureDatabase();
   await preflightDatabase();
@@ -463,11 +774,24 @@ async function verifyCancelFocusEscapeAndTrap(page) {
     await assertFocusInside(page, "[data-timing-dialog]", `forward focus trap Tab ${index + 1}`);
   }
   await editor.locator("[data-timing-save]").focus();
+  await waitForPreviewSettlement(page, "focus boundary preview settlement");
   await page.keyboard.press("Tab");
   await assertFocusInside(page, "[data-timing-dialog]", "forward boundary focus wrap");
-  await timingRow(page, 0).locator('[data-timing-field="start_date"]').focus();
+  assert(
+    await page.locator("[data-timing-dialog]").evaluate(
+      () => document.activeElement?.getAttribute("data-timing-field") === "start_date",
+    ),
+    "Forward boundary did not wrap to the first timing date field.",
+  );
   await page.keyboard.press("Shift+Tab");
   await assertFocusInside(page, "[data-timing-dialog]", "reverse boundary focus wrap");
+  assert(
+    await editor.locator("[data-timing-save]").evaluate(
+      (button) => document.activeElement === button,
+    ),
+    "Reverse boundary did not wrap to Save.",
+  );
+  await waitForPreviewSettlement(page, "reverse focus boundary preview settlement");
   await page.keyboard.press("Escape");
   await editor.waitFor({ state: "hidden" });
   assert(
@@ -551,6 +875,17 @@ async function verifyPausedOrdinarySave(page) {
 
 
 async function submitServerInvalidEditor(page, editor) {
+  await waitForPreviewSettlement(
+    page,
+    "validation-failures: invalid preview before form navigation",
+  );
+  const saveAction = await editor.locator("[data-timing-save-form]").getAttribute("action");
+  assert(saveAction, "Validation timing form action is missing.");
+  allowOneExplicitPreviewAbort({
+    phase: "validation-failures",
+    pathname: `${saveAction}/preview`,
+    reason: "validation-failures: one blur preview may be aborted by invalid-form navigation",
+  });
   await Promise.all([
     page.waitForNavigation({ waitUntil: "networkidle" }),
     editor.locator("[data-timing-save-form]").evaluate((form) => form.requestSubmit()),
@@ -615,6 +950,30 @@ async function verifyValidationFailures(page) {
     "Future timestamp rejection is missing.",
   );
   assertEqual(cardSnapshot(cardId), before, "future draft database snapshot");
+  const validationPath = `/terminal/cards/${cardId}/timing-ledger/preview`;
+  const observedValidation = page.waitForResponse(
+    (response) => response.request().method() === "POST"
+      && new URL(response.url()).pathname === validationPath
+      && response.status() === 422,
+    { timeout: REQUEST_TIMEOUT_MS },
+  );
+  const explicitValidation = await page.evaluate(async ({ endpoint }) => {
+    const form = document.querySelector("[data-timing-save-form]");
+    const body = new FormData();
+    body.set("loaded_version", form.querySelector("input[name='loaded_version']").value);
+    body.set("timing_draft", "{invalid-json");
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Accept": "application/json" },
+      body,
+    });
+    return { status: response.status, payload: await response.json() };
+  }, { endpoint: validationPath });
+  const validationResponse = await observedValidation;
+  assertEqual(validationResponse.status(), 422, "explicit validation HTTP status");
+  assertEqual(explicitValidation.status, 422, "explicit validation fetch status");
+  assertEqual(explicitValidation.payload.ok, false, "explicit validation payload status");
+  assertEqual(cardSnapshot(cardId), before, "explicit validation database snapshot");
   passed("incomplete, impossible-time, and future validation with first-field focus");
 }
 
@@ -649,20 +1008,14 @@ async function verifyManyRowsAnd1366Screenshot(page) {
 }
 
 
-async function beginFinishReview(page, cardId, { doubleSubmit = false } = {}) {
+async function beginFinishReview(page, cardId) {
   const responsePromise = page.waitForResponse(
     (response) => response.request().method() === "POST"
       && new URL(response.url()).pathname === `/terminal/cards/${cardId}/finish-review`,
+    { timeout: REQUEST_TIMEOUT_MS },
   );
   const button = page.locator(`form[action="/terminal/cards/${cardId}/finish"] button[type="submit"]`);
-  if (doubleSubmit) {
-    await button.evaluate((element) => {
-      element.click();
-      element.click();
-    });
-  } else {
-    await button.click();
-  }
+  await button.click();
   const response = await responsePromise;
   const payload = await response.json();
   await page.locator("[data-finish-review-overlay]").waitFor({ state: "visible" });
@@ -670,10 +1023,45 @@ async function beginFinishReview(page, cardId, { doubleSubmit = false } = {}) {
 }
 
 
+async function beginDoubleSubmittedFinishReview(page, cardId) {
+  const finishReviewPattern = `**/terminal/cards/${cardId}/finish-review`;
+  const gate = createRouteGate("finish-review double-submit gate");
+  await page.route(finishReviewPattern, gate.handler);
+  try {
+    const responsePromise = page.waitForResponse(
+      (response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/terminal/cards/${cardId}/finish-review`,
+      { timeout: REQUEST_TIMEOUT_MS },
+    );
+    const button = page.locator(`form[action="/terminal/cards/${cardId}/finish"] button[type="submit"]`);
+    await button.evaluate((element) => {
+      element.click();
+      element.click();
+    });
+    await withTimeout(
+      gate.entered,
+      REQUEST_TIMEOUT_MS,
+      "finish-review double-submit first request",
+    );
+    await waitForRequestQuiescence(page, "finish-review double-submit while gated");
+    gate.release();
+    const response = await responsePromise;
+    const payload = await response.json();
+    await page.locator("[data-finish-review-overlay]").waitFor({ state: "visible" });
+    await waitForRequestQuiescence(page, "finish-review double-submit after response");
+    return { payload, requestCount: gate.count() };
+  } finally {
+    gate.release();
+    await page.unroute(finishReviewPattern, gate.handler);
+  }
+}
+
+
 async function applyFinishEditor(page) {
   const responsePromise = page.waitForResponse(
     (response) => response.request().method() === "POST"
       && new URL(response.url()).pathname.endsWith("/finish-review/preview"),
+    { timeout: REQUEST_TIMEOUT_MS },
   );
   await page.locator("[data-timing-save]").click();
   const response = await responsePromise;
@@ -686,15 +1074,12 @@ async function verifyRunningFinishReview(page) {
   await parkAndReset(page);
   const cardId = await navigate(page, "running");
   const before = cardSnapshot(cardId);
-  const requests = [];
-  page.on("request", (request) => {
-    if (request.method() === "POST") requests.push(new URL(request.url()).pathname);
-  });
 
-  let payload = await beginFinishReview(page, cardId, { doubleSubmit: true });
+  const doubleReview = await beginDoubleSubmittedFinishReview(page, cardId);
+  let payload = doubleReview.payload;
   assert(payload.ok, "Running finish review did not return an accepted preview.");
   assertEqual(
-    requests.filter((pathname) => pathname === `/terminal/cards/${cardId}/finish-review`).length,
+    doubleReview.requestCount,
     1,
     "double-click finish-review request count",
   );
@@ -732,32 +1117,34 @@ async function verifyRunningFinishReview(page) {
   await fillTimingField(page, 0, "start_time", "1002");
   await applyFinishEditor(page);
 
-  let releaseFinish;
-  const finishGate = new Promise((resolve) => { releaseFinish = resolve; });
-  let finishRequestCount = 0;
-  let markFinishEntered;
-  const finishEntered = new Promise((resolve) => { markFinishEntered = resolve; });
   const finishPattern = `**/terminal/cards/${cardId}/finish`;
-  await page.route(finishPattern, async (route) => {
-    finishRequestCount += 1;
-    markFinishEntered();
-    await finishGate;
-    await route.continue();
-  });
-  const navigation = page.waitForURL(
-    (url) => url.pathname === `/terminal/cards/${cardId}`
-      && url.searchParams.get("notice") === "card_finished",
-    { waitUntil: "networkidle" },
-  );
-  await finishOverlay.locator("[data-finish-review-confirm]").evaluate((button) => {
-    button.click();
-    button.click();
-  });
-  await finishEntered;
+  const finishGate = createRouteGate("Confirm Finish double-submit gate");
+  await page.route(finishPattern, finishGate.handler);
+  try {
+    const navigation = page.waitForURL(
+      (url) => url.pathname === `/terminal/cards/${cardId}`
+        && url.searchParams.get("notice") === "card_finished",
+      { waitUntil: "networkidle", timeout: REQUEST_TIMEOUT_MS },
+    );
+    await finishOverlay.locator("[data-finish-review-confirm]").evaluate((button) => {
+      button.click();
+      button.click();
+    });
+    await withTimeout(
+      finishGate.entered,
+      REQUEST_TIMEOUT_MS,
+      "Confirm Finish double-submit first request",
+    );
+    await waitForRequestQuiescence(page, "Confirm Finish double-submit while gated");
+    finishGate.release();
+    await navigation;
+    await waitForRequestQuiescence(page, "Confirm Finish after navigation");
+  } finally {
+    finishGate.release();
+    await page.unroute(finishPattern, finishGate.handler);
+  }
+  const finishRequestCount = finishGate.count();
   assertEqual(finishRequestCount, 1, "double-click Confirm Finish request count");
-  releaseFinish();
-  await navigation;
-  await page.unroute(finishPattern);
 
   const after = cardSnapshot(cardId);
   assertEqual(after.card.status, "completed", "running Confirm Finish status");
@@ -765,7 +1152,7 @@ async function verifyRunningFinishReview(page) {
   assertEqual(after.card.finished_at, payload.preview.reviewed_at_utc, "frozen finish persisted instant");
   assertEqual(after.timing[0][1], "2026-08-20 07:02:00", "finish-review edited minute precision");
   assertEqual(after.timing.at(-1)[2], payload.preview.reviewed_at_utc, "running final interval frozen closure");
-  summary.requestCounts.finishReviewDoubleClick = 1;
+  summary.requestCounts.finishReviewDoubleClick = doubleReview.requestCount;
   summary.requestCounts.confirmFinishDoubleClick = finishRequestCount;
   passed("finish freeze, Edit/Apply/Cancel/Confirm, mixed warning, and double-submit blocking");
 }
@@ -833,6 +1220,11 @@ async function verifyStaleTakeover(page) {
   const cardId = await navigate(page, "running");
   const editor = await openTimingEditor(page);
   const draftInput = await fillTimingField(page, 0, "start_time", "1007");
+  allowOneExplicitPreviewAbort({
+    phase: "stale-takeover",
+    pathname: `/terminal/cards/${cardId}/timing-ledger/preview`,
+    reason: "stale-takeover: one draft preview may be aborted by the explicit stale lock",
+  });
   mutateCardVersion(cardId);
   await page.locator("#terminal-refresh-alert").waitFor({ state: "visible", timeout: 15000 });
   await editor.locator("[data-timing-reload]").waitFor({ state: "visible", timeout: 15000 });
@@ -846,6 +1238,9 @@ async function verifyStaleTakeover(page) {
   assert(
     await editor.locator("[data-timing-reload]").evaluate((link) => document.activeElement === link),
     "Stale reload link did not receive focus.",
+  );
+  markOutstandingPreviewAbortsExpected(
+    "stale-takeover: explicit locked-editor cancellation",
   );
   await editor.locator("[data-timing-cancel]").click();
   await editor.waitFor({ state: "hidden" });
@@ -861,10 +1256,69 @@ async function main() {
     const page = await context.newPage();
     page.on("pageerror", (error) => summary.pageErrors.push(error.message));
     page.on("console", (message) => {
-      if (message.type() === "error") summary.consoleErrors.push(message.text());
+      if (message.type() !== "error") return;
+      const record = { phase: currentPhase, text: message.text() };
+      if (
+        currentPhase === "validation-failures"
+        && record.text === (
+          "Failed to load resource: the server responded with a status of 422 "
+          + "(Unprocessable Entity)"
+        )
+      ) {
+        summary.expectedConsoleErrors.push(record);
+      } else {
+        summary.consoleErrors.push(record);
+      }
+    });
+    page.on("request", (request) => {
+      if (request.method() === "POST") requestActivityVersion += 1;
+      requestPhases.set(request, currentPhase);
+      recordPostActivity("request", request);
+      assertEqual(new URL(request.url()).origin, baseOrigin, "browser request origin");
+      if (isPreviewRequest(request)) {
+        previewSequence += 1;
+        previewRequestStates.set(request, {
+          sequence: previewSequence,
+          phase: currentPhase,
+          method: request.method(),
+          url: request.url(),
+          pathname: new URL(request.url()).pathname,
+          outcome: null,
+          expectedAbortReason: null,
+        });
+      }
+    });
+    page.on("requestfinished", (request) => {
+      if (request.method() === "POST") requestActivityVersion += 1;
+      recordPostActivity("finished", request);
+      const state = previewRequestStates.get(request);
+      if (state && !state.outcome) state.outcome = "finished";
+    });
+    page.on("response", (response) => {
+      const request = response.request();
+      const status = response.status();
+      const state = previewRequestStates.get(request);
+      if (state) state.status = status;
+      if (status < 400) return;
+      const record = {
+        phase: requestPhases.get(request) || "unknown",
+        method: request.method(),
+        pathname: new URL(response.url()).pathname,
+        status,
+      };
+      if (isExpectedHttpFailure(record)) {
+        summary.expectedHttpResponses.push(record);
+      } else {
+        summary.unexpectedHttpResponses.push(record);
+      }
     });
     page.on("requestfailed", (request) => {
+      if (request.method() === "POST") requestActivityVersion += 1;
+      recordPostActivity("failed", request);
+      const previewState = previewRequestStates.get(request);
+      if (previewState) previewState.outcome = "failed";
       const failure = {
+        phase: requestPhases.get(request) || "unknown",
         method: request.method(),
         url: request.url(),
         error: request.failure()?.errorText || "unknown",
@@ -875,29 +1329,43 @@ async function main() {
         && pathname.endsWith("/timing-ledger/preview")
         && failure.error === "net::ERR_ABORTED"
       ) {
-        summary.abortedPreviewRequests.push(failure);
+        summary.abortedPreviewRequests.push({
+          ...failure,
+          pathname,
+          sequence: previewState?.sequence ?? -1,
+          expectedAbortReason: previewState?.expectedAbortReason || null,
+          correlation: null,
+        });
         return;
       }
       summary.failedRequests.push(failure);
     });
-    page.on("request", (request) => {
-      assertEqual(new URL(request.url()).origin, baseOrigin, "browser request origin");
-    });
 
-    await verifyLifecycleAndIcon(page);
-    await verifyCancelFocusEscapeAndTrap(page);
-    await verifyRunningOrdinarySave(page);
-    await verifyPausedOrdinarySave(page);
-    await verifyValidationFailures(page);
-    await verifyManyRowsAnd1366Screenshot(page);
-    await verifyRunningFinishReview(page);
-    await verifyPausedFinishAnd1920Screenshot(page);
-    await verifyCompletedWaitingAbsenceAndLegacyFinish(page);
-    await verifyStaleTakeover(page);
+    await runPhase("lifecycle-and-icon", () => verifyLifecycleAndIcon(page));
+    await runPhase("cancel-focus-and-trap", () => verifyCancelFocusEscapeAndTrap(page));
+    await runPhase("running-ordinary-save", () => verifyRunningOrdinarySave(page));
+    await runPhase("paused-ordinary-save", () => verifyPausedOrdinarySave(page));
+    await runPhase("validation-failures", () => verifyValidationFailures(page));
+    await runPhase("many-row-layout", () => verifyManyRowsAnd1366Screenshot(page));
+    await runPhase("running-finish-review", () => verifyRunningFinishReview(page));
+    await runPhase("paused-finish-review", () => verifyPausedFinishAnd1920Screenshot(page));
+    await runPhase("completed-waiting-legacy", () => verifyCompletedWaitingAbsenceAndLegacyFinish(page));
+    await runPhase("stale-takeover", () => verifyStaleTakeover(page));
+
+    await waitForRequestQuiescence(page, "final verifier request accounting");
+    correlateAbortedPreviews();
 
     assertEqual(summary.consoleErrors, [], "error-level browser console messages");
     assertEqual(summary.pageErrors, [], "browser page errors");
     assertEqual(summary.failedRequests, [], "failed browser requests");
+    assertEqual(summary.routeGateTimeouts, [], "route gate timeouts");
+    assertEqual(summary.routeGateCleanupErrors, [], "route gate cleanup errors");
+    assertEqual(summary.unexpectedHttpResponses, [], "unexpected HTTP >=400 responses");
+    assertEqual(
+      summary.unmatchedAbortedPreviewRequests,
+      [],
+      "unmatched aborted preview requests",
+    );
     summary.status = "passed";
     atomicWriteArtifact(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
     console.log("Terminal timing-correction UI verification passed.");
