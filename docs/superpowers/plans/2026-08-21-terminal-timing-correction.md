@@ -674,6 +674,9 @@ accessibility, stale handling, and lifecycle-control preservation.
 - Create: `scripts/verify_terminal_timing_correction_ui.mjs`
 - Create: `tests/test_terminal_timing_correction_ui_script_safety.py`
 - Create: `docs/implementation-notes/terminal-timing-correction.md`
+- Modify: `scripts/verify_shift_management_ui.mjs`
+- Modify: `scripts/verify_roll_pallet_ui.mjs`
+- Modify: `tests/test_terminal_pallet_summary.py`
 - Modify: `README.md`
 
 - [ ] Red/green the three named fixture/verifier safety tests one at a time.
@@ -686,6 +689,11 @@ accessibility, stale handling, and lifecycle-control preservation.
 
 - [ ] Create deterministic running, paused, completed, awaiting-rewinding, and
   many-interval cards plus an active shift in a temporary SQLite database.
+- [ ] Update the existing shift-management and roll/pallet browser verifiers to
+  drive the reviewed active-card Finish flow while retaining an explicit
+  awaiting-rewinding simple-confirmation check. Update the existing stale-event
+  assertion to the cancelable event contract. Rerun the four exact legacy
+  failures recorded after Task 5 before the full suite.
 - [ ] Implement one Playwright verifier covering: menu/icon loading; unchanged
   lifecycle controls; ordinary running and paused saves; Add Interval;
   Delete/Undo; blank open stop; `1350` → `13:50`; incomplete, invalid, and
