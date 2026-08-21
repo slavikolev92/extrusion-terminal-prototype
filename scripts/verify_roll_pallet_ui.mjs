@@ -745,23 +745,30 @@ async function verifyTerminalBehavior(page, viewport) {
   page.off("request", mutationRequestListener);
 
   const requests = [];
-  const requestListener = (request) => requests.push(request.url());
+  const requestListener = (request) => requests.push({
+    method: request.method(),
+    pathname: new URL(request.url()).pathname,
+  });
   page.on("request", requestListener);
   const requestCountBefore = requests.length;
   const urlBefore = page.url();
   await page.getByRole("button", { name: "Приключи" }).click();
-  const modal = page.locator("[data-finish-confirm-modal]");
-  await modal.waitFor({ state: "visible" });
+  const finishReview = page.locator("[data-finish-review-overlay]");
+  await finishReview.waitFor({ state: "visible" });
   assertEqual(
-    normalizeText(await modal.locator("#finish-confirm-body").textContent()),
+    normalizeText(await finishReview.locator("[data-finish-review-warning]").textContent()),
     "В поръчката има 2 ролки без палет. Искате ли да приключите поръчката?",
     "mixed finish confirmation",
   );
-  await modal.locator("[data-finish-confirm-cancel]").click();
-  await modal.waitFor({ state: "hidden" });
+  await finishReview.locator("[data-finish-review-cancel]").click();
+  await finishReview.waitFor({ state: "hidden" });
   await page.waitForTimeout(150);
-  assertEqual(requests.length, requestCountBefore, "requests after choosing Не");
-  assertEqual(page.url(), urlBefore, "URL after choosing Не");
+  assertEqual(
+    requests.slice(requestCountBefore),
+    [{ method: "POST", pathname: `/terminal/cards/${fixture.cards.running}/finish-review` }],
+    "review-only requests after choosing Отказ",
+  );
+  assertEqual(page.url(), urlBefore, "URL after choosing Отказ");
   assertEqual(
     await page.locator(".roll-row[data-roll-edit-open='true']").count(),
     0,

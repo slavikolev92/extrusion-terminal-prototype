@@ -1478,19 +1478,26 @@ async function verifySecondPageStaleGate(context, firstPage, cardId, before) {
 
   await openCard(firstPage, cardId);
   const finishForm = firstPage.locator(
-    `form[action="/terminal/cards/${cardId}/finish"][data-finish-confirm-form="true"]`,
+    `form[action="/terminal/cards/${cardId}/finish"][data-timing-finish-review="true"]`,
   );
   const finishButton = finishForm.getByRole("button", { name: "Приключи" });
-  const finishModal = firstPage.locator('[data-finish-confirm-modal]');
+  const finishReview = firstPage.locator('[data-finish-review-overlay]');
   await finishButton.click();
-  await finishModal.waitFor({ state: "visible" });
+  await finishReview.waitFor({ state: "visible" });
   await firstPage.keyboard.press("Escape");
-  await finishModal.waitFor({ state: "hidden" });
+  await finishReview.waitFor({ state: "hidden" });
   await finishButton.click();
-  await finishModal.waitFor({ state: "visible" });
-  await finishModal.locator('[data-finish-confirm-cancel]').click();
-  await finishModal.waitFor({ state: "hidden" });
-  assertEqual(postedFromFirstPage, [], "POST requests after cancelled Finish confirmations");
+  await finishReview.waitFor({ state: "visible" });
+  await finishReview.locator('[data-finish-review-cancel]').click();
+  await finishReview.waitFor({ state: "hidden" });
+  assertEqual(
+    postedFromFirstPage.map((url) => new URL(url).pathname),
+    [
+      `/terminal/cards/${cardId}/finish-review`,
+      `/terminal/cards/${cardId}/finish-review`,
+    ],
+    "review-only POST requests after cancelled Finish reviews",
+  );
 
   const secondPage = await context.newPage();
   await openCard(secondPage, cardId);
@@ -1526,7 +1533,14 @@ async function verifySecondPageStaleGate(context, firstPage, cardId, before) {
     underlyingActionWasBlocked = true;
   }
   assert(underlyingActionWasBlocked, "Blocking reload state allowed an underlying terminal action");
-  assertEqual(postedFromFirstPage, [], "POST requests from stale first page");
+  assertEqual(
+    postedFromFirstPage.map((url) => new URL(url).pathname),
+    [
+      `/terminal/cards/${cardId}/finish-review`,
+      `/terminal/cards/${cardId}/finish-review`,
+    ],
+    "review-only POST requests from stale first page",
+  );
   const after = databaseSnapshot();
   assertEqual(
     invariantCardState(after),
@@ -1600,12 +1614,12 @@ async function verifyConfirmedFinishSuspendsPolling(page, cardId) {
   let finishResponse;
   try {
     const finishForm = page.locator(
-      `form[action="/terminal/cards/${cardId}/finish"][data-finish-confirm-form="true"]`,
+      `form[action="/terminal/cards/${cardId}/finish"][data-timing-finish-review="true"]`,
     );
     await finishForm.getByRole("button", { name: "Приключи" }).click();
-    const finishModal = page.locator('[data-finish-confirm-modal]');
-    await finishModal.waitFor({ state: "visible" });
-    confirmClick = finishModal.locator('[data-finish-confirm-submit]').click();
+    const finishReview = page.locator('[data-finish-review-overlay]');
+    await finishReview.waitFor({ state: "visible" });
+    confirmClick = finishReview.locator('[data-finish-review-confirm]').click();
     await waitForFinishRouteEntry();
     const requestsBeforeHold = snapshotRequestCount;
     await page.waitForTimeout(11000);

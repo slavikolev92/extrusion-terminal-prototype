@@ -606,7 +606,7 @@ def test_terminal_render_selected_card_stale_dispatch_follows_refresh_alert_once
     poll_end = html.index("window.setInterval(pollSnapshot, 10000);", poll_start)
     poll_source = html[poll_start:poll_end]
     card_stale_dispatch = (
-        'document.dispatchEvent(new CustomEvent("terminal:card-stale"));'
+        'new CustomEvent("terminal:card-stale", { cancelable: true })'
     )
 
     assert html.count(card_stale_dispatch) == 1
