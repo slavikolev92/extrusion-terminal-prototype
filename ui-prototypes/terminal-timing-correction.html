@@ -1,0 +1,2023 @@
+<!doctype html>
+<html lang="bg">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Корекция на производствено време — прототип</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #edf1f5;
+      --surface: #ffffff;
+      --surface-soft: #f7f9fb;
+      --nav-bg: #ececec;
+      --line: #d5dde6;
+      --line-strong: #92a0af;
+      --text: #1f2933;
+      --muted: #667382;
+      --navy: #0b355f;
+      --green: #1f7a43;
+      --green-soft: #e8f6ed;
+      --yellow: #a66d00;
+      --yellow-soft: #fff7d6;
+      --red: #b4232c;
+      --red-soft: #fff0f0;
+      --blue-soft: #eaf3ff;
+      --shadow: 0 18px 52px rgba(15, 35, 55, .24);
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      padding: 0 12px;
+      font-weight: 800;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    button:hover:not(:disabled) {
+      border-color: #7d8c9c;
+      background: #f8fafc;
+    }
+
+    button:disabled {
+      cursor: default;
+      color: #8a96a5;
+      background: #f1f3f5;
+      border-color: #d9e0e7;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    summary:focus-visible {
+      outline: 3px solid #69a8ed;
+      outline-offset: 2px;
+    }
+
+    input {
+      width: 100%;
+      min-width: 0;
+      min-height: 36px;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--text);
+      padding: 5px 8px;
+      font-weight: 700;
+    }
+
+    input:disabled {
+      color: #7a8590;
+      background: #f3f5f7;
+      border-color: #cbd3dc;
+    }
+
+    input[aria-invalid="true"] {
+      border-color: var(--red);
+      box-shadow: 0 0 0 2px rgba(180, 35, 44, .14);
+    }
+
+    [hidden] { display: none !important; }
+
+    .page-shell {
+      height: 100%;
+    }
+
+    .app {
+      height: 100vh;
+      min-height: 680px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+      background: #e9edf2;
+    }
+
+    .machine-nav {
+      min-width: 0;
+      border-bottom: 1px solid #cfd6de;
+      background: var(--nav-bg);
+      padding: 24px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 156px;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .machine-nav-list {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(240px, 380px));
+      justify-content: start;
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .machine-nav-actions {
+      min-width: 0;
+      display: grid;
+      grid-template-rows: repeat(2, minmax(0, 58px));
+      align-content: center;
+      gap: 10px;
+      align-self: stretch;
+    }
+
+    .machine-tab {
+      position: relative;
+      min-width: 0;
+      min-height: 140px;
+      border-width: 10px 2px 2px;
+      border-style: solid;
+      border-color: #aeb7c1;
+      border-radius: 10px;
+      background: #fff;
+      padding: 12px 14px;
+      display: grid;
+      grid-template-rows: auto auto auto;
+      align-content: center;
+      gap: 9px;
+      text-align: left;
+      overflow: hidden;
+    }
+
+    .machine-tab:hover:not(:disabled) { background: #fff; }
+
+    .machine-tab.selected {
+      border-color: var(--navy);
+    }
+
+    .machine-tab.idle {
+      background: #f8fafc;
+    }
+
+    .machine-tab-top,
+    .machine-tab-progress,
+    .machine-tab-title {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+    }
+
+    .machine-tab-top,
+    .machine-tab-progress {
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .machine-tab-title { gap: 7px; }
+
+    .machine-tab-icon {
+      width: 17px;
+      height: 17px;
+      flex: 0 0 auto;
+      object-fit: contain;
+    }
+
+    .machine-tab-name {
+      overflow: hidden;
+      font-size: 17px;
+      font-weight: 900;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .machine-tab-meta {
+      min-width: 0;
+      display: grid;
+      gap: 3px;
+      font-size: 15px;
+      font-weight: 800;
+      line-height: 1.15;
+    }
+
+    .machine-tab-meta span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .machine-tab-progress {
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    .progress {
+      height: 7px;
+      flex: 1 1 auto;
+      overflow: hidden;
+      border-radius: 99px;
+      background: #e2e6e9;
+    }
+
+    .progress > span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--green);
+    }
+
+    .status {
+      flex: 0 0 auto;
+      border: 1px solid #b6d8c1;
+      border-radius: 999px;
+      background: var(--green-soft);
+      color: var(--green);
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 900;
+      line-height: 1.3;
+    }
+
+    .status.paused {
+      border-color: #e5c464;
+      background: var(--yellow-soft);
+      color: var(--yellow);
+    }
+
+    .status.idle,
+    .status.completed {
+      border-color: #d5dce3;
+      border-style: dashed;
+      background: #fff;
+      color: var(--muted);
+    }
+
+    .history-nav,
+    .queue-nav {
+      min-height: 58px;
+      border-color: #b9c8d9;
+      color: #052f5b;
+      line-height: 1.1;
+    }
+
+    .main {
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .topbar {
+      min-width: 0;
+      min-height: 76px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .title {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+
+    .title h1 {
+      margin: 0;
+      overflow: hidden;
+      font-size: 24px;
+      line-height: 1.05;
+      font-weight: 900;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .completed-note {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .actions {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: nowrap;
+    }
+
+    .action-primary {
+      border-color: var(--navy);
+      background: var(--navy);
+      color: #fff;
+    }
+
+    .action-primary:hover:not(:disabled) {
+      border-color: #082746;
+      background: #082746;
+    }
+
+    .action-secondary,
+    .menu-btn {
+      border-color: #b8c4d1;
+      background: #fff;
+      color: var(--navy);
+    }
+
+    .action-danger {
+      border-color: var(--red);
+      background: var(--red);
+      color: #fff;
+    }
+
+    .action-danger:hover:not(:disabled) {
+      border-color: #941923;
+      background: #941923;
+    }
+
+    .menu {
+      position: relative;
+    }
+
+    .menu-btn {
+      width: 38px;
+      padding: 0;
+      font-size: 21px;
+      line-height: 1;
+    }
+
+    .menu-panel {
+      position: absolute;
+      right: 0;
+      top: 44px;
+      z-index: 5;
+      width: 232px;
+      display: none;
+      gap: 5px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fff;
+      box-shadow: var(--shadow);
+      padding: 6px;
+    }
+
+    .menu:hover .menu-panel,
+    .menu:focus-within .menu-panel,
+    .menu.open .menu-panel {
+      display: grid;
+    }
+
+    .menu-panel button {
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 9px;
+      background: #fff;
+    }
+
+    .menu-panel img {
+      width: 17px;
+      height: 17px;
+      flex: 0 0 auto;
+      object-fit: contain;
+    }
+
+    .workspace {
+      min-width: 0;
+      min-height: 0;
+      padding: 18px 24px 24px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 480px;
+      gap: 28px;
+      overflow: hidden;
+    }
+
+    .panel {
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .panel-head {
+      padding: 0 0 14px;
+      color: var(--text);
+      font-size: 24px;
+      font-weight: 900;
+      line-height: 1.1;
+    }
+
+    .panel-body {
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .details-body {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 20px;
+    }
+
+    .order-section,
+    .roll-entry,
+    .roll-table,
+    .totals {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    .order-section {
+      padding: 17px 18px 16px;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .field-label,
+    .section-title,
+    .recipe-head,
+    .roll-head,
+    .metric-label {
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    .value {
+      margin-top: 5px;
+      font-size: 18px;
+      font-weight: 900;
+      line-height: 1.15;
+    }
+
+    .notes-section { margin-top: 18px; }
+
+    .notes {
+      margin-top: 7px;
+      font-size: 18px;
+      line-height: 1.3;
+    }
+
+    .recipe-section {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 10px;
+    }
+
+    .recipe-title {
+      font-size: 24px;
+      font-weight: 900;
+    }
+
+    .recipe-table {
+      min-height: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    .recipe-head,
+    .recipe-row {
+      display: grid;
+      grid-template-columns: 178px minmax(220px, 1fr) minmax(180px, .7fr) minmax(140px, .5fr);
+    }
+
+    .recipe-head {
+      min-height: 36px;
+      background: #eef1f4;
+    }
+
+    .recipe-head > div,
+    .recipe-row > div {
+      min-width: 0;
+      border-right: 1px solid var(--line);
+      padding: 7px 10px;
+    }
+
+    .recipe-head > div:last-child,
+    .recipe-row > div:last-child { border-right: 0; }
+
+    .recipe-row {
+      min-height: 54px;
+      border-top: 1px solid var(--line);
+      font-size: 18px;
+      font-weight: 800;
+      align-items: center;
+    }
+
+    .recipe-row:first-of-type { border-top: 0; }
+
+    .component {
+      align-self: stretch;
+      display: flex;
+      align-items: center;
+      background: #f7f9fb;
+    }
+
+    .roll-body {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 9px;
+    }
+
+    .roll-entry {
+      padding: 8px;
+      display: grid;
+      grid-template-columns: 138px minmax(150px, 1fr) auto;
+      gap: 8px;
+      align-items: end;
+    }
+
+    .roll-entry label {
+      min-width: 0;
+      display: grid;
+      gap: 5px;
+    }
+
+    .roll-entry input { min-height: 45px; }
+
+    .roll-entry button {
+      min-height: 45px;
+    }
+
+    .roll-table {
+      min-height: 0;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .roll-head,
+    .roll-row {
+      display: grid;
+      grid-template-columns: 48px minmax(150px, 1fr) minmax(90px, .75fr);
+      gap: 0;
+      align-items: center;
+    }
+
+    .roll-head {
+      min-height: 36px;
+      background: #eef1f4;
+    }
+
+    .roll-head > div,
+    .roll-row > div { padding: 6px 8px; }
+
+    .roll-list {
+      min-height: 0;
+      overflow-y: auto;
+    }
+
+    .roll-row {
+      min-height: 41px;
+      border-top: 1px solid var(--line);
+      font-size: 16px;
+      font-weight: 900;
+    }
+
+    .roll-row input { min-height: 31px; }
+
+    .totals {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      overflow: hidden;
+    }
+
+    .metric {
+      min-width: 0;
+      padding: 9px 14px 10px;
+      border-right: 1px solid var(--line);
+    }
+
+    .metric:last-child { border-right: 0; }
+
+    .metric strong {
+      display: block;
+      margin-top: 2px;
+      font-size: 30px;
+      line-height: 1;
+    }
+
+    .prototype-controls {
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      z-index: 40;
+      width: 268px;
+      border: 1px solid #9ca9b8;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, .97);
+      box-shadow: 0 8px 24px rgba(15, 35, 55, .18);
+    }
+
+    .prototype-controls summary {
+      min-height: 42px;
+      padding: 11px 13px;
+      color: var(--navy);
+      font-size: 14px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .prototype-control-body {
+      padding: 0 10px 10px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px;
+    }
+
+    .prototype-control-body p {
+      grid-column: 1 / -1;
+      margin: 0 2px 2px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.3;
+    }
+
+    .prototype-control-body button {
+      min-height: 34px;
+      padding: 4px 7px;
+      font-size: 12px;
+      white-space: normal;
+    }
+
+    .toast {
+      position: fixed;
+      right: 22px;
+      bottom: 22px;
+      z-index: 45;
+      max-width: 420px;
+      border: 1px solid #9bc8a8;
+      border-radius: 9px;
+      background: #f0faf3;
+      color: #155c32;
+      padding: 12px 16px;
+      box-shadow: 0 8px 22px rgba(15, 35, 55, .16);
+      font-weight: 800;
+    }
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      padding: 20px;
+      display: grid;
+      place-items: center;
+      background: rgba(16, 32, 48, .58);
+      backdrop-filter: blur(2px);
+    }
+
+    .timing-dialog,
+    .finish-dialog {
+      min-width: 0;
+      border: 1px solid #b8c4d1;
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .timing-dialog {
+      width: min(1040px, calc(100vw - 40px));
+      height: min(728px, calc(100vh - 40px));
+      max-height: min(728px, calc(100vh - 40px));
+      display: grid;
+      grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    }
+
+    .dialog-header {
+      min-width: 0;
+      border-bottom: 1px solid var(--line);
+      padding: 20px 24px 18px;
+    }
+
+    .dialog-header h2 {
+      margin: 0;
+      color: var(--navy);
+      font-size: 25px;
+      line-height: 1.15;
+      font-weight: 900;
+    }
+
+    .dialog-context {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .dialog-message-region {
+      min-height: 82px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px 24px;
+      display: grid;
+      align-items: center;
+    }
+
+    .timing-totals {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .timing-total {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--surface-soft);
+      padding: 9px 12px;
+    }
+
+    .timing-total span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .timing-total strong {
+      display: block;
+      margin-top: 2px;
+      color: var(--navy);
+      font-size: 21px;
+      line-height: 1.1;
+    }
+
+    .dialog-alert {
+      border: 1px solid #e7a5aa;
+      border-radius: 9px;
+      background: var(--red-soft);
+      color: #8e1720;
+      padding: 11px 13px;
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.35;
+    }
+
+    .dialog-alert.stale {
+      border-color: #d9b555;
+      background: var(--yellow-soft);
+      color: #795000;
+    }
+
+    .interval-columns,
+    .interval-row {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr) minmax(0, 1fr) 150px 72px;
+      gap: 0;
+      align-items: center;
+    }
+
+    .interval-columns {
+      min-height: 48px;
+      border-bottom: 1px solid var(--line);
+      background: #eef1f4;
+      padding: 8px 24px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .interval-columns > div,
+    .interval-row > div {
+      min-width: 0;
+      align-self: stretch;
+      display: flex;
+      align-items: center;
+      padding: 0 18px;
+    }
+
+    .interval-columns > div:first-child,
+    .interval-row > div:first-child {
+      padding-left: 0;
+      padding-right: 12px;
+    }
+
+    .interval-columns > div:not(:first-child),
+    .interval-row > div:not(:first-child) {
+      border-left: 1px solid #dfe5eb;
+    }
+
+    .interval-columns > div:last-child,
+    .interval-row > div:last-child {
+      justify-content: center;
+      padding-right: 0;
+    }
+
+    .interval-columns > div:nth-child(4) { font-size: 11px; }
+
+    .interval-scroll {
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      background: #fff;
+    }
+
+    .interval-row {
+      min-height: 86px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px 24px;
+      transition: background .15s ease;
+    }
+
+    .interval-row:last-child { border-bottom: 0; }
+
+    .interval-row.pending-delete {
+      border-color: var(--line);
+      background: var(--surface-soft);
+    }
+
+    .interval-number {
+      color: var(--navy);
+      font-size: 18px;
+      font-weight: 900;
+    }
+
+    .timestamp-controls {
+      width: 100%;
+      min-width: 0;
+      display: grid;
+      grid-template-columns: minmax(142px, 1fr) 100px;
+      gap: 8px;
+    }
+
+    .timestamp-controls input[type="date"] { min-width: 142px; }
+    .timestamp-controls input[data-field$="Time"] { min-width: 100px; }
+
+    .duration {
+      color: var(--text);
+      font-size: 16px;
+      font-weight: 900;
+    }
+
+    .delete-button,
+    .undo-button {
+      border-color: var(--line);
+      background: #fff;
+      color: var(--text);
+    }
+
+    .delete-button {
+      width: 28px;
+      min-height: 28px;
+      border-radius: 6px;
+      padding: 0;
+      font-size: 19px;
+      line-height: 1;
+    }
+
+    .undo-button {
+      width: 72px;
+      min-height: 34px;
+      padding: 0 8px;
+      font-size: 13px;
+    }
+
+    .dialog-footer {
+      min-height: 72px;
+      border-top: 1px solid var(--line);
+      background: #f8fafc;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .dialog-footer-group {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .dialog-footer button { min-width: 108px; }
+
+    .finish-dialog {
+      width: min(680px, calc(100vw - 40px));
+    }
+
+    .finish-body {
+      padding: 22px 24px 8px;
+    }
+
+    .finish-intro {
+      margin: 0 0 16px;
+      color: #4f5c69;
+      font-size: 15px;
+      line-height: 1.45;
+    }
+
+    .finish-facts {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .finish-fact {
+      min-height: 82px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #f7f9fb;
+      padding: 12px 14px;
+    }
+
+    .finish-fact span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .finish-fact strong {
+      display: block;
+      margin-top: 7px;
+      color: var(--navy);
+      font-size: 20px;
+      line-height: 1.15;
+    }
+
+    .finish-actions {
+      padding: 16px 24px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .finish-actions-right {
+      display: flex;
+      gap: 9px;
+    }
+
+    @media (max-width: 1500px) {
+      .machine-nav {
+        grid-template-columns: minmax(0, 1fr) 156px;
+        gap: 10px;
+      }
+
+      .machine-nav-list {
+        grid-template-columns: repeat(4, minmax(210px, 1fr));
+        gap: 10px;
+      }
+
+      .workspace {
+        grid-template-columns: minmax(0, 1fr) 480px;
+        gap: 28px;
+      }
+
+      .info-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .info-grid > div:nth-child(n + 5) { display: none; }
+
+      .notes-section { margin-top: 38px; }
+
+    }
+
+    @media (max-width: 1100px) {
+      .machine-nav {
+        grid-template-columns: minmax(0, 1fr) 132px;
+        padding: 18px;
+      }
+
+      .machine-nav-list { overflow-x: auto; }
+      .machine-tab { min-width: 220px; }
+
+      .workspace {
+        grid-template-columns: minmax(0, 1fr) 420px;
+        padding: 16px 18px 20px;
+        gap: 18px;
+      }
+
+      .interval-columns,
+      .interval-row {
+        grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr) 118px 72px;
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+
+      .interval-columns > div,
+      .interval-row > div {
+        padding-left: 12px;
+        padding-right: 12px;
+      }
+    }
+
+    @media (max-height: 800px) {
+      .recipe-row { min-height: 48px; }
+      .interval-row { min-height: 90px; }
+    }
+
+    @media (max-height: 700px) {
+      .app { min-height: 0; }
+      .machine-nav { padding: 12px 18px; }
+      .machine-tab { min-height: 96px; gap: 5px; padding: 7px 10px; }
+      .machine-tab-name { font-size: 17px; }
+      .machine-tab-meta,
+      .machine-tab-progress { font-size: 12px; }
+      .machine-nav-actions { grid-template-rows: repeat(2, 42px); gap: 7px; }
+      .history-nav,
+      .queue-nav { min-height: 42px; }
+      .workspace { padding: 12px 18px 16px; }
+      .topbar { min-height: 68px; padding: 12px 18px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-shell" id="page-shell">
+    <main class="app" id="terminal-app">
+      <header class="machine-nav" aria-label="Навигация по машини">
+        <div class="machine-nav-list">
+          <button class="machine-tab selected" type="button" data-machine="1" data-state="running">
+            <span class="machine-tab-top">
+              <span class="machine-tab-title">
+                <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
+                <span class="machine-tab-name">Машина 1</span>
+              </span>
+              <span class="status" data-machine-status>Изработване</span>
+            </span>
+            <span class="machine-tab-meta">
+              <span>Пелети Пирин</span>
+              <span>ТСФ 890/0.082</span>
+            </span>
+            <span class="machine-tab-progress">
+              <span class="progress"><span style="width:75%"></span></span>
+              <span>3000 / 4000 кг</span>
+            </span>
+          </button>
+
+          <button class="machine-tab" type="button" data-machine="2" data-state="running">
+            <span class="machine-tab-top">
+              <span class="machine-tab-title">
+                <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
+                <span class="machine-tab-name">Машина 2</span>
+              </span>
+              <span class="status">Изработване</span>
+            </span>
+            <span class="machine-tab-meta">
+              <span>Бета Трейд</span>
+              <span>Торби LDPE</span>
+            </span>
+            <span class="machine-tab-progress">
+              <span class="progress"><span style="width:12%"></span></span>
+              <span>97 / 800 кг</span>
+            </span>
+          </button>
+
+          <button class="machine-tab" type="button" data-machine="3" data-state="paused">
+            <span class="machine-tab-top">
+              <span class="machine-tab-title">
+                <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
+                <span class="machine-tab-name">Машина 3</span>
+              </span>
+              <span class="status paused">Паузирана</span>
+            </span>
+            <span class="machine-tab-meta">
+              <span>Алфа Пак</span>
+              <span>Фолио 890/0.082</span>
+            </span>
+            <span class="machine-tab-progress">
+              <span class="progress"><span style="width:61%"></span></span>
+              <span>183 / 300 кг</span>
+            </span>
+          </button>
+
+          <button class="machine-tab idle" type="button" data-machine="4" data-state="idle">
+            <span class="machine-tab-top">
+              <span class="machine-tab-title">
+                <img class="machine-tab-icon" src="assets/machine-icon.png" alt="" aria-hidden="true">
+                <span class="machine-tab-name">Машина 4</span>
+              </span>
+              <span class="status idle">Свободна</span>
+            </span>
+            <span class="machine-tab-meta">
+              <span>-</span>
+              <span aria-hidden="true">&nbsp;</span>
+            </span>
+            <span class="machine-tab-progress">
+              <span class="progress"><span style="width:0%"></span></span>
+              <span>0 / 0 кг</span>
+            </span>
+          </button>
+        </div>
+
+        <div class="machine-nav-actions" aria-label="Глобални действия">
+          <button class="history-nav" type="button">Завършени<br>поръчки</button>
+          <button class="queue-nav" type="button">Опашка</button>
+        </div>
+      </header>
+
+      <section class="main">
+        <header class="topbar">
+          <div class="title">
+            <h1 id="card-title">Машина 1: №25278</h1>
+            <span class="completed-note" id="completed-note" hidden>Времето е само за преглед. Корекциите се правят от Админ.</span>
+          </div>
+          <div class="actions" aria-label="Действия за поръчката">
+            <button id="action-start" type="button" disabled>Старт</button>
+            <button class="action-secondary" id="action-pause" type="button">Пауза</button>
+            <button class="action-primary" id="action-finish" type="button">Приключи</button>
+            <div class="menu">
+              <button class="menu-btn" type="button" aria-label="Още действия" aria-haspopup="true" aria-expanded="false" aria-controls="action-menu-panel">⋯</button>
+              <div class="menu-panel" id="action-menu-panel">
+                <button type="button">Печат / препечат</button>
+                <button id="action-correct" type="button">
+                  <img src="clock-icon.png" alt="" aria-hidden="true">
+                  <span>Производствено време</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div class="workspace">
+          <section class="panel">
+            <div class="panel-head">Детайли</div>
+            <div class="panel-body details-body">
+              <section class="order-section">
+                <div class="info-grid">
+                  <div><span class="field-label">Вид изделие</span><div class="value">ТСФ 890/0.082</div></div>
+                  <div><span class="field-label">Фирма</span><div class="value">Пелети Пирин</div></div>
+                  <div><span class="field-label">Количество</span><div class="value">500 кг / 5 ролки</div></div>
+                  <div><span class="field-label">Размер / дебелина</span><div class="value">890 / 0.082</div></div>
+                  <div><span class="field-label">Вид заготовка</span><div class="value">плоско</div></div>
+                  <div><span class="field-label">Материал</span><div class="value">LDPE</div></div>
+                  <div><span class="field-label">Макс. тегло ролка, кг</span><div class="value">60.0</div></div>
+                </div>
+                <section class="notes-section">
+                  <div class="section-title">Забележки</div>
+                  <div class="notes">Екструдират се ролки по 4500 м. Размерът се пуска с 2-3 см изрезка.</div>
+                </section>
+              </section>
+
+              <section class="recipe-section">
+                <div class="recipe-title">Рецепта</div>
+                <div class="recipe-table">
+                  <div class="recipe-head"><div>Вид суровина</div><div>Заложена суровина</div><div>Използван материал</div><div>Партида</div></div>
+                  <div class="recipe-row"><div class="component">Вид суровина A</div><div>LDPE тв. румънско B20/03</div><div><input aria-label="Използван материал A"></div><div><input aria-label="Партида A"></div></div>
+                  <div class="recipe-row"><div class="component">Вид суровина B</div><div>LLDPE Exxon Mobil</div><div><input aria-label="Използван материал B"></div><div><input aria-label="Партида B"></div></div>
+                  <div class="recipe-row"><div class="component">Вид суровина C</div><div></div><div><input aria-label="Използван материал C"></div><div><input aria-label="Партида C"></div></div>
+                  <div class="recipe-row"><div class="component">Линеен /mLLDPE/</div><div></div><div><input aria-label="Използван линеен материал"></div><div><input aria-label="Партида линеен материал"></div></div>
+                  <div class="recipe-row"><div class="component">Антистатик</div><div>Антистатик 1%</div><div><input aria-label="Използван антистатик"></div><div><input aria-label="Партида антистатик"></div></div>
+                  <div class="recipe-row"><div class="component">Мастербач</div><div>Бял мастербач</div><div><input aria-label="Използван мастербач"></div><div><input aria-label="Партида мастербач"></div></div>
+                  <div class="recipe-row"><div class="component">Креда</div><div></div><div><input aria-label="Използвана креда"></div><div><input aria-label="Партида креда"></div></div>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">Ролки</div>
+            <div class="panel-body roll-body">
+              <div class="roll-entry">
+                <label><span class="field-label">Шпула, кг</span><input value="1.2"></label>
+                <label><span class="field-label">Нова ролка, кг</span><input value="60.0"></label>
+                <button class="action-primary" type="button">Добави</button>
+              </div>
+              <div class="roll-table">
+                <div class="roll-head"><div>№</div><div>БРУТО КГ</div><div>НЕТО</div></div>
+                <div class="roll-list" id="roll-list"></div>
+              </div>
+              <div class="totals">
+                <div class="metric"><span class="metric-label">Бруто</span><strong>3000.0</strong></div>
+                <div class="metric"><span class="metric-label">Оставащи</span><strong>1000.0</strong></div>
+                <div class="metric"><span class="metric-label">Нето</span><strong>2940.0</strong></div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <details class="prototype-controls" id="prototype-controls">
+      <summary>Прототипни състояния</summary>
+      <div class="prototype-control-body">
+        <p>Само за преглед на иначе труднодостъпни състояния.</p>
+        <button type="button" data-demo="running">Работеща карта</button>
+        <button type="button" data-demo="paused">Паузирана карта</button>
+        <button type="button" data-demo="completed">Завършена карта</button>
+        <button type="button" data-demo="validation">Грешка при проверка</button>
+        <button type="button" data-demo="deletion">Изтриване / Отмяна</button>
+        <button type="button" data-demo="stale">Остаряла чернова</button>
+        <button type="button" data-demo="finish-summary">Финален преглед</button>
+        <button type="button" data-demo="finish-editor">Финален редактор</button>
+      </div>
+    </details>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <div class="modal-overlay" id="timing-overlay" hidden aria-hidden="true">
+    <section class="timing-dialog" role="dialog" aria-modal="true" aria-labelledby="timing-title" aria-describedby="timing-context" tabindex="-1">
+      <header class="dialog-header">
+        <h2 id="timing-title">Корекция на производствено време</h2>
+        <p class="dialog-context" id="timing-context">Машина 1 · Поръчка №25278 · Изработване</p>
+      </header>
+
+      <div class="dialog-message-region">
+        <div class="dialog-alert" id="timing-alert" role="alert" hidden></div>
+        <div class="timing-totals" id="editor-totals">
+          <div class="timing-total"><span>Производствено време</span><strong id="editor-production-total">0 ч 00 мин</strong></div>
+          <div class="timing-total"><span>Общо паузирано време</span><strong id="editor-paused-total">0 ч 00 мин</strong></div>
+        </div>
+      </div>
+
+      <div class="interval-columns" aria-hidden="true">
+        <div>№</div>
+        <div>Начало</div>
+        <div>Край</div>
+        <div>Продължителност</div>
+        <div>Действие</div>
+      </div>
+
+      <div class="interval-scroll" id="interval-list" tabindex="-1"></div>
+
+      <footer class="dialog-footer">
+        <div class="dialog-footer-group">
+          <button class="action-secondary" id="add-interval" type="button">Добави интервал</button>
+          <button class="action-secondary" id="reload-draft" type="button" hidden>Презареди</button>
+        </div>
+        <div class="dialog-footer-group">
+          <button class="action-secondary" id="cancel-editor" type="button">Отказ</button>
+          <button class="action-primary" id="save-editor" type="button">Запиши</button>
+        </div>
+      </footer>
+    </section>
+  </div>
+
+  <div class="modal-overlay" id="finish-overlay" hidden aria-hidden="true">
+    <section class="finish-dialog" role="dialog" aria-modal="true" aria-labelledby="finish-title" aria-describedby="finish-intro" tabindex="-1">
+      <header class="dialog-header">
+        <h2 id="finish-title">Преглед преди приключване</h2>
+        <p class="dialog-context">Машина <span id="finish-machine">1</span> · Поръчка №25278</p>
+      </header>
+      <div class="finish-body">
+        <p class="finish-intro" id="finish-intro">Проверете производствените интервали и общото време. Крайният час е фиксиран при натискане на „Приключи“.</p>
+        <div class="finish-facts">
+          <div class="finish-fact"><span>Първо начало</span><strong id="finish-first-start">—</strong></div>
+          <div class="finish-fact"><span>Предложен край</span><strong id="finish-proposed-stop">—</strong></div>
+          <div class="finish-fact"><span>Производствено време</span><strong id="finish-production-total">—</strong></div>
+          <div class="finish-fact"><span>Общо паузирано време</span><strong id="finish-paused-total">—</strong></div>
+        </div>
+      </div>
+      <footer class="finish-actions">
+        <button class="action-secondary" id="edit-finish-intervals" type="button">Редактирай интервалите</button>
+        <div class="finish-actions-right">
+          <button class="action-secondary" id="cancel-finish" type="button">Отказ</button>
+          <button class="action-danger" id="confirm-finish" type="button">Потвърди приключване</button>
+        </div>
+      </footer>
+    </section>
+  </div>
+
+  <script>
+    (() => {
+      const clone = (value) => JSON.parse(JSON.stringify(value));
+      const rollList = document.getElementById("roll-list");
+      const pageShell = document.getElementById("page-shell");
+      const timingOverlay = document.getElementById("timing-overlay");
+      const timingDialog = timingOverlay.querySelector("[role='dialog']");
+      const finishOverlay = document.getElementById("finish-overlay");
+      const finishDialog = finishOverlay.querySelector("[role='dialog']");
+      const intervalList = document.getElementById("interval-list");
+      const timingAlert = document.getElementById("timing-alert");
+      const editorTotals = document.getElementById("editor-totals");
+      const addIntervalButton = document.getElementById("add-interval");
+      const reloadDraftButton = document.getElementById("reload-draft");
+      const cancelEditorButton = document.getElementById("cancel-editor");
+      const saveEditorButton = document.getElementById("save-editor");
+      const timingMenuAction = document.getElementById("action-correct");
+      const actionMenu = timingMenuAction.closest(".menu");
+      const menuButton = actionMenu.querySelector(".menu-btn");
+      const pauseButton = document.getElementById("action-pause");
+      const finishButton = document.getElementById("action-finish");
+      const cardTitle = document.getElementById("card-title");
+      const completedNote = document.getElementById("completed-note");
+      const toast = document.getElementById("toast");
+      const machineTabs = Array.from(document.querySelectorAll("[data-machine]"));
+
+      const runningIntervals = [
+        { id: "r1", startDate: "2026-08-21", startTime: "06:58", stopDate: "2026-08-21", stopTime: "08:42", pendingDelete: false },
+        { id: "r2", startDate: "2026-08-21", startTime: "09:03", stopDate: "2026-08-21", stopTime: "10:37", pendingDelete: false },
+        { id: "r3", startDate: "2026-08-21", startTime: "10:58", stopDate: "2026-08-21", stopTime: "12:12", pendingDelete: false },
+        { id: "r4", startDate: "2026-08-21", startTime: "12:31", stopDate: "2026-08-21", stopTime: "13:22", pendingDelete: false },
+        { id: "r5", startDate: "2026-08-21", startTime: "13:41", stopDate: "", stopTime: "", pendingDelete: false },
+      ];
+
+      const pausedIntervals = clone(runningIntervals);
+      pausedIntervals[pausedIntervals.length - 1].stopDate = "2026-08-21";
+      pausedIntervals[pausedIntervals.length - 1].stopTime = "14:07";
+
+      const cardIntervals = {
+        running: clone(runningIntervals),
+        paused: clone(pausedIntervals),
+      };
+
+      let selectedMachine = 1;
+      let cardState = "running";
+      let editorMode = "ordinary";
+      let editorDraft = [];
+      let staleDraft = false;
+      let finishReview = null;
+      let returnFocus = null;
+      let toastTimer = null;
+
+      for (let index = 1; index <= 18; index += 1) {
+        const row = document.createElement("div");
+        row.className = "roll-row";
+        row.innerHTML = `<div>${index}</div><div><input aria-label="Бруто ролка ${index}" value="60.0"></div><div>58.8</div>`;
+        rollList.append(row);
+      }
+
+      const statusLabel = (state) => ({
+        running: "Изработване",
+        paused: "Паузирана",
+        completed: "Завършена",
+        idle: "Свободна",
+      }[state] || state);
+
+      const parseTimestamp = (dateValue, timeValue) => {
+        if (!dateValue || !timeValue) return null;
+        if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(timeValue)) return null;
+        const parsed = new Date(`${dateValue}T${timeValue}:00`);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      };
+
+      const formatMinutes = (minutes) => {
+        const safeMinutes = Math.max(0, Math.round(minutes || 0));
+        const hours = Math.floor(safeMinutes / 60);
+        const rest = safeMinutes % 60;
+        return `${hours} ч ${String(rest).padStart(2, "0")} мин`;
+      };
+
+      const formatTimestamp = (dateValue, timeValue) => {
+        if (!dateValue || !timeValue) return "—";
+        const [year, month, day] = dateValue.split("-");
+        return `${day}.${month}.${year} ${timeValue}`;
+      };
+
+      const timestampInputValues = (date) => ({
+        date: [
+          date.getFullYear(),
+          String(date.getMonth() + 1).padStart(2, "0"),
+          String(date.getDate()).padStart(2, "0"),
+        ].join("-"),
+        time: `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`,
+      });
+
+      const effectiveIntervals = (intervals) => intervals.filter((interval) => !interval.pendingDelete);
+
+      const calculateTotals = (intervals, fallbackStop = null) => {
+        const active = effectiveIntervals(intervals);
+        let productionMinutes = 0;
+        let pausedMinutes = 0;
+        let previousStop = null;
+
+        active.forEach((interval, index) => {
+          const start = parseTimestamp(interval.startDate, interval.startTime);
+          let stop = parseTimestamp(interval.stopDate, interval.stopTime);
+          if (!stop && index === active.length - 1 && fallbackStop) {
+            stop = parseTimestamp(fallbackStop.date, fallbackStop.time);
+          }
+          if (start && stop && stop > start) {
+            productionMinutes += (stop - start) / 60000;
+            if (previousStop && start > previousStop) {
+              pausedMinutes += (start - previousStop) / 60000;
+            }
+            previousStop = stop;
+          }
+        });
+
+        return { productionMinutes, pausedMinutes };
+      };
+
+      const currentProposedStop = () => (
+        cardState === "paused"
+          ? { date: "2026-08-21", time: "14:07" }
+          : { date: "2026-08-21", time: "14:42" }
+      );
+
+      const showToast = (message) => {
+        window.clearTimeout(toastTimer);
+        toast.textContent = message;
+        toast.hidden = false;
+        toastTimer = window.setTimeout(() => { toast.hidden = true; }, 3200);
+      };
+
+      const setBackgroundInert = (inert) => {
+        if (inert) {
+          pageShell.setAttribute("inert", "");
+          pageShell.setAttribute("aria-hidden", "true");
+        } else {
+          pageShell.removeAttribute("inert");
+          pageShell.removeAttribute("aria-hidden");
+        }
+      };
+
+      const showOverlay = (overlay, focusTarget) => {
+        overlay.hidden = false;
+        overlay.setAttribute("aria-hidden", "false");
+        setBackgroundInert(true);
+        window.requestAnimationFrame(() => (focusTarget || overlay.querySelector("[role='dialog']"))?.focus());
+      };
+
+      const hideOverlay = (overlay) => {
+        overlay.hidden = true;
+        overlay.setAttribute("aria-hidden", "true");
+      };
+
+      const restoreBackgroundAndFocus = (overrideTarget = null) => {
+        setBackgroundInert(false);
+        const target = overrideTarget || returnFocus;
+        returnFocus = null;
+        if (target === timingMenuAction) {
+          actionMenu.classList.add("open");
+          menuButton.setAttribute("aria-expanded", "true");
+        }
+        target?.focus({ preventScroll: true });
+      };
+
+      const updateMachineAndActions = () => {
+        machineTabs.forEach((tab) => tab.classList.toggle("selected", Number(tab.dataset.machine) === selectedMachine));
+        const hasActiveCard = ["running", "paused"].includes(cardState);
+        cardTitle.textContent = cardState === "idle"
+          ? `Машина ${selectedMachine}: свободна`
+          : `Машина ${selectedMachine}: №25278${cardState === "completed" ? " · завършена" : ""}`;
+        completedNote.hidden = cardState !== "completed";
+        timingMenuAction.hidden = !hasActiveCard;
+        pauseButton.disabled = !hasActiveCard;
+        finishButton.disabled = !hasActiveCard;
+        pauseButton.textContent = cardState === "paused" ? "Продължи" : "Пауза";
+        pauseButton.className = cardState === "paused" ? "action-primary" : "action-secondary";
+        finishButton.className = cardState === "running" ? "action-primary" : "action-secondary";
+        if (!hasActiveCard) {
+          finishButton.className = "action-primary";
+          actionMenu.classList.remove("open");
+          menuButton.setAttribute("aria-expanded", "false");
+        }
+      };
+
+      const setCardState = (state, machine = selectedMachine) => {
+        selectedMachine = machine;
+        cardState = state;
+        updateMachineAndActions();
+      };
+
+      const setAlert = (message, stale = false) => {
+        timingAlert.textContent = message || "";
+        timingAlert.classList.toggle("stale", stale);
+        timingAlert.hidden = !message;
+        editorTotals.hidden = Boolean(message);
+      };
+
+      const rowDuration = (interval) => {
+        if (interval.pendingDelete) return "Изключен";
+        const start = parseTimestamp(interval.startDate, interval.startTime);
+        let stop = parseTimestamp(interval.stopDate, interval.stopTime);
+        if (!stop && editorMode === "ordinary" && cardState === "running") {
+          stop = parseTimestamp("2026-08-21", "14:42");
+        }
+        if (!start || !stop || stop <= start) return "—";
+        return formatMinutes((stop - start) / 60000);
+      };
+
+      const maskTimeValue = (value) => {
+        const digits = value.replace(/\D/g, "").slice(0, 4);
+        if (digits.length < 2) return digits;
+        return `${digits.slice(0, 2)}:${digits.slice(2)}`;
+      };
+
+      const updateDraftFromInput = (input) => {
+        const rowIndex = Number(input.dataset.rowIndex);
+        const field = input.dataset.field;
+        if (!editorDraft[rowIndex] || !field) return;
+        editorDraft[rowIndex][field] = input.value;
+        input.removeAttribute("aria-invalid");
+        setAlert("");
+        renderTotals();
+        const duration = input.closest(".interval-row")?.querySelector(".duration");
+        if (duration) duration.textContent = rowDuration(editorDraft[rowIndex]);
+      };
+
+      const bindIntervalInput = (input) => {
+        const isTimeInput = input.dataset.field?.endsWith("Time");
+        input.addEventListener("input", () => {
+          if (isTimeInput) input.value = maskTimeValue(input.value);
+          updateDraftFromInput(input);
+        });
+        if (isTimeInput) {
+          input.addEventListener("keydown", (event) => {
+            if (
+              event.key !== "Backspace"
+              || input.selectionStart !== input.selectionEnd
+              || input.selectionStart !== 3
+              || input.value[2] !== ":"
+            ) return;
+            event.preventDefault();
+            input.value = `${input.value.slice(0, 1)}${input.value.slice(2)}`;
+            input.setSelectionRange(1, 1);
+            updateDraftFromInput(input);
+          });
+        }
+      };
+
+      const timestampMarkup = (interval, index, prefix, allowOpenStop) => {
+        const isStop = prefix === "stop";
+        const openStop = isStop && allowOpenStop && !interval.stopDate && !interval.stopTime;
+        if (openStop) {
+          return "";
+        }
+        const disabled = staleDraft || interval.pendingDelete;
+        const dateValue = interval[`${prefix}Date`] || "";
+        const timeValue = interval[`${prefix}Time`] || "";
+        const labelPrefix = isStop ? "Край" : "Начало";
+        return `
+          <div class="timestamp-controls">
+            <input type="date" aria-label="${labelPrefix}, дата, интервал ${index + 1}" data-row-index="${index}" data-field="${prefix}Date" value="${dateValue}" ${disabled ? "disabled" : ""}>
+            <input type="text" inputmode="numeric" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" maxlength="5" placeholder="HH:MM" aria-label="${labelPrefix}, час, интервал ${index + 1}" data-row-index="${index}" data-field="${prefix}Time" value="${timeValue}" ${disabled ? "disabled" : ""}>
+          </div>`;
+      };
+
+      const renderTotals = () => {
+        const fallback = editorMode === "ordinary" && cardState === "running" ? currentProposedStop() : null;
+        const totals = calculateTotals(editorDraft, fallback);
+        document.getElementById("editor-production-total").textContent = formatMinutes(totals.productionMinutes);
+        document.getElementById("editor-paused-total").textContent = formatMinutes(totals.pausedMinutes);
+      };
+
+      const renderIntervals = () => {
+        intervalList.innerHTML = "";
+        const active = effectiveIntervals(editorDraft);
+        const lastActiveId = active.at(-1)?.id;
+
+        editorDraft.forEach((interval, index) => {
+          const row = document.createElement("div");
+          row.className = `interval-row${interval.pendingDelete ? " pending-delete" : ""}`;
+          row.dataset.intervalId = interval.id;
+          const allowOpenStop = (
+            editorMode === "ordinary"
+            && cardState === "running"
+            && interval.id === lastActiveId
+          );
+          row.innerHTML = `
+            <div class="interval-number">${index + 1}</div>
+            <div>${timestampMarkup(interval, index, "start", false)}</div>
+            <div class="stop-cell">${timestampMarkup(interval, index, "stop", allowOpenStop)}</div>
+            <div class="duration">${rowDuration(interval)}</div>
+            <div>
+              <button class="${interval.pendingDelete ? "undo-button" : "delete-button"}" type="button" aria-label="${interval.pendingDelete ? "Отмени" : `Изтрий интервал ${index + 1}`}" data-toggle-delete="${index}" ${staleDraft ? "disabled" : ""}>
+                ${interval.pendingDelete ? "Отмени" : "×"}
+              </button>
+            </div>`;
+          intervalList.append(row);
+        });
+
+        intervalList.querySelectorAll("input").forEach(bindIntervalInput);
+        intervalList.querySelectorAll("[data-toggle-delete]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const index = Number(button.dataset.toggleDelete);
+            editorDraft[index].pendingDelete = !editorDraft[index].pendingDelete;
+            setAlert("");
+            renderIntervals();
+          });
+        });
+        renderTotals();
+      };
+
+      const configureEditorState = () => {
+        const finishMode = editorMode === "finish";
+        document.getElementById("timing-title").textContent = finishMode
+          ? "Редакция преди приключване"
+          : "Корекция на производствено време";
+        document.getElementById("timing-context").textContent = `Машина ${selectedMachine} · Поръчка №25278 · ${statusLabel(cardState)}`;
+        saveEditorButton.textContent = finishMode ? "Приложи" : "Запиши";
+        addIntervalButton.hidden = staleDraft;
+        reloadDraftButton.hidden = !staleDraft;
+        saveEditorButton.hidden = staleDraft;
+        if (staleDraft) {
+          setAlert("Поръчката е променена след отварянето на тази чернова. Полетата са заключени — презаредете актуалните данни или изберете Отказ.", true);
+        } else {
+          setAlert("");
+        }
+      };
+
+      const focusFirstEditorField = () => {
+        const first = timingDialog.querySelector("input:not([disabled]), button:not([disabled])");
+        (first || timingDialog).focus();
+      };
+
+      const openEditor = ({ mode = "ordinary", stale = false, draft = null, opener = document.activeElement } = {}) => {
+        if (!returnFocus) returnFocus = opener;
+        editorMode = mode;
+        staleDraft = stale;
+        if (draft) {
+          editorDraft = clone(draft);
+        } else {
+          const sourceState = cardState === "paused" ? "paused" : "running";
+          editorDraft = clone(cardIntervals[sourceState]);
+        }
+
+        if (mode === "finish") {
+          const finalActive = effectiveIntervals(editorDraft).at(-1);
+          if (finalActive && !finalActive.stopDate && finishReview) {
+            finalActive.stopDate = finishReview.proposedStop.date;
+            finalActive.stopTime = finishReview.proposedStop.time;
+          }
+        }
+        configureEditorState();
+        renderIntervals();
+        hideOverlay(finishOverlay);
+        showOverlay(timingOverlay, null);
+        window.requestAnimationFrame(focusFirstEditorField);
+      };
+
+      const closeOrdinaryEditor = () => {
+        hideOverlay(timingOverlay);
+        restoreBackgroundAndFocus();
+      };
+
+      const cancelFinishReview = () => {
+        hideOverlay(timingOverlay);
+        hideOverlay(finishOverlay);
+        finishReview = null;
+        restoreBackgroundAndFocus();
+      };
+
+      const validateDraft = ({ allowDeletedFinalOpenReplacement = false } = {}) => {
+        timingDialog.querySelectorAll("[aria-invalid='true']").forEach((input) => input.removeAttribute("aria-invalid"));
+        const activeEntries = editorDraft
+          .map((interval, index) => ({ interval, index }))
+          .filter(({ interval }) => !interval.pendingDelete);
+        let previousStop = null;
+
+        if (activeEntries.length === 0) {
+          setAlert("Оставете поне един производствен интервал.");
+          addIntervalButton.focus();
+          return false;
+        }
+
+        if (editorMode === "ordinary" && cardState === "running") {
+          const openEntries = activeEntries.filter(({ interval }) => !interval.stopDate && !interval.stopTime);
+          const finalEntry = activeEntries.at(-1);
+          const physicalFinalInterval = editorDraft.at(-1);
+          const canReplaceDeletedFinalOpen = (
+            allowDeletedFinalOpenReplacement
+            && openEntries.length === 0
+            && physicalFinalInterval?.pendingDelete
+            && !physicalFinalInterval.stopDate
+            && !physicalFinalInterval.stopTime
+          );
+          if ((openEntries.length !== 1 || openEntries[0] !== finalEntry) && !canReplaceDeletedFinalOpen) {
+            setAlert("Работещата поръчка трябва да има точно един последен отворен интервал. Възстановете изтрития интервал или добавете нов.");
+            const deletedOpen = [...editorDraft].reverse().find(
+              (interval) => interval.pendingDelete && !interval.stopDate && !interval.stopTime,
+            );
+            const problemEntry = openEntries.find((entry) => entry !== finalEntry);
+            const target = deletedOpen
+              ? intervalList.querySelector(`[data-interval-id="${deletedOpen.id}"] .undo-button`)
+              : problemEntry
+                ? intervalList.querySelector(`[data-row-index="${problemEntry.index}"][data-field="stopDate"]`)
+                : addIntervalButton;
+            target?.focus();
+            target?.scrollIntoView({ block: "nearest" });
+            return false;
+          }
+        }
+
+        for (let activeIndex = 0; activeIndex < activeEntries.length; activeIndex += 1) {
+          const { interval, index } = activeEntries[activeIndex];
+          const start = parseTimestamp(interval.startDate, interval.startTime);
+          const isFinalOpen = (
+            editorMode === "ordinary"
+            && cardState === "running"
+            && activeIndex === activeEntries.length - 1
+            && !interval.stopDate
+            && !interval.stopTime
+          );
+          const stop = isFinalOpen ? null : parseTimestamp(interval.stopDate, interval.stopTime);
+          let invalidField = null;
+          let message = "";
+
+          if (!start) {
+            invalidField = interval.startDate ? "startTime" : "startDate";
+            message = `Попълнете начало за интервал ${index + 1}.`;
+          } else if (!isFinalOpen && !stop) {
+            invalidField = interval.stopDate ? "stopTime" : "stopDate";
+            message = `Попълнете край за интервал ${index + 1}.`;
+          } else if (stop && stop <= start) {
+            invalidField = "stopTime";
+            message = `Краят на интервал ${index + 1} трябва да е след началото.`;
+          } else if (previousStop && start < previousStop) {
+            invalidField = "startTime";
+            message = `Интервал ${index + 1} започва преди края на предишния интервал.`;
+          }
+
+          if (invalidField) {
+            setAlert(message);
+            const target = timingDialog.querySelector(`[data-row-index="${index}"][data-field="${invalidField}"]`)
+              || timingDialog.querySelector(`[data-row-index="${index}"]`);
+            target?.setAttribute("aria-invalid", "true");
+            target?.focus();
+            target?.scrollIntoView({ block: "nearest" });
+            return false;
+          }
+
+          if (stop) previousStop = stop;
+        }
+
+        setAlert("");
+        return true;
+      };
+
+      const addInterval = () => {
+        if (!validateDraft({
+          allowDeletedFinalOpenReplacement: editorMode === "ordinary" && cardState === "running",
+        })) return;
+        const active = effectiveIntervals(editorDraft);
+        const finalActive = active.at(-1);
+        const runningOrdinary = editorMode === "ordinary" && cardState === "running";
+        let startAt = parseTimestamp("2026-08-21", "14:10");
+
+        if (runningOrdinary && finalActive && !finalActive.stopDate && !finalActive.stopTime) {
+          const proposedStop = currentProposedStop();
+          const proposedStopAt = parseTimestamp(proposedStop.date, proposedStop.time);
+          const finalStartAt = parseTimestamp(finalActive.startDate, finalActive.startTime);
+          const earliestValidStop = new Date(finalStartAt.getTime() + 60000);
+          startAt = proposedStopAt > earliestValidStop ? proposedStopAt : earliestValidStop;
+          const closedAt = timestampInputValues(startAt);
+          finalActive.stopDate = closedAt.date;
+          finalActive.stopTime = closedAt.time;
+        } else if (finalActive?.stopDate && finalActive?.stopTime) {
+          startAt = parseTimestamp(finalActive.stopDate, finalActive.stopTime);
+          startAt.setMinutes(startAt.getMinutes() + 15);
+        }
+
+        const startedAt = timestampInputValues(startAt);
+        const newInterval = {
+          id: `draft-${Date.now()}`,
+          startDate: startedAt.date,
+          startTime: startedAt.time,
+          stopDate: "",
+          stopTime: "",
+          pendingDelete: false,
+        };
+
+        if (!runningOrdinary) {
+          const stopAt = new Date(startAt.getTime() + 25 * 60000);
+          const stoppedAt = timestampInputValues(stopAt);
+          newInterval.stopDate = stoppedAt.date;
+          newInterval.stopTime = stoppedAt.time;
+        }
+
+        editorDraft.push(newInterval);
+        renderIntervals();
+        window.requestAnimationFrame(() => {
+          const row = intervalList.querySelector(`[data-interval-id="${newInterval.id}"]`);
+          row?.scrollIntoView({ block: "nearest" });
+          row?.querySelector("input")?.focus();
+        });
+      };
+
+      const openFinishSummary = (focusTarget = document.getElementById("edit-finish-intervals")) => {
+        if (!finishReview) return;
+        const active = effectiveIntervals(finishReview.intervals);
+        const first = active[0];
+        const last = active.at(-1);
+        const totals = calculateTotals(finishReview.intervals);
+        document.getElementById("finish-machine").textContent = selectedMachine;
+        document.getElementById("finish-first-start").textContent = formatTimestamp(first?.startDate, first?.startTime);
+        document.getElementById("finish-proposed-stop").textContent = formatTimestamp(last?.stopDate, last?.stopTime);
+        document.getElementById("finish-production-total").textContent = formatMinutes(totals.productionMinutes);
+        document.getElementById("finish-paused-total").textContent = formatMinutes(totals.pausedMinutes);
+        hideOverlay(timingOverlay);
+        showOverlay(finishOverlay, focusTarget);
+      };
+
+      const beginFinishReview = (opener = document.activeElement, openEditorDirectly = false) => {
+        if (!["running", "paused"].includes(cardState)) return;
+        returnFocus = opener;
+        const proposedStop = currentProposedStop();
+        const intervals = clone(cardIntervals[cardState]);
+        const last = effectiveIntervals(intervals).at(-1);
+        if (last && !last.stopDate) {
+          last.stopDate = proposedStop.date;
+          last.stopTime = proposedStop.time;
+        }
+        finishReview = { proposedStop, intervals };
+        if (openEditorDirectly) {
+          openEditor({ mode: "finish", draft: finishReview.intervals, opener });
+        } else {
+          openFinishSummary(document.getElementById("edit-finish-intervals"));
+        }
+      };
+
+      const saveOrApply = () => {
+        if (!validateDraft()) return;
+        const cleanDraft = editorDraft.filter((interval) => !interval.pendingDelete).map((interval) => ({ ...interval, pendingDelete: false }));
+        if (editorMode === "finish") {
+          finishReview.intervals = clone(cleanDraft);
+          openFinishSummary(document.getElementById("edit-finish-intervals"));
+          return;
+        }
+        const targetState = cardState === "paused" ? "paused" : "running";
+        cardIntervals[targetState] = clone(cleanDraft);
+        hideOverlay(timingOverlay);
+        restoreBackgroundAndFocus();
+        showToast("Производствените интервали са записани в прототипа.");
+      };
+
+      const openValidationState = (opener) => {
+        openEditor({ mode: "ordinary", opener });
+        editorDraft[1].startTime = "08:15";
+        renderIntervals();
+        validateDraft();
+      };
+
+      const openDeletionState = (opener) => {
+        openEditor({ mode: "ordinary", opener });
+        editorDraft[1].pendingDelete = true;
+        renderIntervals();
+        const undo = intervalList.querySelector(".undo-button");
+        undo?.focus();
+      };
+
+      const focusableElements = (dialog) => Array.from(dialog.querySelectorAll(
+        'button:not([disabled]):not([hidden]), input:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
+      )).filter((element) => !element.closest("[hidden]"));
+
+      const trapFocus = (event, dialog) => {
+        const focusable = focusableElements(dialog);
+        if (!focusable.length) {
+          event.preventDefault();
+          dialog.focus();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable.at(-1);
+        if (!dialog.contains(document.activeElement)) {
+          event.preventDefault();
+          first.focus();
+        } else if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      };
+
+      machineTabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+          setCardState(tab.dataset.state, Number(tab.dataset.machine));
+        });
+      });
+
+      menuButton.addEventListener("click", () => {
+        actionMenu.classList.add("open");
+        menuButton.setAttribute("aria-expanded", "true");
+      });
+      actionMenu.addEventListener("focusout", () => {
+        window.requestAnimationFrame(() => {
+          if (!actionMenu.contains(document.activeElement)) {
+            actionMenu.classList.remove("open");
+            menuButton.setAttribute("aria-expanded", "false");
+          }
+        });
+      });
+      timingMenuAction.addEventListener("click", () => {
+        actionMenu.classList.remove("open");
+        menuButton.setAttribute("aria-expanded", "false");
+        openEditor({ opener: timingMenuAction });
+      });
+      pauseButton.addEventListener("click", () => {
+        if (cardState === "running") {
+          setCardState("paused");
+          showToast("Поръчката е паузирана в прототипа.");
+        } else if (cardState === "paused") {
+          setCardState("running");
+          showToast("Работата по поръчката продължава в прототипа.");
+        }
+      });
+      finishButton.addEventListener("click", () => beginFinishReview(finishButton));
+      addIntervalButton.addEventListener("click", addInterval);
+      saveEditorButton.addEventListener("click", saveOrApply);
+      cancelEditorButton.addEventListener("click", () => {
+        if (editorMode === "finish") cancelFinishReview();
+        else closeOrdinaryEditor();
+      });
+      reloadDraftButton.addEventListener("click", () => {
+        staleDraft = false;
+        editorDraft = clone(cardIntervals[cardState === "paused" ? "paused" : "running"]);
+        configureEditorState();
+        renderIntervals();
+        focusFirstEditorField();
+      });
+
+      document.getElementById("edit-finish-intervals").addEventListener("click", (event) => {
+        openEditor({ mode: "finish", draft: finishReview.intervals, opener: event.currentTarget });
+      });
+      document.getElementById("cancel-finish").addEventListener("click", cancelFinishReview);
+      document.getElementById("confirm-finish").addEventListener("click", () => {
+        cardIntervals.completed = clone(finishReview.intervals);
+        setCardState("completed");
+        const machine = machineTabs.find((tab) => Number(tab.dataset.machine) === selectedMachine);
+        if (machine) {
+          machine.dataset.state = "completed";
+          const badge = machine.querySelector("[data-machine-status], .status");
+          badge.textContent = "Завършена";
+          badge.className = "status completed";
+        }
+        hideOverlay(finishOverlay);
+        finishReview = null;
+        restoreBackgroundAndFocus(machine);
+        showToast("Поръчката е приключена в прототипа. Времето е само за преглед.");
+      });
+
+      document.querySelectorAll("[data-demo]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const demo = button.dataset.demo;
+          if (demo === "running") {
+            setCardState("running", 1);
+            machineTabs[0].dataset.state = "running";
+            const badge = machineTabs[0].querySelector(".status");
+            badge.textContent = "Изработване";
+            badge.className = "status";
+          } else if (demo === "paused") {
+            setCardState("paused", 3);
+          } else if (demo === "completed") {
+            setCardState("completed", 1);
+          } else if (demo === "validation") {
+            setCardState("running", 1);
+            openValidationState(button);
+          } else if (demo === "deletion") {
+            setCardState("running", 1);
+            openDeletionState(button);
+          } else if (demo === "stale") {
+            setCardState("running", 1);
+            openEditor({ mode: "ordinary", stale: true, opener: button });
+          } else if (demo === "finish-summary") {
+            setCardState("running", 1);
+            beginFinishReview(button);
+          } else if (demo === "finish-editor") {
+            setCardState("running", 1);
+            beginFinishReview(button, true);
+          }
+        });
+      });
+
+      [timingOverlay, finishOverlay].forEach((overlay) => {
+        overlay.addEventListener("click", (event) => {
+          if (event.target === overlay) {
+            event.preventDefault();
+          }
+        });
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (!timingOverlay.hidden) {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            if (editorMode === "finish") cancelFinishReview();
+            else closeOrdinaryEditor();
+          } else if (event.key === "Tab") {
+            trapFocus(event, timingDialog);
+          }
+          return;
+        }
+        if (!finishOverlay.hidden) {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            cancelFinishReview();
+          } else if (event.key === "Tab") {
+            trapFocus(event, finishDialog);
+          }
+        }
+      });
+
+      updateMachineAndActions();
+    })();
+  </script>
+</body>
+</html>

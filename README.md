@@ -603,7 +603,7 @@ Confirmed storage behavior:
   import, admin forms, release, terminal display, or roll validation.
 - Roll entries do not need notes for the pilot.
 - Keep only latest values; no change history is required for the pilot.
-- Every operator action that changes production data must persist immediately. There should not be a separate "save all" button for roll entries or timing actions.
+- Every ordinary operator action that changes production data must persist immediately. Roll entry and the Start/Pause/Resume lifecycle actions do not use a separate save-all step. The approved timing-correction editor is the exception: it stages one complete interval-ledger draft and persists it atomically only when the operator selects Save.
 - Terminal roll entry should use one fixed gross-weight input for adding the next roll.
 - Pressing `Enter` in the fixed gross-weight input or clicking the add button should save the new roll immediately and clear/focus the input for the next roll.
 - Roll numbers are assigned automatically starting at `1`.
@@ -629,7 +629,19 @@ Confirmed production timing behavior:
   separate stop button in the terminal workflow.
 - Total production time should be calculated from the sum of each start/resume to pause/finish interval.
 - Do not calculate total time as one naive `finish time - start time` if pauses exist.
-- Start, pause, resume, and finish actions must persist immediately when clicked.
+- Start, pause, and resume persist immediately. Finish persists only when the
+  operator confirms its review; opening or cancelling that review writes
+  nothing.
+- While a card is `running` or `paused`, the terminal exposes
+  `Производствено време` in an overflow menu. Operators may atomically correct
+  the card's productive intervals; pauses are the implied gaps between those
+  intervals. Completed-card timing is read-only on the terminal and remains
+  correctable through Admin.
+- Clicking Finish for a running or paused card first freezes and displays the
+  proposed stop, productive time, and paused time. The operator may edit the
+  same interval draft, then Confirm Finish saves the ledger and lifecycle
+  transition atomically. Cancelling the review writes nothing. The existing
+  awaiting-rewinding finalization flow remains timing-neutral.
 - If an operator tries to input a roll while no timer is active for that card, the app should warn them.
 - Printing/reprinting is an admin/shift-manager action after the card is produced or archived.
 
