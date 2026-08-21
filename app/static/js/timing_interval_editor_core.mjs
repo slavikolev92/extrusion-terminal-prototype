@@ -99,6 +99,19 @@ export function mapServerPreview(rows, preview) {
   };
 }
 
+export function serializeTimingDraft(rows) {
+  return rows
+    .filter((row) => row.segment_id !== null || row.deleted !== true)
+    .map((row) => ({
+      segment_id: row.segment_id,
+      start_date: row.start_date,
+      start_time: row.start_time,
+      stop_date: row.stop_date,
+      stop_time: row.stop_time,
+      deleted: row.deleted,
+    }));
+}
+
 function withDisplayNumbers(rows) {
   return rows.map((row, index) => ({
     ...row,

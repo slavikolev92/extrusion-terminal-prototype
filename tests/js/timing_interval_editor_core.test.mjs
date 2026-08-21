@@ -7,6 +7,7 @@ import {
   markIntervalDeleted,
   mapServerPreview,
   maskTimeInput,
+  serializeTimingDraft,
   undoIntervalDelete,
 } from "../../app/static/js/timing_interval_editor_core.mjs";
 
@@ -216,4 +217,60 @@ test("server preview maps interval productive and paused seconds without Date pa
   assert.equal(latest.paused_seconds, 5400);
   assert.equal(latest.first_start_display, "21.08.2026 10:00");
   assert.equal(latest.proposed_stop_display, "21.08.2026 13:30");
+});
+
+test("draft serializer emits only server fields and omits deleted unsaved rows", () => {
+  const rows = Object.freeze([
+    Object.freeze({
+      segment_id: 41,
+      start_date: "server-authoritative",
+      start_time: "13:",
+      stop_date: "",
+      stop_time: "",
+      deleted: true,
+      display_number: 1,
+      duration_seconds: 3600,
+      end_reason: "must-not-leak",
+    }),
+    Object.freeze({
+      segment_id: null,
+      start_date: "2026-08-21",
+      start_time: "14:00",
+      stop_date: "2026-08-21",
+      stop_time: "15:00",
+      deleted: true,
+      display_number: 2,
+    }),
+    Object.freeze({
+      segment_id: null,
+      start_date: "2026-08-21",
+      start_time: "16:00",
+      stop_date: "",
+      stop_time: "",
+      deleted: false,
+      display_number: 3,
+      duration_seconds: null,
+    }),
+  ]);
+
+  assert.deepEqual(serializeTimingDraft(rows), [
+    {
+      segment_id: 41,
+      start_date: "server-authoritative",
+      start_time: "13:",
+      stop_date: "",
+      stop_time: "",
+      deleted: true,
+    },
+    {
+      segment_id: null,
+      start_date: "2026-08-21",
+      start_time: "16:00",
+      stop_date: "",
+      stop_time: "",
+      deleted: false,
+    },
+  ]);
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0].display_number, 1);
 });
