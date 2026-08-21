@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import base64
 from contextlib import asynccontextmanager
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import hashlib
+import hmac
 import json
 import logging
 from pathlib import Path
 import re
+import secrets
 import traceback
 from typing import Any
 from urllib.parse import urlencode
@@ -64,10 +68,12 @@ from .db import (
     fetch_recent_import_batches,
     fetch_shift_summary,
     fetch_shift_window_state,
+    finish_card_with_timing_ledger,
     finish_card,
     init_db,
     pause_production_timing,
     parse_rewinding_roll_count,
+    preview_terminal_finish_review as preview_terminal_finish_review_data,
     preview_terminal_timing_ledger as preview_terminal_timing_ledger_data,
     release_card,
     resume_production_timing,
@@ -127,6 +133,10 @@ TERMINAL_TIMING_DRAFT_KEYS = {
 }
 TERMINAL_TIMING_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 TERMINAL_TIMING_TIME_PATTERN = re.compile(r"^\d{2}:\d{2}$")
+INVALID_FINISH_REVIEW_MESSAGE = (
+    "Прегледът за приключване е невалиден. Отворете го отново."
+)
+FINISH_REVIEW_TOKEN_KEY = secrets.token_bytes(32)
 
 
 class TerminalTimingDraftParseError(ValueError):
@@ -138,6 +148,102 @@ class TerminalTimingDraftParseError(ValueError):
         super().__init__(issue.message)
         self.issue = issue
         self.retained_draft = retained_draft
+
+
+def _finish_review_token_error() -> ValueError:
+    return ValueError(INVALID_FINISH_REVIEW_MESSAGE)
+
+
+def _urlsafe_base64_without_padding(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _decode_urlsafe_base64_without_padding(value: str) -> bytes:
+    if not value or "=" in value:
+        raise _finish_review_token_error()
+    try:
+        return base64.b64decode(
+            value + "=" * (-len(value) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+    except (ValueError, UnicodeEncodeError):
+        raise _finish_review_token_error() from None
+
+
+def encode_finish_review_token(
+    card_id: int,
+    loaded_version: int,
+    reviewed_at: str,
+    *,
+    key: bytes,
+) -> str:
+    if (
+        type(card_id) is not int
+        or card_id < 1
+        or type(loaded_version) is not int
+        or loaded_version < 0
+        or not isinstance(reviewed_at, str)
+    ):
+        raise _finish_review_token_error()
+    try:
+        parsed_reviewed_at = datetime.strptime(
+            reviewed_at,
+            TIMING_TIMESTAMP_FORMAT,
+        )
+    except ValueError:
+        raise _finish_review_token_error() from None
+    if parsed_reviewed_at.strftime(TIMING_TIMESTAMP_FORMAT) != reviewed_at:
+        raise _finish_review_token_error()
+
+    payload = json.dumps(
+        {
+            "card_id": card_id,
+            "loaded_version": loaded_version,
+            "reviewed_at": reviewed_at,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    signature = hmac.new(key, payload, hashlib.sha256).digest()
+    return (
+        f"{_urlsafe_base64_without_padding(payload)}."
+        f"{_urlsafe_base64_without_padding(signature)}"
+    )
+
+
+def decode_finish_review_token(
+    token: str,
+    *,
+    key: bytes,
+) -> dict[str, int | str]:
+    if not isinstance(token, str) or token.count(".") != 1:
+        raise _finish_review_token_error()
+    payload_text, signature_text = token.split(".", 1)
+    payload = _decode_urlsafe_base64_without_padding(payload_text)
+    signature = _decode_urlsafe_base64_without_padding(signature_text)
+    expected_signature = hmac.new(key, payload, hashlib.sha256).digest()
+    if not hmac.compare_digest(signature, expected_signature):
+        raise _finish_review_token_error()
+    try:
+        decoded = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        raise _finish_review_token_error() from None
+    if not isinstance(decoded, dict) or set(decoded) != {
+        "card_id",
+        "loaded_version",
+        "reviewed_at",
+    }:
+        raise _finish_review_token_error()
+    canonical_token = encode_finish_review_token(
+        decoded["card_id"],
+        decoded["loaded_version"],
+        decoded["reviewed_at"],
+        key=key,
+    )
+    if not hmac.compare_digest(token, canonical_token):
+        raise _finish_review_token_error()
+    return decoded
 
 
 CARD_NOT_FOUND_MESSAGE = "Картата не е намерена."
@@ -2613,11 +2719,127 @@ async def preview_terminal_timing_ledger_route(
             outcome.issues,
         )
     assert outcome.preview is not None
-    preview = outcome.preview
+    return terminal_timing_preview_response(outcome.preview)
+
+
+@app.post("/terminal/cards/{card_id}/finish-review")
+async def finish_terminal_card_review(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(""),
+):
+    del request
+    parsed_version, version_result = parse_loaded_version(loaded_version)
+    if parsed_version is None:
+        return terminal_timing_error_response(version_result)
+
+    outcome = preview_terminal_finish_review_data(
+        card_id,
+        parsed_version,
+        require_active_shift=True,
+    )
+    if not outcome.result.ok:
+        return terminal_timing_error_response(outcome.result, outcome.issues)
+    assert outcome.preview is not None
+    review_token = encode_finish_review_token(
+        card_id,
+        parsed_version,
+        outcome.preview.reviewed_at,
+        key=FINISH_REVIEW_TOKEN_KEY,
+    )
+    return terminal_timing_preview_response(
+        outcome.preview,
+        review_token=review_token,
+    )
+
+
+@app.post("/terminal/cards/{card_id}/finish-review/preview")
+async def preview_terminal_finish_review(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(""),
+    review_token: str = Form(""),
+    timing_draft: str = Form(""),
+):
+    del request
+    parsed_version, version_result = parse_loaded_version(loaded_version)
+    if parsed_version is None:
+        return terminal_timing_error_response(version_result)
+    token_payload = verified_finish_review_token_payload(
+        review_token,
+        card_id=card_id,
+        loaded_version=parsed_version,
+    )
+    if token_payload is None:
+        return invalid_finish_review_response()
+    try:
+        draft_rows = parse_terminal_timing_draft(timing_draft)
+    except TerminalTimingDraftParseError as error:
+        return terminal_timing_error_response(
+            RuleResult(False, (str(error),)),
+            (error.issue,),
+        )
+
+    outcome = preview_terminal_timing_ledger_data(
+        card_id,
+        parsed_version,
+        draft_rows,
+        preview_at=str(token_payload["reviewed_at"]),
+        finish_mode=True,
+        require_active_shift=True,
+    )
+    if not outcome.result.ok:
+        return terminal_timing_error_response(outcome.result, outcome.issues)
+    assert outcome.preview is not None
+    return terminal_timing_preview_response(
+        outcome.preview,
+        review_token=review_token,
+    )
+
+
+def verified_finish_review_token_payload(
+    review_token: str,
+    *,
+    card_id: int,
+    loaded_version: int,
+) -> dict[str, int | str] | None:
+    try:
+        payload = decode_finish_review_token(
+            review_token,
+            key=FINISH_REVIEW_TOKEN_KEY,
+        )
+    except ValueError:
+        return None
+    if (
+        payload["card_id"] != card_id
+        or payload["loaded_version"] != loaded_version
+    ):
+        return None
+    return payload
+
+
+def invalid_finish_review_response() -> JSONResponse:
+    return terminal_timing_error_response(
+        RuleResult(False, (INVALID_FINISH_REVIEW_MESSAGE,)),
+        (
+            TimingValidationIssue(
+                source_index=None,
+                field="form",
+                message=INVALID_FINISH_REVIEW_MESSAGE,
+            ),
+        ),
+    )
+
+
+def terminal_timing_preview_response(
+    preview: Any,
+    *,
+    review_token: str | None = None,
+) -> JSONResponse:
     return JSONResponse(
         {
             "ok": True,
-            "review_token": None,
+            "review_token": review_token,
             "preview": {
                 "reviewed_at_utc": preview.reviewed_at,
                 "first_start_display": terminal_timing_minute_display(
@@ -2628,7 +2850,10 @@ async def preview_terminal_timing_ledger_route(
                 ),
                 "production_seconds": preview.production_seconds,
                 "paused_seconds": preview.paused_seconds,
-                "draft": [terminal_timing_draft_row_payload(row) for row in preview.draft_rows],
+                "draft": [
+                    terminal_timing_draft_row_payload(row)
+                    for row in preview.draft_rows
+                ],
                 "intervals": list(preview.intervals),
             },
         }
@@ -2737,24 +2962,73 @@ async def finish_terminal_card(
     request: Request,
     card_id: int,
     loaded_version: str = Form(...),
+    review_token: str = Form(""),
+    timing_draft: str = Form(""),
 ):
     notice_code = "card_finished"
+    draft_rows: list[TimingDraftRow] = []
+    timing_issues: tuple[TimingValidationIssue, ...] = ()
+    finish_review_active = False
+    finish_preview = None
     parsed_version, workflow_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        workflow_result = validate_terminal_card_available_for_post(card_id)
-        if workflow_result.ok:
-            workflow_result = finish_card(
-                card_id,
-                parsed_version,
-                require_active_shift=True,
+        card = fetch_terminal_card_detail(card_id)
+        finish_review_active = bool(
+            card is not None
+            and str(card["status"]) in {STATUS_RUNNING, STATUS_PAUSED}
+        )
+        if finish_review_active:
+            token_payload = verified_finish_review_token_payload(
+                review_token,
+                card_id=card_id,
+                loaded_version=parsed_version,
             )
+            if token_payload is None:
+                workflow_result = RuleResult(
+                    False,
+                    (INVALID_FINISH_REVIEW_MESSAGE,),
+                )
+                timing_issues = (
+                    TimingValidationIssue(
+                        source_index=None,
+                        field="form",
+                        message=INVALID_FINISH_REVIEW_MESSAGE,
+                    ),
+                )
+            else:
+                try:
+                    draft_rows = parse_terminal_timing_draft(timing_draft)
+                except TerminalTimingDraftParseError as error:
+                    draft_rows = list(error.retained_draft)
+                    workflow_result = RuleResult(False, (str(error),))
+                    timing_issues = (error.issue,)
+                else:
+                    outcome = finish_card_with_timing_ledger(
+                        card_id,
+                        parsed_version,
+                        draft_rows,
+                        str(token_payload["reviewed_at"]),
+                        require_active_shift=True,
+                    )
+                    workflow_result = outcome.result
+                    timing_issues = outcome.issues
+                    finish_preview = outcome.preview
+        else:
+            workflow_result = validate_terminal_card_available_for_post(card_id)
             if workflow_result.ok:
-                updated_card = fetch_terminal_card_detail(card_id)
-                if (
-                    updated_card is not None
-                    and updated_card["status"] == STATUS_AWAITING_REWINDING
-                ):
-                    notice_code = "card_awaiting_rewinding"
+                workflow_result = finish_card(
+                    card_id,
+                    parsed_version,
+                    require_active_shift=True,
+                )
+
+        if workflow_result.ok:
+            updated_card = fetch_terminal_card_detail(card_id)
+            if (
+                updated_card is not None
+                and updated_card["status"] == STATUS_AWAITING_REWINDING
+            ):
+                notice_code = "card_awaiting_rewinding"
 
     return terminal_post_response(
         request,
@@ -2762,6 +3036,16 @@ async def finish_terminal_card(
         "workflow_result",
         workflow_result,
         notice_code=notice_code,
+        finish_review_open=finish_review_active and not workflow_result.ok,
+        finish_review_token=review_token,
+        finish_review_draft=draft_rows,
+        finish_review_draft_json=timing_draft,
+        finish_review_loaded_version=loaded_version,
+        finish_review_issues=timing_issues,
+        finish_review_preview=finish_preview,
+        finish_review_stale=(
+            not workflow_result.ok and STALE_CARD_MESSAGE in workflow_result.messages
+        ),
     )
 
 

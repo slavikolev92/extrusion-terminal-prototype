@@ -1731,79 +1731,109 @@ def finish_card(
         version_result = validate_loaded_card_version(card, loaded_version)
         if not version_result.ok:
             return version_result
-
-        shift_result = validate_active_shift_for_terminal_write(
+        assert card is not None
+        active_shift = None
+        active_shift_checked = False
+        if require_active_shift:
+            active_shift = fetch_active_shift_row(connection)
+            active_shift_checked = True
+            if active_shift is None:
+                return RuleResult(False, (NO_ACTIVE_SHIFT_MESSAGE,))
+        return _finish_card_with_connection(
             connection,
-            require_active_shift,
-        )
-        if not shift_result.ok:
-            return shift_result
-
-        status = str(card["status"])
-        is_waiting = status == STATUS_AWAITING_REWINDING
-        needs_rewinding = (
-            not is_waiting
-            and card["rewinding_roll_count"] is not None
-            and int(card["rewinding_roll_count"]) > 0
+            card,
+            loaded_version,
+            active_shift=active_shift,
+            active_shift_checked=active_shift_checked,
         )
 
-        timing_result = validate_card_timing_started(connection, card_id)
-        if not timing_result.ok:
-            return timing_result
-        if not is_waiting and status not in (STATUS_RUNNING, STATUS_PAUSED):
+
+def _finish_card_with_connection(
+    connection: sqlite3.Connection,
+    card: sqlite3.Row,
+    loaded_version: int,
+    *,
+    active_shift: sqlite3.Row | None,
+    active_shift_checked: bool = False,
+    reviewed_timing_applied: bool = False,
+    reviewed_finished_at: str | None = None,
+) -> RuleResult:
+    card_id = int(card["id"])
+    status = str(card["status"])
+    is_waiting = status == STATUS_AWAITING_REWINDING
+    needs_rewinding = (
+        not is_waiting
+        and card["rewinding_roll_count"] is not None
+        and int(card["rewinding_roll_count"]) > 0
+    )
+
+    timing_result = validate_card_timing_started(connection, card_id)
+    if not timing_result.ok:
+        return timing_result
+    if not is_waiting and status not in (STATUS_RUNNING, STATUS_PAUSED):
+        return RuleResult(
+            False,
+            (
+                "Само карти в изработване или паузирани карти могат да "
+                "приключат екструдирането.",
+            ),
+        )
+
+    if is_waiting:
+        finish_result = validate_card_ready_to_finish(connection, card_id, card)
+    elif needs_rewinding:
+        finish_result = RuleResult(True)
+    else:
+        finish_result = validate_card_ready_to_finish(connection, card_id, card)
+    if not finish_result.ok:
+        return finish_result
+
+    open_segment = fetch_open_timing_segment(connection, card_id)
+    if is_waiting:
+        if open_segment:
             return RuleResult(
                 False,
                 (
-                    "Само карти в изработване или паузирани карти могат да "
-                    "приключат екструдирането.",
+                    "Карта, изчакваща пренавиване, не трябва да има активен "
+                    "времеви сегмент. Презаредете картата.",
                 ),
             )
+        update_result = connection.execute(
+            """
+            UPDATE cards
+            SET status = ?,
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND version = ?
+              AND status = ?
+            """,
+            (
+                STATUS_COMPLETED,
+                card_id,
+                loaded_version,
+                STATUS_AWAITING_REWINDING,
+            ),
+        )
+        if update_result.rowcount != 1:
+            connection.rollback()
+            return RuleResult(False, (STALE_CARD_MESSAGE,))
+        return RuleResult(True, (f"Поръчка {card['order_number']} е приключена.",))
 
-        if is_waiting:
-            finish_result = validate_card_ready_to_finish(connection, card_id, card)
-        elif needs_rewinding:
-            finish_result = RuleResult(True)
-        else:
-            finish_result = validate_card_ready_to_finish(connection, card_id, card)
-        if not finish_result.ok:
-            return finish_result
-
-        open_segment = fetch_open_timing_segment(connection, card_id)
-        if is_waiting:
-            if open_segment:
-                return RuleResult(
-                    False,
-                    (
-                        "Карта, изчакваща пренавиване, не трябва да има активен "
-                        "времеви сегмент. Презаредете картата.",
-                    ),
-                )
-            update_result = connection.execute(
-                """
-                UPDATE cards
-                SET status = ?,
-                    version = version + 1,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                  AND version = ?
-                  AND status = ?
-                """,
-                (
-                    STATUS_COMPLETED,
-                    card_id,
-                    loaded_version,
-                    STATUS_AWAITING_REWINDING,
-                ),
-            )
-            if update_result.rowcount != 1:
-                connection.rollback()
-                return RuleResult(False, (STALE_CARD_MESSAGE,))
-            return RuleResult(True, (f"Поръчка {card['order_number']} е приключена.",))
-
+    if active_shift is None and not active_shift_checked:
         active_shift = fetch_active_shift_row(connection)
-        if active_shift is None:
-            return RuleResult(False, (NO_ACTIVE_SHIFT_MESSAGE,))
-
+    if active_shift is None:
+        return RuleResult(False, (NO_ACTIVE_SHIFT_MESSAGE,))
+    if reviewed_timing_applied:
+        if open_segment:
+            return RuleResult(
+                False,
+                (
+                    "Прегледаното производствено време не трябва да има "
+                    "отворен сегмент.",
+                ),
+            )
+    else:
         if status == STATUS_RUNNING and not open_segment:
             return RuleResult(
                 False,
@@ -1815,50 +1845,52 @@ def finish_card(
         if status == STATUS_PAUSED and open_segment:
             return RuleResult(
                 False,
-                ("Паузирани карти не трябва да имат активен времеви сегмент. Презаредете картата.",),
+                (
+                    "Паузирани карти не трябва да имат активен времеви "
+                    "сегмент. Презаредете картата.",
+                ),
             )
 
-        now = current_database_timestamp(connection)
-        if open_segment:
-            connection.execute(
-                """
-                UPDATE production_time_segments
-                SET ended_at = ?,
-                    end_reason = 'finish',
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (now, open_segment["id"]),
-            )
-
-        target_status = STATUS_AWAITING_REWINDING if needs_rewinding else STATUS_COMPLETED
-        update_result = connection.execute(
+    finished_at = reviewed_finished_at or current_database_timestamp(connection)
+    if open_segment:
+        connection.execute(
             """
-            UPDATE cards
-            SET status = ?,
-                finished_at = ?,
-                final_extrusion_shift_occurrence_id = ?,
-                version = version + 1,
+            UPDATE production_time_segments
+            SET ended_at = ?,
+                end_reason = 'finish',
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-              AND version = ?
-              AND status = ?
             """,
-            (
-                target_status,
-                now,
-                active_shift["id"],
-                card_id,
-                loaded_version,
-                status,
-            ),
+            (finished_at, open_segment["id"]),
         )
-        if update_result.rowcount != 1:
-            connection.rollback()
-            return RuleResult(False, (STALE_CARD_MESSAGE,))
-        if card["machine_id"] is not None:
-            normalize_machine_queue(connection, int(card["machine_id"]))
 
+    target_status = STATUS_AWAITING_REWINDING if needs_rewinding else STATUS_COMPLETED
+    update_result = connection.execute(
+        """
+        UPDATE cards
+        SET status = ?,
+            finished_at = ?,
+            final_extrusion_shift_occurrence_id = ?,
+            version = version + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND version = ?
+          AND status = ?
+        """,
+        (
+            target_status,
+            finished_at,
+            active_shift["id"],
+            card_id,
+            loaded_version,
+            status,
+        ),
+    )
+    if update_result.rowcount != 1:
+        connection.rollback()
+        return RuleResult(False, (STALE_CARD_MESSAGE,))
+    if card["machine_id"] is not None:
+        normalize_machine_queue(connection, int(card["machine_id"]))
     return RuleResult(True, (f"Поръчка {card['order_number']} е приключена.",))
 
 
@@ -2243,15 +2275,22 @@ def preview_terminal_timing_ledger(
     finish_mode: bool = False,
     require_active_shift: bool = True,
 ) -> TimingLedgerOutcome:
-    del finish_mode
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
-        reviewed_at = preview_at or current_database_timestamp(connection)
+        transaction_time = current_database_timestamp(connection)
+        reviewed_at = preview_at or transaction_time
         if not _is_canonical_timing_timestamp(reviewed_at):
             issue = TimingValidationIssue(
                 None,
                 "form",
                 INVALID_TERMINAL_TIMING_DRAFT_MESSAGE,
+            )
+            return _terminal_timing_issue_outcome((issue,))
+        if finish_mode and reviewed_at > transaction_time:
+            issue = TimingValidationIssue(
+                None,
+                "form",
+                "Времето не може да бъде в бъдещето.",
             )
             return _terminal_timing_issue_outcome((issue,))
         card, proposal, preparation_error = _prepare_terminal_timing_ledger(
@@ -2261,6 +2300,7 @@ def preview_terminal_timing_ledger(
             draft_rows,
             transaction_time=reviewed_at,
             require_active_shift=require_active_shift,
+            finish_mode=finish_mode,
         )
         if preparation_error is not None:
             return preparation_error
@@ -2270,10 +2310,193 @@ def preview_terminal_timing_ledger(
             connection,
             proposal,
             draft_rows,
-            status=str(card["status"]),
+            status=(STATUS_PAUSED if finish_mode else str(card["status"])),
             reviewed_at=reviewed_at,
         )
     return TimingLedgerOutcome(RuleResult(True), preview=preview)
+
+
+def preview_terminal_finish_review(
+    card_id: int,
+    loaded_version: int,
+    *,
+    require_active_shift: bool = True,
+) -> TimingLedgerOutcome:
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        reviewed_at = current_database_timestamp(connection)
+        draft_rows = _terminal_timing_draft_rows(connection, card_id)
+        status_row = connection.execute(
+            "SELECT status FROM cards WHERE id = ?",
+            (card_id,),
+        ).fetchone()
+        if status_row is not None and str(status_row["status"]) == STATUS_RUNNING:
+            reviewed_local = format_sofia_input(reviewed_at)
+            open_indices = [
+                index
+                for index, row in enumerate(draft_rows)
+                if not row.stop_date and not row.stop_time
+            ]
+            if len(open_indices) == 1:
+                open_index = open_indices[0]
+                draft_rows[open_index] = replace(
+                    draft_rows[open_index],
+                    stop_date=reviewed_local[:10],
+                    stop_time=reviewed_local[11:16],
+                )
+        card, proposal, preparation_error = _prepare_terminal_timing_ledger(
+            connection,
+            card_id,
+            loaded_version,
+            draft_rows,
+            transaction_time=reviewed_at,
+            require_active_shift=require_active_shift,
+            finish_mode=True,
+        )
+        if preparation_error is not None:
+            return preparation_error
+        assert card is not None
+        assert proposal is not None
+        preview = _build_terminal_timing_preview(
+            connection,
+            proposal,
+            draft_rows,
+            status=STATUS_PAUSED,
+            reviewed_at=reviewed_at,
+        )
+    return TimingLedgerOutcome(RuleResult(True), preview=preview)
+
+
+def finish_card_with_timing_ledger(
+    card_id: int,
+    loaded_version: int,
+    draft_rows: list[TimingDraftRow],
+    reviewed_at: str,
+    *,
+    require_active_shift: bool = True,
+) -> TimingLedgerOutcome:
+    del require_active_shift
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        transaction_time = current_database_timestamp(connection)
+        if not _is_canonical_timing_timestamp(reviewed_at):
+            issue = TimingValidationIssue(
+                None,
+                "form",
+                INVALID_TERMINAL_TIMING_DRAFT_MESSAGE,
+            )
+            return _terminal_timing_issue_outcome((issue,))
+        if reviewed_at > transaction_time:
+            issue = TimingValidationIssue(
+                None,
+                "form",
+                "Времето не може да бъде в бъдещето.",
+            )
+            return _terminal_timing_issue_outcome((issue,))
+
+        card = fetch_finish_action_card(connection, card_id)
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return TimingLedgerOutcome(version_result)
+        assert card is not None
+
+        active_shift = fetch_active_shift_row(connection)
+        if active_shift is None:
+            return TimingLedgerOutcome(
+                RuleResult(False, (NO_ACTIVE_SHIFT_MESSAGE,))
+            )
+        if str(card["status"]) not in {STATUS_RUNNING, STATUS_PAUSED}:
+            return TimingLedgerOutcome(
+                RuleResult(
+                    False,
+                    (
+                        "Производственото време може да се коригира само за "
+                        "карта в изработване или на пауза.",
+                    ),
+                )
+            )
+
+        proposal, preparation_error = _prepare_terminal_timing_ledger_for_card(
+            connection,
+            card,
+            card_id,
+            draft_rows,
+            transaction_time=reviewed_at,
+            finish_mode=True,
+        )
+        if preparation_error is not None:
+            return preparation_error
+        assert proposal is not None
+        preview = _build_terminal_timing_preview(
+            connection,
+            proposal,
+            draft_rows,
+            status=STATUS_PAUSED,
+            reviewed_at=reviewed_at,
+        )
+        if preview.proposed_finished_at is None:
+            issue = TimingValidationIssue(
+                None,
+                "form",
+                INVALID_TERMINAL_TIMING_DRAFT_MESSAGE,
+            )
+            return _terminal_timing_issue_outcome((issue,))
+
+        try:
+            _apply_timing_ledger_proposal(connection, card_id, proposal)
+            refresh_card_timing_markers(connection, card_id)
+            finish_result = _finish_card_with_connection(
+                connection,
+                card,
+                loaded_version,
+                active_shift=active_shift,
+                active_shift_checked=True,
+                reviewed_timing_applied=True,
+                reviewed_finished_at=preview.proposed_finished_at,
+            )
+            if not finish_result.ok:
+                connection.rollback()
+                return TimingLedgerOutcome(
+                    finish_result,
+                    preview=preview,
+                )
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return TimingLedgerOutcome(
+                RuleResult(False, ("Картата вече има отворен времеви сегмент.",)),
+                preview=preview,
+            )
+
+    return TimingLedgerOutcome(finish_result, preview=preview)
+
+
+def _terminal_timing_draft_rows(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> list[TimingDraftRow]:
+    segments = connection.execute(
+        """
+        SELECT id, started_at, ended_at
+        FROM production_time_segments
+        WHERE card_id = ?
+        ORDER BY started_at, id
+        """,
+        (card_id,),
+    ).fetchall()
+    draft_rows: list[TimingDraftRow] = []
+    for segment in segments:
+        start_local = format_sofia_input(segment["started_at"])
+        stop_local = format_sofia_input(segment["ended_at"])
+        draft_rows.append(
+            TimingDraftRow(
+                segment_id=int(segment["id"]),
+                start_date=start_local[:10],
+                start_time=start_local[11:16],
+                stop_date=stop_local[:10] if stop_local else "",
+                stop_time=stop_local[11:16] if stop_local else "",
+            )
+        )
+    return draft_rows
 
 
 def _prepare_terminal_timing_ledger(
@@ -2284,6 +2507,7 @@ def _prepare_terminal_timing_ledger(
     *,
     transaction_time: str,
     require_active_shift: bool,
+    finish_mode: bool = False,
 ) -> tuple[
     sqlite3.Row | None,
     _TimingLedgerProposal | None,
@@ -2305,9 +2529,31 @@ def _prepare_terminal_timing_ledger(
     if not shift_result.ok:
         return None, None, TimingLedgerOutcome(shift_result)
 
+    proposal, preparation_error = _prepare_terminal_timing_ledger_for_card(
+        connection,
+        card,
+        card_id,
+        draft_rows,
+        transaction_time=transaction_time,
+        finish_mode=finish_mode,
+    )
+    if preparation_error is not None:
+        return None, None, preparation_error
+    return card, proposal, None
+
+
+def _prepare_terminal_timing_ledger_for_card(
+    connection: sqlite3.Connection,
+    card: sqlite3.Row,
+    card_id: int,
+    draft_rows: list[TimingDraftRow],
+    *,
+    transaction_time: str,
+    finish_mode: bool,
+) -> tuple[_TimingLedgerProposal | None, TimingLedgerOutcome | None]:
+
     if str(card["status"]) not in {STATUS_RUNNING, STATUS_PAUSED}:
         return (
-            None,
             None,
             TimingLedgerOutcome(
                 RuleResult(
@@ -2324,24 +2570,32 @@ def _prepare_terminal_timing_ledger(
         connection,
         card_id,
         draft_rows,
+        finish_mode=finish_mode and str(card["status"]) == STATUS_RUNNING,
+        reviewed_at=transaction_time,
     )
     if build_issues:
-        return None, None, _terminal_timing_issue_outcome(build_issues)
+        return None, _terminal_timing_issue_outcome(build_issues)
 
+    policy_status = (
+        STATUS_COMPLETED
+        if finish_mode and str(card["status"]) == STATUS_RUNNING
+        else str(card["status"])
+    )
     validation_issues = _validate_timing_ledger_proposal(
         proposal,
         _admin_timing_status_policy(
-            str(card["status"]),
+            policy_status,
             running_open_count_message=(
                 "Картите в изработване трябва да запазят един отворен "
                 "времеви сегмент."
             ),
         ),
         transaction_time=transaction_time,
+        reject_all_future=finish_mode,
     )
     if validation_issues:
-        return None, None, _terminal_timing_issue_outcome(validation_issues)
-    return card, proposal, None
+        return None, _terminal_timing_issue_outcome(validation_issues)
+    return proposal, None
 
 
 def _is_canonical_timing_timestamp(value: str) -> bool:
@@ -2421,6 +2675,9 @@ def _build_terminal_timing_ledger_proposal(
     connection: sqlite3.Connection,
     card_id: int,
     draft_rows: list[TimingDraftRow],
+    *,
+    finish_mode: bool = False,
+    reviewed_at: str | None = None,
 ) -> tuple[_TimingLedgerProposal, tuple[TimingValidationIssue, ...]]:
     existing_segments = connection.execute(
         """
@@ -2483,7 +2740,14 @@ def _build_terminal_timing_ledger_proposal(
         end_at = _terminal_draft_timestamp(
             draft.stop_date,
             draft.stop_time,
-            original=(existing["ended_at"] if existing is not None else None),
+            original=(
+                reviewed_at
+                if finish_mode
+                and existing is not None
+                and existing["ended_at"] is None
+                and reviewed_at is not None
+                else existing["ended_at"] if existing is not None else None
+            ),
             source_index=source_index,
             field="stop_time",
             label="Край",
@@ -2546,6 +2810,21 @@ def _build_terminal_timing_ledger_proposal(
         )
         for row in proposal.rows
     )
+    if finish_mode and remapped_rows:
+        final_row = max(
+            remapped_rows,
+            key=lambda row: (
+                row.ended_at or "",
+                row.started_at,
+                row.source_index if row.source_index is not None else -1,
+            ),
+        )
+        remapped_rows = tuple(
+            replace(row, end_reason="finish", write_required=True)
+            if row is final_row
+            else row
+            for row in remapped_rows
+        )
     return replace(proposal, rows=remapped_rows), shared_issues
 
 
@@ -2893,6 +3172,7 @@ def _validate_timing_ledger_proposal(
     policy: _TimingLedgerStatusPolicy,
     *,
     transaction_time: str,
+    reject_all_future: bool = False,
 ) -> tuple[TimingValidationIssue, ...]:
     issues: list[TimingValidationIssue] = []
     if (
@@ -2944,7 +3224,7 @@ def _validate_timing_ledger_proposal(
         for field, proposed, original in changed_values:
             if (
                 proposed is not None
-                and proposed != original
+                and (reject_all_future or proposed != original)
                 and proposed > transaction_time
             ):
                 issues.append(

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import csv
+import hashlib
+import hmac
 import io
 import json
 
@@ -198,6 +201,57 @@ def make_test_request(path: str, method: str = "POST") -> Request:
             "app": main.app,
         }
     )
+
+
+def finish_review_endpoint():
+    route = next(
+        (
+            route
+            for route in main.app.routes
+            if getattr(route, "path", None)
+            == "/terminal/cards/{card_id}/finish-review"
+        ),
+        None,
+    )
+    assert route is not None, "finish-review route must be registered"
+    return route.endpoint
+
+
+def finish_review_preview_endpoint():
+    route = next(
+        (
+            route
+            for route in main.app.routes
+            if getattr(route, "path", None)
+            == "/terminal/cards/{card_id}/finish-review/preview"
+        ),
+        None,
+    )
+    assert route is not None, "finish-review preview route must be registered"
+    return route.endpoint
+
+
+def stored_finish_snapshot(card_id: int) -> dict[str, object]:
+    with db.connect() as connection:
+        card = dict(
+            connection.execute(
+                "SELECT * FROM cards WHERE id = ?",
+                (card_id,),
+            ).fetchone()
+        )
+        timing_rows = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT *
+                FROM production_time_segments
+                WHERE card_id = ?
+                ORDER BY started_at, id
+                """,
+                (card_id,),
+            ).fetchall()
+        ]
+    return {"card": card, "timing_rows": timing_rows}
 
 
 def timing_draft_json(*rows: db.TimingDraftRow) -> str:
@@ -1643,3 +1697,605 @@ def test_terminal_timing_preview_and_save_routes_reject_non_active_status(connec
     assert json.loads(preview_response.body)["messages"] == [expected_message]
     assert save_response.context["timing_result"].messages == (expected_message,)
     assert timing_snapshot(card_id) == before
+
+
+def test_finish_review_freezes_time_and_writes_nothing(connection, monkeypatch):
+    card_id = release_ready_card("27024", 1)
+    start_card(card_id)
+    set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:37",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    loaded_version = card_version(card_id)
+    before = stored_finish_snapshot(card_id)
+    monkeypatch.setattr(
+        db,
+        "current_database_timestamp",
+        lambda connection: "2026-01-15 12:34:56",
+    )
+
+    response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+    assert payload["ok"] is True
+    assert payload["preview"]["reviewed_at_utc"] == "2026-01-15 12:34:56"
+    assert payload["preview"]["proposed_stop_display"] == "15.01.2026 14:34"
+    assert stored_finish_snapshot(card_id) == before
+
+
+def test_finish_review_returns_server_normalized_editable_stop(connection, monkeypatch):
+    card_id = release_ready_card("27025", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:37",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    monkeypatch.setattr(
+        db,
+        "current_database_timestamp",
+        lambda connection: "2026-01-15 12:34:56",
+    )
+
+    response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(card_version(card_id)),
+        )
+    )
+
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+    assert payload["preview"]["draft"] == [
+        {
+            "segment_id": segment_id,
+            "start_date": "2026-01-15",
+            "start_time": "10:00",
+            "stop_date": "2026-01-15",
+            "stop_time": "14:34",
+            "deleted": False,
+        }
+    ]
+
+
+def test_finish_review_token_rejects_tampering_substitution_and_new_process_key(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("27026", 1)
+    start_card(card_id)
+    set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:37",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    loaded_version = card_version(card_id)
+    key = b"a" * 32
+    monkeypatch.setattr(main, "FINISH_REVIEW_TOKEN_KEY", key)
+
+    review_response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    token = review_payload["review_token"]
+    assert isinstance(token, str) and token.count(".") == 1
+    decoded = main.decode_finish_review_token(token, key=key)
+    assert decoded == {
+        "card_id": card_id,
+        "loaded_version": loaded_version,
+        "reviewed_at": review_payload["preview"]["reviewed_at_utc"],
+    }
+    draft_json = json.dumps(review_payload["preview"]["draft"])
+    before = stored_finish_snapshot(card_id)
+    payload_part, signature_part = token.split(".")
+    replacement = "A" if signature_part[0] != "A" else "B"
+    tampered = f"{payload_part}.{replacement}{signature_part[1:]}"
+    substituted_card = main.encode_finish_review_token(
+        card_id + 1,
+        loaded_version,
+        review_payload["preview"]["reviewed_at_utc"],
+        key=key,
+    )
+    substituted_version = main.encode_finish_review_token(
+        card_id,
+        loaded_version + 1,
+        review_payload["preview"]["reviewed_at_utc"],
+        key=key,
+    )
+
+    rejected_responses = []
+    for rejected_token in (tampered, substituted_card, substituted_version):
+        rejected_responses.append(
+            asyncio.run(
+                finish_review_preview_endpoint()(
+                    make_test_request(
+                        f"/terminal/cards/{card_id}/finish-review/preview"
+                    ),
+                    card_id,
+                    loaded_version=str(loaded_version),
+                    review_token=rejected_token,
+                    timing_draft=draft_json,
+                )
+            )
+        )
+
+    monkeypatch.setattr(main, "FINISH_REVIEW_TOKEN_KEY", b"b" * 32)
+    rejected_responses.append(
+        asyncio.run(
+            finish_review_preview_endpoint()(
+                make_test_request(
+                    f"/terminal/cards/{card_id}/finish-review/preview"
+                ),
+                card_id,
+                loaded_version=str(loaded_version),
+                review_token=token,
+                timing_draft=draft_json,
+            )
+        )
+    )
+
+    for response in rejected_responses:
+        assert response.status_code == 422
+        assert json.loads(response.body) == {
+            "ok": False,
+            "messages": [
+                "Прегледът за приключване е невалиден. Отворете го отново."
+            ],
+            "field_errors": [
+                {
+                    "source_index": None,
+                    "field": "form",
+                    "message": (
+                        "Прегледът за приключване е невалиден. "
+                        "Отворете го отново."
+                    ),
+                }
+            ],
+        }
+    assert stored_finish_snapshot(card_id) == before
+
+
+def test_finish_review_token_rejects_malformed_and_noncanonical_signed_payloads():
+    key = b"canonical-review-key" * 2
+
+    def signed_token(payload: bytes) -> str:
+        payload_text = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+        signature = hmac.new(key, payload, hashlib.sha256).digest()
+        signature_text = (
+            base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+        )
+        return f"{payload_text}.{signature_text}"
+
+    invalid_tokens = [
+        "",
+        "not-a-token",
+        signed_token(b"{"),
+        signed_token(
+            b'{"card_id":1,"loaded_version":2,"reviewed_at":"2026-1-1 00:00:00"}'
+        ),
+        signed_token(
+            b'{"reviewed_at":"2026-01-01 00:00:00", "loaded_version":2, "card_id":1}'
+        ),
+        signed_token(
+            b'{"card_id":1,"loaded_version":2,"reviewed_at":"2026-01-01 00:00:00","extra":true}'
+        ),
+    ]
+
+    for token in invalid_tokens:
+        with pytest.raises(ValueError) as error:
+            main.decode_finish_review_token(token, key=key)
+        assert str(error.value) == (
+            "Прегледът за приключване е невалиден. Отворете го отново."
+        )
+    with pytest.raises(ValueError):
+        main.encode_finish_review_token(
+            1,
+            2,
+            "2026-1-1 00:00:00",
+            key=key,
+        )
+
+
+def test_finish_preview_rejects_stale_or_missing_shift_and_retains_draft(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("27027", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:37",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    loaded_version = card_version(card_id)
+    review_response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    reviewed_at = review_payload["preview"]["reviewed_at_utc"]
+    submitted = db.TimingDraftRow(
+        segment_id,
+        "2026-01-15",
+        "09:30",
+        review_payload["preview"]["draft"][0]["stop_date"],
+        review_payload["preview"]["draft"][0]["stop_time"],
+    )
+    submitted_json = timing_draft_json(submitted)
+    before = stored_finish_snapshot(card_id)
+    captured_drafts: list[list[db.TimingDraftRow]] = []
+    real_preview = main.preview_terminal_timing_ledger_data
+
+    def capture_preview(*args, **kwargs):
+        captured_drafts.append(list(args[2]))
+        return real_preview(*args, **kwargs)
+
+    monkeypatch.setattr(main, "preview_terminal_timing_ledger_data", capture_preview)
+    stale_version = loaded_version - 1
+    stale_token = main.encode_finish_review_token(
+        card_id,
+        stale_version,
+        reviewed_at,
+        key=main.FINISH_REVIEW_TOKEN_KEY,
+    )
+    stale_response = asyncio.run(
+        finish_review_preview_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review/preview"),
+            card_id,
+            loaded_version=str(stale_version),
+            review_token=stale_token,
+            timing_draft=submitted_json,
+        )
+    )
+
+    end_active_test_shift()
+    missing_shift_response = asyncio.run(
+        finish_review_preview_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review/preview"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=submitted_json,
+        )
+    )
+
+    assert stale_response.status_code == 409
+    assert json.loads(stale_response.body)["messages"] == [db.STALE_CARD_MESSAGE]
+    assert missing_shift_response.status_code == 422
+    assert json.loads(missing_shift_response.body)["messages"] == [
+        db.NO_ACTIVE_SHIFT_MESSAGE
+    ]
+    assert captured_drafts == [[submitted], [submitted]]
+    assert stored_finish_snapshot(card_id) == before
+
+
+def test_finish_preview_recalculates_without_mutation(connection, monkeypatch):
+    card_id = release_ready_card("27028", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:37",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    loaded_version = card_version(card_id)
+    monkeypatch.setattr(
+        db,
+        "current_database_timestamp",
+        lambda connection: "2026-01-15 12:34:56",
+    )
+    review_response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    before = stored_finish_snapshot(card_id)
+    corrected = db.TimingDraftRow(
+        segment_id,
+        "2026-01-15",
+        "10:00",
+        "2026-01-15",
+        "12:00",
+    )
+
+    response = asyncio.run(
+        finish_review_preview_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review/preview"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=timing_draft_json(corrected),
+        )
+    )
+
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+    assert payload["review_token"] == review_payload["review_token"]
+    assert payload["preview"]["reviewed_at_utc"] == "2026-01-15 12:34:56"
+    assert payload["preview"]["proposed_stop_display"] == "15.01.2026 12:00"
+    assert payload["preview"]["production_seconds"] == 7_163
+    assert payload["preview"]["paused_seconds"] == 0
+    assert stored_finish_snapshot(card_id) == before
+
+
+@pytest.mark.parametrize(
+    ("failure_kind", "expected_message"),
+    [
+        ("stale", db.STALE_CARD_MESSAGE),
+        ("missing_shift", db.NO_ACTIVE_SHIFT_MESSAGE),
+        ("future", "Времето не може да бъде в бъдещето."),
+        (
+            "rolls",
+            "Поне едно бруто тегло на ролка е задължително преди приключване.",
+        ),
+    ],
+)
+def test_finish_with_timing_rolls_back_every_validation_failure(
+    connection,
+    failure_kind,
+    expected_message,
+):
+    card_id = release_ready_card(f"27029-{failure_kind}", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:37",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    if failure_kind != "rolls":
+        assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
+        assert db.add_roll_gross_weight(card_id, card_version(card_id), "25.00").ok
+    loaded_version = card_version(card_id)
+    submitted_stop = "15:00" if failure_kind == "future" else "14:00"
+    draft_rows = [
+        db.TimingDraftRow(
+            segment_id,
+            "2026-01-15",
+            "10:00",
+            "2026-01-15",
+            submitted_stop,
+        )
+    ]
+    if failure_kind == "stale":
+        loaded_version -= 1
+    elif failure_kind == "missing_shift":
+        end_active_test_shift()
+    before = stored_finish_snapshot(card_id)
+
+    outcome = db.finish_card_with_timing_ledger(
+        card_id,
+        loaded_version,
+        draft_rows,
+        "2026-01-15 12:34:56",
+    )
+
+    assert not outcome.result.ok
+    assert expected_message in outcome.result.messages
+    assert stored_finish_snapshot(card_id) == before
+
+
+def test_finish_with_timing_uses_one_lifecycle_version_increment(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("27030", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:37",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "25.00").ok
+    loaded_version = card_version(card_id)
+
+    def forbidden_touch(*args, **kwargs):
+        raise AssertionError("reviewed finish must not call touch_card")
+
+    monkeypatch.setattr(db, "touch_card", forbidden_touch)
+    outcome = db.finish_card_with_timing_ledger(
+        card_id,
+        loaded_version,
+        [
+            db.TimingDraftRow(
+                segment_id,
+                "2026-01-15",
+                "10:00",
+                "2026-01-15",
+                "14:00",
+            )
+        ],
+        "2026-01-15 12:34:56",
+    )
+
+    after = stored_finish_snapshot(card_id)
+    assert outcome.result.ok
+    assert after["card"]["status"] == STATUS_COMPLETED
+    assert after["card"]["version"] == loaded_version + 1
+    assert after["card"]["finished_at"] == "2026-01-15 12:00:00"
+    assert after["timing_rows"][0]["ended_at"] == "2026-01-15 12:00:00"
+    assert after["timing_rows"][0]["end_reason"] == "finish"
+
+
+def test_failed_active_finish_confirmation_reopens_retained_review_draft(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("27031", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:37",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    loaded_version = card_version(card_id)
+    monkeypatch.setattr(
+        db,
+        "current_database_timestamp",
+        lambda connection: "2026-01-15 12:34:56",
+    )
+    review_response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    retained_row = db.TimingDraftRow(
+        segment_id,
+        "2026-01-15",
+        "10:00",
+        "2026-01-15",
+        "14:00",
+    )
+    retained_json = timing_draft_json(retained_row)
+    before = stored_finish_snapshot(card_id)
+
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=retained_json,
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (
+        "Поне едно бруто тегло на ролка е задължително преди приключване.",
+    )
+    assert response.context["finish_review_open"] is True
+    assert response.context["finish_review_token"] == review_payload["review_token"]
+    assert response.context["finish_review_draft"] == [retained_row]
+    assert response.context["finish_review_draft_json"] == retained_json
+    assert response.context["finish_review_loaded_version"] == str(loaded_version)
+    assert response.context["finish_review_preview"] is not None
+    assert stored_finish_snapshot(card_id) == before
+
+
+def test_finish_preview_rejects_authenticated_review_time_after_transaction_time(
+    connection,
+):
+    card_id = release_ready_card("27032", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:37",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    loaded_version = card_version(card_id)
+    future_reviewed_at = "2099-01-15 12:34:56"
+    token = main.encode_finish_review_token(
+        card_id,
+        loaded_version,
+        future_reviewed_at,
+        key=main.FINISH_REVIEW_TOKEN_KEY,
+    )
+    submitted = db.TimingDraftRow(
+        segment_id,
+        "2026-01-15",
+        "10:00",
+        "2026-01-15",
+        "14:00",
+    )
+    before = stored_finish_snapshot(card_id)
+
+    response = asyncio.run(
+        finish_review_preview_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review/preview"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=token,
+            timing_draft=timing_draft_json(submitted),
+        )
+    )
+
+    assert response.status_code == 422
+    assert json.loads(response.body)["messages"] == [
+        "Времето не може да бъде в бъдещето."
+    ]
+    assert stored_finish_snapshot(card_id) == before
+
+
+def test_finish_preview_rejects_unchanged_submitted_time_after_frozen_review(
+    connection,
+):
+    card_id = release_ready_card("27033", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 13:00:37",
+        ended_at="2026-01-15 14:00:29",
+        end_reason="pause",
+        status=STATUS_PAUSED,
+    )
+    loaded_version = card_version(card_id)
+    reviewed_at = "2026-01-15 12:34:56"
+    token = main.encode_finish_review_token(
+        card_id,
+        loaded_version,
+        reviewed_at,
+        key=main.FINISH_REVIEW_TOKEN_KEY,
+    )
+    submitted = db.TimingDraftRow(
+        segment_id,
+        "2026-01-15",
+        "15:00",
+        "2026-01-15",
+        "16:00",
+    )
+    before = stored_finish_snapshot(card_id)
+
+    response = asyncio.run(
+        finish_review_preview_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review/preview"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=token,
+            timing_draft=timing_draft_json(submitted),
+        )
+    )
+
+    assert response.status_code == 422
+    assert json.loads(response.body)["messages"] == [
+        "Времето не може да бъде в бъдещето."
+    ]
+    assert stored_finish_snapshot(card_id) == before

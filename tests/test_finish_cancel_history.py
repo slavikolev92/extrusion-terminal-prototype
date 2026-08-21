@@ -11,6 +11,7 @@ from app.constants import (
     STATUS_AWAITING_REWINDING,
     STATUS_CANCELLED,
     STATUS_COMPLETED,
+    STATUS_PAUSED,
     STATUS_PENDING,
     STATUS_RUNNING,
 )
@@ -279,6 +280,76 @@ def test_finish_from_running_closes_active_segment_and_archives_card(
     assert card_id in archive_ids
 
 
+@pytest.mark.parametrize(
+    ("submitted_stop_time", "expected_finished_at"),
+    [
+        ("14:34", "2026-01-15 12:34:56"),
+        ("14:00", "2026-01-15 12:00:00"),
+    ],
+)
+def test_reviewed_running_finish_uses_frozen_or_earlier_corrected_stop(
+    connection,
+    active_test_shift,
+    submitted_stop_time,
+    expected_finished_at,
+):
+    card_id = prepare_running_finishable_card(
+        f"25604-reviewed-{submitted_stop_time.replace(':', '')}"
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    segment_id = int(card["timing_segments"][0]["id"])
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (segment_id,),
+        )
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET first_started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+    loaded_version = int(db.fetch_terminal_card_detail(card_id)["version"])
+
+    outcome = db.finish_card_with_timing_ledger(
+        card_id,
+        loaded_version,
+        [
+            db.TimingDraftRow(
+                segment_id,
+                "2026-01-15",
+                "10:00",
+                "2026-01-15",
+                submitted_stop_time,
+            )
+        ],
+        "2026-01-15 12:34:56",
+    )
+
+    card = db.fetch_terminal_card_detail(card_id)
+    segment = connection.execute(
+        """
+        SELECT ended_at, end_reason
+        FROM production_time_segments
+        WHERE id = ?
+        """,
+        (segment_id,),
+    ).fetchone()
+    assert outcome.result.ok
+    assert card["status"] == STATUS_COMPLETED
+    assert card["finished_at"] == expected_finished_at
+    assert card["final_extrusion_shift_occurrence_id"] == active_test_shift["id"]
+    assert segment["ended_at"] == expected_finished_at
+    assert segment["end_reason"] == "finish"
+
+
 def test_finish_normalizes_active_machine_queue_after_removed_card(
     connection,
     active_test_shift,
@@ -302,6 +373,103 @@ def test_finish_normalizes_active_machine_queue_after_removed_card(
         (second_id, 1),
         (third_id, 2),
     ]
+
+
+def test_reviewed_finish_sets_markers_shift_and_normalizes_queue_once(
+    connection,
+    active_test_shift,
+    monkeypatch,
+):
+    card_id = prepare_running_finishable_card(
+        "25653-reviewed",
+        machine_id=1,
+        machine_sequence=1,
+    )
+    second_id = import_and_release_card(
+        "25654-reviewed",
+        machine_id=1,
+        machine_sequence=2,
+    )
+    third_id = import_and_release_card(
+        "25655-reviewed",
+        machine_id=1,
+        machine_sequence=3,
+    )
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    segment_id = int(card["timing_segments"][0]["id"])
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (segment_id,),
+        )
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET first_started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+    loaded_version = int(db.fetch_terminal_card_detail(card_id)["version"])
+    normalize_calls: list[tuple[int, int | None, int | None]] = []
+    real_normalize = db.normalize_machine_queue
+
+    def record_normalize(
+        queue_connection,
+        machine_id,
+        moving_card_id=None,
+        target_position=None,
+    ):
+        normalize_calls.append((machine_id, moving_card_id, target_position))
+        return real_normalize(
+            queue_connection,
+            machine_id,
+            moving_card_id,
+            target_position,
+        )
+
+    monkeypatch.setattr(db, "normalize_machine_queue", record_normalize)
+    outcome = db.finish_card_with_timing_ledger(
+        card_id,
+        loaded_version,
+        [
+            db.TimingDraftRow(
+                segment_id,
+                "2026-01-15",
+                "10:00",
+                "2026-01-15",
+                "14:00",
+            )
+        ],
+        "2026-01-15 12:34:56",
+    )
+
+    after = db.fetch_terminal_card_detail(card_id)
+    active_rows = connection.execute(
+        """
+        SELECT id, machine_sequence
+        FROM cards
+        WHERE machine_id = 1 AND status IN ('pending', 'running', 'paused')
+        ORDER BY machine_sequence
+        """
+    ).fetchall()
+    assert outcome.result.ok
+    assert after["status"] == STATUS_COMPLETED
+    assert after["machine_id"] == 1
+    assert after["machine_sequence"] == 1
+    assert after["first_started_at"] == "2026-01-15 08:00:37"
+    assert after["finished_at"] == "2026-01-15 12:00:00"
+    assert after["final_extrusion_shift_occurrence_id"] == active_test_shift["id"]
+    assert [(row["id"], row["machine_sequence"]) for row in active_rows] == [
+        (second_id, 1),
+        (third_id, 2),
+    ]
+    assert normalize_calls == [(1, None, None)]
 
 
 @pytest.mark.parametrize(
@@ -368,6 +536,107 @@ def test_finish_from_paused_succeeds_without_open_segment_or_timing_mutation(
     assert card["finished_at"] is not None
     assert open_segments == 0
     assert [tuple(row) for row in after_segments] == before_segments
+
+
+def test_reviewed_paused_finish_applies_only_submitted_timing_edits(
+    connection,
+    active_test_shift,
+):
+    card_id = prepare_running_finishable_card("25605-reviewed")
+    assert db.pause_production_timing(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+    ).ok
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    first_segment_id = int(card["timing_segments"][0]["id"])
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = '2026-01-15 08:00:37',
+                ended_at = '2026-01-15 09:00:29',
+                end_reason = 'pause'
+            WHERE id = ?
+            """,
+            (first_segment_id,),
+        )
+        second_segment_id = int(
+            setup_connection.execute(
+                """
+                INSERT INTO production_time_segments (
+                    card_id, started_at, ended_at, end_reason
+                )
+                VALUES (
+                    ?, '2026-01-15 10:00:15',
+                    '2026-01-15 11:45:45', 'correction'
+                )
+                RETURNING id
+                """,
+                (card_id,),
+            ).fetchone()["id"]
+        )
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET status = ?, first_started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (STATUS_PAUSED, card_id),
+        )
+    loaded_version = int(db.fetch_terminal_card_detail(card_id)["version"])
+
+    outcome = db.finish_card_with_timing_ledger(
+        card_id,
+        loaded_version,
+        [
+            db.TimingDraftRow(
+                first_segment_id,
+                "2026-01-15",
+                "10:00",
+                "2026-01-15",
+                "11:00",
+            ),
+            db.TimingDraftRow(
+                second_segment_id,
+                "2026-01-15",
+                "12:00",
+                "2026-01-15",
+                "13:30",
+            ),
+        ],
+        "2026-01-15 12:34:56",
+    )
+
+    after = db.fetch_terminal_card_detail(card_id)
+    segments = connection.execute(
+        """
+        SELECT id, started_at, ended_at, end_reason
+        FROM production_time_segments
+        WHERE card_id = ?
+        ORDER BY started_at, id
+        """,
+        (card_id,),
+    ).fetchall()
+    assert outcome.result.ok
+    assert after["status"] == STATUS_COMPLETED
+    assert after["version"] == loaded_version + 1
+    assert after["finished_at"] == "2026-01-15 11:30:00"
+    assert [tuple(row) for row in segments] == [
+        (
+            first_segment_id,
+            "2026-01-15 08:00:37",
+            "2026-01-15 09:00:29",
+            "pause",
+        ),
+        (
+            second_segment_id,
+            "2026-01-15 10:00:15",
+            "2026-01-15 11:30:00",
+            "correction",
+        ),
+    ]
+    assert after["final_extrusion_shift_occurrence_id"] == active_test_shift["id"]
 
 
 def test_admin_can_mark_completed_card_as_archived(connection, active_test_shift):

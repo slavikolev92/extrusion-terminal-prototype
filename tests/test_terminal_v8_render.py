@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import json
 import re
 from pathlib import Path
 from urllib.parse import urlencode
@@ -177,6 +178,19 @@ def form_block(html: str, action: str) -> str:
     )
     assert match is not None
     return match.group(0)
+
+
+def route_endpoint(path: str):
+    route = next(
+        (
+            route
+            for route in app.routes
+            if getattr(route, "path", None) == path
+        ),
+        None,
+    )
+    assert route is not None, f"route must be registered: {path}"
+    return route.endpoint
 
 
 def form_blocks(html: str, action: str) -> list[str]:
@@ -2237,6 +2251,111 @@ def test_terminal_v8_finish_confirmation_script_handles_modal_lifecycle(connecti
     assert "pendingFinishForm.requestSubmit();" in html
 
 
+def test_active_finish_uses_review_while_waiting_finish_keeps_simple_confirmation(
+    connection,
+):
+    active_id = release_ready_card(
+        "26184-reviewed-active",
+        machine_id=1,
+        sequence=1,
+    )
+    assert db.start_production_timing(active_id, card_version(active_id)).ok
+    assert db.update_tare_weight(active_id, card_version(active_id), "1.00").ok
+    assert db.add_roll_gross_weight(active_id, card_version(active_id), "25.00").ok
+    active_card = db.fetch_terminal_card_detail(active_id)
+    assert active_card is not None
+    active_segment_id = int(active_card["timing_segments"][0]["id"])
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (active_segment_id,),
+        )
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET first_started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (active_id,),
+        )
+    loaded_version = card_version(active_id)
+
+    missing_review = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{active_id}/finish"),
+            active_id,
+            str(loaded_version),
+        )
+    )
+
+    assert missing_review.status_code == 200
+    assert missing_review.context["workflow_result"].messages == (
+        "Прегледът за приключване е невалиден. Отворете го отново.",
+    )
+    assert db.fetch_terminal_card_detail(active_id)["status"] == "running"
+
+    review_response = asyncio.run(
+        route_endpoint("/terminal/cards/{card_id}/finish-review")(
+            make_test_request(f"/terminal/cards/{active_id}/finish-review"),
+            active_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    active_finish = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{active_id}/finish"),
+            active_id,
+            str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=json.dumps(review_payload["preview"]["draft"]),
+        )
+    )
+
+    assert active_finish.status_code == 303
+    assert active_finish.headers["location"] == (
+        f"/terminal/cards/{active_id}?notice=card_finished"
+    )
+    assert db.fetch_terminal_card_detail(active_id)["status"] == "completed"
+
+    waiting_id = release_ready_card(
+        "26184-reviewed-waiting",
+        machine_id=2,
+        sequence=1,
+    )
+    assert db.start_production_timing(waiting_id, card_version(waiting_id)).ok
+    assert db.update_rewinding_roll_count(
+        waiting_id,
+        card_version(waiting_id),
+        2,
+    ).ok
+    assert db.finish_card(waiting_id, card_version(waiting_id)).ok
+    assert db.update_tare_weight(waiting_id, card_version(waiting_id), "1.00").ok
+    assert db.add_roll_gross_weight(waiting_id, card_version(waiting_id), "25.00").ok
+    waiting_before = db.fetch_terminal_card_detail(waiting_id)
+    assert waiting_before is not None
+    timing_before = [dict(row) for row in waiting_before["timing_segments"]]
+    waiting_finish = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{waiting_id}/finish"),
+            waiting_id,
+            str(waiting_before["version"]),
+            review_token="malformed-review-token",
+            timing_draft="{",
+        )
+    )
+
+    waiting_after = db.fetch_terminal_card_detail(waiting_id)
+    assert waiting_finish.status_code == 303
+    assert waiting_after["status"] == "completed"
+    assert waiting_after["finished_at"] == waiting_before["finished_at"]
+    assert waiting_after["timing_segments"] == timing_before
+
+
 def test_terminal_finish_confirmation_warns_only_for_mixed_saved_gross_roll_pallets(
     connection,
 ):
@@ -3584,13 +3703,40 @@ def test_terminal_finish_success_redirects_to_canonical_get(connection):
     assert db.start_production_timing(card_id, card_version(card_id)).ok
     assert db.update_tare_weight(card_id, card_version(card_id), "1.20").ok
     assert db.add_roll_gross_weight(card_id, card_version(card_id), "60.00").ok
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = '2026-01-15 08:00:37'
+            WHERE card_id = ?
+            """,
+            (card_id,),
+        )
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET first_started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
     loaded_version = card_version(card_id)
+    review_response = asyncio.run(
+        route_endpoint("/terminal/cards/{card_id}/finish-review")(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
 
     response = asyncio.run(
         finish_terminal_card(
             make_test_request(f"/terminal/cards/{card_id}/finish"),
             card_id,
             str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=json.dumps(review_payload["preview"]["draft"]),
         )
     )
     refresh_html = render_terminal(card_id)

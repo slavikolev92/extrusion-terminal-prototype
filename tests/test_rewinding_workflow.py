@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import json
+import sqlite3
 
 import pytest
 from starlette.requests import Request
@@ -200,6 +202,28 @@ def rewinding_count_endpoint():
     )
     assert route is not None, "rewinding-count route must be registered"
     return route.endpoint
+
+
+def finish_review_payload(card_id: int) -> dict[str, object]:
+    route = next(
+        (
+            route
+            for route in app.routes
+            if getattr(route, "path", None)
+            == "/terminal/cards/{card_id}/finish-review"
+        ),
+        None,
+    )
+    assert route is not None, "finish-review route must be registered"
+    response = asyncio.run(
+        route.endpoint(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(card_state(card_id)["version"]),
+        )
+    )
+    assert response.status_code == 200
+    return json.loads(response.body)
 
 
 def save_rewinding_count(card_id: int, loaded_version: str, raw_count: str):
@@ -458,6 +482,112 @@ def test_paused_card_with_rewinding_marker_ends_without_creating_or_moving_timin
     assert timing_snapshot(card_id) == before_segments
 
 
+@pytest.mark.parametrize("reviewed_status", [STATUS_RUNNING, STATUS_PAUSED])
+def test_reviewed_finish_to_waiting_is_atomic_for_running_and_paused(
+    connection,
+    active_test_shift,
+    monkeypatch,
+    reviewed_status,
+):
+    order_number = (
+        "61802-reviewed-running"
+        if reviewed_status == STATUS_RUNNING
+        else "61803-reviewed-paused"
+    )
+    card_id = release_ready_card(order_number)
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    if reviewed_status == STATUS_PAUSED:
+        card = db.fetch_terminal_card_detail(card_id)
+        assert card is not None
+        assert db.pause_production_timing(card_id, int(card["version"])).ok
+    set_rewinding_marker(card_id, 6)
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    segment_id = int(card["timing_segments"][0]["id"])
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = '2026-01-15 08:00:37',
+                ended_at = ?,
+                end_reason = ?
+            WHERE id = ?
+            """,
+            (
+                "2026-01-15 09:00:29"
+                if reviewed_status == STATUS_PAUSED
+                else None,
+                "pause" if reviewed_status == STATUS_PAUSED else None,
+                segment_id,
+            ),
+        )
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET status = ?, first_started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (reviewed_status, card_id),
+        )
+    loaded_version = int(db.fetch_terminal_card_detail(card_id)["version"])
+    draft = db.TimingDraftRow(
+        segment_id,
+        "2026-01-15",
+        "10:00",
+        "2026-01-15",
+        "11:00" if reviewed_status == STATUS_PAUSED else "14:00",
+    )
+    before = {
+        "card": stored_card(card_id),
+        "timing_rows": timing_snapshot(card_id),
+    }
+    real_normalize = db.normalize_machine_queue
+
+    def fail_queue_normalization(*args, **kwargs):
+        raise sqlite3.IntegrityError("forced queue failure")
+
+    monkeypatch.setattr(db, "normalize_machine_queue", fail_queue_normalization)
+    rejected = db.finish_card_with_timing_ledger(
+        card_id,
+        loaded_version,
+        [draft],
+        "2026-01-15 12:34:56",
+    )
+
+    assert not rejected.result.ok
+    assert {
+        "card": stored_card(card_id),
+        "timing_rows": timing_snapshot(card_id),
+    } == before
+
+    monkeypatch.setattr(db, "normalize_machine_queue", real_normalize)
+    accepted = db.finish_card_with_timing_ledger(
+        card_id,
+        loaded_version,
+        [draft],
+        "2026-01-15 12:34:56",
+    )
+
+    after = stored_card(card_id)
+    after_timing = timing_snapshot(card_id)
+    assert accepted.result.ok
+    assert after["status"] == STATUS_AWAITING_REWINDING
+    assert after["final_extrusion_shift_occurrence_id"] == active_test_shift["id"]
+    assert after["version"] == loaded_version + 1
+    assert after["finished_at"] == (
+        "2026-01-15 09:00:29"
+        if reviewed_status == STATUS_PAUSED
+        else "2026-01-15 12:00:00"
+    )
+    assert after_timing[0]["ended_at"] == after["finished_at"]
+    assert after_timing[0]["end_reason"] == (
+        "pause" if reviewed_status == STATUS_PAUSED else "finish"
+    )
+    assert db.fetch_terminal_card_detail(card_id)["roll_entries"] == []
+
+
 @pytest.mark.parametrize("clear_marker", [False, True])
 def test_waiting_card_completion_changes_only_lifecycle_metadata(
     connection,
@@ -491,6 +621,45 @@ def test_waiting_card_completion_changes_only_lifecycle_metadata(
     assert after_card["version"] == int(before_card["version"]) + 1
     assert changed_columns == {"status", "version", "updated_at"}
     assert after_segments == before_segments
+
+
+def test_waiting_finalization_remains_timing_immutable_without_review_payload(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("61902-reviewed-contract")
+    enter_rewinding_wait(card_id)
+    insert_roll(card_id, "61902-reviewed-contract", 1, 25, 1, 24)
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            "UPDATE cards SET updated_at = '2000-01-01 00:00:00' WHERE id = ?",
+            (card_id,),
+        )
+    before_card = stored_card(card_id)
+    before_segments = timing_snapshot(card_id)
+
+    response = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            str(before_card["version"]),
+            review_token="not-a-valid-review-token",
+            timing_draft="{",
+        )
+    )
+
+    after_card = stored_card(card_id)
+    changed_columns = {
+        key for key in before_card if before_card[key] != after_card[key]
+    }
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=card_finished"
+    )
+    assert after_card["status"] == STATUS_COMPLETED
+    assert changed_columns == {"status", "version", "updated_at"}
+    assert after_card["finished_at"] == before_card["finished_at"]
+    assert timing_snapshot(card_id) == before_segments
 
 
 @pytest.mark.parametrize(
@@ -1129,12 +1298,32 @@ def test_terminal_finish_active_rewinding_card_keeps_selection_and_uses_waiting_
     card_id = release_ready_card("63110")
     assert db.start_production_timing(card_id, int(card_state(card_id)["version"])).ok
     set_rewinding_marker(card_id, 4)
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = '2026-01-15 08:00:37'
+            WHERE card_id = ?
+            """,
+            (card_id,),
+        )
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET first_started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+    review_payload = finish_review_payload(card_id)
 
     response = asyncio.run(
         finish_terminal_card(
             make_test_request(f"/terminal/cards/{card_id}/finish"),
             card_id,
             str(card_state(card_id)["version"]),
+            review_token=str(review_payload["review_token"]),
+            timing_draft=json.dumps(review_payload["preview"]["draft"]),
         )
     )
     context = terminal_context(card_id, terminal_notice="card_awaiting_rewinding")
