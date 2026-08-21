@@ -2069,6 +2069,131 @@ def test_terminal_v8_action_and_roll_add_buttons_render_decorative_icons(connect
     assert "Продължи" in resume_form
 
 
+def test_terminal_timing_context_models_running_and_paused_ledgers(connection):
+    running_id = release_ready_card("26182-timing-running", machine_id=1, sequence=1)
+    assert db.start_production_timing(running_id, card_version(running_id)).ok
+    with db.connect() as timing_connection:
+        running_segment_id = int(
+            timing_connection.execute(
+                "SELECT id FROM production_time_segments WHERE card_id = ?",
+                (running_id,),
+            ).fetchone()["id"]
+        )
+        timing_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (running_segment_id,),
+        )
+
+    running_context = terminal_context(running_id)
+    running_model = running_context["terminal_timing"]
+    assert running_model["card_id"] == running_id
+    assert running_model["status"] == "running"
+    assert running_model["loaded_version"] == card_version(running_id)
+    assert running_model["server_now_utc"]
+    assert running_model["server_now_display"]
+    assert running_model["draft"] == [
+        {
+            "segment_id": running_segment_id,
+            "start_date": "2026-01-15",
+            "start_time": "10:00",
+            "stop_date": "",
+            "stop_time": "",
+            "deleted": False,
+        }
+    ]
+    assert running_model["display"]["production_seconds"] >= 0
+
+    paused_id = release_ready_card("26182-timing-paused", machine_id=2, sequence=1)
+    assert db.start_production_timing(paused_id, card_version(paused_id)).ok
+    assert db.pause_production_timing(paused_id, card_version(paused_id)).ok
+    paused_context = terminal_context(paused_id)
+    paused_model = paused_context["terminal_timing"]
+    assert paused_model["status"] == "paused"
+    assert paused_model["draft"][0]["stop_date"]
+    assert paused_model["draft"][0]["stop_time"]
+
+
+def test_terminal_timing_context_blocks_missing_shift_and_other_statuses(connection):
+    pending_id = release_ready_card("26182-timing-pending", machine_id=1, sequence=1)
+    assert terminal_context(pending_id)["terminal_timing"] is None
+
+    completed_id = release_ready_card(
+        "26182-timing-completed",
+        machine_id=2,
+        sequence=1,
+    )
+    complete_card(completed_id)
+    assert terminal_context(completed_id)["terminal_timing"] is None
+
+    waiting_id = release_ready_card("26182-timing-waiting", machine_id=3, sequence=1)
+    assert db.start_production_timing(waiting_id, card_version(waiting_id)).ok
+    assert db.update_rewinding_roll_count(
+        waiting_id,
+        card_version(waiting_id),
+        1,
+    ).ok
+    assert db.finish_card(waiting_id, card_version(waiting_id)).ok
+    assert terminal_context(waiting_id)["terminal_timing"] is None
+
+    running_id = release_ready_card(
+        "26182-timing-no-shift",
+        machine_id=4,
+        sequence=1,
+    )
+    assert db.start_production_timing(running_id, card_version(running_id)).ok
+    end_active_test_shift()
+    assert terminal_context(running_id)["terminal_timing"] is None
+
+
+def test_terminal_timing_context_retains_invalid_and_locks_stale_drafts(connection):
+    card_id = release_ready_card("26182-timing-retained", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    segment_id = int(card["timing_segments"][0]["id"])
+    submitted = db.TimingDraftRow(
+        segment_id,
+        "2026-01-15",
+        "10:00",
+        "2026-01-15",
+        "10:00",
+    )
+    loaded_version = str(card_version(card_id))
+
+    invalid_context = terminal_context(
+        card_id,
+        terminal_timing_draft=[submitted],
+        terminal_timing_loaded_version=loaded_version,
+        terminal_timing_stale=False,
+    )
+    assert invalid_context["terminal_timing"]["draft"] == [
+        {
+            "segment_id": segment_id,
+            "start_date": "2026-01-15",
+            "start_time": "10:00",
+            "stop_date": "2026-01-15",
+            "stop_time": "10:00",
+            "deleted": False,
+        }
+    ]
+    assert invalid_context["terminal_timing"]["locked"] is False
+
+    stale_context = terminal_context(
+        card_id,
+        terminal_timing_draft=[submitted],
+        terminal_timing_loaded_version=loaded_version,
+        terminal_timing_stale=True,
+    )
+    assert stale_context["terminal_timing"]["draft"] == invalid_context[
+        "terminal_timing"
+    ]["draft"]
+    assert stale_context["terminal_timing"]["locked"] is True
+
+
 def test_terminal_v8_finish_form_uses_app_native_confirmation_modal(connection):
     card_id = release_ready_card("26183", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok

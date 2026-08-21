@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import json
 import logging
 from pathlib import Path
 import re
@@ -11,7 +12,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -21,18 +22,23 @@ from .constants import (
     STATUS_LABELS,
     STATUS_AWAITING_REWINDING,
     STATUS_IMPORTED,
+    STATUS_PAUSED,
     STATUS_PENDING,
     STATUS_RUNNING,
     TERMINAL_ARCHIVE_STATUSES,
     TIMING_REASON_LABELS,
 )
 from .db import (
+    INVALID_TERMINAL_TIMING_DRAFT_MESSAGE,
     MAX_SHIFT_COUNT,
     NO_ACTIVE_SHIFT_MESSAGE,
     PALLET_NUMBER_ERROR,
     STALE_CARD_MESSAGE,
     STALE_CONFIGURATION_MESSAGE,
     STALE_SHIFT_MESSAGE,
+    TIMING_TIMESTAMP_FORMAT,
+    TimingDraftRow,
+    TimingValidationIssue,
     add_timing_segment,
     add_roll_gross_weight,
     archive_completed_card,
@@ -62,6 +68,7 @@ from .db import (
     init_db,
     pause_production_timing,
     parse_rewinding_roll_count,
+    preview_terminal_timing_ledger as preview_terminal_timing_ledger_data,
     release_card,
     resume_production_timing,
     restore_cancelled_card,
@@ -82,6 +89,7 @@ from .db import (
     update_tare_weight,
     update_terminal_recipe_actual_entries,
     update_terminal_roll_corrections,
+    update_terminal_timing_ledger,
     update_shift_count,
     update_active_shift_number,
     unrelease_pending_card,
@@ -106,6 +114,25 @@ from .timekeeping import (
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 logger = logging.getLogger(__name__)
+
+TERMINAL_TIMING_DRAFT_MAX_BYTES = 65_536
+TERMINAL_TIMING_DRAFT_MAX_ROWS = 200
+TERMINAL_TIMING_DRAFT_KEYS = {
+    "segment_id",
+    "start_date",
+    "start_time",
+    "stop_date",
+    "stop_time",
+    "deleted",
+}
+TERMINAL_TIMING_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+TERMINAL_TIMING_TIME_PATTERN = re.compile(r"^\d{2}:\d{2}$")
+
+
+class TerminalTimingDraftParseError(ValueError):
+    def __init__(self, issue: TimingValidationIssue) -> None:
+        super().__init__(issue.message)
+        self.issue = issue
 
 CARD_NOT_FOUND_MESSAGE = "Картата не е намерена."
 INVALID_LOADED_VERSION_MESSAGE = "Версията на заредената карта е невалидна. Презаредете картата."
@@ -140,6 +167,7 @@ TERMINAL_NOTICE_MESSAGES = {
     "timing_started": ("Времето е стартирано.",),
     "timing_paused": ("Времето е паузирано.",),
     "timing_resumed": ("Времето е продължено.",),
+    "timing_saved": ("Производственото време е записано.",),
     "card_finished": ("Картата е приключена.",),
     "card_awaiting_rewinding": (
         "Екструдирането е приключено. Картата изчаква пренавиване.",
@@ -803,6 +831,124 @@ def terminal_roll_corrections_from_form(form: Any) -> dict[int, dict[str, str]]:
             roll_id = int(key.removeprefix("pallet_number__"))
             roll_updates.setdefault(roll_id, {})["pallet_number"] = text_value
     return roll_updates
+
+
+def parse_terminal_timing_draft(value: str) -> list[TimingDraftRow]:
+    def invalid(
+        source_index: int | None = None,
+        field: str = "form",
+    ) -> TerminalTimingDraftParseError:
+        return TerminalTimingDraftParseError(
+            TimingValidationIssue(
+                source_index,
+                field,
+                INVALID_TERMINAL_TIMING_DRAFT_MESSAGE,
+            )
+        )
+
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        decoded_object = dict(pairs)
+        if len(decoded_object) != len(pairs):
+            raise invalid()
+        return decoded_object
+
+    if not isinstance(value, str):
+        raise invalid()
+    try:
+        encoded_value = value.encode("utf-8")
+    except UnicodeError:
+        raise invalid() from None
+    if len(encoded_value) > TERMINAL_TIMING_DRAFT_MAX_BYTES:
+        raise invalid()
+    try:
+        decoded = json.loads(value, object_pairs_hook=unique_object)
+    except (json.JSONDecodeError, UnicodeError):
+        raise invalid() from None
+    if not isinstance(decoded, list) or len(decoded) > TERMINAL_TIMING_DRAFT_MAX_ROWS:
+        raise invalid()
+
+    draft_rows: list[TimingDraftRow] = []
+    for source_index, raw_row in enumerate(decoded):
+        if not isinstance(raw_row, dict) or set(raw_row) != TERMINAL_TIMING_DRAFT_KEYS:
+            raise invalid(source_index)
+
+        segment_id = raw_row["segment_id"]
+        if segment_id is not None and (
+            type(segment_id) is not int or segment_id < 1
+        ):
+            raise invalid(source_index)
+        deleted = raw_row["deleted"]
+        if type(deleted) is not bool:
+            raise invalid(source_index)
+
+        text_fields = (
+            ("start_date", raw_row["start_date"]),
+            ("start_time", raw_row["start_time"]),
+            ("stop_date", raw_row["stop_date"]),
+            ("stop_time", raw_row["stop_time"]),
+        )
+        for field, field_value in text_fields:
+            if not isinstance(field_value, str):
+                raise invalid(source_index, field)
+        start_date, start_time, stop_date, stop_time = (
+            field_value for _, field_value in text_fields
+        )
+        _validate_terminal_timing_local_pair(
+            start_date,
+            start_time,
+            source_index=source_index,
+            date_field="start_date",
+            time_field="start_time",
+            invalid=invalid,
+        )
+        _validate_terminal_timing_local_pair(
+            stop_date,
+            stop_time,
+            source_index=source_index,
+            date_field="stop_date",
+            time_field="stop_time",
+            invalid=invalid,
+        )
+        draft_rows.append(
+            TimingDraftRow(
+                segment_id=segment_id,
+                start_date=start_date,
+                start_time=start_time,
+                stop_date=stop_date,
+                stop_time=stop_time,
+                deleted=deleted,
+            )
+        )
+    return draft_rows
+
+
+def _validate_terminal_timing_local_pair(
+    date_value: str,
+    time_value: str,
+    *,
+    source_index: int,
+    date_field: str,
+    time_field: str,
+    invalid: Any,
+) -> None:
+    if not date_value and not time_value:
+        return
+    if not date_value:
+        raise invalid(source_index, date_field)
+    if not time_value:
+        raise invalid(source_index, time_field)
+    if not TERMINAL_TIMING_DATE_PATTERN.fullmatch(date_value):
+        raise invalid(source_index, date_field)
+    if not TERMINAL_TIMING_TIME_PATTERN.fullmatch(time_value):
+        raise invalid(source_index, time_field)
+    try:
+        datetime.strptime(date_value, "%Y-%m-%d")
+    except ValueError:
+        raise invalid(source_index, date_field) from None
+    try:
+        datetime.strptime(time_value, "%H:%M")
+    except ValueError:
+        raise invalid(source_index, time_field) from None
 
 
 def canonical_timing_values(started_at: Any, ended_at: Any) -> tuple[str, str]:
@@ -2369,6 +2515,151 @@ async def start_timing(
     )
 
 
+@app.post("/terminal/cards/{card_id}/timing-ledger")
+async def save_terminal_timing_ledger(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(""),
+    timing_draft: str = Form(""),
+):
+    draft_rows: list[TimingDraftRow] = []
+    parsed_version, timing_result = parse_loaded_version(loaded_version)
+    if parsed_version is not None:
+        try:
+            draft_rows = parse_terminal_timing_draft(timing_draft)
+        except TerminalTimingDraftParseError as error:
+            timing_result = RuleResult(False, (str(error),))
+            timing_issues = (error.issue,)
+        else:
+            outcome = update_terminal_timing_ledger(
+                card_id,
+                parsed_version,
+                draft_rows,
+                require_active_shift=True,
+            )
+            timing_result = outcome.result
+            timing_issues = outcome.issues
+    else:
+        timing_issues = ()
+
+    return terminal_post_response(
+        request,
+        card_id,
+        "timing_result",
+        timing_result,
+        notice_code="timing_saved",
+        terminal_timing_dialog_open=not timing_result.ok,
+        terminal_timing_draft=draft_rows,
+        terminal_timing_draft_json=timing_draft,
+        terminal_timing_loaded_version=loaded_version,
+        terminal_timing_issues=timing_issues,
+        terminal_timing_stale=(
+            not timing_result.ok and STALE_CARD_MESSAGE in timing_result.messages
+        ),
+    )
+
+
+@app.post("/terminal/cards/{card_id}/timing-ledger/preview")
+async def preview_terminal_timing_ledger_route(
+    request: Request,
+    card_id: int,
+    loaded_version: str = Form(""),
+    timing_draft: str = Form(""),
+):
+    del request
+    try:
+        draft_rows = parse_terminal_timing_draft(timing_draft)
+    except TerminalTimingDraftParseError as error:
+        return terminal_timing_error_response(
+            RuleResult(False, (str(error),)),
+            (error.issue,),
+        )
+
+    parsed_version, version_result = parse_loaded_version(loaded_version)
+    if parsed_version is None:
+        return terminal_timing_error_response(version_result)
+
+    outcome = preview_terminal_timing_ledger_data(
+        card_id,
+        parsed_version,
+        draft_rows,
+        require_active_shift=True,
+    )
+    if not outcome.result.ok:
+        return terminal_timing_error_response(
+            outcome.result,
+            outcome.issues,
+        )
+    assert outcome.preview is not None
+    preview = outcome.preview
+    return JSONResponse(
+        {
+            "ok": True,
+            "review_token": None,
+            "preview": {
+                "reviewed_at_utc": preview.reviewed_at,
+                "first_start_display": terminal_timing_minute_display(
+                    preview.first_started_at
+                ),
+                "proposed_stop_display": terminal_timing_minute_display(
+                    preview.proposed_finished_at
+                ),
+                "production_seconds": preview.production_seconds,
+                "paused_seconds": preview.paused_seconds,
+                "draft": [terminal_timing_draft_row_payload(row) for row in preview.draft_rows],
+                "intervals": list(preview.intervals),
+            },
+        }
+    )
+
+
+def terminal_timing_error_response(
+    result: RuleResult,
+    issues: tuple[Any, ...] = (),
+) -> JSONResponse:
+    field_errors = [
+        {
+            "source_index": issue.source_index,
+            "field": issue.field,
+            "message": issue.message,
+        }
+        for issue in issues
+    ]
+    if not field_errors:
+        field_errors = [
+            {
+                "source_index": None,
+                "field": "form",
+                "message": message,
+            }
+            for message in result.messages
+        ]
+    return JSONResponse(
+        {
+            "ok": False,
+            "messages": list(result.messages),
+            "field_errors": field_errors,
+        },
+        status_code=(409 if STALE_CARD_MESSAGE in result.messages else 422),
+    )
+
+
+def terminal_timing_draft_row_payload(row: TimingDraftRow) -> dict[str, Any]:
+    return {
+        "segment_id": row.segment_id,
+        "start_date": row.start_date,
+        "start_time": row.start_time,
+        "stop_date": row.stop_date,
+        "stop_time": row.stop_time,
+        "deleted": row.deleted,
+    }
+
+
+def terminal_timing_minute_display(value: str | None) -> str:
+    display = format_display_datetime(value, blank="")
+    return display[:-3] if display else ""
+
+
 @app.post("/terminal/cards/{card_id}/timing/pause")
 async def pause_timing(
     request: Request,
@@ -2748,6 +3039,18 @@ def terminal_context(
         selected_card_id,
         known_shift_signature=str(shift_state["shift_signature"]),
     )
+    terminal_timing = build_terminal_timing_model(
+        selected_card,
+        active_shift_exists=shift_state["active_shift"] is not None,
+        server_now_utc=str(terminal_snapshot["server_now_utc"]),
+        retained_draft=(
+            extra.get("terminal_timing_draft")
+            if "terminal_timing_draft" in extra
+            else None
+        ),
+        retained_loaded_version=extra.get("terminal_timing_loaded_version"),
+        stale=bool(extra.get("terminal_timing_stale")),
+    )
 
     context: dict[str, Any] = {
         "machines": fetch_machines(),
@@ -2761,6 +3064,7 @@ def terminal_context(
         "selected_machine_occupying_card": selected_machine_occupying_card,
         "selected_machine_id": selected_machine_id,
         "terminal_snapshot": terminal_snapshot,
+        "terminal_timing": terminal_timing,
         "status_labels": STATUS_LABELS,
         "recipe_rows": build_terminal_recipe_rows(selected_card) if selected_card else [],
         **shift_context,
@@ -2768,6 +3072,142 @@ def terminal_context(
         "terminal_feedback": build_terminal_feedback(extra),
     }
     return context
+
+
+def build_terminal_timing_model(
+    selected_card: dict[str, Any] | None,
+    *,
+    active_shift_exists: bool,
+    server_now_utc: str,
+    retained_draft: Any = None,
+    retained_loaded_version: Any = None,
+    stale: bool = False,
+) -> dict[str, Any] | None:
+    if (
+        selected_card is None
+        or not active_shift_exists
+        or selected_card.get("status") not in {STATUS_RUNNING, STATUS_PAUSED}
+    ):
+        return None
+
+    if retained_draft is None:
+        draft_rows = terminal_timing_draft_from_card(selected_card)
+        loaded_version = int(selected_card["version"])
+    else:
+        draft_rows = list(retained_draft)
+        try:
+            loaded_version = int(retained_loaded_version)
+        except (TypeError, ValueError):
+            loaded_version = retained_loaded_version
+
+    display = terminal_timing_display_from_stored_card(
+        selected_card,
+        server_now_utc=server_now_utc,
+    )
+    return {
+        "card_id": int(selected_card["id"]),
+        "status": str(selected_card["status"]),
+        "loaded_version": loaded_version,
+        "server_now_utc": server_now_utc,
+        "server_now_display": terminal_timing_minute_display(server_now_utc),
+        "draft": [terminal_timing_draft_row_payload(row) for row in draft_rows],
+        "locked": stale,
+        "display": display,
+    }
+
+
+def terminal_timing_display_from_stored_card(
+    card: dict[str, Any],
+    *,
+    server_now_utc: str,
+) -> dict[str, Any]:
+    segments = sorted(
+        card.get("timing_segments", []),
+        key=lambda segment: (str(segment["started_at"]), int(segment["id"])),
+    )
+    intervals: list[dict[str, int]] = []
+    production_seconds = 0
+    paused_seconds = 0
+    for source_index, segment in enumerate(segments):
+        effective_end = segment.get("ended_at")
+        if (
+            effective_end is None
+            and card.get("status") == STATUS_RUNNING
+            and source_index == len(segments) - 1
+        ):
+            effective_end = server_now_utc
+        duration_seconds = terminal_canonical_duration_seconds(
+            str(segment["started_at"]),
+            str(effective_end) if effective_end is not None else None,
+        )
+        production_seconds += duration_seconds
+        intervals.append(
+            {
+                "source_index": source_index,
+                "duration_seconds": duration_seconds,
+            }
+        )
+        if source_index > 0:
+            previous_end = segments[source_index - 1].get("ended_at")
+            if previous_end is not None:
+                paused_seconds += terminal_canonical_duration_seconds(
+                    str(previous_end),
+                    str(segment["started_at"]),
+                )
+
+    first_started_at = str(segments[0]["started_at"]) if segments else None
+    if card.get("status") == STATUS_RUNNING:
+        proposed_finished_at = server_now_utc
+    else:
+        ended_values = [
+            str(segment["ended_at"])
+            for segment in segments
+            if segment.get("ended_at") is not None
+        ]
+        proposed_finished_at = max(ended_values, default=None)
+    return {
+        "reviewed_at_utc": server_now_utc,
+        "first_start_display": terminal_timing_minute_display(first_started_at),
+        "proposed_stop_display": terminal_timing_minute_display(
+            proposed_finished_at
+        ),
+        "production_seconds": production_seconds,
+        "paused_seconds": paused_seconds,
+        "intervals": intervals,
+    }
+
+
+def terminal_canonical_duration_seconds(
+    start_value: str,
+    end_value: str | None,
+) -> int:
+    if end_value is None:
+        return 0
+    try:
+        start = datetime.strptime(start_value, TIMING_TIMESTAMP_FORMAT)
+        end = datetime.strptime(end_value, TIMING_TIMESTAMP_FORMAT)
+    except ValueError:
+        return 0
+    return max(0, int((end - start).total_seconds()))
+
+
+def terminal_timing_draft_from_card(
+    card: dict[str, Any],
+) -> list[TimingDraftRow]:
+    draft_rows: list[TimingDraftRow] = []
+    for segment in card.get("timing_segments", []):
+        start_local = format_sofia_input(segment.get("started_at"))
+        end_local = format_sofia_input(segment.get("ended_at"))
+        draft_rows.append(
+            TimingDraftRow(
+                segment_id=int(segment["id"]),
+                start_date=start_local[:10],
+                start_time=start_local[11:16],
+                stop_date=end_local[:10] if end_local else "",
+                stop_time=end_local[11:16] if end_local else "",
+            )
+        )
+    return draft_rows
 
 
 def build_terminal_shift_context(

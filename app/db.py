@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from datetime import datetime
@@ -36,6 +36,7 @@ from .recipe_parser import (
 )
 from .rules import RECIPE_RELEASE_FIELD_LABELS, RuleResult, validate_structured_recipe_release
 from .schema import CARD_INDEX_SQL, _quote_identifier, cards_table_sql
+from .timekeeping import LocalTimeInputError, format_sofia_input, parse_sofia_input
 
 STALE_CARD_MESSAGE = "Картата е променена след зареждането на страницата. Презаредете и опитайте отново."
 STALE_SHIFT_MESSAGE = "Данните за смяната са променени. Презаредете терминала."
@@ -52,6 +53,9 @@ UNRELEASE_PRODUCTION_DATA_MESSAGE = (
 MAX_SHIFT_COUNT = 99
 TIMING_END_REASONS = ("pause", "finish", "correction")
 TIMING_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+INVALID_TERMINAL_TIMING_DRAFT_MESSAGE = (
+    "Данните за производственото време са невалидни."
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,34 @@ class TimingValidationIssue:
     source_index: int | None
     field: str
     message: str
+
+
+@dataclass(frozen=True)
+class TimingDraftRow:
+    segment_id: int | None
+    start_date: str
+    start_time: str
+    stop_date: str
+    stop_time: str
+    deleted: bool = False
+
+
+@dataclass(frozen=True)
+class TimingLedgerPreview:
+    draft_rows: tuple[TimingDraftRow, ...]
+    intervals: tuple[dict[str, Any], ...]
+    first_started_at: str | None
+    proposed_finished_at: str | None
+    production_seconds: int
+    paused_seconds: int
+    reviewed_at: str
+
+
+@dataclass(frozen=True)
+class TimingLedgerOutcome:
+    result: RuleResult
+    preview: TimingLedgerPreview | None = None
+    issues: tuple[TimingValidationIssue, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2159,6 +2191,400 @@ def update_admin_timing_ledger(
         if not result.ok:
             owned_connection.rollback()
         return result
+
+
+def update_terminal_timing_ledger(
+    card_id: int,
+    loaded_version: int,
+    draft_rows: list[TimingDraftRow],
+    *,
+    require_active_shift: bool = True,
+) -> TimingLedgerOutcome:
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        card, proposal, preparation_error = _prepare_terminal_timing_ledger(
+            connection,
+            card_id,
+            loaded_version,
+            draft_rows,
+            transaction_time=current_database_timestamp(connection),
+            require_active_shift=require_active_shift,
+        )
+        if preparation_error is not None:
+            return preparation_error
+        assert card is not None
+        assert proposal is not None
+
+        try:
+            _apply_timing_ledger_proposal(connection, card_id, proposal)
+            refresh_card_timing_markers(connection, card_id)
+            touch_card(connection, card_id)
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return TimingLedgerOutcome(
+                RuleResult(False, ("Картата вече има отворен времеви сегмент.",))
+            )
+
+    return TimingLedgerOutcome(
+        RuleResult(
+            True,
+            (f"Производственото време за поръчка {card['order_number']} е записано.",),
+        )
+    )
+
+
+def preview_terminal_timing_ledger(
+    card_id: int,
+    loaded_version: int,
+    draft_rows: list[TimingDraftRow],
+    *,
+    preview_at: str | None = None,
+    finish_mode: bool = False,
+    require_active_shift: bool = True,
+) -> TimingLedgerOutcome:
+    del finish_mode
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        reviewed_at = preview_at or current_database_timestamp(connection)
+        if not _is_canonical_timing_timestamp(reviewed_at):
+            issue = TimingValidationIssue(
+                None,
+                "form",
+                INVALID_TERMINAL_TIMING_DRAFT_MESSAGE,
+            )
+            return _terminal_timing_issue_outcome((issue,))
+        card, proposal, preparation_error = _prepare_terminal_timing_ledger(
+            connection,
+            card_id,
+            loaded_version,
+            draft_rows,
+            transaction_time=reviewed_at,
+            require_active_shift=require_active_shift,
+        )
+        if preparation_error is not None:
+            return preparation_error
+        assert card is not None
+        assert proposal is not None
+        preview = _build_terminal_timing_preview(
+            connection,
+            proposal,
+            draft_rows,
+            status=str(card["status"]),
+            reviewed_at=reviewed_at,
+        )
+    return TimingLedgerOutcome(RuleResult(True), preview=preview)
+
+
+def _prepare_terminal_timing_ledger(
+    connection: sqlite3.Connection,
+    card_id: int,
+    loaded_version: int,
+    draft_rows: list[TimingDraftRow],
+    *,
+    transaction_time: str,
+    require_active_shift: bool,
+) -> tuple[
+    sqlite3.Row | None,
+    _TimingLedgerProposal | None,
+    TimingLedgerOutcome | None,
+]:
+    card = connection.execute(
+        "SELECT id, order_number, status, version FROM cards WHERE id = ?",
+        (card_id,),
+    ).fetchone()
+    version_result = validate_loaded_card_version(card, loaded_version)
+    if not version_result.ok:
+        return None, None, TimingLedgerOutcome(version_result)
+    assert card is not None
+
+    shift_result = validate_active_shift_for_terminal_write(
+        connection,
+        require_active_shift,
+    )
+    if not shift_result.ok:
+        return None, None, TimingLedgerOutcome(shift_result)
+
+    if str(card["status"]) not in {STATUS_RUNNING, STATUS_PAUSED}:
+        return (
+            None,
+            None,
+            TimingLedgerOutcome(
+                RuleResult(
+                    False,
+                    (
+                        "Производственото време може да се коригира само за карта "
+                        "в изработване или на пауза.",
+                    ),
+                )
+            ),
+        )
+
+    proposal, build_issues = _build_terminal_timing_ledger_proposal(
+        connection,
+        card_id,
+        draft_rows,
+    )
+    if build_issues:
+        return None, None, _terminal_timing_issue_outcome(build_issues)
+
+    validation_issues = _validate_timing_ledger_proposal(
+        proposal,
+        _admin_timing_status_policy(
+            str(card["status"]),
+            running_open_count_message=(
+                "Картите в изработване трябва да запазят един отворен "
+                "времеви сегмент."
+            ),
+        ),
+        transaction_time=transaction_time,
+    )
+    if validation_issues:
+        return None, None, _terminal_timing_issue_outcome(validation_issues)
+    return card, proposal, None
+
+
+def _is_canonical_timing_timestamp(value: str) -> bool:
+    try:
+        parsed = datetime.strptime(value, TIMING_TIMESTAMP_FORMAT)
+    except ValueError:
+        return False
+    return parsed.strftime(TIMING_TIMESTAMP_FORMAT) == value
+
+
+def _build_terminal_timing_preview(
+    connection: sqlite3.Connection,
+    proposal: _TimingLedgerProposal,
+    draft_rows: list[TimingDraftRow],
+    *,
+    status: str,
+    reviewed_at: str,
+) -> TimingLedgerPreview:
+    preview_end = reviewed_at if status == STATUS_RUNNING else None
+    production_seconds, paused_seconds = calculate_timing_ledger_totals(
+        connection,
+        proposal.rows,
+        preview_end=preview_end,
+    )
+    ordered_rows = sorted(
+        proposal.rows,
+        key=lambda row: (
+            row.started_at,
+            row.ended_at or "",
+            row.source_index if row.source_index is not None else -1,
+        ),
+    )
+    intervals: list[dict[str, Any]] = []
+    for index, row in enumerate(ordered_rows):
+        effective_end = row.ended_at
+        if effective_end is None and index == len(ordered_rows) - 1:
+            effective_end = preview_end
+        duration_seconds = (
+            max(
+                0,
+                _canonical_timing_seconds_between(
+                    connection,
+                    row.started_at,
+                    effective_end,
+                ),
+            )
+            if effective_end is not None
+            else 0
+        )
+        intervals.append(
+            {
+                "source_index": row.source_index,
+                "duration_seconds": duration_seconds,
+            }
+        )
+
+    first_started_at = min(
+        (row.started_at for row in proposal.rows),
+        default=None,
+    )
+    proposed_finished_at = preview_end or max(
+        (row.ended_at for row in proposal.rows if row.ended_at is not None),
+        default=None,
+    )
+    return TimingLedgerPreview(
+        draft_rows=tuple(draft_rows),
+        intervals=tuple(intervals),
+        first_started_at=first_started_at,
+        proposed_finished_at=proposed_finished_at,
+        production_seconds=production_seconds,
+        paused_seconds=paused_seconds,
+        reviewed_at=reviewed_at,
+    )
+
+
+def _build_terminal_timing_ledger_proposal(
+    connection: sqlite3.Connection,
+    card_id: int,
+    draft_rows: list[TimingDraftRow],
+) -> tuple[_TimingLedgerProposal, tuple[TimingValidationIssue, ...]]:
+    existing_segments = connection.execute(
+        """
+        SELECT id, started_at, ended_at, end_reason
+        FROM production_time_segments
+        WHERE card_id = ?
+        ORDER BY started_at, id
+        """,
+        (card_id,),
+    ).fetchall()
+    existing_by_id = {int(row["id"]): row for row in existing_segments}
+    seen_existing_ids: set[int] = set()
+    for source_index, draft in enumerate(draft_rows):
+        if draft.segment_id is None:
+            continue
+        if (
+            draft.segment_id in seen_existing_ids
+            or draft.segment_id not in existing_by_id
+        ):
+            issue = TimingValidationIssue(
+                source_index,
+                "form",
+                INVALID_TERMINAL_TIMING_DRAFT_MESSAGE,
+            )
+            return _TimingLedgerProposal((), ()), (issue,)
+        seen_existing_ids.add(draft.segment_id)
+    if seen_existing_ids != set(existing_by_id):
+        issue = TimingValidationIssue(
+            None,
+            "form",
+            INVALID_TERMINAL_TIMING_DRAFT_MESSAGE,
+        )
+        return _TimingLedgerProposal((), ()), (issue,)
+
+    segment_updates: dict[int, dict[str, str]] = {}
+    delete_segment_ids: set[int] = set()
+    new_segments: list[dict[str, str]] = []
+    issues: list[TimingValidationIssue] = []
+
+    for source_index, draft in enumerate(draft_rows):
+        existing = (
+            existing_by_id.get(draft.segment_id)
+            if draft.segment_id is not None
+            else None
+        )
+        if draft.deleted:
+            if draft.segment_id is not None:
+                delete_segment_ids.add(draft.segment_id)
+            continue
+
+        start_at = _terminal_draft_timestamp(
+            draft.start_date,
+            draft.start_time,
+            original=(str(existing["started_at"]) if existing is not None else None),
+            source_index=source_index,
+            field="start_time",
+            label="Начало",
+            issues=issues,
+        )
+        end_at = _terminal_draft_timestamp(
+            draft.stop_date,
+            draft.stop_time,
+            original=(existing["ended_at"] if existing is not None else None),
+            source_index=source_index,
+            field="stop_time",
+            label="Край",
+            issues=issues,
+            required=False,
+        )
+        if start_at is None or (draft.stop_date and end_at is None):
+            continue
+
+        end_reason = ""
+        if end_at is not None:
+            if existing is not None and existing["ended_at"] is None:
+                end_reason = "pause"
+            elif existing is not None:
+                end_reason = str(existing["end_reason"] or "correction")
+            else:
+                end_reason = "correction"
+        values = {
+            "started_at": start_at,
+            "ended_at": end_at or "",
+            "end_reason": end_reason,
+        }
+        if draft.segment_id is None:
+            new_segments.append(values)
+        else:
+            segment_updates[draft.segment_id] = values
+
+    if issues:
+        return _TimingLedgerProposal((), ()), _ordered_timing_validation_issues(issues)
+
+    proposal, shared_issues = _build_timing_ledger_proposal(
+        connection,
+        card_id,
+        segment_updates,
+        delete_segment_ids,
+        new_segments,
+        unknown_segment_message=(
+            "Избран времеви сегмент не принадлежи към тази карта."
+        ),
+    )
+    existing_source_indices = {
+        draft.segment_id: source_index
+        for source_index, draft in enumerate(draft_rows)
+        if draft.segment_id is not None
+    }
+    new_source_indices = iter(
+        source_index
+        for source_index, draft in enumerate(draft_rows)
+        if draft.segment_id is None and not draft.deleted
+    )
+    remapped_rows = tuple(
+        replace(
+            row,
+            source_index=(
+                existing_source_indices[row.segment_id]
+                if row.segment_id is not None
+                else next(new_source_indices)
+            ),
+        )
+        for row in proposal.rows
+    )
+    return replace(proposal, rows=remapped_rows), shared_issues
+
+
+def _terminal_draft_timestamp(
+    date_value: str,
+    time_value: str,
+    *,
+    original: str | None,
+    source_index: int,
+    field: str,
+    label: str,
+    issues: list[TimingValidationIssue],
+    required: bool = True,
+) -> str | None:
+    if not date_value and not time_value and not required:
+        return None
+    if original is not None:
+        original_local = format_sofia_input(original)
+        if (
+            date_value == original_local[:10]
+            and time_value == original_local[11:16]
+        ):
+            return original
+    try:
+        return parse_sofia_input(
+            f"{date_value} {time_value}:00",
+            label=label,
+            required=required,
+        ) or None
+    except LocalTimeInputError as error:
+        issues.append(TimingValidationIssue(source_index, field, str(error)))
+        return None
+
+
+def _terminal_timing_issue_outcome(
+    issues: tuple[TimingValidationIssue, ...],
+) -> TimingLedgerOutcome:
+    return TimingLedgerOutcome(
+        RuleResult(False, tuple(dict.fromkeys(issue.message for issue in issues))),
+        issues=issues,
+    )
 
 
 def _update_admin_timing_ledger(
