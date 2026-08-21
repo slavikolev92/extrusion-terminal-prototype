@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -453,3 +454,165 @@ def test_waiting_rewinding_query_and_terminal_context_use_deterministic_display_
     )
     assert selected_waiting["is_selected"] is True
     assert selected_waiting["status_label"] == "Изчаква пренавиване"
+
+
+def test_terminal_card_stale_locks_timing_without_topbar_focus_takeover():
+    template = Path("app/templates/terminal.html").read_text(encoding="utf-8")
+    controller = Path(
+        "app/static/js/timing_interval_editor.mjs"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        'new CustomEvent("terminal:card-stale", { cancelable: true })'
+        in template
+    )
+    generic_start = template.index(
+        'document.addEventListener("terminal:card-stale", (event) => {'
+    )
+    generic_end = template.index(
+        'document.addEventListener("terminal:shift-stale"',
+        generic_start,
+    )
+    generic_handler = template[generic_start:generic_end]
+    assert "if (event.defaultPrevented)" in generic_handler
+    assert generic_handler.index("if (event.defaultPrevented)") < generic_handler.index(
+        'document.getElementById("terminal-refresh-alert-button")?.focus()'
+    )
+
+    stale_start = controller.index(
+        'window.addEventListener("terminal:card-stale", (event) => {'
+    )
+    stale_end = controller.index("}, { capture: true });", stale_start)
+    stale_handler = controller[stale_start:stale_end]
+    assert stale_handler.index(
+        "previewCoordinator.invalidate({ stale: true });"
+    ) < stale_handler.index("if (overlay.hidden && finishOverlay.hidden)")
+    assert "if (overlay.hidden && finishOverlay.hidden)" in stale_handler
+    assert "event.preventDefault();" in stale_handler
+    assert "finishReview.draft" in stale_handler
+    assert "openEditor({" in stale_handler
+    assert "lockTimingDraft" in stale_handler
+    assert "reloadLink.focus()" in controller
+    assert "state.rows = createInitialState" not in stale_handler
+    assert 'terminal:card-stale", (event) =>' not in template[generic_end:]
+
+
+def test_terminal_shift_stale_leaves_only_shift_reload_modal_active():
+    template = Path("app/templates/terminal.html").read_text(encoding="utf-8")
+    shift_partial = Path("app/templates/_terminal_shift_window.html").read_text(
+        encoding="utf-8"
+    )
+    controller = Path(
+        "app/static/js/timing_interval_editor.mjs"
+    ).read_text(encoding="utf-8")
+
+    shift_listener = 'window.addEventListener("terminal:shift-stale", () => {'
+    assert shift_listener in controller
+    shift_start = controller.index(shift_listener)
+    shift_end = controller.index("}, { capture: true });", shift_start)
+    shift_handler = controller[shift_start:shift_end]
+    assert "shiftSuspended = true;" in shift_handler
+    assert "closeMenu();" in shift_handler
+    assert "overlay.hidden = true;" in shift_handler
+    assert 'overlay.setAttribute("aria-hidden", "true")' in shift_handler
+    assert 'dialog.setAttribute("aria-modal", "false")' in shift_handler
+    assert "finishOverlay.hidden = true;" in shift_handler
+    assert 'finishDialog.setAttribute("aria-modal", "false")' in shift_handler
+    assert "setBackgroundIsolated(false);" in shift_handler
+    assert ".focus(" not in shift_handler
+
+    existing_start = template.index(
+        'document.addEventListener("terminal:shift-stale", () => {'
+    )
+    existing_end = template.index("});", existing_start)
+    existing_handler = template[existing_start:existing_end]
+    assert 'shiftWindow.dataset.shiftState = "reload";' in existing_handler
+    assert "shiftWindow.hidden = false;" in existing_handler
+    assert 'shiftWindow.setAttribute("aria-hidden", "false")' in existing_handler
+    assert "setUnderlyingTerminalHidden(true);" in existing_handler
+    assert 'showShiftPane("reload");' in existing_handler
+    assert re.search(
+        r'<section class="shift-window-dialog"[^>]+role="dialog"'
+        r'[^>]+aria-modal="true"',
+        shift_partial,
+    )
+
+
+def test_terminal_timing_preview_ignores_superseded_and_post_stale_responses():
+    controller_path = Path("app/static/js/timing_interval_editor.mjs")
+    controller = controller_path.read_text(encoding="utf-8")
+    assert "export function createPreviewCoordinator" in controller
+    execution = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            f"""
+globalThis.document = {{
+  querySelector: () => null,
+  querySelectorAll: () => [],
+}};
+const {{ createPreviewCoordinator }} = await import({json.dumps(controller_path.resolve().as_uri())});
+const pending = [];
+const applied = [];
+const coordinator = createPreviewCoordinator({{
+  apply: (value) => applied.push(value),
+}});
+const makeRequest = (label) => coordinator.request((signal) => new Promise((resolve) => {{
+  pending.push({{ label, signal, resolve }});
+}}));
+
+const first = makeRequest("first");
+await Promise.resolve();
+const second = makeRequest("second");
+await Promise.resolve();
+pending.find((request) => request.label === "second").resolve("second");
+const secondResult = await second;
+pending.find((request) => request.label === "first").resolve("first");
+const firstResult = await first;
+
+const third = makeRequest("third");
+await Promise.resolve();
+coordinator.invalidate({{ stale: true }});
+pending.find((request) => request.label === "third").resolve("third");
+const thirdResult = await third;
+
+console.log(JSON.stringify({{
+  applied,
+  results: [firstResult.applied, secondResult.applied, thirdResult.applied],
+  aborted: pending.map((request) => request.signal.aborted),
+  generation: coordinator.generation(),
+}}));
+""",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    observed = json.loads(execution.stdout)
+    assert observed == {
+        "applied": ["second"],
+        "results": [False, True, False],
+        "aborted": [True, False, True],
+        "generation": 4,
+    }
+
+    assert 'document.addEventListener("terminal:server-time"' in controller
+    assert "requestOrdinaryPreview" in controller
+    assert 'input.addEventListener("blur"' in controller
+    assert "invalidatePreviewDraft();" in controller
+    add_start = controller.index('addButton.addEventListener("click", () => {')
+    add_end = controller.index("});", add_start)
+    add_handler = controller[add_start:add_end]
+    assert add_handler.index("invalidatePreviewDraft();") < add_handler.index(
+        "addIntervalDraft"
+    )
+    assert "requestOrdinaryPreview" not in add_handler
+    assert "setPreviewLoading(true);" in controller
+    assert "setPreviewLoading(false);" in controller
+    assert "previewCoordinator.generation() === requestGeneration" in controller
+    assert "previewCoordinator.invalidate({ stale: true })" in controller
+    assert "previewCoordinator.invalidate({ suspend: true })" in controller
+    assert "signal," in controller
+    assert "new Date(" not in controller
+    assert "Date.parse(" not in controller

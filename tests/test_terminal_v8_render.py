@@ -180,6 +180,50 @@ def form_block(html: str, action: str) -> str:
     return match.group(0)
 
 
+def normalized_markup(markup: str) -> str:
+    return re.sub(r"\s+", " ", markup).strip()
+
+
+def terminal_timing_model_from_html(html: str) -> dict[str, object]:
+    match = re.search(
+        r'<script type="application/json" data-terminal-timing-model>\s*'
+        r'(?P<payload>.*?)\s*</script>',
+        html,
+        flags=re.S,
+    )
+    assert match is not None
+    return json.loads(match.group("payload"))
+
+
+def accepted_lifecycle_form_snapshot(
+    *,
+    action: str,
+    slot: str,
+    version: int,
+    icon: str,
+    label: str,
+    button_class: str,
+    finish_message: str | None = None,
+) -> str:
+    finish_hook = (
+        ' data-finish-confirm-form="true"'
+        f' data-finish-confirm-message="{finish_message}"'
+        if finish_message is not None
+        else ""
+    )
+    return normalized_markup(
+        f"""
+        <form action="{action}" method="post" data-lifecycle-slot="{slot}"{finish_hook}>
+          <input type="hidden" name="loaded_version" value="{version}">
+          <button class="{button_class}" type="submit"><span class="button-icon button-icon-asset"
+                data-icon-asset="{icon}"
+                style="--button-icon-source: url('/static/images/terminal-ui/{icon}.svg')"
+                aria-hidden="true"></span><span>{label}</span></button>
+        </form>
+        """
+    )
+
+
 def route_endpoint(path: str):
     route = next(
         (
@@ -2208,13 +2252,243 @@ def test_terminal_timing_context_retains_invalid_and_locks_stale_drafts(connecti
     assert stale_context["terminal_timing"]["locked"] is True
 
 
+def test_terminal_timing_menu_visibility_icon_and_lifecycle_markup(connection):
+    card_id = release_ready_card("26182-timing-menu", machine_id=1, sequence=1)
+
+    pending_version = card_version(card_id)
+    pending_html = render_terminal(card_id)
+    pending_start = form_block(
+        pending_html,
+        f"/terminal/cards/{card_id}/timing/start",
+    )
+    assert normalized_markup(pending_start) == accepted_lifecycle_form_snapshot(
+        action=f"/terminal/cards/{card_id}/timing/start",
+        slot="start",
+        version=pending_version,
+        icon="start",
+        label="Старт",
+        button_class="action-button action-primary",
+    )
+    assert "data-timing-menu" not in pending_html
+
+    assert db.start_production_timing(card_id, pending_version).ok
+    running_version = card_version(card_id)
+    running_card = terminal_context(card_id)["selected_card"]
+    running_html = render_terminal(card_id)
+    running_pause = form_block(
+        running_html,
+        f"/terminal/cards/{card_id}/timing/pause",
+    )
+    running_finish = form_block(
+        running_html,
+        f"/terminal/cards/{card_id}/finish",
+    )
+    assert normalized_markup(running_pause) == accepted_lifecycle_form_snapshot(
+        action=f"/terminal/cards/{card_id}/timing/pause",
+        slot="pause",
+        version=running_version,
+        icon="pause",
+        label="Пауза",
+        button_class="action-button action-secondary",
+    )
+    assert 'data-timing-finish-review="true"' in running_finish
+    assert 'data-finish-confirm-form="true"' not in running_finish
+    accepted_running_finish = running_finish.replace(
+        'data-timing-finish-review="true"',
+        'data-finish-confirm-form="true"',
+    )
+    assert normalized_markup(
+        accepted_running_finish
+    ) == accepted_lifecycle_form_snapshot(
+        action=f"/terminal/cards/{card_id}/finish",
+        slot="finish",
+        version=running_version,
+        icon="end",
+        label="Приключи",
+        button_class="action-button action-primary",
+        finish_message=running_card["finish_confirmation_message"],
+    )
+    assert running_html.count('data-lifecycle-slot=') == 3
+    assert running_html.index('data-lifecycle-slot="finish"') < running_html.index(
+        "data-timing-menu"
+    )
+    assert running_html.count("Производствено време") >= 1
+    assert 'aria-label="Още действия"' in running_html
+    assert 'aria-haspopup="menu"' in running_html
+    assert 'aria-expanded="false"' in running_html
+    assert 'role="menu"' in running_html
+    assert 'role="menuitem"' in running_html
+    assert re.search(
+        r'<img[^>]+src="/static/images/terminal-ui/clock-icon\.png"'
+        r'[^>]+width="17"[^>]+height="17"[^>]+alt=""',
+        running_html,
+    )
+    assert Path(
+        "app/static/images/terminal-ui/clock-icon.png"
+    ).read_bytes() == Path("ui-prototypes/clock-icon.png").read_bytes()
+
+    assert db.pause_production_timing(card_id, running_version).ok
+    paused_version = card_version(card_id)
+    paused_card = terminal_context(card_id)["selected_card"]
+    paused_html = render_terminal(card_id)
+    paused_resume = form_block(
+        paused_html,
+        f"/terminal/cards/{card_id}/timing/resume",
+    )
+    paused_finish = form_block(
+        paused_html,
+        f"/terminal/cards/{card_id}/finish",
+    )
+    assert normalized_markup(paused_resume) == accepted_lifecycle_form_snapshot(
+        action=f"/terminal/cards/{card_id}/timing/resume",
+        slot="pause",
+        version=paused_version,
+        icon="start",
+        label="Продължи",
+        button_class="action-button action-primary",
+    )
+    accepted_paused_finish = paused_finish.replace(
+        'data-timing-finish-review="true"',
+        'data-finish-confirm-form="true"',
+    )
+    assert normalized_markup(
+        accepted_paused_finish
+    ) == accepted_lifecycle_form_snapshot(
+        action=f"/terminal/cards/{card_id}/finish",
+        slot="finish",
+        version=paused_version,
+        icon="end",
+        label="Приключи",
+        button_class="action-button action-secondary",
+        finish_message=paused_card["finish_confirmation_message"],
+    )
+    assert paused_html.count("data-timing-menu") >= 1
+
+    assert db.update_rewinding_roll_count(card_id, paused_version, 2).ok
+    assert db.finish_card(card_id, card_version(card_id)).ok
+    waiting_version = card_version(card_id)
+    waiting_card = terminal_context(card_id)["selected_card"]
+    waiting_html = render_terminal(card_id)
+    waiting_finish = form_block(
+        waiting_html,
+        f"/terminal/cards/{card_id}/finish",
+    )
+    assert normalized_markup(waiting_finish) == accepted_lifecycle_form_snapshot(
+        action=f"/terminal/cards/{card_id}/finish",
+        slot="finish",
+        version=waiting_version,
+        icon="end",
+        label="Приключи",
+        button_class="action-button action-primary",
+        finish_message=waiting_card["finish_confirmation_message"],
+    )
+    assert "data-timing-menu" not in waiting_html
+
+
+def test_terminal_timing_dialog_matches_approved_v2_contract(connection):
+    card_id = release_ready_card("26182-timing-dialog", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+
+    html = render_terminal(card_id)
+    controller_path = Path("app/static/js/timing_interval_editor.mjs")
+    assert controller_path.exists()
+    controller_source = controller_path.read_text(encoding="utf-8")
+
+    assert html.count('data-timing-editor-overlay') == 1
+    assert re.search(
+        r'<div[^>]+data-timing-editor-overlay[^>]+hidden[^>]+aria-hidden="true"',
+        html,
+    )
+    assert re.search(
+        r'<section[^>]+class="timing-dialog"[^>]+role="dialog"'
+        r'[^>]+aria-modal="true"[^>]+aria-labelledby="timing-dialog-title"'
+        r'[^>]+aria-describedby="timing-dialog-context"[^>]+tabindex="-1"',
+        html,
+    )
+    assert '<h2 id="timing-dialog-title">Корекция на производствено време</h2>' in html
+    assert 'id="timing-dialog-context"' in html
+    assert html.count("Производствено време") >= 2
+    assert "Общо паузирано време" in html
+    assert [
+        html.index(">№</div>", html.index('data-timing-column-headings')),
+        html.index(">Начало</div>", html.index('data-timing-column-headings')),
+        html.index(">Край</div>", html.index('data-timing-column-headings')),
+        html.index(">Продължителност</div>", html.index('data-timing-column-headings')),
+        html.index(">Действие</div>", html.index('data-timing-column-headings')),
+    ] == sorted(
+        [
+            html.index(">№</div>", html.index('data-timing-column-headings')),
+            html.index(">Начало</div>", html.index('data-timing-column-headings')),
+            html.index(">Край</div>", html.index('data-timing-column-headings')),
+            html.index(">Продължителност</div>", html.index('data-timing-column-headings')),
+            html.index(">Действие</div>", html.index('data-timing-column-headings')),
+        ]
+    )
+    assert 'class="interval-scroll" data-timing-interval-list tabindex="-1"' in html
+    assert 'role="alert" tabindex="-1" data-timing-alert hidden' in html
+    assert 'data-timing-add-interval>Добави интервал</button>' in html
+    assert 'data-timing-reload hidden>Презареди</a>' in html
+    assert 'data-timing-cancel>Отказ</button>' in html
+    assert 'data-timing-save>Запиши</button>' in html
+    assert 'name="loaded_version"' in html
+    assert 'name="timing_draft"' in html
+    assert 'type="application/json" data-terminal-timing-model' in html
+    assert '/static/js/timing_interval_editor.mjs' in html
+
+    dialog_rules = css_rules(html, r"(?m)^    \.timing-dialog")
+    assert "width: min(1040px, calc(100vw - 40px));" in dialog_rules
+    assert "height: min(728px, calc(100vh - 40px));" in dialog_rules
+    assert "grid-template-rows: auto auto auto minmax(0, 1fr) auto;" in dialog_rules
+    overlay_rules = css_rules(html, r"(?m)^    \.timing-modal-overlay")
+    assert "padding: 20px;" in overlay_rules
+    menu_button_rules = css_rules(html, r"(?m)^    \.timing-menu-button")
+    assert "color: var(--primary-text);" in menu_button_rules
+    scroll_rules = css_rules(html, r"(?m)^    \.interval-scroll")
+    assert "overflow-y: auto;" in scroll_rules
+    columns_rules = css_rules(
+        html,
+        r"(?m)^    \.interval-columns,\s*\.interval-row",
+    )
+    assert "48px minmax(0, 1fr) minmax(0, 1fr) 150px 72px" in columns_rules
+    separator_rules = css_rules(
+        html,
+        r"(?m)^    \.interval-columns > div:not\(:first-child\),\s*\.interval-row > div:not\(:first-child\)",
+    )
+    assert "border-left: 1px solid #dfe5eb;" in separator_rules
+
+    assert 'from "./timing_interval_editor_core.mjs"' in controller_source
+    for reused_export in (
+        "addIntervalDraft",
+        "incompleteDraftFields",
+        "mapServerPreview",
+        "markIntervalDeleted",
+        "maskTimeInput",
+        "serializeTimingDraft",
+        "undoIntervalDelete",
+    ):
+        assert reused_export in controller_source
+    assert 'input.type = "date"' in controller_source
+    assert 'inputMode = "numeric"' in controller_source
+    assert 'maxLength = 5' in controller_source
+    assert 'stopCell.replaceChildren()' in controller_source
+    assert 'button.textContent = row.deleted ? "Отмяна" : "×"' in controller_source
+    assert "openEditor({ opener: menuButton });" in controller_source
+    assert "new Date(" not in controller_source
+    assert "Date.parse(" not in controller_source
+    assert "Добави пауза" not in html
+    assert "ongoing" not in html
+
+
 def test_terminal_v8_finish_form_uses_app_native_confirmation_modal(connection):
     card_id = release_ready_card("26183", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
 
+    running_html = render_terminal(card_id)
+    pause_form = form_block(running_html, f"/terminal/cards/{card_id}/timing/pause")
+    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 1).ok
+    assert db.finish_card(card_id, card_version(card_id)).ok
     html = render_terminal(card_id)
     finish_form = form_block(html, f"/terminal/cards/{card_id}/finish")
-    pause_form = form_block(html, f"/terminal/cards/{card_id}/timing/pause")
 
     assert "confirm(" not in html
     assert "onsubmit=" not in finish_form
@@ -2283,6 +2557,47 @@ def test_active_finish_uses_review_while_waiting_finish_keeps_simple_confirmatio
             (active_id,),
         )
     loaded_version = card_version(active_id)
+    active_html = render_terminal(active_id)
+    active_finish_markup = form_block(
+        active_html,
+        f"/terminal/cards/{active_id}/finish",
+    )
+    controller_source = Path(
+        "app/static/js/timing_interval_editor.mjs"
+    ).read_text(encoding="utf-8")
+
+    assert 'data-timing-finish-review="true"' in active_finish_markup
+    assert 'data-finish-confirm-form="true"' not in active_finish_markup
+    assert active_html.count("data-finish-review-overlay") == 1
+    assert 'aria-labelledby="finish-review-title"' in active_html
+    assert 'role="alert" tabindex="-1" data-finish-review-alert hidden' in active_html
+    assert '<h2 id="finish-review-title">Преглед преди приключване</h2>' in active_html
+    assert "Първо начало" in active_html
+    assert "Предложен край" in active_html
+    assert 'data-finish-review-edit>Редактирай интервалите</button>' in active_html
+    assert 'data-finish-review-cancel>Отказ</button>' in active_html
+    assert (
+        'class="finish-confirm-primary" type="button" '
+        'data-finish-review-confirm>Потвърди приключване</button>'
+    ) in active_html
+    assert 'form[data-timing-finish-review="true"]' in controller_source
+    assert "`${activeFinishForm.action}-review`" in controller_source
+    assert "`${activeFinishForm.action}-review/preview`" in controller_source
+    assert "responsePayload.preview.draft" in controller_source
+    assert 'name = "review_token"' in controller_source
+    assert 'name = "timing_draft"' in controller_source
+    assert 'state.mode === "finish" ? cancelEditor() : closeEditor();' in controller_source
+    finish_submit_start = controller_source.index(
+        'activeFinishForm.addEventListener("submit", (event) => {'
+    )
+    finish_submit_end = controller_source.index("});", finish_submit_start)
+    finish_submit_handler = controller_source[finish_submit_start:finish_submit_end]
+    assert "if (finishNativeSubmit)" in finish_submit_handler
+    assert finish_submit_handler.index("event.preventDefault();") < finish_submit_handler.index(
+        "if (finishSubmitting)"
+    )
+    assert "finishNativeSubmit = true;" in controller_source
+    assert "activeFinishForm.requestSubmit();\n    } finally {\n      finishNativeSubmit = false;" in controller_source
 
     missing_review = asyncio.run(
         finish_terminal_card(
@@ -2339,6 +2654,13 @@ def test_active_finish_uses_review_while_waiting_finish_keeps_simple_confirmatio
     waiting_before = db.fetch_terminal_card_detail(waiting_id)
     assert waiting_before is not None
     timing_before = [dict(row) for row in waiting_before["timing_segments"]]
+    waiting_html = render_terminal(waiting_id)
+    waiting_finish_markup = form_block(
+        waiting_html,
+        f"/terminal/cards/{waiting_id}/finish",
+    )
+    assert 'data-finish-confirm-form="true"' in waiting_finish_markup
+    assert 'data-timing-finish-review="true"' not in waiting_finish_markup
     waiting_finish = asyncio.run(
         finish_terminal_card(
             make_test_request(f"/terminal/cards/{waiting_id}/finish"),
@@ -2354,6 +2676,120 @@ def test_active_finish_uses_review_while_waiting_finish_keeps_simple_confirmatio
     assert waiting_after["status"] == "completed"
     assert waiting_after["finished_at"] == waiting_before["finished_at"]
     assert waiting_after["timing_segments"] == timing_before
+
+
+def test_terminal_timing_errors_reopen_or_lock_the_submitted_draft(connection):
+    card_id = release_ready_card("26184-timing-errors", machine_id=1, sequence=1)
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.pause_production_timing(card_id, card_version(card_id)).ok
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    segment_id = int(card["timing_segments"][0]["id"])
+    loaded_version = card_version(card_id)
+    submitted = db.TimingDraftRow(
+        segment_id,
+        "2026-01-15",
+        "10:00",
+        "2026-01-15",
+        "10:00",
+    )
+    hostile_message = 'Краят е невалиден. </script><script>alert("x")</script>'
+    issue = db.TimingValidationIssue(0, "stop_time", hostile_message)
+    retained_preview = db.TimingLedgerPreview(
+        draft_rows=(submitted,),
+        intervals=({"source_index": 0, "duration_seconds": 3600},),
+        first_started_at="2026-01-15 08:00:37",
+        proposed_finished_at="2026-01-15 09:00:29",
+        production_seconds=3600,
+        paused_seconds=600,
+        reviewed_at="2026-01-15 09:00:29",
+    )
+
+    ordinary_html = render_terminal(
+        card_id,
+        terminal_timing_dialog_open=True,
+        terminal_timing_draft=[submitted],
+        terminal_timing_loaded_version=str(loaded_version),
+        terminal_timing_issues=(issue,),
+        terminal_timing_stale=False,
+        timing_result=RuleResult(False, (hostile_message,)),
+    )
+    ordinary_model = terminal_timing_model_from_html(ordinary_html)
+    assert ordinary_model["editor_open"] is True
+    assert ordinary_model["timing"]["loaded_version"] == loaded_version
+    assert ordinary_model["timing"]["draft"] == [
+        {
+            "segment_id": segment_id,
+            "start_date": "2026-01-15",
+            "start_time": "10:00",
+            "stop_date": "2026-01-15",
+            "stop_time": "10:00",
+            "deleted": False,
+        }
+    ]
+    assert ordinary_model["issues"] == [
+        {
+            "source_index": 0,
+            "field": "stop_time",
+            "message": hostile_message,
+        }
+    ]
+    assert hostile_message not in ordinary_html
+    assert "\\u003c/script\\u003e" in ordinary_html
+
+    finish_html = render_terminal(
+        card_id,
+        finish_review_open=True,
+        finish_review_token="opaque-review-token",
+        finish_review_draft=[submitted],
+        finish_review_loaded_version=str(loaded_version),
+        finish_review_issues=(issue,),
+        finish_review_preview=retained_preview,
+        finish_review_stale=True,
+        workflow_result=RuleResult(False, (hostile_message,)),
+    )
+    finish_model = terminal_timing_model_from_html(finish_html)
+    assert finish_model["finish_review"] == {
+        "open": True,
+        "review_token": "opaque-review-token",
+        "loaded_version": loaded_version,
+        "draft": ordinary_model["timing"]["draft"],
+        "issues": ordinary_model["issues"],
+        "locked": True,
+        "preview": {
+            "production_seconds": 3600,
+            "paused_seconds": 600,
+            "intervals": [{"source_index": 0, "duration_seconds": 3600}],
+        },
+    }
+
+    controller_source = Path(
+        "app/static/js/timing_interval_editor.mjs"
+    ).read_text(encoding="utf-8")
+    assert "if (model.finish_review?.open)" in controller_source
+    assert "model.finish_review.draft" in controller_source
+    assert "retainedFinishPreview(model.finish_review, retainedDraft)" in controller_source
+    assert "renderServerErrors" in controller_source
+    assert "fieldInput(issue.source_index, issue.field)" in controller_source
+    assert "lockTimingDraft" in controller_source
+    assert "reloadLink.hidden = false" in controller_source
+    assert "finishConfirmButton.disabled = true" in controller_source
+
+    begin_review_start = controller_source.index("async function beginFinishReview()")
+    begin_review_end = controller_source.index(
+        "async function applyFinishDraft()", begin_review_start
+    )
+    begin_review = controller_source[begin_review_start:begin_review_end]
+    assert "const hasRowErrors = (responsePayload.field_errors || []).some" in begin_review
+    stale_branch = begin_review.index("if (response.status === 409 || hasRowErrors)")
+    assert begin_review.index("openEditor({", stale_branch) < begin_review.index(
+        "lockTimingDraft(responsePayload.messages)", stale_branch
+    )
+    assert "renderServerErrors(responsePayload.field_errors || [])" in begin_review
+    assert "finishConfirmButton.disabled = true" in begin_review
+    assert "finishEditButton.disabled = true" in begin_review
+    assert begin_review.count("focusFinishAlert();") == 2
+    assert "showFinishAlert(model.finish_review.issues.map((issue) => issue.message));\n      focusFinishAlert();" in controller_source
 
 
 def test_terminal_finish_confirmation_warns_only_for_mixed_saved_gross_roll_pallets(

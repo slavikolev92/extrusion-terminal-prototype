@@ -714,6 +714,385 @@
       line-height: 1;
     }
 
+    .timing-menu {
+      position: relative;
+      flex: 0 0 auto;
+    }
+
+    .timing-menu-button {
+      width: 38px;
+      min-width: 38px;
+      padding: 0;
+      color: var(--primary-text);
+      font-size: 21px;
+      line-height: 1;
+    }
+
+    .timing-menu-panel {
+      position: absolute;
+      top: 44px;
+      right: 0;
+      z-index: 45;
+      width: 232px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 6px;
+    }
+
+    .timing-menu-panel button {
+      width: 100%;
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 9px;
+      background: var(--surface);
+    }
+
+    .timing-menu-panel img {
+      width: 17px;
+      height: 17px;
+      flex: 0 0 auto;
+      object-fit: contain;
+    }
+
+    .timing-modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 110;
+      padding: 20px;
+      display: grid;
+      place-items: center;
+      background: rgba(16, 32, 48, .58);
+      backdrop-filter: blur(2px);
+    }
+
+    .timing-dialog {
+      width: min(1040px, calc(100vw - 40px));
+      height: min(728px, calc(100vh - 40px));
+      max-height: min(728px, calc(100vh - 40px));
+      min-width: 0;
+      display: grid;
+      grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+      border: 1px solid #b8c4d1;
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .timing-dialog-header {
+      min-width: 0;
+      border-bottom: 1px solid var(--line);
+      padding: 20px 24px 18px;
+    }
+
+    .timing-dialog-header h2 {
+      margin: 0;
+      color: var(--primary-text);
+      font-size: 25px;
+      line-height: 1.15;
+      font-weight: 900;
+    }
+
+    .timing-dialog-context {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .timing-dialog-message-region {
+      min-height: 82px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px 24px;
+      display: grid;
+      align-items: center;
+    }
+
+    .timing-totals {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .timing-total {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--surface-soft);
+      padding: 9px 12px;
+    }
+
+    .timing-total span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .timing-total strong {
+      display: block;
+      margin-top: 2px;
+      color: var(--primary-text);
+      font-size: 21px;
+      line-height: 1.1;
+    }
+
+    .timing-dialog-alert {
+      border: 1px solid #e7a5aa;
+      border-radius: 9px;
+      background: var(--red-soft);
+      color: #8e1720;
+      padding: 11px 13px;
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.35;
+    }
+
+    .timing-dialog-alert.stale {
+      border-color: #d9b555;
+      background: var(--yellow-soft);
+      color: #795000;
+    }
+
+    .interval-columns,
+    .interval-row {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr) minmax(0, 1fr) 150px 72px;
+      gap: 0;
+      align-items: center;
+    }
+
+    .interval-columns {
+      min-height: 48px;
+      border-bottom: 1px solid var(--line);
+      background: #eef1f4;
+      padding: 8px 24px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .interval-columns > div,
+    .interval-row > div {
+      min-width: 0;
+      align-self: stretch;
+      display: flex;
+      align-items: center;
+      padding: 0 18px;
+    }
+
+    .interval-columns > div:first-child,
+    .interval-row > div:first-child {
+      padding-left: 0;
+      padding-right: 12px;
+    }
+
+    .interval-columns > div:not(:first-child),
+    .interval-row > div:not(:first-child) {
+      border-left: 1px solid #dfe5eb;
+    }
+
+    .interval-columns > div:last-child,
+    .interval-row > div:last-child {
+      justify-content: center;
+      padding-right: 0;
+    }
+
+    .interval-columns > div:nth-child(4) {
+      font-size: 11px;
+    }
+
+    .interval-scroll {
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      background: var(--surface);
+    }
+
+    .interval-row {
+      min-height: 86px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px 24px;
+      transition: background .15s ease;
+    }
+
+    .interval-row:last-child {
+      border-bottom: 0;
+    }
+
+    .interval-row.pending-delete {
+      border-color: var(--line);
+      background: var(--surface-soft);
+    }
+
+    .interval-number {
+      color: var(--primary-text);
+      font-size: 18px;
+      font-weight: 900;
+    }
+
+    .timestamp-controls {
+      width: 100%;
+      min-width: 0;
+      display: grid;
+      grid-template-columns: minmax(142px, 1fr) 100px;
+      gap: 8px;
+    }
+
+    .timestamp-controls input[type="date"] {
+      min-width: 142px;
+    }
+
+    .timestamp-controls input[data-timing-field$="_time"] {
+      min-width: 100px;
+    }
+
+    .interval-duration {
+      color: var(--text);
+      font-size: 16px;
+      font-weight: 900;
+    }
+
+    .interval-delete,
+    .interval-undo {
+      border-color: var(--line);
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    .interval-delete {
+      width: 28px;
+      min-height: 28px;
+      border-radius: 6px;
+      padding: 0;
+      font-size: 19px;
+      line-height: 1;
+    }
+
+    .interval-undo {
+      width: 72px;
+      min-height: 34px;
+      padding: 0 8px;
+      font-size: 13px;
+    }
+
+    .timing-dialog-footer {
+      min-height: 72px;
+      border-top: 1px solid var(--line);
+      background: #f8fafc;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .timing-dialog-footer-group {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .timing-dialog-footer button,
+    .timing-dialog-footer a {
+      min-width: 108px;
+    }
+
+    .timing-dialog-loading {
+      opacity: .62;
+    }
+
+    .finish-review-dialog {
+      width: min(680px, calc(100vw - 40px));
+      min-width: 0;
+      border: 1px solid #b8c4d1;
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .finish-review-body {
+      padding: 22px 24px 8px;
+    }
+
+    .finish-review-intro,
+    .finish-review-warning {
+      margin: 0 0 16px;
+      color: #4f5c69;
+      font-size: 15px;
+      line-height: 1.45;
+    }
+
+    .finish-review-warning {
+      border: 1px solid #d9b555;
+      border-radius: 9px;
+      background: var(--yellow-soft);
+      color: #795000;
+      padding: 11px 13px;
+      font-weight: 800;
+    }
+
+    .finish-review-facts {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .finish-review-fact {
+      min-height: 82px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface-soft);
+      padding: 12px 14px;
+    }
+
+    .finish-review-fact span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .finish-review-fact strong {
+      display: block;
+      margin-top: 7px;
+      color: var(--primary-text);
+      font-size: 20px;
+      line-height: 1.15;
+    }
+
+    .finish-review-actions {
+      padding: 16px 24px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .finish-review-actions-right {
+      display: flex;
+      gap: 9px;
+    }
+
+    @media (max-width: 1100px) {
+      .interval-columns,
+      .interval-row {
+        grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr) 118px 72px;
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+
+      .interval-columns > div,
+      .interval-row > div {
+        padding-left: 12px;
+        padding-right: 12px;
+      }
+    }
+
     .action-disabled-reason {
       max-width: 470px;
       margin: 0;
@@ -4257,12 +4636,27 @@
               {% endif %}
 
               {% if selected_card.status in ["running", "paused"] %}
-                <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post" data-lifecycle-slot="finish" data-finish-confirm-form="true" data-finish-confirm-message="{{ selected_card.finish_confirmation_message }}">
+                <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post" data-lifecycle-slot="finish" data-timing-finish-review="true" data-finish-confirm-message="{{ selected_card.finish_confirmation_message }}">
                   <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
                   <button class="action-button {% if selected_card.status == 'running' %}action-primary{% else %}action-secondary{% endif %}" type="submit">{{ terminal_icon("end") }}<span>Приключи</span></button>
                 </form>
               {% else %}
                 <button class="action-button" type="button" data-lifecycle-slot="finish" disabled>{{ terminal_icon("end") }}<span>Приключи</span></button>
+              {% endif %}
+              {% if terminal_timing %}
+                <div class="timing-menu" data-timing-menu>
+                  <button class="timing-menu-button" type="button" aria-label="Още действия"
+                          aria-haspopup="menu" aria-expanded="false"
+                          aria-controls="timing-menu-panel" data-timing-menu-button>⋯</button>
+                  <div class="timing-menu-panel" id="timing-menu-panel" role="menu"
+                       data-timing-menu-panel hidden>
+                    <button type="button" role="menuitem" data-timing-menu-open>
+                      <img src="{{ url_for('static', path='/images/terminal-ui/clock-icon.png') }}"
+                           width="17" height="17" alt="">
+                      <span>Производствено време</span>
+                    </button>
+                  </div>
+                </div>
               {% endif %}
               {% endif %}
             </div>
@@ -4805,6 +5199,144 @@
             </div>
           </div>
         </form>
+      </section>
+    </div>
+  {% endif %}
+  {% if terminal_timing %}
+    <script type="application/json" data-terminal-timing-model>
+      {
+        "timing": {{ terminal_timing | tojson }},
+        "editor_open": {{ (terminal_timing_dialog_open | default(false)) | tojson }},
+        "issues": [
+          {% for issue in terminal_timing_issues | default(()) %}
+            {
+              "source_index": {{ issue.source_index | tojson }},
+              "field": {{ issue.field | tojson }},
+              "message": {{ issue.message | tojson }}
+            }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        "finish_review": {
+          "open": {{ (finish_review_open | default(false)) | tojson }},
+          "review_token": {{ (finish_review_token if finish_review_token is string else "") | tojson }},
+          "loaded_version": {{ (finish_review_loaded_version | default(terminal_timing.loaded_version)) | int | tojson }},
+          "draft": [
+            {% for row in finish_review_draft | default(()) %}
+              {
+                "segment_id": {{ row.segment_id | tojson }},
+                "start_date": {{ row.start_date | tojson }},
+                "start_time": {{ row.start_time | tojson }},
+                "stop_date": {{ row.stop_date | tojson }},
+                "stop_time": {{ row.stop_time | tojson }},
+                "deleted": {{ row.deleted | tojson }}
+              }{% if not loop.last %},{% endif %}
+            {% endfor %}
+          ],
+          "issues": [
+            {% for issue in finish_review_issues | default(()) %}
+              {
+                "source_index": {{ issue.source_index | tojson }},
+                "field": {{ issue.field | tojson }},
+                "message": {{ issue.message | tojson }}
+              }{% if not loop.last %},{% endif %}
+            {% endfor %}
+          ],
+          "locked": {{ (finish_review_stale | default(false)) | tojson }},
+          "preview": {% if finish_review_preview is defined and finish_review_preview %}{
+            "production_seconds": {{ finish_review_preview.production_seconds | tojson }},
+            "paused_seconds": {{ finish_review_preview.paused_seconds | tojson }},
+            "intervals": {{ finish_review_preview.intervals | tojson }}
+          }{% else %}null{% endif %}
+        }
+      }
+    </script>
+    <div class="timing-modal-overlay" data-timing-editor-overlay hidden aria-hidden="true">
+      <form action="/terminal/cards/{{ terminal_timing.card_id }}/timing-ledger" method="post"
+            data-timing-save-form>
+        <input type="hidden" name="loaded_version" value="{{ terminal_timing.loaded_version }}">
+        <input type="hidden" name="timing_draft" value="" data-timing-draft-input>
+        <section class="timing-dialog" role="dialog" aria-modal="true"
+                 aria-labelledby="timing-dialog-title" aria-describedby="timing-dialog-context"
+                 tabindex="-1" data-timing-dialog>
+          <header class="timing-dialog-header">
+            <h2 id="timing-dialog-title">Корекция на производствено време</h2>
+            <p class="timing-dialog-context" id="timing-dialog-context">
+              Машина {{ selected_card.machine_id }} · Поръчка №{{ selected_card.order_number }} · {{ selected_card.status_label }}
+            </p>
+          </header>
+          <div class="timing-dialog-message-region">
+            <div class="timing-dialog-alert" role="alert" tabindex="-1" data-timing-alert hidden></div>
+            <div class="timing-totals" data-timing-totals>
+              <div class="timing-total">
+                <span>Производствено време</span>
+                <strong data-timing-production-total>0 ч 00 мин</strong>
+              </div>
+              <div class="timing-total">
+                <span>Общо паузирано време</span>
+                <strong data-timing-paused-total>0 ч 00 мин</strong>
+              </div>
+            </div>
+          </div>
+          <div class="interval-columns" data-timing-column-headings aria-hidden="true">
+            <div>№</div>
+            <div>Начало</div>
+            <div>Край</div>
+            <div>Продължителност</div>
+            <div>Действие</div>
+          </div>
+          <div class="interval-scroll" data-timing-interval-list tabindex="-1"></div>
+          <footer class="timing-dialog-footer">
+            <div class="timing-dialog-footer-group">
+              <button class="action-secondary" type="button" data-timing-add-interval>Добави интервал</button>
+              <a class="refresh-link" href="/terminal/cards/{{ terminal_timing.card_id }}"
+                 data-timing-reload hidden>Презареди</a>
+            </div>
+            <div class="timing-dialog-footer-group">
+              <button class="action-secondary" type="button" data-timing-cancel>Отказ</button>
+              <button class="action-primary" type="submit" data-timing-save>Запиши</button>
+            </div>
+          </footer>
+        </section>
+      </form>
+    </div>
+    <div class="timing-modal-overlay" data-finish-review-overlay hidden aria-hidden="true">
+      <section class="finish-review-dialog" role="dialog" aria-modal="true"
+               aria-labelledby="finish-review-title" aria-describedby="finish-review-intro"
+               tabindex="-1" data-finish-review-dialog>
+        <header class="timing-dialog-header">
+          <h2 id="finish-review-title">Преглед преди приключване</h2>
+          <p class="timing-dialog-context">
+            Машина {{ selected_card.machine_id }} · Поръчка №{{ selected_card.order_number }}
+          </p>
+        </header>
+        <div class="finish-review-body">
+          <div class="timing-dialog-alert" role="alert" tabindex="-1" data-finish-review-alert hidden></div>
+          <p class="finish-review-intro" id="finish-review-intro">
+            Проверете производствените интервали и общото време. Крайният час е фиксиран при натискане на „Приключи“.
+          </p>
+          <p class="finish-review-warning" data-finish-review-warning hidden></p>
+          <div class="finish-review-facts">
+            <div class="finish-review-fact">
+              <span>Първо начало</span><strong data-finish-first-start>—</strong>
+            </div>
+            <div class="finish-review-fact">
+              <span>Предложен край</span><strong data-finish-proposed-stop>—</strong>
+            </div>
+            <div class="finish-review-fact">
+              <span>Производствено време</span><strong data-finish-production-total>—</strong>
+            </div>
+            <div class="finish-review-fact">
+              <span>Общо паузирано време</span><strong data-finish-paused-total>—</strong>
+            </div>
+          </div>
+        </div>
+        <footer class="finish-review-actions">
+          <button class="action-secondary" type="button" data-finish-review-edit>Редактирай интервалите</button>
+          <div class="finish-review-actions-right">
+            <button class="action-secondary" type="button" data-finish-review-cancel>Отказ</button>
+            <button class="finish-confirm-primary" type="button" data-finish-review-confirm>Потвърди приключване</button>
+          </div>
+        </footer>
       </section>
     </div>
   {% endif %}
@@ -5569,7 +6101,9 @@
 
           currentSignature = snapshot.signature;
           showRefreshAlert();
-          document.dispatchEvent(new CustomEvent("terminal:card-stale"));
+          document.dispatchEvent(
+            new CustomEvent("terminal:card-stale", { cancelable: true }),
+          );
         } catch {
           // Manual refresh and server-side version checks still protect the workflow.
         }
@@ -6103,9 +6637,12 @@
       waitingRows.forEach((row) => row.addEventListener("click", () => closeWaiting(false)));
       historyFilters.forEach((filter) => filter.addEventListener("input", filterHistory));
       historyRows.forEach((row) => row.addEventListener("click", () => closeHistory(false)));
-      document.addEventListener("terminal:card-stale", () => {
+      document.addEventListener("terminal:card-stale", (event) => {
         closePalletSummary(false);
         requestAnimationFrame(() => {
+          if (event.defaultPrevented) {
+            return;
+          }
           document.getElementById("terminal-refresh-alert-button")?.focus();
         });
       });
@@ -6178,5 +6715,6 @@
     })();
   </script>
   <script type="module" src="{{ url_for('static', path='/js/roll_change_countdown.mjs') }}"></script>
+  <script type="module" src="{{ url_for('static', path='/js/timing_interval_editor.mjs') }}"></script>
 </body>
 </html>
