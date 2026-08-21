@@ -560,6 +560,48 @@ def test_terminal_timing_enforces_running_and_paused_ledger_shapes(connection):
     assert timing_snapshot(paused_id) == before_paused_open
 
 
+def test_terminal_timing_preserves_legacy_null_reason_on_existing_closed_edit(
+    connection,
+):
+    card_id = release_ready_card("27008-legacy-null-reason", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:17",
+        ended_at="2026-01-15 09:00:29",
+        end_reason=None,
+        status=STATUS_PAUSED,
+    )
+    before_version = card_version(card_id)
+
+    outcome = db.update_terminal_timing_ledger(
+        card_id,
+        before_version,
+        [
+            db.TimingDraftRow(
+                segment_id,
+                "2026-01-15",
+                "10:05",
+                "2026-01-15",
+                "11:05",
+            )
+        ],
+    )
+
+    assert outcome.result.ok
+    card = db.fetch_admin_card_detail(card_id)
+    assert card is not None
+    assert card["version"] == before_version + 1
+    assert card["timing_segments"] == [
+        {
+            "id": segment_id,
+            "started_at": "2026-01-15 08:05:00",
+            "ended_at": "2026-01-15 09:05:00",
+            "end_reason": None,
+        }
+    ]
+
+
 def test_terminal_timing_rejects_equal_reversed_overlapping_and_future_rows(connection):
     card_id = release_ready_card("27009", 1)
     start_card(card_id)
@@ -791,6 +833,88 @@ def test_terminal_timing_handles_skipped_repeated_and_unchanged_ambiguous_minute
     assert card is not None
     assert card["timing_segments"][0]["started_at"] == "2026-10-25 00:30:37"
     assert card["timing_segments"][0]["ended_at"] == "2026-10-25 02:30:41"
+
+
+def test_terminal_timing_rejects_unrepresentable_sofia_value_without_mutation(
+    connection,
+):
+    card_id = release_ready_card("27012-timezone-overflow", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:17",
+        ended_at="2026-01-15 09:00:29",
+        end_reason="pause",
+        status=STATUS_PAUSED,
+    )
+    before = timing_snapshot(card_id)
+    submitted = db.TimingDraftRow(
+        segment_id,
+        "0001-01-01",
+        "00:00",
+        "0001-01-01",
+        "01:00",
+    )
+    draft_json = timing_draft_json(submitted)
+
+    preview_response = asyncio.run(
+        main.preview_terminal_timing_ledger_route(
+            make_test_request(
+                f"/terminal/cards/{card_id}/timing-ledger/preview"
+            ),
+            card_id,
+            loaded_version=str(before[0]),
+            timing_draft=draft_json,
+        )
+    )
+    save_response = asyncio.run(
+        main.save_terminal_timing_ledger(
+            make_test_request(f"/terminal/cards/{card_id}/timing-ledger"),
+            card_id,
+            loaded_version=str(before[0]),
+            timing_draft=draft_json,
+        )
+    )
+
+    expected_issues = [
+        {
+            "source_index": 0,
+            "field": "start_time",
+            "message": "Начало съдържа невалидна дата или час.",
+        },
+        {
+            "source_index": 0,
+            "field": "stop_time",
+            "message": "Край съдържа невалидна дата или час.",
+        },
+    ]
+    assert preview_response.status_code == 422
+    assert json.loads(preview_response.body) == {
+        "ok": False,
+        "messages": [
+            "Начало съдържа невалидна дата или час.",
+            "Край съдържа невалидна дата или час.",
+        ],
+        "field_errors": expected_issues,
+    }
+    assert save_response.status_code == 200
+    assert save_response.context["timing_result"].messages == (
+        "Начало съдържа невалидна дата или час.",
+        "Край съдържа невалидна дата или час.",
+    )
+    assert save_response.context["terminal_timing_issues"] == (
+        db.TimingValidationIssue(
+            source_index=0,
+            field="start_time",
+            message="Начало съдържа невалидна дата или час.",
+        ),
+        db.TimingValidationIssue(
+            source_index=0,
+            field="stop_time",
+            message="Край съдържа невалидна дата или час.",
+        ),
+    )
+    assert timing_snapshot(card_id) == before
 
 
 def test_terminal_timing_save_preserves_unrelated_production_data_and_versions_once(connection):
@@ -1086,6 +1210,88 @@ def test_terminal_timing_save_route_retains_invalid_draft(connection):
     assert response.context["terminal_timing_stale"] is False
 
 
+@pytest.mark.parametrize(
+    ("invalid_values", "expected_field"),
+    (
+        (
+            {
+                "start_date": "2026-02-30",
+                "start_time": "10:00",
+                "stop_date": "",
+                "stop_time": "",
+            },
+            "start_date",
+        ),
+        (
+            {
+                "start_date": "2026-01-15",
+                "start_time": "10:00",
+                "stop_date": "2026-01-15",
+                "stop_time": "",
+            },
+            "stop_time",
+        ),
+    ),
+)
+def test_terminal_timing_parser_invalid_save_retains_safe_rows_in_render_model(
+    connection,
+    monkeypatch,
+    invalid_values,
+    expected_field,
+):
+    card_id = release_ready_card("27018-parser-retained", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:17",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    before = timing_snapshot(card_id)
+    adapter_calls: list[int] = []
+
+    def save_adapter(*args, **kwargs):
+        adapter_calls.append(card_id)
+        return None
+
+    monkeypatch.setattr(main, "update_terminal_timing_ledger", save_adapter)
+    submitted_row = {
+        "segment_id": segment_id,
+        **invalid_values,
+        "deleted": False,
+    }
+    submitted_json = json.dumps([submitted_row])
+
+    response = asyncio.run(
+        main.save_terminal_timing_ledger(
+            make_test_request(f"/terminal/cards/{card_id}/timing-ledger"),
+            card_id,
+            loaded_version=str(before[0]),
+            timing_draft=submitted_json,
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.context["timing_result"].messages == (
+        db.INVALID_TERMINAL_TIMING_DRAFT_MESSAGE,
+    )
+    assert response.context["terminal_timing_issues"] == (
+        db.TimingValidationIssue(
+            source_index=0,
+            field=expected_field,
+            message=db.INVALID_TERMINAL_TIMING_DRAFT_MESSAGE,
+        ),
+    )
+    assert response.context["terminal_timing_draft"] == [
+        db.TimingDraftRow(segment_id=segment_id, **invalid_values)
+    ]
+    assert response.context["terminal_timing"]["draft"] == [submitted_row]
+    assert response.context["terminal_timing_draft_json"] == submitted_json
+    assert adapter_calls == []
+    assert timing_snapshot(card_id) == before
+
+
 def test_terminal_timing_save_route_locks_retained_stale_draft(connection):
     card_id = release_ready_card("27019", 1)
     start_card(card_id)
@@ -1235,6 +1441,67 @@ def test_terminal_timing_routes_parse_before_database_adapter(connection, monkey
     )
     assert save_response.context["terminal_timing_draft_json"] == "{"
     assert adapter_calls == []
+
+
+def test_terminal_timing_decoder_depth_failure_returns_malformed_before_adapter(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("27021-decoder-depth", 1)
+    start_card(card_id)
+    before = timing_snapshot(card_id)
+    adapter_calls: list[str] = []
+
+    def preview_adapter(*args, **kwargs):
+        adapter_calls.append("preview")
+        return None
+
+    def save_adapter(*args, **kwargs):
+        adapter_calls.append("save")
+        return None
+
+    monkeypatch.setattr(main, "preview_terminal_timing_ledger_data", preview_adapter)
+    monkeypatch.setattr(main, "update_terminal_timing_ledger", save_adapter)
+    deeply_nested_json = "[" * 30_000 + "]" * 30_000
+
+    preview_response = asyncio.run(
+        main.preview_terminal_timing_ledger_route(
+            make_test_request(
+                f"/terminal/cards/{card_id}/timing-ledger/preview"
+            ),
+            card_id,
+            loaded_version=str(card_version(card_id)),
+            timing_draft=deeply_nested_json,
+        )
+    )
+    save_response = asyncio.run(
+        main.save_terminal_timing_ledger(
+            make_test_request(f"/terminal/cards/{card_id}/timing-ledger"),
+            card_id,
+            loaded_version=str(card_version(card_id)),
+            timing_draft=deeply_nested_json,
+        )
+    )
+
+    expected_error = {
+        "ok": False,
+        "messages": [db.INVALID_TERMINAL_TIMING_DRAFT_MESSAGE],
+        "field_errors": [
+            {
+                "source_index": None,
+                "field": "form",
+                "message": db.INVALID_TERMINAL_TIMING_DRAFT_MESSAGE,
+            }
+        ],
+    }
+    assert preview_response.status_code == 422
+    assert json.loads(preview_response.body) == expected_error
+    assert save_response.status_code == 200
+    assert save_response.context["timing_result"].messages == (
+        db.INVALID_TERMINAL_TIMING_DRAFT_MESSAGE,
+    )
+    assert adapter_calls == []
+    assert timing_snapshot(card_id) == before
 
 
 def test_terminal_timing_preview_parser_targets_row_and_field(connection):

@@ -130,9 +130,15 @@ TERMINAL_TIMING_TIME_PATTERN = re.compile(r"^\d{2}:\d{2}$")
 
 
 class TerminalTimingDraftParseError(ValueError):
-    def __init__(self, issue: TimingValidationIssue) -> None:
+    def __init__(
+        self,
+        issue: TimingValidationIssue,
+        retained_draft: tuple[TimingDraftRow, ...] = (),
+    ) -> None:
         super().__init__(issue.message)
         self.issue = issue
+        self.retained_draft = retained_draft
+
 
 CARD_NOT_FOUND_MESSAGE = "Картата не е намерена."
 INVALID_LOADED_VERSION_MESSAGE = "Версията на заредената карта е невалидна. Презаредете картата."
@@ -862,7 +868,7 @@ def parse_terminal_timing_draft(value: str) -> list[TimingDraftRow]:
         raise invalid()
     try:
         decoded = json.loads(value, object_pairs_hook=unique_object)
-    except (json.JSONDecodeError, UnicodeError):
+    except (json.JSONDecodeError, RecursionError, UnicodeError):
         raise invalid() from None
     if not isinstance(decoded, list) or len(decoded) > TERMINAL_TIMING_DRAFT_MAX_ROWS:
         raise invalid()
@@ -893,22 +899,6 @@ def parse_terminal_timing_draft(value: str) -> list[TimingDraftRow]:
         start_date, start_time, stop_date, stop_time = (
             field_value for _, field_value in text_fields
         )
-        _validate_terminal_timing_local_pair(
-            start_date,
-            start_time,
-            source_index=source_index,
-            date_field="start_date",
-            time_field="start_time",
-            invalid=invalid,
-        )
-        _validate_terminal_timing_local_pair(
-            stop_date,
-            stop_time,
-            source_index=source_index,
-            date_field="stop_date",
-            time_field="stop_time",
-            invalid=invalid,
-        )
         draft_rows.append(
             TimingDraftRow(
                 segment_id=segment_id,
@@ -918,6 +908,37 @@ def parse_terminal_timing_draft(value: str) -> list[TimingDraftRow]:
                 stop_time=stop_time,
                 deleted=deleted,
             )
+        )
+
+    def invalid_semantic(
+        source_index: int | None = None,
+        field: str = "form",
+    ) -> TerminalTimingDraftParseError:
+        return TerminalTimingDraftParseError(
+            TimingValidationIssue(
+                source_index,
+                field,
+                INVALID_TERMINAL_TIMING_DRAFT_MESSAGE,
+            ),
+            tuple(draft_rows),
+        )
+
+    for source_index, draft_row in enumerate(draft_rows):
+        _validate_terminal_timing_local_pair(
+            draft_row.start_date,
+            draft_row.start_time,
+            source_index=source_index,
+            date_field="start_date",
+            time_field="start_time",
+            invalid=invalid_semantic,
+        )
+        _validate_terminal_timing_local_pair(
+            draft_row.stop_date,
+            draft_row.stop_time,
+            source_index=source_index,
+            date_field="stop_date",
+            time_field="stop_time",
+            invalid=invalid_semantic,
         )
     return draft_rows
 
@@ -2528,6 +2549,7 @@ async def save_terminal_timing_ledger(
         try:
             draft_rows = parse_terminal_timing_draft(timing_draft)
         except TerminalTimingDraftParseError as error:
+            draft_rows = list(error.retained_draft)
             timing_result = RuleResult(False, (str(error),))
             timing_issues = (error.issue,)
         else:

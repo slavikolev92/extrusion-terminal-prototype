@@ -56,6 +56,7 @@ TIMING_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 INVALID_TERMINAL_TIMING_DRAFT_MESSAGE = (
     "Данните за производственото време са невалидни."
 )
+_TRUSTED_END_REASON_UNSET = object()
 
 
 @dataclass(frozen=True)
@@ -2497,7 +2498,7 @@ def _build_terminal_timing_ledger_proposal(
             if existing is not None and existing["ended_at"] is None:
                 end_reason = "pause"
             elif existing is not None:
-                end_reason = str(existing["end_reason"] or "correction")
+                end_reason = str(existing["end_reason"] or "")
             else:
                 end_reason = "correction"
         values = {
@@ -2522,6 +2523,7 @@ def _build_terminal_timing_ledger_proposal(
         unknown_segment_message=(
             "Избран времеви сегмент не принадлежи към тази карта."
         ),
+        preserve_existing_end_reason=True,
     )
     existing_source_indices = {
         draft.segment_id: source_index
@@ -2575,6 +2577,15 @@ def _terminal_draft_timestamp(
         ) or None
     except LocalTimeInputError as error:
         issues.append(TimingValidationIssue(source_index, field, str(error)))
+        return None
+    except OverflowError:
+        issues.append(
+            TimingValidationIssue(
+                source_index,
+                field,
+                f"{label} съдържа невалидна дата или час.",
+            )
+        )
         return None
 
 
@@ -2650,6 +2661,7 @@ def _build_timing_ledger_proposal(
     new_segments: list[dict[str, str]],
     *,
     unknown_segment_message: str,
+    preserve_existing_end_reason: bool = False,
 ) -> tuple[_TimingLedgerProposal, tuple[TimingValidationIssue, ...]]:
     existing_segments = connection.execute(
         """
@@ -2700,6 +2712,11 @@ def _build_timing_ledger_proposal(
             values.get("ended_at", ""),
             values.get("end_reason", ""),
             source_index=source_index,
+            trusted_end_reason=(
+                existing["end_reason"]
+                if preserve_existing_end_reason and existing["ended_at"] is not None
+                else _TRUSTED_END_REASON_UNSET
+            ),
         )
         issues.extend(parse_issues)
         if parsed is None:
@@ -2760,6 +2777,7 @@ def _parse_timing_ledger_row(
     end_reason: str,
     *,
     source_index: int | None,
+    trusted_end_reason: str | None | object = _TRUSTED_END_REASON_UNSET,
 ) -> tuple[dict[str, str | None] | None, tuple[TimingValidationIssue, ...]]:
     cleaned_start = started_at.strip()
     cleaned_end = ended_at.strip()
@@ -2782,7 +2800,7 @@ def _parse_timing_ledger_row(
             for message in end_messages
         )
 
-    if cleaned_end:
+    if cleaned_end and trusted_end_reason is _TRUSTED_END_REASON_UNSET:
         if not cleaned_reason:
             issues.append(
                 TimingValidationIssue(
@@ -2799,7 +2817,7 @@ def _parse_timing_ledger_row(
                     "Причината трябва да бъде пауза, приключване или корекция.",
                 )
             )
-    elif cleaned_reason:
+    elif not cleaned_end and cleaned_reason:
         issues.append(
             TimingValidationIssue(
                 source_index,
@@ -2815,7 +2833,11 @@ def _parse_timing_ledger_row(
         {
             "started_at": parsed_start.strftime(TIMING_TIMESTAMP_FORMAT),
             "ended_at": parsed_end.strftime(TIMING_TIMESTAMP_FORMAT) if parsed_end else None,
-            "end_reason": cleaned_reason if cleaned_end else None,
+            "end_reason": (
+                trusted_end_reason
+                if cleaned_end and trusted_end_reason is not _TRUSTED_END_REASON_UNSET
+                else cleaned_reason if cleaned_end else None
+            ),
         },
         (),
     )
