@@ -583,14 +583,16 @@ def test_admin_successful_detail_correction_routes_redirect_to_canonical_get(
         )
     )
     card = db.fetch_admin_card_detail(card_id)
+    timing_context = admin_card_detail_context(card_id)
+    timing_segment = timing_context["card"]["timing_segments"][0]
     timing_response = asyncio.run(
         save_admin_timing_segment(
             FormRequest({}),
             card_id,
             card["timing_segments"][0]["id"],
             str(card["version"]),
-            card["timing_segments"][0]["started_at"],
-            card["timing_segments"][0]["ended_at"],
+            timing_segment["started_at_input"],
+            timing_segment["ended_at_input"],
             "correction",
         )
     )
@@ -753,8 +755,8 @@ def test_admin_timing_add_route_converts_sofia_summer_input_to_utc(connection):
 @pytest.mark.parametrize(
     ("case_name", "original_started_at", "original_ended_at", "expected_offset"),
     (
-        ("summer", "2026-10-25 00:30:00", "2026-10-25 00:45:00", "+03:00"),
-        ("winter", "2026-10-25 01:30:00", "2026-10-25 01:45:00", "+02:00"),
+        ("summer", "2025-10-26 00:30:00", "2025-10-26 00:45:00", "+03:00"),
+        ("winter", "2025-10-26 01:30:00", "2025-10-26 01:45:00", "+02:00"),
     ),
 )
 def test_admin_timing_update_route_round_trips_repeated_hour_input_exactly(
@@ -775,8 +777,8 @@ def test_admin_timing_update_route_round_trips_repeated_hour_input_exactly(
     context = admin_card_detail_context(card_id)
     assert context is not None
     segment = context["card"]["timing_segments"][0]
-    assert segment["started_at_input"] == f"2026-10-25 03:30:00{expected_offset}"
-    assert segment["ended_at_input"] == f"2026-10-25 03:45:00{expected_offset}"
+    assert segment["started_at_input"] == f"2025-10-26 03:30:00{expected_offset}"
+    assert segment["ended_at_input"] == f"2025-10-26 03:45:00{expected_offset}"
 
     response = asyncio.run(
         save_admin_timing_segment(
@@ -1102,11 +1104,176 @@ def test_admin_timing_correction_rejects_invalid_intervals_and_multiple_open_seg
         "",
     )
     assert not invalid_interval.ok
-    assert invalid_interval.messages == ("Краят не може да бъде преди началото.",)
+    assert invalid_interval.messages == ("Краят трябва да бъде след началото.",)
     assert not open_result.ok
     assert open_result.messages == ("Картата вече има отворен времеви сегмент.",)
     assert not non_running_open_result.ok
     assert non_running_open_result.messages == ("Само карти в изработване могат да имат отворен времеви сегмент.",)
+
+
+def test_admin_timing_rejects_equal_and_future_changed_values(connection):
+    card_id = release_ready_card("26049")
+
+    equal_result = db.add_timing_segment(
+        card_id,
+        card_version(card_id),
+        "2026-06-14 09:00:00",
+        "2026-06-14 09:00:00",
+        "correction",
+    )
+
+    assert not equal_result.ok
+    assert equal_result.messages == ("Краят трябва да бъде след началото.",)
+
+    with db.connect() as timing_connection:
+        cursor = timing_connection.execute(
+            """
+            INSERT INTO production_time_segments (
+                card_id, started_at, ended_at, end_reason
+            )
+            VALUES (?, '2999-01-01 08:00:00', '2999-01-01 09:00:00', 'correction')
+            """,
+            (card_id,),
+        )
+        future_segment_id = int(cursor.lastrowid)
+
+    unchanged = db.update_admin_timing_ledger(
+        card_id,
+        card_version(card_id),
+        {
+            future_segment_id: {
+                "started_at": "2999-01-01 08:00:00",
+                "ended_at": "2999-01-01 09:00:00",
+                "end_reason": "correction",
+            }
+        },
+        set(),
+        [],
+    )
+    assert unchanged.ok
+
+    changed_future = db.update_timing_segment(
+        card_id,
+        future_segment_id,
+        card_version(card_id),
+        "2999-01-01 08:00:00",
+        "2999-01-01 09:01:00",
+        "correction",
+    )
+
+    assert not changed_future.ok
+    assert changed_future.messages == ("Времето не може да бъде в бъдещето.",)
+
+
+def test_admin_individual_and_bulk_timing_share_final_ledger_validation(
+    connection,
+    active_test_shift,
+):
+    individual_card_id = release_ready_card("26075", machine_id=1)
+    start_card(individual_card_id)
+    assert db.pause_production_timing(
+        individual_card_id, card_version(individual_card_id)
+    ).ok
+    individual_card = db.fetch_admin_card_detail(individual_card_id)
+    individual_segment_id = int(individual_card["timing_segments"][0]["id"])
+
+    individual_result = db.delete_timing_segment(
+        individual_card_id,
+        individual_segment_id,
+        int(individual_card["version"]),
+    )
+
+    bulk_card_id = release_ready_card("26076", machine_id=2)
+    start_card(bulk_card_id)
+    assert db.pause_production_timing(bulk_card_id, card_version(bulk_card_id)).ok
+    bulk_card = db.fetch_admin_card_detail(bulk_card_id)
+    bulk_segment_id = int(bulk_card["timing_segments"][0]["id"])
+
+    bulk_result = db.update_admin_timing_ledger(
+        bulk_card_id,
+        int(bulk_card["version"]),
+        {},
+        {bulk_segment_id},
+        [],
+    )
+
+    expected_messages = (
+        "Картите на пауза трябва да запазят поне един затворен времеви сегмент.",
+    )
+    assert not individual_result.ok
+    assert individual_result.messages == expected_messages
+    assert not bulk_result.ok
+    assert bulk_result.messages == expected_messages
+
+
+def test_admin_standalone_timing_correction_increments_version_once(connection):
+    card_id = release_ready_card("26077")
+    assert db.add_timing_segment(
+        card_id,
+        card_version(card_id),
+        "2026-06-14 08:00:00",
+        "2026-06-14 09:00:00",
+        "pause",
+    ).ok
+    before = db.fetch_admin_card_detail(card_id)
+    segment_id = int(before["timing_segments"][0]["id"])
+
+    result = db.update_admin_timing_ledger(
+        card_id,
+        int(before["version"]),
+        {
+            segment_id: {
+                "started_at": "2026-06-14 08:10:00",
+                "ended_at": "2026-06-14 09:10:00",
+                "end_reason": "pause",
+            }
+        },
+        set(),
+        [
+            {
+                "started_at": "2026-06-14 10:00:00",
+                "ended_at": "2026-06-14 11:00:00",
+                "end_reason": "correction",
+            }
+        ],
+    )
+    after = db.fetch_admin_card_detail(card_id)
+
+    assert result.ok
+    assert after["version"] == int(before["version"]) + 1
+    assert len(after["timing_segments"]) == 2
+
+
+def test_shared_timing_totals_sort_rows_and_preview_only_the_final_open_interval(
+    connection,
+):
+    canonical_rows = [
+        {
+            "started_at": "2026-06-14 10:30:00",
+            "ended_at": "2026-06-14 11:00:00",
+        },
+        {
+            "started_at": "2026-06-14 11:15:00",
+            "ended_at": None,
+        },
+        {
+            "started_at": "2026-06-14 08:00:00",
+            "ended_at": "2026-06-14 10:00:00",
+        },
+    ]
+
+    persisted_totals = db.calculate_timing_ledger_totals(
+        connection,
+        canonical_rows,
+    )
+    preview_totals = db.calculate_timing_ledger_totals(
+        connection,
+        canonical_rows,
+        preview_end="2026-06-14 12:00:00",
+    )
+
+    assert persisted_totals == (9000, 2700)
+    assert preview_totals == (11700, 2700)
 
 
 def test_admin_timing_correction_rejects_overlapping_closed_segments(connection):

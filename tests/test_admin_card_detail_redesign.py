@@ -1466,6 +1466,59 @@ def test_admin_global_save_rolls_back_all_sections_when_timing_is_invalid(connec
     assert after_segments == before_segments
 
 
+def test_admin_save_all_timing_keeps_outer_transaction_and_version_behavior(connection):
+    card_id = prepare_dense_completed_card("27108-outer-timing", roll_count=1)
+    before = db.fetch_admin_card_detail(card_id)
+    segment = before["timing_segments"][0]
+
+    with db.connect() as outer_connection:
+        outer_connection.execute("BEGIN IMMEDIATE")
+        outer_connection.execute(
+            """
+            UPDATE cards
+            SET customer = 'Outer transaction customer',
+                version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+        timing_version = int(
+            outer_connection.execute(
+                "SELECT version FROM cards WHERE id = ?", (card_id,)
+            ).fetchone()["version"]
+        )
+
+        result = db.update_admin_timing_ledger(
+            card_id,
+            timing_version,
+            {
+                int(segment["id"]): {
+                    "started_at": str(segment["started_at"]),
+                    "ended_at": str(segment["ended_at"]),
+                    "end_reason": str(segment["end_reason"]),
+                }
+            },
+            set(),
+            [],
+            connection=outer_connection,
+        )
+
+        assert result.ok
+        assert outer_connection.in_transaction
+        in_transaction = outer_connection.execute(
+            "SELECT customer, version FROM cards WHERE id = ?", (card_id,)
+        ).fetchone()
+        assert in_transaction["customer"] == "Outer transaction customer"
+        assert int(in_transaction["version"]) == int(before["version"]) + 2
+        outer_connection.rollback()
+
+    after = db.fetch_admin_card_detail(card_id)
+    assert after["customer"] == before["customer"]
+    assert after["version"] == before["version"]
+    assert after["timing_segments"] == before["timing_segments"]
+
+
 @pytest.mark.parametrize(
     ("case_name", "new_started_at", "message_fragments"),
     (

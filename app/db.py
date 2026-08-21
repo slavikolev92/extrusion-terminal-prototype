@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from datetime import datetime
@@ -51,6 +52,39 @@ UNRELEASE_PRODUCTION_DATA_MESSAGE = (
 MAX_SHIFT_COUNT = 99
 TIMING_END_REASONS = ("pause", "finish", "correction")
 TIMING_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+@dataclass(frozen=True)
+class TimingValidationIssue:
+    source_index: int | None
+    field: str
+    message: str
+
+
+@dataclass(frozen=True)
+class _TimingLedgerRow:
+    source_index: int | None
+    segment_id: int | None
+    started_at: str
+    ended_at: str | None
+    end_reason: str | None
+    original_started_at: str | None
+    original_ended_at: str | None
+    write_required: bool
+
+
+@dataclass(frozen=True)
+class _TimingLedgerProposal:
+    rows: tuple[_TimingLedgerRow, ...]
+    delete_segment_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class _TimingLedgerStatusPolicy:
+    minimum_segment_count: int
+    minimum_segment_message: str | None
+    required_open_count: int
+    open_count_message: str
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv("EXTRUSION_DATA_DIR", BASE_DIR / "data"))
@@ -1994,55 +2028,32 @@ def add_timing_segment(
     ended_at: str,
     end_reason: str,
 ) -> RuleResult:
-    parsed, parse_result = parse_timing_segment_values(started_at, ended_at, end_reason)
-    if not parse_result.ok:
-        return parse_result
-
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
-        card = fetch_admin_production_action_card(connection, card_id)
-        version_result = validate_loaded_card_version(card, loaded_version)
-        if not version_result.ok:
-            return version_result
-
-        final_state_result = validate_individual_timing_final_state(
+        result = _update_admin_timing_ledger(
             connection,
-            card,
-            appended_ended_at=(parsed["ended_at"],),
+            card_id,
+            loaded_version,
+            {},
+            set(),
+            [
+                {
+                    "started_at": started_at,
+                    "ended_at": ended_at,
+                    "end_reason": end_reason,
+                }
+            ],
+            unknown_segment_message="Времевият сегмент не е намерен.",
+            running_open_count_message=(
+                "Картата вече има отворен времеви сегмент."
+                if not ended_at.strip()
+                else "Картите в изработване трябва да запазят отворен времеви сегмент."
+            ),
+            success_message="Времеви сегмент е добавен за поръчка {order_number}.",
         )
-        if not final_state_result.ok:
-            return final_state_result
-
-        invariant_result = validate_timing_segment_change(
-            connection=connection,
-            card=card,
-            started_at=parsed["started_at"],
-            ended_at=parsed["ended_at"],
-        )
-        if not invariant_result.ok:
-            return invariant_result
-
-        try:
-            connection.execute(
-                """
-                INSERT INTO production_time_segments (card_id, started_at, ended_at, end_reason)
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    card_id,
-                    parsed["started_at"],
-                    parsed["ended_at"],
-                    parsed["end_reason"],
-                ),
-            )
-            refresh_card_timing_markers(connection, card_id)
-            refresh_extrusion_ended_finished_at(connection, card_id)
-            touch_card(connection, card_id)
-        except sqlite3.IntegrityError:
+        if not result.ok:
             connection.rollback()
-            return RuleResult(False, ("Картата вече има отворен времеви сегмент.",))
-
-    return RuleResult(True, (f"Времеви сегмент е добавен за поръчка {card['order_number']}.",))
+        return result
 
 
 def update_timing_segment(
@@ -2053,122 +2064,53 @@ def update_timing_segment(
     ended_at: str,
     end_reason: str,
 ) -> RuleResult:
-    parsed, parse_result = parse_timing_segment_values(started_at, ended_at, end_reason)
-    if not parse_result.ok:
-        return parse_result
-
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
-        card = fetch_admin_production_action_card(connection, card_id)
-        version_result = validate_loaded_card_version(card, loaded_version)
-        if not version_result.ok:
-            return version_result
-
-        segment = connection.execute(
-            """
-            SELECT id
-            FROM production_time_segments
-            WHERE id = ?
-              AND card_id = ?
-            """,
-            (segment_id, card_id),
-        ).fetchone()
-        if not segment:
-            return RuleResult(False, ("Времевият сегмент не е намерен.",))
-
-        final_state_result = validate_individual_timing_final_state(
+        result = _update_admin_timing_ledger(
             connection,
-            card,
-            exclude_segment_id=segment_id,
-            appended_ended_at=(parsed["ended_at"],),
+            card_id,
+            loaded_version,
+            {
+                segment_id: {
+                    "started_at": started_at,
+                    "ended_at": ended_at,
+                    "end_reason": end_reason,
+                }
+            },
+            set(),
+            [],
+            unknown_segment_message="Времевият сегмент не е намерен.",
+            running_open_count_message=(
+                "Картата вече има отворен времеви сегмент."
+                if not ended_at.strip()
+                else "Картите в изработване трябва да запазят отворен времеви сегмент."
+            ),
+            success_message="Времевият сегмент е записан.",
         )
-        if not final_state_result.ok:
-            return final_state_result
-
-        invariant_result = validate_timing_segment_change(
-            connection=connection,
-            card=card,
-            started_at=parsed["started_at"],
-            ended_at=parsed["ended_at"],
-            segment_id=segment_id,
-        )
-        if not invariant_result.ok:
-            return invariant_result
-
-        try:
-            connection.execute(
-                """
-                UPDATE production_time_segments
-                SET started_at = ?,
-                    ended_at = ?,
-                    end_reason = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                  AND card_id = ?
-                """,
-                (
-                    parsed["started_at"],
-                    parsed["ended_at"],
-                    parsed["end_reason"],
-                    segment_id,
-                    card_id,
-                ),
-            )
-            refresh_card_timing_markers(connection, card_id)
-            refresh_extrusion_ended_finished_at(connection, card_id)
-            touch_card(connection, card_id)
-        except sqlite3.IntegrityError:
+        if not result.ok:
             connection.rollback()
-            return RuleResult(False, ("Картата вече има отворен времеви сегмент.",))
-
-    return RuleResult(True, ("Времевият сегмент е записан.",))
+        return result
 
 
 def delete_timing_segment(card_id: int, segment_id: int, loaded_version: int) -> RuleResult:
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
-        card = fetch_admin_production_action_card(connection, card_id)
-        version_result = validate_loaded_card_version(card, loaded_version)
-        if not version_result.ok:
-            return version_result
-
-        segment = connection.execute(
-            """
-            SELECT id
-            FROM production_time_segments
-            WHERE id = ?
-              AND card_id = ?
-            """,
-            (segment_id, card_id),
-        ).fetchone()
-        if not segment:
-            return RuleResult(False, ("Времевият сегмент не е намерен.",))
-
-        final_state_result = validate_individual_timing_final_state(
+        result = _update_admin_timing_ledger(
             connection,
-            card,
-            exclude_segment_id=segment_id,
+            card_id,
+            loaded_version,
+            {},
+            {segment_id},
+            [],
+            unknown_segment_message="Времевият сегмент не е намерен.",
+            running_open_count_message=(
+                "Картите в изработване трябва да запазят отворен времеви сегмент."
+            ),
+            success_message="Времевият сегмент е изтрит.",
         )
-        if not final_state_result.ok:
-            return final_state_result
-
-        delete_result = validate_timing_segment_delete(connection, card, segment_id)
-        if not delete_result.ok:
-            return delete_result
-
-        connection.execute(
-            """
-            DELETE FROM production_time_segments
-            WHERE id = ?
-              AND card_id = ?
-            """,
-            (segment_id, card_id),
-        )
-        refresh_card_timing_markers(connection, card_id)
-        refresh_extrusion_ended_finished_at(connection, card_id)
-        touch_card(connection, card_id)
-
-    return RuleResult(True, ("Времевият сегмент е изтрит.",))
+        if not result.ok:
+            connection.rollback()
+        return result
 
 
 def update_admin_timing_ledger(
@@ -2188,17 +2130,35 @@ def update_admin_timing_ledger(
             segment_updates,
             delete_segment_ids,
             new_segments,
+            unknown_segment_message=(
+                "Избран времеви сегмент не принадлежи към тази карта."
+            ),
+            running_open_count_message=(
+                "Картите в изработване трябва да запазят един отворен времеви сегмент."
+            ),
+            success_message="Времето е записано.",
         )
 
     with connect() as owned_connection:
-        return _update_admin_timing_ledger(
+        owned_connection.execute("BEGIN IMMEDIATE")
+        result = _update_admin_timing_ledger(
             owned_connection,
             card_id,
             loaded_version,
             segment_updates,
             delete_segment_ids,
             new_segments,
+            unknown_segment_message=(
+                "Избран времеви сегмент не принадлежи към тази карта."
+            ),
+            running_open_count_message=(
+                "Картите в изработване трябва да запазят един отворен времеви сегмент."
+            ),
+            success_message="Времето е записано.",
         )
+        if not result.ok:
+            owned_connection.rollback()
+        return result
 
 
 def _update_admin_timing_ledger(
@@ -2208,14 +2168,63 @@ def _update_admin_timing_ledger(
     segment_updates: dict[int, dict[str, str]],
     delete_segment_ids: set[int],
     new_segments: list[dict[str, str]],
+    *,
+    unknown_segment_message: str,
+    running_open_count_message: str,
+    success_message: str,
 ) -> RuleResult:
-    if not connection.in_transaction:
-        connection.execute("BEGIN IMMEDIATE")
     card = fetch_admin_production_action_card(connection, card_id)
     version_result = validate_loaded_card_version(card, loaded_version)
     if not version_result.ok:
         return version_result
+    assert card is not None
 
+    proposal, build_issues = _build_timing_ledger_proposal(
+        connection,
+        card_id,
+        segment_updates,
+        delete_segment_ids,
+        new_segments,
+        unknown_segment_message=unknown_segment_message,
+    )
+    if build_issues:
+        return _admin_timing_issue_result(build_issues)
+
+    policy = _admin_timing_status_policy(
+        str(card["status"]),
+        running_open_count_message=running_open_count_message,
+    )
+    validation_issues = _validate_timing_ledger_proposal(
+        proposal,
+        policy,
+        transaction_time=current_database_timestamp(connection),
+    )
+    if validation_issues:
+        return _admin_timing_issue_result(validation_issues)
+
+    try:
+        _apply_timing_ledger_proposal(connection, card_id, proposal)
+        refresh_card_timing_markers(connection, card_id)
+        refresh_extrusion_ended_finished_at(connection, card_id)
+        touch_card(connection, card_id)
+    except sqlite3.IntegrityError:
+        return RuleResult(False, ("Картата вече има отворен времеви сегмент.",))
+
+    return RuleResult(
+        True,
+        (success_message.format(order_number=str(card["order_number"])),),
+    )
+
+
+def _build_timing_ledger_proposal(
+    connection: sqlite3.Connection,
+    card_id: int,
+    segment_updates: dict[int, dict[str, str]],
+    delete_segment_ids: set[int],
+    new_segments: list[dict[str, str]],
+    *,
+    unknown_segment_message: str,
+) -> tuple[_TimingLedgerProposal, tuple[TimingValidationIssue, ...]]:
     existing_segments = connection.execute(
         """
         SELECT id, started_at, ended_at, end_reason
@@ -2228,271 +2237,480 @@ def _update_admin_timing_ledger(
     existing_ids = {int(row["id"]) for row in existing_segments}
     unknown_ids = (set(segment_updates) | delete_segment_ids) - existing_ids
     if unknown_ids:
-        return RuleResult(False, ("Избран времеви сегмент не принадлежи към тази карта.",))
-
-    parsed_updates: dict[int, dict[str, str | None]] = {}
-    for segment_id, values in segment_updates.items():
-        if segment_id in delete_segment_ids:
-            continue
-        parsed, result = parse_timing_segment_values(
-            values.get("started_at", ""),
-            values.get("ended_at", ""),
-            values.get("end_reason", ""),
-        )
-        if not result.ok:
-            return result
-        parsed_updates[segment_id] = parsed
-
-    parsed_new: list[dict[str, str | None]] = []
-    for segment in new_segments:
-        if not (
-            str(segment.get("started_at") or "").strip()
-            or str(segment.get("ended_at") or "").strip()
-        ):
-            continue
-        parsed, result = parse_timing_segment_values(
-            segment.get("started_at", ""),
-            segment.get("ended_at", ""),
-            segment.get("end_reason", ""),
-        )
-        if not result.ok:
-            return result
-        parsed_new.append(parsed)
-
-    final_open_count = 0
-    final_segment_count = len(parsed_new)
-    for row in existing_segments:
-        segment_id = int(row["id"])
-        if segment_id in delete_segment_ids:
-            continue
-        values = parsed_updates.get(
-            segment_id,
-            {
-                "started_at": str(row["started_at"]),
-                "ended_at": row["ended_at"],
-                "end_reason": row["end_reason"],
-            },
-        )
-        final_segment_count += 1
-        if values["ended_at"] is None:
-            final_open_count += 1
-    final_open_count += sum(1 for segment in parsed_new if segment["ended_at"] is None)
-
-    if str(card["status"]) in EXTRUSION_ENDED_STATUSES and final_segment_count < 1:
-        return RuleResult(
-            False,
+        return (
+            _TimingLedgerProposal((), ()),
             (
-                "Картите с приключило екструдиране трябва да запазят поне един "
-                "времеви сегмент.",
+                TimingValidationIssue(
+                    source_index=None,
+                    field="form",
+                    message=unknown_segment_message,
+                ),
             ),
         )
 
-    if str(card["status"]) != STATUS_RUNNING and final_open_count > 0:
-        return RuleResult(False, ("Само карти в изработване могат да имат отворен времеви сегмент.",))
-
-    if str(card["status"]) == STATUS_RUNNING and final_open_count != 1:
-        return RuleResult(
-            False,
-            ("Картите в изработване трябва да запазят един отворен времеви сегмент.",),
-        )
-
-    final_segments: list[dict[str, str | None]] = []
-    for row in existing_segments:
-        segment_id = int(row["id"])
+    rows: list[_TimingLedgerRow] = []
+    issues: list[TimingValidationIssue] = []
+    for source_index, existing in enumerate(existing_segments):
+        segment_id = int(existing["id"])
         if segment_id in delete_segment_ids:
             continue
-        final_segments.append(
-            parsed_updates.get(
-                segment_id,
-                {
-                    "started_at": str(row["started_at"]),
-                    "ended_at": row["ended_at"],
-                    "end_reason": row["end_reason"],
-                },
+        values = segment_updates.get(segment_id)
+        if values is None:
+            rows.append(
+                _TimingLedgerRow(
+                    source_index=source_index,
+                    segment_id=segment_id,
+                    started_at=str(existing["started_at"]),
+                    ended_at=existing["ended_at"],
+                    end_reason=existing["end_reason"],
+                    original_started_at=str(existing["started_at"]),
+                    original_ended_at=existing["ended_at"],
+                    write_required=False,
+                )
+            )
+            continue
+        parsed, parse_issues = _parse_timing_ledger_row(
+            values.get("started_at", ""),
+            values.get("ended_at", ""),
+            values.get("end_reason", ""),
+            source_index=source_index,
+        )
+        issues.extend(parse_issues)
+        if parsed is None:
+            continue
+        rows.append(
+            _TimingLedgerRow(
+                source_index=source_index,
+                segment_id=segment_id,
+                started_at=parsed["started_at"],
+                ended_at=parsed["ended_at"],
+                end_reason=parsed["end_reason"],
+                original_started_at=str(existing["started_at"]),
+                original_ended_at=existing["ended_at"],
+                write_required=True,
             )
         )
-    final_segments.extend(parsed_new)
-    overlap_result = validate_no_overlapping_timing_segments(final_segments)
-    if not overlap_result.ok:
-        return overlap_result
 
-    try:
-        for segment_id in delete_segment_ids:
-            connection.execute(
-                """
-                DELETE FROM production_time_segments
-                WHERE id = ?
-                  AND card_id = ?
-                """,
-                (segment_id, card_id),
+    for new_index, values in enumerate(new_segments, start=len(existing_segments)):
+        if not (
+            str(values.get("started_at") or "").strip()
+            or str(values.get("ended_at") or "").strip()
+        ):
+            continue
+        parsed, parse_issues = _parse_timing_ledger_row(
+            values.get("started_at", ""),
+            values.get("ended_at", ""),
+            values.get("end_reason", ""),
+            source_index=new_index,
+        )
+        issues.extend(parse_issues)
+        if parsed is None:
+            continue
+        rows.append(
+            _TimingLedgerRow(
+                source_index=new_index,
+                segment_id=None,
+                started_at=parsed["started_at"],
+                ended_at=parsed["ended_at"],
+                end_reason=parsed["end_reason"],
+                original_started_at=None,
+                original_ended_at=None,
+                write_required=True,
             )
+        )
 
-        closing_updates = [
-            (segment_id, parsed)
-            for segment_id, parsed in parsed_updates.items()
-            if parsed["ended_at"] is not None
-        ]
-        opening_updates = [
-            (segment_id, parsed)
-            for segment_id, parsed in parsed_updates.items()
-            if parsed["ended_at"] is None
-        ]
-        closing_new_segments = [
-            parsed for parsed in parsed_new if parsed["ended_at"] is not None
-        ]
-        opening_new_segments = [
-            parsed for parsed in parsed_new if parsed["ended_at"] is None
-        ]
-
-        for segment_id, parsed in closing_updates:
-            connection.execute(
-                """
-                UPDATE production_time_segments
-                SET started_at = ?,
-                    ended_at = ?,
-                    end_reason = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                  AND card_id = ?
-                """,
-                (
-                    parsed["started_at"],
-                    parsed["ended_at"],
-                    parsed["end_reason"],
-                    segment_id,
-                    card_id,
-                ),
-            )
-
-        for parsed in closing_new_segments:
-            connection.execute(
-                """
-                INSERT INTO production_time_segments (
-                    card_id,
-                    started_at,
-                    ended_at,
-                    end_reason
-                )
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    card_id,
-                    parsed["started_at"],
-                    parsed["ended_at"],
-                    parsed["end_reason"],
-                ),
-            )
-
-        for segment_id, parsed in opening_updates:
-            connection.execute(
-                """
-                UPDATE production_time_segments
-                SET started_at = ?,
-                    ended_at = ?,
-                    end_reason = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                  AND card_id = ?
-                """,
-                (
-                    parsed["started_at"],
-                    parsed["ended_at"],
-                    parsed["end_reason"],
-                    segment_id,
-                    card_id,
-                ),
-            )
-
-        for parsed in opening_new_segments:
-            connection.execute(
-                """
-                INSERT INTO production_time_segments (
-                    card_id,
-                    started_at,
-                    ended_at,
-                    end_reason
-                )
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    card_id,
-                    parsed["started_at"],
-                    parsed["ended_at"],
-                    parsed["end_reason"],
-                ),
-            )
-
-        refresh_extrusion_ended_finished_at(connection, card_id)
-        refresh_card_timing_markers(connection, card_id)
-        touch_card(connection, card_id)
-    except sqlite3.IntegrityError:
-        connection.rollback()
-        return RuleResult(False, ("Картата вече има отворен времеви сегмент.",))
-
-    return RuleResult(True, ("Времето е записано.",))
-
-
-def validate_no_overlapping_timing_segments(
-    segments: list[dict[str, str | None]],
-) -> RuleResult:
-    ordered_segments = sorted(
-        segments,
-        key=lambda segment: (
-            str(segment["started_at"]),
-            str(segment.get("ended_at") or ""),
+    return (
+        _TimingLedgerProposal(
+            rows=tuple(rows),
+            delete_segment_ids=tuple(sorted(delete_segment_ids)),
         ),
+        tuple(issues),
     )
-    has_previous = False
-    previous_end: str | None = None
-    for segment in ordered_segments:
-        started_at = str(segment["started_at"])
-        if has_previous and (previous_end is None or started_at < previous_end):
-            return RuleResult(False, ("Времевите сегменти не могат да се застъпват.",))
-        previous_end = (
-            str(segment["ended_at"])
-            if segment.get("ended_at") is not None
-            else None
-        )
-        has_previous = True
-    return RuleResult(True)
 
 
-def parse_timing_segment_values(
+def _parse_timing_ledger_row(
     started_at: str,
     ended_at: str,
     end_reason: str,
-) -> tuple[dict[str, str | None], RuleResult]:
-    messages: list[str] = []
+    *,
+    source_index: int | None,
+) -> tuple[dict[str, str | None] | None, tuple[TimingValidationIssue, ...]]:
     cleaned_start = started_at.strip()
     cleaned_end = ended_at.strip()
     cleaned_reason = end_reason.strip()
+    issues: list[TimingValidationIssue] = []
 
-    parsed_start = parse_timing_timestamp(cleaned_start, "Начало", messages)
+    start_messages: list[str] = []
+    parsed_start = parse_timing_timestamp(cleaned_start, "Начало", start_messages)
+    issues.extend(
+        TimingValidationIssue(source_index, "start_time", message)
+        for message in start_messages
+    )
+
     parsed_end = None
     if cleaned_end:
-        parsed_end = parse_timing_timestamp(cleaned_end, "Край", messages)
-
-    if parsed_start and parsed_end and parsed_end < parsed_start:
-        messages.append("Краят не може да бъде преди началото.")
+        end_messages: list[str] = []
+        parsed_end = parse_timing_timestamp(cleaned_end, "Край", end_messages)
+        issues.extend(
+            TimingValidationIssue(source_index, "stop_time", message)
+            for message in end_messages
+        )
 
     if cleaned_end:
         if not cleaned_reason:
-            messages.append("Причина е задължителна, когато е въведен край.")
+            issues.append(
+                TimingValidationIssue(
+                    source_index,
+                    "stop_time",
+                    "Причина е задължителна, когато е въведен край.",
+                )
+            )
         elif cleaned_reason not in TIMING_END_REASONS:
-            messages.append("Причината трябва да бъде пауза, приключване или корекция.")
+            issues.append(
+                TimingValidationIssue(
+                    source_index,
+                    "stop_time",
+                    "Причината трябва да бъде пауза, приключване или корекция.",
+                )
+            )
     elif cleaned_reason:
-        messages.append("Причината трябва да е празна за отворен сегмент.")
+        issues.append(
+            TimingValidationIssue(
+                source_index,
+                "stop_time",
+                "Причината трябва да е празна за отворен сегмент.",
+            )
+        )
 
-    result = RuleResult(not messages, tuple(messages))
-    if not result.ok:
-        return {}, result
-
+    if issues:
+        return None, tuple(issues)
     assert parsed_start is not None
-    return {
-        "started_at": parsed_start.strftime(TIMING_TIMESTAMP_FORMAT),
-        "ended_at": parsed_end.strftime(TIMING_TIMESTAMP_FORMAT) if parsed_end else None,
-        "end_reason": cleaned_reason if cleaned_end else None,
-    }, result
+    return (
+        {
+            "started_at": parsed_start.strftime(TIMING_TIMESTAMP_FORMAT),
+            "ended_at": parsed_end.strftime(TIMING_TIMESTAMP_FORMAT) if parsed_end else None,
+            "end_reason": cleaned_reason if cleaned_end else None,
+        },
+        (),
+    )
+
+
+def _admin_timing_status_policy(
+    status: str,
+    *,
+    running_open_count_message: str,
+) -> _TimingLedgerStatusPolicy:
+    if status == STATUS_RUNNING:
+        return _TimingLedgerStatusPolicy(
+            minimum_segment_count=0,
+            minimum_segment_message=None,
+            required_open_count=1,
+            open_count_message=running_open_count_message,
+        )
+    if status == STATUS_PAUSED:
+        return _TimingLedgerStatusPolicy(
+            minimum_segment_count=1,
+            minimum_segment_message=(
+                "Картите на пауза трябва да запазят поне един затворен времеви сегмент."
+            ),
+            required_open_count=0,
+            open_count_message=(
+                "Само карти в изработване могат да имат отворен времеви сегмент."
+            ),
+        )
+    if status in EXTRUSION_ENDED_STATUSES:
+        return _TimingLedgerStatusPolicy(
+            minimum_segment_count=1,
+            minimum_segment_message=(
+                "Картите с приключило екструдиране трябва да запазят поне един "
+                "времеви сегмент."
+            ),
+            required_open_count=0,
+            open_count_message=(
+                "Само карти в изработване могат да имат отворен времеви сегмент."
+            ),
+        )
+    return _TimingLedgerStatusPolicy(
+        minimum_segment_count=0,
+        minimum_segment_message=None,
+        required_open_count=0,
+        open_count_message=(
+            "Само карти в изработване могат да имат отворен времеви сегмент."
+        ),
+    )
+
+
+def _validate_timing_ledger_proposal(
+    proposal: _TimingLedgerProposal,
+    policy: _TimingLedgerStatusPolicy,
+    *,
+    transaction_time: str,
+) -> tuple[TimingValidationIssue, ...]:
+    issues: list[TimingValidationIssue] = []
+    if (
+        len(proposal.rows) < policy.minimum_segment_count
+        and policy.minimum_segment_message is not None
+    ):
+        issues.append(
+            TimingValidationIssue(
+                None,
+                "form",
+                policy.minimum_segment_message,
+            )
+        )
+
+    open_rows = [row for row in proposal.rows if row.ended_at is None]
+    if len(open_rows) != policy.required_open_count:
+        issues.append(
+            TimingValidationIssue(None, "form", policy.open_count_message)
+        )
+    if issues:
+        return tuple(issues)
+
+    source_ordered_rows = sorted(
+        proposal.rows,
+        key=lambda row: row.source_index if row.source_index is not None else -1,
+    )
+    for row in source_ordered_rows:
+        timestamps_changed = (
+            row.segment_id is None
+            or row.started_at != row.original_started_at
+            or row.ended_at != row.original_ended_at
+        )
+        if (
+            timestamps_changed
+            and row.ended_at is not None
+            and row.ended_at <= row.started_at
+        ):
+            issues.append(
+                TimingValidationIssue(
+                    row.source_index,
+                    "stop_time",
+                    "Краят трябва да бъде след началото.",
+                )
+            )
+        changed_values = (
+            ("start_time", row.started_at, row.original_started_at),
+            ("stop_time", row.ended_at, row.original_ended_at),
+        )
+        for field, proposed, original in changed_values:
+            if (
+                proposed is not None
+                and proposed != original
+                and proposed > transaction_time
+            ):
+                issues.append(
+                    TimingValidationIssue(
+                        row.source_index,
+                        field,
+                        "Времето не може да бъде в бъдещето.",
+                    )
+                )
+
+    chronological_rows = sorted(
+        proposal.rows,
+        key=lambda row: (
+            row.started_at,
+            row.ended_at or "",
+            row.segment_id if row.segment_id is not None else 2**63,
+            row.source_index if row.source_index is not None else -1,
+        ),
+    )
+    for previous, current in zip(chronological_rows, chronological_rows[1:]):
+        if previous.ended_at is None or current.started_at < previous.ended_at:
+            issues.append(
+                TimingValidationIssue(
+                    current.source_index,
+                    "start_time",
+                    "Времевите сегменти не могат да се застъпват.",
+                )
+            )
+
+    return _ordered_timing_validation_issues(issues)
+
+
+def _ordered_timing_validation_issues(
+    issues: list[TimingValidationIssue],
+) -> tuple[TimingValidationIssue, ...]:
+    field_order = {
+        "start_date": 0,
+        "start_time": 1,
+        "stop_date": 2,
+        "stop_time": 3,
+        "form": 4,
+    }
+    return tuple(
+        issue
+        for _, issue in sorted(
+            enumerate(issues),
+            key=lambda indexed_issue: (
+                indexed_issue[1].source_index
+                if indexed_issue[1].source_index is not None
+                else -1,
+                field_order[indexed_issue[1].field],
+                indexed_issue[0],
+            ),
+        )
+    )
+
+
+def _apply_timing_ledger_proposal(
+    connection: sqlite3.Connection,
+    card_id: int,
+    proposal: _TimingLedgerProposal,
+) -> None:
+    for segment_id in proposal.delete_segment_ids:
+        connection.execute(
+            """
+            DELETE FROM production_time_segments
+            WHERE id = ?
+              AND card_id = ?
+            """,
+            (segment_id, card_id),
+        )
+
+    changed_existing = [
+        row
+        for row in proposal.rows
+        if row.segment_id is not None and row.write_required
+    ]
+    new_rows = [row for row in proposal.rows if row.segment_id is None]
+    ordered_mutations = (
+        [row for row in changed_existing if row.ended_at is not None],
+        [row for row in new_rows if row.ended_at is not None],
+        [row for row in changed_existing if row.ended_at is None],
+        [row for row in new_rows if row.ended_at is None],
+    )
+
+    for row in ordered_mutations[0]:
+        connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = ?,
+                ended_at = ?,
+                end_reason = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND card_id = ?
+            """,
+            (
+                row.started_at,
+                row.ended_at,
+                row.end_reason,
+                row.segment_id,
+                card_id,
+            ),
+        )
+    for row in ordered_mutations[1]:
+        connection.execute(
+            """
+            INSERT INTO production_time_segments (
+                card_id, started_at, ended_at, end_reason
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (card_id, row.started_at, row.ended_at, row.end_reason),
+        )
+    for row in ordered_mutations[2]:
+        connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = ?,
+                ended_at = ?,
+                end_reason = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND card_id = ?
+            """,
+            (
+                row.started_at,
+                row.ended_at,
+                row.end_reason,
+                row.segment_id,
+                card_id,
+            ),
+        )
+    for row in ordered_mutations[3]:
+        connection.execute(
+            """
+            INSERT INTO production_time_segments (
+                card_id, started_at, ended_at, end_reason
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (card_id, row.started_at, row.ended_at, row.end_reason),
+        )
+
+
+def _admin_timing_issue_result(
+    issues: tuple[TimingValidationIssue, ...],
+) -> RuleResult:
+    messages = tuple(dict.fromkeys(issue.message for issue in issues))
+    return RuleResult(False, messages)
+
+
+def calculate_timing_ledger_totals(
+    connection: sqlite3.Connection,
+    canonical_rows: list[dict[str, Any] | _TimingLedgerRow]
+    | tuple[dict[str, Any] | _TimingLedgerRow, ...],
+    *,
+    preview_end: str | None = None,
+) -> tuple[int, int]:
+    def values(row: dict[str, Any] | _TimingLedgerRow) -> tuple[str, str | None]:
+        if isinstance(row, _TimingLedgerRow):
+            return row.started_at, row.ended_at
+        return str(row["started_at"]), row.get("ended_at")
+
+    ordered_rows = sorted(
+        (values(row) for row in canonical_rows),
+        key=lambda row: (row[0], row[1] or ""),
+    )
+    production_seconds = 0
+    paused_seconds = 0
+    previous_end: str | None = None
+    final_index = len(ordered_rows) - 1
+
+    for index, (started_at, stored_end) in enumerate(ordered_rows):
+        if previous_end is not None:
+            paused_seconds += max(
+                0,
+                _canonical_timing_seconds_between(
+                    connection,
+                    previous_end,
+                    started_at,
+                ),
+            )
+
+        effective_end = stored_end
+        if effective_end is None and index == final_index and preview_end is not None:
+            effective_end = preview_end
+        if effective_end is not None:
+            production_seconds += max(
+                0,
+                _canonical_timing_seconds_between(
+                    connection,
+                    started_at,
+                    effective_end,
+                ),
+            )
+        previous_end = effective_end
+
+    return production_seconds, paused_seconds
+
+
+def _canonical_timing_seconds_between(
+    connection: sqlite3.Connection,
+    started_at: str,
+    ended_at: str,
+) -> int:
+    row = connection.execute(
+        """
+        SELECT CAST(strftime('%s', ?) AS INTEGER)
+             - CAST(strftime('%s', ?) AS INTEGER)
+        """,
+        (ended_at, started_at),
+    ).fetchone()
+    return int(row[0])
 
 
 def parse_timing_timestamp(
@@ -2509,151 +2727,6 @@ def parse_timing_timestamp(
     except ValueError:
         messages.append(f"{label} трябва да използва формат YYYY-MM-DD HH:MM:SS.")
         return None
-
-
-def validate_timing_segment_change(
-    connection: sqlite3.Connection,
-    card: sqlite3.Row,
-    started_at: str,
-    ended_at: str | None,
-    segment_id: int | None = None,
-) -> RuleResult:
-    if ended_at is None and card["status"] != STATUS_RUNNING:
-        return RuleResult(False, ("Само карти в изработване могат да имат отворен времеви сегмент.",))
-
-    if ended_at is None:
-        query = """
-            SELECT id
-            FROM production_time_segments
-            WHERE card_id = ?
-              AND ended_at IS NULL
-        """
-        values: list[Any] = [card["id"]]
-        if segment_id is not None:
-            query += " AND id <> ?"
-            values.append(segment_id)
-        existing_open = connection.execute(query, values).fetchone()
-        if existing_open:
-            return RuleResult(False, ("Картата вече има отворен времеви сегмент.",))
-    elif card["status"] == STATUS_RUNNING:
-        open_segment_count = count_open_timing_segments(
-            connection,
-            int(card["id"]),
-            exclude_segment_id=segment_id,
-        )
-        if open_segment_count == 0:
-            return RuleResult(False, ("Картите в изработване трябва да запазят отворен времеви сегмент.",))
-
-    query = """
-        SELECT started_at, ended_at
-        FROM production_time_segments
-        WHERE card_id = ?
-    """
-    values: list[Any] = [card["id"]]
-    if segment_id is not None:
-        query += " AND id <> ?"
-        values.append(segment_id)
-    proposed_segments = [
-        {
-            "started_at": str(row["started_at"]),
-            "ended_at": row["ended_at"],
-        }
-        for row in connection.execute(query, values).fetchall()
-    ]
-    proposed_segments.append(
-        {
-            "started_at": started_at,
-            "ended_at": ended_at,
-        }
-    )
-    overlap_result = validate_no_overlapping_timing_segments(proposed_segments)
-    if not overlap_result.ok:
-        return overlap_result
-
-    return RuleResult(True)
-
-
-def validate_individual_timing_final_state(
-    connection: sqlite3.Connection,
-    card: sqlite3.Row,
-    *,
-    exclude_segment_id: int | None = None,
-    appended_ended_at: tuple[str | None, ...] = (),
-) -> RuleResult:
-    if str(card["status"]) not in EXTRUSION_ENDED_STATUSES:
-        return RuleResult(True)
-
-    query = """
-        SELECT ended_at
-        FROM production_time_segments
-        WHERE card_id = ?
-    """
-    values: list[Any] = [int(card["id"])]
-    if exclude_segment_id is not None:
-        query += " AND id <> ?"
-        values.append(exclude_segment_id)
-    final_ended_at = [row["ended_at"] for row in connection.execute(query, values)]
-    final_ended_at.extend(appended_ended_at)
-
-    if any(ended_at is None for ended_at in final_ended_at):
-        return RuleResult(
-            False,
-            ("Само карти в изработване могат да имат отворен времеви сегмент.",),
-        )
-    if not final_ended_at:
-        return RuleResult(
-            False,
-            (
-                "Картите с приключило екструдиране трябва да запазят поне един "
-                "времеви сегмент.",
-            ),
-        )
-    return RuleResult(True)
-
-
-def validate_timing_segment_delete(
-    connection: sqlite3.Connection,
-    card: sqlite3.Row,
-    segment_id: int,
-) -> RuleResult:
-    if card["status"] == STATUS_RUNNING:
-        segment = connection.execute(
-            """
-            SELECT ended_at
-            FROM production_time_segments
-            WHERE id = ?
-              AND card_id = ?
-            """,
-            (segment_id, card["id"]),
-        ).fetchone()
-        if segment and segment["ended_at"] is None:
-            open_segment_count = count_open_timing_segments(
-                connection,
-                int(card["id"]),
-                exclude_segment_id=segment_id,
-            )
-            if open_segment_count == 0:
-                return RuleResult(False, ("Картите в изработване трябва да запазят отворен времеви сегмент.",))
-
-    return RuleResult(True)
-
-
-def count_open_timing_segments(
-    connection: sqlite3.Connection,
-    card_id: int,
-    exclude_segment_id: int | None = None,
-) -> int:
-    query = """
-        SELECT COUNT(*)
-        FROM production_time_segments
-        WHERE card_id = ?
-          AND ended_at IS NULL
-    """
-    values: list[Any] = [card_id]
-    if exclude_segment_id is not None:
-        query += " AND id <> ?"
-        values.append(exclude_segment_id)
-    return int(connection.execute(query, values).fetchone()[0] or 0)
 
 
 def fetch_admin_production_action_card(
