@@ -93,56 +93,40 @@ No migration required.
 
 The guarded browser fixture creates deterministic running, paused, completed,
 awaiting-rewinding, and many-interval cards plus an active shift. It refuses the
-runtime database, every path outside its dedicated
-`.test-runtime/terminal-timing-correction/` subtree, symlinks, hard links, and
-conflicting database environment values. Existing DB/JSON targets are replaced
-only when matching ownership tokens in both files positively identify a prior
-copy of this fixture; regeneration publishes a fresh database file rather than
-unlinking the old path.
-
-The verifier accepts fixtures only from that same dedicated subtree and checks
-the exact resolved `/health` database identity before claiming an artifact
-directory. `ARTIFACT_DIR` must be a pre-created, empty, uniquely named directory
-at or below `artifacts/ui-checks/terminal-timing-correction/`. Screenshot and
-summary buffers are written once through exclusive no-follow descriptors; the
-descriptor and directory-entry inode/link state is checked before and after the
-atomic rename. Existing destinations are never replaced.
+runtime database, paths outside `.test-runtime`, symlinks, hard links, and
+conflicting database environment values. The verifier checks the exact resolved
+`/health` database identity before creating artifacts and writes only below the
+supplied artifact directory.
 
 The live verification used:
 
 ```bash
-EXTRUSION_DB_PATH=/home/sk/projects/extrusion-terminal/.worktrees/terminal-timing-correction/.test-runtime/terminal-timing-correction/verified-run/fixture.sqlite3 \
-EXTRUSION_DATA_DIR=/home/sk/projects/extrusion-terminal/.worktrees/terminal-timing-correction/.test-runtime/terminal-timing-correction/verified-run \
+EXTRUSION_DB_PATH=/home/sk/projects/extrusion-terminal/.worktrees/terminal-timing-correction/.test-runtime/terminal-timing-correction/fixture.sqlite3 \
+EXTRUSION_DATA_DIR=/home/sk/projects/extrusion-terminal/.worktrees/terminal-timing-correction/.test-runtime/terminal-timing-correction \
 .venv/bin/python scripts/create_terminal_timing_correction_fixture.py \
-  --db-path /home/sk/projects/extrusion-terminal/.worktrees/terminal-timing-correction/.test-runtime/terminal-timing-correction/verified-run/fixture.sqlite3 \
-  --output /home/sk/projects/extrusion-terminal/.worktrees/terminal-timing-correction/.test-runtime/terminal-timing-correction/verified-run/fixture.json
+  --db-path /home/sk/projects/extrusion-terminal/.worktrees/terminal-timing-correction/.test-runtime/terminal-timing-correction/fixture.sqlite3 \
+  --output /home/sk/projects/extrusion-terminal/.worktrees/terminal-timing-correction/.test-runtime/terminal-timing-correction/fixture.json
 
-EXTRUSION_DB_PATH=/home/sk/projects/extrusion-terminal/.worktrees/terminal-timing-correction/.test-runtime/terminal-timing-correction/verified-run/fixture.sqlite3 \
+EXTRUSION_DB_PATH=/home/sk/projects/extrusion-terminal/.worktrees/terminal-timing-correction/.test-runtime/terminal-timing-correction/fixture.sqlite3 \
 .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8014
 
-mkdir -p artifacts/ui-checks/terminal-timing-correction
-ARTIFACT_RUN_DIR=$(mktemp -d artifacts/ui-checks/terminal-timing-correction/run-XXXXXX)
 BASE_URL=http://127.0.0.1:8014 \
-FIXTURE_JSON=.test-runtime/terminal-timing-correction/verified-run/fixture.json \
-ARTIFACT_DIR="$ARTIFACT_RUN_DIR" \
+FIXTURE_JSON=.test-runtime/terminal-timing-correction/fixture.json \
+ARTIFACT_DIR=artifacts/ui-checks/terminal-timing-correction \
 node scripts/verify_terminal_timing_correction_ui.mjs
 ```
 
 The verifier passed with the exact fixture database reported by `/health`, no
-unexpected HTTP responses, console errors, page errors, or failed requests, and
-one final request each for double-clicked Finish review and confirmation after
-a bounded request-quiescence window. The deliberately exercised validation
-`422` and its exact browser console line are recorded separately as expected. A
-preview `ERR_ABORTED` is accepted only when correlated to a later preview or to
-one narrowly declared transition; the summary records the correlation. Route
-gates have bounded waits and always release and unregister in cleanup. The
-server was stopped after the run.
+unexpected failed requests, no console/page errors, and one request each for
+double-clicked Finish review and confirmation. Superseded preview requests may
+be deliberately aborted by the editor coordinator and are reported separately.
+The server was stopped after the run.
 
 The untracked visual evidence is:
 
-- `artifacts/ui-checks/terminal-timing-correction/run-XXXXXX/timing-editor-1366x768.png`
-- `artifacts/ui-checks/terminal-timing-correction/run-XXXXXX/finish-review-1920x1080.png`
-- `artifacts/ui-checks/terminal-timing-correction/run-XXXXXX/verification-summary.json`
+- `artifacts/ui-checks/terminal-timing-correction/timing-editor-1366x768.png`
+- `artifacts/ui-checks/terminal-timing-correction/finish-review-1920x1080.png`
+- `artifacts/ui-checks/terminal-timing-correction/verification-summary.json`
 
 Visual inspection confirmed fixed editor chrome with internal row scrolling at
 `1366x768`, and a centered, legible, unclipped Finish review with all actions

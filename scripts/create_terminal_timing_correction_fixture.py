@@ -5,10 +5,8 @@ import csv
 import io
 import json
 import os
-import sqlite3
 import sys
 import tempfile
-import uuid
 from pathlib import Path
 
 
@@ -26,8 +24,6 @@ SCENARIOS = (
     "awaiting_rewinding",
     "many_rows",
 )
-FIXTURE_KIND = "terminal-timing-correction-v1"
-OWNED_RUNTIME_DIR = ROOT_DIR / ".test-runtime" / "terminal-timing-correction"
 
 
 def require_single_link(path: Path, *, label: str) -> None:
@@ -36,18 +32,11 @@ def require_single_link(path: Path, *, label: str) -> None:
 
 
 def resolve_under_test_runtime(raw_path: str, *, label: str) -> Path:
-    runtime_path = OWNED_RUNTIME_DIR
-    current_guard = ROOT_DIR
-    for component in runtime_path.relative_to(ROOT_DIR).parts:
-        current_guard = current_guard / component
-        if current_guard.is_symlink():
-            raise ValueError(
-                ".test-runtime/terminal-timing-correction guard root must not contain symlinks"
-            )
+    runtime_path = ROOT_DIR / ".test-runtime"
+    if runtime_path.is_symlink():
+        raise ValueError(".test-runtime guard root must not be a symlink")
     if runtime_path.exists() and not runtime_path.is_dir():
-        raise ValueError(
-            ".test-runtime/terminal-timing-correction guard root must be a directory"
-        )
+        raise ValueError(".test-runtime guard root must be a directory")
 
     candidate = Path(raw_path)
     if not candidate.is_absolute():
@@ -57,93 +46,36 @@ def resolve_under_test_runtime(raw_path: str, *, label: str) -> Path:
     try:
         relative = lexical_candidate.relative_to(lexical_runtime)
     except ValueError as exc:
-        raise ValueError(
-            f"{label} must be under .test-runtime/terminal-timing-correction"
-        ) from exc
+        raise ValueError(f"{label} must be under .test-runtime") from exc
     if not relative.parts:
-        raise ValueError(
-            f"{label} must be under .test-runtime/terminal-timing-correction"
-        )
+        raise ValueError(f"{label} must be under .test-runtime")
 
     current = lexical_runtime
     for component in relative.parts:
         current = current / component
         if current.exists() or current.is_symlink():
             if current.is_symlink():
-                raise ValueError(
-                    f"{label} must be under .test-runtime/terminal-timing-correction"
-                )
+                raise ValueError(f"{label} must be under .test-runtime")
 
     resolved_runtime = runtime_path.resolve()
     resolved = candidate.resolve()
     try:
         resolved.relative_to(resolved_runtime)
     except ValueError as exc:
-        raise ValueError(
-            f"{label} must be under .test-runtime/terminal-timing-correction"
-        ) from exc
+        raise ValueError(f"{label} must be under .test-runtime") from exc
     if resolved.exists() and not resolved.is_file():
         raise ValueError(f"{label} must be a regular file")
     require_single_link(resolved, label=label)
     return resolved
 
 
-def initialize_database(database_path: Path) -> None:
+def reset_database(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     require_single_link(database_path, label="fixture DB path")
+    database_path.unlink(missing_ok=True)
     db.DATA_DIR = database_path.parent
     db.DB_PATH = database_path
     db.init_db()
-
-
-def read_owned_fixture_token(database_path: Path, output_path: Path) -> str | None:
-    if not database_path.exists() and not output_path.exists():
-        return None
-    if not database_path.exists() or not output_path.exists():
-        raise ValueError("existing fixture targets are not owned by this fixture")
-    try:
-        payload = json.loads(output_path.read_text(encoding="utf-8"))
-        token = payload["ownership_token"]
-        if (
-            payload.get("fixture_kind") != FIXTURE_KIND
-            or not isinstance(token, str)
-            or not token
-            or Path(payload.get("db_path", "")).resolve() != database_path
-        ):
-            raise ValueError
-        with sqlite3.connect(f"{database_path.as_uri()}?mode=ro", uri=True) as connection:
-            marker = connection.execute(
-                "SELECT fixture_kind, ownership_token "
-                "FROM terminal_timing_fixture_ownership WHERE id = 1"
-            ).fetchone()
-        if marker != (FIXTURE_KIND, token):
-            raise ValueError
-    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, sqlite3.Error) as exc:
-        raise ValueError(
-            "existing fixture targets are not owned by this fixture"
-        ) from exc
-    return token
-
-
-def record_fixture_ownership(ownership_token: str) -> None:
-    with db.connect() as connection:
-        connection.execute(
-            """
-            CREATE TABLE terminal_timing_fixture_ownership (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                fixture_kind TEXT NOT NULL,
-                ownership_token TEXT NOT NULL
-            )
-            """
-        )
-        connection.execute(
-            """
-            INSERT INTO terminal_timing_fixture_ownership (
-                id, fixture_kind, ownership_token
-            ) VALUES (1, ?, ?)
-            """,
-            (FIXTURE_KIND, ownership_token),
-        )
 
 
 def atomic_write_text(path: Path, contents: str, *, label: str) -> None:
@@ -382,13 +314,8 @@ def fixture_snapshot(cards: dict[str, int]) -> dict[str, object]:
     }
 
 
-def create_fixture(
-    database_path: Path,
-    *,
-    published_database_path: Path | None = None,
-    ownership_token: str,
-) -> dict[str, object]:
-    initialize_database(database_path)
+def create_fixture(database_path: Path) -> dict[str, object]:
+    reset_database(database_path)
     configuration = db.fetch_terminal_configuration()
     require_ok(
         db.update_shift_count(int(configuration["version"]), "2"),
@@ -463,11 +390,8 @@ def create_fixture(
     active_shift = db.fetch_active_shift()
     if active_shift is None:
         raise RuntimeError("Fixture active shift is missing.")
-    record_fixture_ownership(ownership_token)
     payload = {
-        "fixture_kind": FIXTURE_KIND,
-        "ownership_token": ownership_token,
-        "db_path": str(published_database_path or database_path),
+        "db_path": str(database_path),
         "active_shift": {
             "id": int(active_shift["id"]),
             "shift_number": int(active_shift["shift_number"]),
@@ -517,38 +441,12 @@ def main() -> None:
     except ValueError as exc:
         parser.error(str(exc))
 
-    try:
-        prior_ownership_token = read_owned_fixture_token(database_path, output_path)
-    except ValueError as exc:
-        parser.error(str(exc))
-    ownership_token = prior_ownership_token or uuid.uuid4().hex
-
-    database_path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        dir=database_path.parent,
-        prefix=f".{database_path.name}.",
-        suffix=".tmp.sqlite3",
+    payload = create_fixture(database_path)
+    atomic_write_text(
+        output_path,
+        f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n",
+        label="fixture output path",
     )
-    os.close(descriptor)
-    temporary_database_path = Path(temporary_name)
-    try:
-        payload = create_fixture(
-            temporary_database_path,
-            published_database_path=database_path,
-            ownership_token=ownership_token,
-        )
-        if read_owned_fixture_token(database_path, output_path) != prior_ownership_token:
-            raise ValueError("fixture ownership changed during replacement")
-        temporary_database_path.replace(database_path)
-        temporary_database_path = None
-        atomic_write_text(
-            output_path,
-            f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n",
-            label="fixture output path",
-        )
-    finally:
-        if temporary_database_path is not None:
-            temporary_database_path.unlink(missing_ok=True)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
