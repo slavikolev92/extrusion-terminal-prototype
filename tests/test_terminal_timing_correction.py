@@ -734,6 +734,37 @@ def test_terminal_timing_rejects_equal_reversed_overlapping_and_future_rows(conn
         assert timing_snapshot(card_id) == before
 
 
+def test_terminal_timing_rejects_unchanged_zero_length_existing_segment(connection):
+    card_id = release_ready_card("27009-legacy-zero", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:00",
+        ended_at="2026-01-15 08:00:00",
+        end_reason="pause",
+        status=STATUS_PAUSED,
+    )
+    before = timing_snapshot(card_id)
+
+    outcome = db.update_terminal_timing_ledger(
+        card_id,
+        before[0],
+        [
+            db.TimingDraftRow(
+                segment_id,
+                "2026-01-15",
+                "10:00",
+                "2026-01-15",
+                "10:00",
+            )
+        ],
+    )
+
+    assert not outcome.result.ok
+    assert outcome.result.messages == ("Краят трябва да бъде след началото.",)
+    assert timing_snapshot(card_id) == before
+
+
 def test_terminal_timing_allows_adjacent_rows(connection):
     card_id = release_ready_card("27010", 1)
     start_card(card_id)
@@ -1074,6 +1105,63 @@ def test_terminal_timing_json_parser_rejects_oversize_extra_and_wrong_types(conn
         with pytest.raises(ValueError) as error:
             main.parse_terminal_timing_draft(value)
         assert str(error.value) == db.INVALID_TERMINAL_TIMING_DRAFT_MESSAGE
+
+
+def test_terminal_timing_parser_ignores_timestamp_semantics_for_deleted_rows():
+    parsed = main.parse_terminal_timing_draft(
+        json.dumps(
+            [
+                {
+                    "segment_id": 41,
+                    "start_date": "",
+                    "start_time": "13:",
+                    "stop_date": "not-a-date",
+                    "stop_time": "25:99",
+                    "deleted": True,
+                }
+            ]
+        )
+    )
+
+    assert parsed == [db.TimingDraftRow(41, "", "13:", "not-a-date", "25:99", True)]
+
+
+def test_terminal_timing_future_boundary_does_not_emit_cascading_order_errors(
+    connection,
+):
+    card_id = release_ready_card("27013-future-only", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:17",
+        ended_at="2026-01-15 09:00:29",
+        end_reason="pause",
+        status=STATUS_PAUSED,
+    )
+
+    outcome = db.preview_terminal_timing_ledger(
+        card_id,
+        card_version(card_id),
+        [
+            db.TimingDraftRow(
+                segment_id,
+                "2099-01-15",
+                "10:00",
+                "2026-01-15",
+                "11:00",
+            )
+        ],
+        preview_at="2026-01-16 00:00:00",
+    )
+
+    assert outcome.result.messages == ("Времето не може да бъде в бъдещето.",)
+    assert outcome.issues == (
+        db.TimingValidationIssue(
+            source_index=0,
+            field="start_time",
+            message="Времето не може да бъде в бъдещето.",
+        ),
+    )
 
 
 def test_terminal_timing_preview_is_authoritative_nonpersistent_and_dst_correct(connection):

@@ -6,7 +6,6 @@ import io
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 
@@ -26,80 +25,34 @@ SCENARIOS = (
 )
 
 
-def require_single_link(path: Path, *, label: str) -> None:
-    if path.exists() and path.stat().st_nlink != 1:
-        raise ValueError(f"{label} must not be hard-linked")
-
-
 def resolve_under_test_runtime(raw_path: str, *, label: str) -> Path:
-    runtime_path = ROOT_DIR / ".test-runtime"
-    if runtime_path.is_symlink():
-        raise ValueError(".test-runtime guard root must not be a symlink")
-    if runtime_path.exists() and not runtime_path.is_dir():
-        raise ValueError(".test-runtime guard root must be a directory")
-
+    runtime_path = (ROOT_DIR / ".test-runtime").resolve()
     candidate = Path(raw_path)
     if not candidate.is_absolute():
         candidate = ROOT_DIR / candidate
-    lexical_runtime = runtime_path.absolute()
-    lexical_candidate = candidate.absolute()
     try:
-        relative = lexical_candidate.relative_to(lexical_runtime)
+        candidate = candidate.resolve()
+        relative = candidate.relative_to(runtime_path)
     except ValueError as exc:
         raise ValueError(f"{label} must be under .test-runtime") from exc
     if not relative.parts:
         raise ValueError(f"{label} must be under .test-runtime")
-
-    current = lexical_runtime
-    for component in relative.parts:
-        current = current / component
-        if current.exists() or current.is_symlink():
-            if current.is_symlink():
-                raise ValueError(f"{label} must be under .test-runtime")
-
-    resolved_runtime = runtime_path.resolve()
-    resolved = candidate.resolve()
-    try:
-        resolved.relative_to(resolved_runtime)
-    except ValueError as exc:
-        raise ValueError(f"{label} must be under .test-runtime") from exc
-    if resolved.exists() and not resolved.is_file():
+    if candidate.exists() and not candidate.is_file():
         raise ValueError(f"{label} must be a regular file")
-    require_single_link(resolved, label=label)
-    return resolved
+    return candidate
 
 
 def reset_database(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
-    require_single_link(database_path, label="fixture DB path")
     database_path.unlink(missing_ok=True)
     db.DATA_DIR = database_path.parent
     db.DB_PATH = database_path
     db.init_db()
 
 
-def atomic_write_text(path: Path, contents: str, *, label: str) -> None:
+def write_text(path: Path, contents: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temporary:
-            temporary_path = Path(temporary.name)
-            temporary.write(contents)
-            temporary.flush()
-            os.fsync(temporary.fileno())
-        require_single_link(path, label=label)
-        temporary_path.replace(path)
-        temporary_path = None
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
+    path.write_text(contents, encoding="utf-8")
 
 
 def fixture_row(order_number: str, customer: str) -> dict[str, str]:
@@ -409,7 +362,7 @@ def create_fixture(database_path: Path) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Create the guarded terminal timing-correction browser fixture."
+        description="Create the temporary terminal timing-correction browser fixture."
     )
     parser.add_argument("--db-path", required=True)
     parser.add_argument("--output", required=True)
@@ -442,10 +395,9 @@ def main() -> None:
         parser.error(str(exc))
 
     payload = create_fixture(database_path)
-    atomic_write_text(
+    write_text(
         output_path,
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n",
-        label="fixture output path",
     )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 

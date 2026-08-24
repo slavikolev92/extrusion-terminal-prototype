@@ -1,11 +1,18 @@
 import {
   addIntervalDraft,
+  canDeleteTimingRow,
+  dateSegmentsFromValue,
+  dateValueFromSegments,
+  formatFinishBoundary,
   incompleteDraftFields,
   mapServerPreview,
   markIntervalDeleted,
+  maskedBackspaceEdit,
   maskTimeInput,
+  maskedCaretPosition,
+  normalizeDraftDateInputs,
   serializeTimingDraft,
-  undoIntervalDelete,
+  visibleTimingRows,
 } from "./timing_interval_editor_core.mjs";
 
 export function createPreviewCoordinator({ apply = () => {} } = {}) {
@@ -74,71 +81,6 @@ export function retainedFinishReviewMessages(finishReview) {
   ].filter(Boolean))];
 }
 
-export function rerenderTimingRowsPreservingFocus({
-  activeElement,
-  intervalList,
-  renderRows,
-  shouldRestore = () => true,
-}) {
-  let focusIdentity = null;
-  if (activeElement && intervalList.contains(activeElement)) {
-    const sourceIndex = activeElement.dataset.sourceIndex;
-    const field = activeElement.dataset.timingField;
-    const numericSourceIndex = Number(sourceIndex);
-    if (
-      sourceIndex !== ""
-      && Number.isSafeInteger(numericSourceIndex)
-      && numericSourceIndex >= 0
-      && field
-    ) {
-      let selection = null;
-      try {
-        if (
-          Number.isSafeInteger(activeElement.selectionStart)
-          && Number.isSafeInteger(activeElement.selectionEnd)
-        ) {
-          selection = {
-            start: activeElement.selectionStart,
-            end: activeElement.selectionEnd,
-            direction: activeElement.selectionDirection,
-          };
-        }
-      } catch {
-        selection = null;
-      }
-      focusIdentity = { sourceIndex, field, selection };
-    }
-  }
-
-  renderRows();
-  if (!focusIdentity || !shouldRestore()) {
-    return false;
-  }
-  const replacement = intervalList.querySelector(
-    `[data-source-index="${focusIdentity.sourceIndex}"]`
-      + `[data-timing-field="${focusIdentity.field}"]`,
-  );
-  if (!replacement || replacement.disabled) {
-    return false;
-  }
-  replacement.focus({ preventScroll: true });
-  if (
-    focusIdentity.selection
-    && typeof replacement.setSelectionRange === "function"
-  ) {
-    try {
-      replacement.setSelectionRange(
-        focusIdentity.selection.start,
-        focusIdentity.selection.end,
-        focusIdentity.selection.direction,
-      );
-    } catch {
-      // Native date controls do not expose a text selection range.
-    }
-  }
-  return true;
-}
-
 const modelElement = document.querySelector("[data-terminal-timing-model]");
 const menu = document.querySelector("[data-timing-menu]");
 const menuButton = menu?.querySelector("[data-timing-menu-button]");
@@ -157,6 +99,11 @@ const addButton = overlay?.querySelector("[data-timing-add-interval]");
 const reloadLink = overlay?.querySelector("[data-timing-reload]");
 const cancelButton = overlay?.querySelector("[data-timing-cancel]");
 const saveButton = overlay?.querySelector("[data-timing-save]");
+const deleteConfirmOverlay = overlay?.querySelector("[data-timing-delete-confirm-overlay]");
+const deleteConfirmDialog = deleteConfirmOverlay?.querySelector("[data-timing-delete-confirm-dialog]");
+const deleteConfirmPrompt = deleteConfirmOverlay?.querySelector("[data-timing-delete-confirm-prompt]");
+const deleteConfirmCancel = deleteConfirmOverlay?.querySelector("[data-timing-delete-confirm-cancel]");
+const deleteConfirmSubmit = deleteConfirmOverlay?.querySelector("[data-timing-delete-confirm-submit]");
 const activeFinishForm = document.querySelector('form[data-timing-finish-review="true"]');
 const finishOverlay = document.querySelector("[data-finish-review-overlay]");
 const finishDialog = finishOverlay?.querySelector("[data-finish-review-dialog]");
@@ -183,7 +130,9 @@ try {
 if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     && dialog && saveForm && draftInput && intervalList && alertBox && totals
     && productionTotal && pausedTotal && addButton && reloadLink && cancelButton
-    && saveButton && activeFinishForm && finishOverlay && finishDialog && finishAlert
+    && saveButton && deleteConfirmOverlay && deleteConfirmDialog
+    && deleteConfirmPrompt && deleteConfirmCancel && deleteConfirmSubmit
+    && activeFinishForm && finishOverlay && finishDialog && finishAlert
     && finishWarning && finishFirstStart && finishProposedStop
     && finishProductionTotal && finishPausedTotal && finishEditButton
     && finishCancelButton && finishConfirmButton) {
@@ -197,6 +146,8 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   let finishSubmitting = false;
   let finishNativeSubmit = false;
   let shiftSuspended = false;
+  let timingActionPointerDown = false;
+  let pendingDeleteConfirmation = null;
   const previewCoordinator = createPreviewCoordinator();
 
   function cloneRows(rows) {
@@ -208,7 +159,10 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     previewPayload = timing.display,
     mode = "ordinary",
   ) {
-    const preview = mapServerPreview(cloneRows(rows), previewPayload);
+    const preview = mapServerPreview(
+      normalizeDraftDateInputs(cloneRows(rows)),
+      previewPayload,
+    );
     return {
       status: timing.status,
       mode,
@@ -229,17 +183,20 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     }
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
-    return `${hours} ч ${String(minutes).padStart(2, "0")} мин`;
+    return `${hours} ч ${String(minutes).padStart(2, "0")} м`;
   }
 
   function formatDraftBoundary(row, prefix) {
     const date = row?.[`${prefix}_date`] || "";
     const time = row?.[`${prefix}_time`] || "";
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
-    if (!match || !/^\d{2}:\d{2}$/.test(time)) {
+    const displayMatch = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(date);
+    const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+    if ((!displayMatch && !isoMatch) || !/^\d{2}:\d{2}$/.test(time)) {
       return "";
     }
-    return `${match[3]}.${match[2]}.${match[1]} ${time}`;
+    return displayMatch
+      ? `${date} ${time}`
+      : `${isoMatch[3]}.${isoMatch[2]}.${isoMatch[1]} ${time}`;
   }
 
   function retainedFinishPreview(finishModel, draft) {
@@ -263,9 +220,48 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     pausedTotal.textContent = formatDuration(state.pausedSeconds);
   }
 
+  function updateRenderedDuration(sourceIndex) {
+    const row = state.rows[sourceIndex];
+    const duration = intervalList.querySelector(
+      `.interval-row[data-source-index="${sourceIndex}"] .interval-duration`,
+    );
+    if (row && duration) {
+      duration.textContent = row.deleted ? "—" : formatDuration(row.duration_seconds);
+    }
+  }
+
+  function invalidateDisplayedCalculations(sourceIndexes = []) {
+    sourceIndexes.forEach((sourceIndex) => {
+      if (state.rows[sourceIndex]) {
+        state.rows[sourceIndex] = {
+          ...state.rows[sourceIndex],
+          duration_seconds: null,
+        };
+        updateRenderedDuration(sourceIndex);
+      }
+    });
+    state.productionSeconds = null;
+    state.pausedSeconds = null;
+    updateTotals();
+  }
+
   function setPreviewLoading(loading) {
     totals.classList.toggle("timing-dialog-loading", loading);
     totals.setAttribute("aria-busy", loading ? "true" : "false");
+  }
+
+  function setEditorSubmitting(active) {
+    submitting = active;
+    dialog.setAttribute("aria-busy", active ? "true" : "false");
+    intervalList.querySelectorAll("input").forEach((input) => {
+      input.readOnly = active;
+    });
+    addButton.disabled = active || state.locked;
+    cancelButton.disabled = active;
+    saveButton.disabled = active || state.locked;
+    intervalList.querySelectorAll("[data-timing-action]").forEach((button) => {
+      button.disabled = active || state.locked;
+    });
   }
 
   function invalidatePreviewDraft() {
@@ -274,6 +270,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   }
 
   function clearAlert() {
+    clearServerErrorState();
     alertBox.hidden = true;
     alertBox.classList.remove("stale");
     alertBox.replaceChildren();
@@ -294,69 +291,73 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   }
 
   function fieldInput(sourceIndex, field) {
-    return intervalList.querySelector(
-      `[data-source-index="${sourceIndex}"][data-timing-field="${field}"]`,
-    );
+    return fieldInputs(sourceIndex, field)[0] || null;
   }
 
-  function renderServerErrors(
-    issues,
-    { finish = false, preserveAlert = false } = {},
-  ) {
-    intervalList.querySelectorAll("[data-timing-field-error]").forEach(
-      (element) => {
-        element.replaceChildren();
-        element.hidden = true;
-      },
+  function fieldInputs(sourceIndex, field) {
+    const dateGroup = intervalList.querySelector(
+      `[data-source-index="${sourceIndex}"][data-timing-date-field="${field}"]`,
     );
+    if (dateGroup) {
+      return Array.from(dateGroup.querySelectorAll("input"));
+    }
+    return Array.from(intervalList.querySelectorAll(
+      `[data-source-index="${sourceIndex}"][data-timing-field="${field}"]`,
+    ));
+  }
+
+  function clearServerErrorState() {
     intervalList.querySelectorAll("[aria-invalid='true']").forEach((input) => {
       input.removeAttribute("aria-invalid");
       input.removeAttribute("aria-describedby");
     });
+  }
+
+  function renderServerErrors(
+    issues,
+    { focus = false, preserveAlert = false } = {},
+  ) {
+    clearServerErrorState();
     const formMessages = [];
+    const invalidSourceIndexes = new Set();
     let firstEditableTarget = null;
     issues.forEach((issue) => {
+      formMessages.push(issue.message);
       if (!Number.isSafeInteger(issue.source_index) || issue.field === "form") {
-        formMessages.push(issue.message);
         return;
       }
-      const input = fieldInput(issue.source_index, issue.field);
-      if (!input) {
-        formMessages.push(issue.message);
-        return;
-      }
-      const error = input.closest("[data-timing-field-wrapper]")?.querySelector(
-        "[data-timing-field-error]",
-      );
-      if (!error) {
-        formMessages.push(issue.message);
-        return;
-      }
-      error.textContent = error.hidden
-        ? issue.message
-        : `${error.textContent} ${issue.message}`;
-      error.hidden = false;
-      input.setAttribute("aria-invalid", "true");
-      input.setAttribute("aria-describedby", error.id);
-      if (!input.disabled && !firstEditableTarget) {
-        firstEditableTarget = input;
-      }
-    });
-    if (!preserveAlert) {
-      if (finish && finishOverlay.hidden === false) {
-        showFinishAlert(formMessages);
-      } else {
-        if (formMessages.length > 0) {
-          showAlert(formMessages, { stale: state.locked });
-        } else {
-          clearAlert();
+      invalidSourceIndexes.add(issue.source_index);
+      const prefix = issue.field.startsWith("start_") ? "start" : "stop";
+      const targetFields = issue.field.endsWith("_date")
+        ? [issue.field]
+        : [`${prefix}_date`, `${prefix}_time`];
+      targetFields.forEach((field) => {
+        const inputs = fieldInputs(issue.source_index, field);
+        if (inputs.length === 0) {
+          return;
         }
+        inputs.forEach((input) => {
+          input.setAttribute("aria-invalid", "true");
+          input.setAttribute("aria-describedby", "timing-dialog-alert");
+        });
+        const input = inputs.find((candidate) => !candidate.disabled);
+        firstEditableTarget ||= input || null;
+      });
+    });
+    if (formMessages.length > 0 && !state.locked) {
+      invalidateDisplayedCalculations(invalidSourceIndexes);
+    }
+    if (!preserveAlert) {
+      if (formMessages.length > 0) {
+        showAlert(formMessages, { stale: state.locked });
+      } else {
+        clearAlert();
       }
-      if (firstEditableTarget) {
+      if (focus && firstEditableTarget) {
         window.requestAnimationFrame(() => firstEditableTarget.focus());
-      } else if (formMessages.length > 0) {
+      } else if (focus && formMessages.length > 0) {
         window.requestAnimationFrame(() => {
-          (finish && !finishOverlay.hidden ? finishAlert : alertBox).focus?.();
+          alertBox.focus?.();
         });
       }
     }
@@ -365,7 +366,12 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   function lockTimingDraft(messages = ["Данните са променени. Презаредете картата."]) {
     previewCoordinator.invalidate({ stale: true });
     setPreviewLoading(false);
+    closeDeleteConfirmation({ restoreFocus: false });
     state.locked = true;
+    if (state.mode === "finish" && finishReview) {
+      finishReview.locked = true;
+      finishReview.lockMessages = [...new Set(messages.filter(Boolean))];
+    }
     renderRows();
     addButton.disabled = true;
     saveButton.disabled = true;
@@ -376,9 +382,30 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     reloadLink.focus();
   }
 
-  function createFieldInput(row, sourceIndex, field) {
+  function persistFieldValue(sourceIndex, field, value) {
+    invalidatePreviewDraft();
+    state.rows[sourceIndex] = {
+      ...state.rows[sourceIndex],
+      [field]: value,
+      duration_seconds: null,
+    };
+    invalidateDisplayedCalculations([sourceIndex]);
+    clearAlert();
+    updateDraftInput();
+  }
+
+  function requestPreviewAfterFieldExit() {
+    if (
+      !submitting
+      && !timingActionPointerDown
+      && incompleteDraftFields(state.rows, requiredDraftStatus()).length === 0
+    ) {
+      requestEditorPreview();
+    }
+  }
+
+  function createTimeInput(row, sourceIndex, field) {
     const input = document.createElement("input");
-    input.value = row[field] || "";
     input.dataset.sourceIndex = String(sourceIndex);
     input.dataset.timingField = field;
     input.disabled = state.locked || row.deleted;
@@ -386,39 +413,164 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
       "aria-label",
       timingFieldAccessibleName(row.display_number, field),
     );
-    if (field.endsWith("_date")) {
-      input.type = "date";
-    } else {
+    input.type = "text";
+    input.inputMode = "numeric";
+    input.maxLength = 5;
+    input.autocomplete = "off";
+    input.placeholder = "чч:мм";
+    input.value = row[field] || "";
+    const selectTimeSegment = () => {
+      if (input.disabled) {
+        return;
+      }
+      const caret = input.selectionStart ?? 0;
+      const segmentStart = caret >= 3 ? 3 : 0;
+      const segmentEnd = Math.min(segmentStart + 2, input.value.length);
+      input.setSelectionRange(segmentStart, segmentEnd);
+    };
+    input.addEventListener("click", selectTimeSegment);
+    input.addEventListener("keydown", (event) => {
+      if (input.readOnly || event.key !== "Backspace") {
+        return;
+      }
+      const edit = maskedBackspaceEdit(
+        input.value,
+        input.selectionStart,
+        input.selectionEnd,
+      );
+      if (!edit) {
+        return;
+      }
+      event.preventDefault();
+      input.value = edit.value;
+      input.setSelectionRange(edit.caret, edit.caret);
+      persistFieldValue(sourceIndex, field, edit.value);
+    });
+    input.addEventListener("input", () => {
+      const rawValue = input.value;
+      const rawCaret = input.selectionStart ?? rawValue.length;
+      const digitsBeforeCaret = rawValue
+        .slice(0, rawCaret)
+        .replace(/\D/g, "").length;
+      const value = maskTimeInput(rawValue).value;
+      input.value = value;
+      const caret = maskedCaretPosition(value, digitsBeforeCaret);
+      input.setSelectionRange(caret, caret);
+      persistFieldValue(sourceIndex, field, value);
+    });
+    input.addEventListener("blur", requestPreviewAfterFieldExit);
+    return input;
+  }
+
+  function createSegmentedDateInput(row, sourceIndex, field) {
+    const group = document.createElement("div");
+    group.className = "segmented-date-input";
+    group.dataset.sourceIndex = String(sourceIndex);
+    group.dataset.timingDateField = field;
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", timingFieldAccessibleName(row.display_number, field));
+
+    const values = dateSegmentsFromValue(row[field] || "");
+    const definitions = [
+      { key: "day", label: "ден", maxLength: 2, placeholder: "дд" },
+      { key: "month", label: "месец", maxLength: 2, placeholder: "мм" },
+      { key: "year", label: "година", maxLength: 4, placeholder: "гггг" },
+    ];
+    const inputs = [];
+
+    const selectInput = (input) => {
+      if (!input || input.disabled) {
+        return;
+      }
+      input.focus({ preventScroll: true });
+      input.select();
+    };
+
+    const combinedValue = () => dateValueFromSegments(Object.fromEntries(
+      inputs.map((input) => [input.dataset.dateSegment, input.value]),
+    ));
+
+    definitions.forEach((definition, index) => {
+      if (index > 0) {
+        const separator = document.createElement("span");
+        separator.className = "date-segment-separator";
+        separator.textContent = "/";
+        separator.setAttribute("aria-hidden", "true");
+        group.append(separator);
+      }
+
+      const input = document.createElement("input");
       input.type = "text";
       input.inputMode = "numeric";
-      input.maxLength = 5;
+      input.maxLength = definition.maxLength;
       input.autocomplete = "off";
-      input.placeholder = "чч:мм";
-    }
-    input.addEventListener("input", () => {
-      invalidatePreviewDraft();
-      let value = input.value;
-      if (field.endsWith("_time")) {
-        const masked = maskTimeInput(value);
-        value = masked.value;
-        input.value = value;
+      input.placeholder = definition.placeholder;
+      input.value = values[definition.key];
+      input.disabled = state.locked || row.deleted;
+      input.dataset.sourceIndex = String(sourceIndex);
+      input.dataset.dateSegment = definition.key;
+      input.dataset.timingCombinedField = field;
+      if (index === 0) {
+        input.dataset.timingField = field;
       }
-      state.rows[sourceIndex] = {
-        ...state.rows[sourceIndex],
-        [field]: value,
-      };
-      clearAlert();
-      updateDraftInput();
+      input.setAttribute(
+        "aria-label",
+        `${timingFieldAccessibleName(row.display_number, field)}, ${definition.label}`,
+      );
+      input.addEventListener("focus", () => input.select());
+      input.addEventListener("click", () => input.select());
+      input.addEventListener("input", () => {
+        input.value = input.value.replace(/\D/g, "").slice(0, definition.maxLength);
+        persistFieldValue(sourceIndex, field, combinedValue());
+        if (input.value.length === definition.maxLength) {
+          selectInput(inputs[index + 1]);
+        }
+      });
+      input.addEventListener("keydown", (event) => {
+        const previous = inputs[index - 1];
+        const next = inputs[index + 1];
+        const selectionStart = input.selectionStart ?? 0;
+        const selectionEnd = input.selectionEnd ?? selectionStart;
+        if ((event.key === "." || event.key === "/") && next) {
+          event.preventDefault();
+          selectInput(next);
+        } else if (
+          event.key === "ArrowRight"
+          && selectionStart === input.value.length
+          && selectionEnd === selectionStart
+          && next
+        ) {
+          event.preventDefault();
+          selectInput(next);
+        } else if (
+          event.key === "ArrowLeft"
+          && selectionStart === 0
+          && selectionEnd === 0
+          && previous
+        ) {
+          event.preventDefault();
+          selectInput(previous);
+        } else if (
+          event.key === "Backspace"
+          && input.value === ""
+          && selectionStart === 0
+          && previous
+        ) {
+          event.preventDefault();
+          selectInput(previous);
+        }
+      });
+      inputs.push(input);
+      group.append(input);
     });
-    input.addEventListener("blur", () => {
-      if (
-        state.mode === "ordinary"
-        && incompleteDraftFields(state.rows, requiredDraftStatus()).length === 0
-      ) {
-        requestOrdinaryPreview();
+
+    group.addEventListener("focusout", (event) => {
+      if (event.relatedTarget && group.contains(event.relatedTarget)) {
+        return;
       }
+      requestPreviewAfterFieldExit();
     });
-    return input;
+    return group;
   }
 
   function createTimestampControls(row, sourceIndex, prefix) {
@@ -435,26 +587,79 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     const wrapper = document.createElement("div");
     wrapper.className = "timestamp-field";
     wrapper.dataset.timingFieldWrapper = "true";
-    const input = createFieldInput(row, sourceIndex, field);
-    const error = document.createElement("span");
-    error.id = `timing-field-error-${sourceIndex}-${field}`;
-    error.dataset.timingFieldError = "true";
-    error.className = "field-error-slot";
-    error.hidden = true;
-    wrapper.append(input, error);
+    const input = field.endsWith("_date")
+      ? createSegmentedDateInput(row, sourceIndex, field)
+      : createTimeInput(row, sourceIndex, field);
+    wrapper.append(input);
     return wrapper;
+  }
+
+  function closeDeleteConfirmation({ restoreFocus = true } = {}) {
+    if (deleteConfirmOverlay.hidden) {
+      return;
+    }
+    const opener = pendingDeleteConfirmation?.opener || null;
+    deleteConfirmOverlay.hidden = true;
+    deleteConfirmOverlay.setAttribute("aria-hidden", "true");
+    dialog.removeAttribute("inert");
+    pendingDeleteConfirmation = null;
+    if (restoreFocus && opener?.isConnected && !opener.disabled) {
+      opener.focus({ preventScroll: true });
+    }
+  }
+
+  function openDeleteConfirmation({ row, sourceIndex, visibleIndex, opener }) {
+    if (state.locked || submitting || opener.disabled) {
+      return;
+    }
+    pendingDeleteConfirmation = {
+      sourceIndex,
+      visibleIndex,
+      opener,
+    };
+    deleteConfirmPrompt.textContent = `Сигурни ли сте, че искате да изтриете интервал №${row.display_number}?`;
+    dialog.setAttribute("inert", "");
+    deleteConfirmOverlay.hidden = false;
+    deleteConfirmOverlay.setAttribute("aria-hidden", "false");
+    deleteConfirmCancel.focus({ preventScroll: true });
+  }
+
+  function confirmIntervalDelete() {
+    const pending = pendingDeleteConfirmation;
+    if (!pending || state.locked || submitting) {
+      closeDeleteConfirmation({ restoreFocus: !state.locked });
+      return;
+    }
+    const { sourceIndex, visibleIndex } = pending;
+    closeDeleteConfirmation({ restoreFocus: false });
+    invalidatePreviewDraft();
+    state.rows = markIntervalDeleted(state.rows, sourceIndex);
+    invalidateDisplayedCalculations();
+    clearAlert();
+    renderRows();
+    updateDraftInput();
+    window.requestAnimationFrame(() => {
+      const renderedRows = Array.from(intervalList.querySelectorAll(".interval-row"));
+      const nextAction = renderedRows[visibleIndex]?.querySelector(
+        '[data-timing-action="delete"]:not([disabled])',
+      );
+      const previousAction = renderedRows[visibleIndex - 1]?.querySelector(
+        '[data-timing-action="delete"]:not([disabled])',
+      );
+      (nextAction || previousAction || addButton).focus({ preventScroll: true });
+    });
+    if (incompleteDraftFields(state.rows, requiredDraftStatus()).length === 0) {
+      requestEditorPreview();
+    }
   }
 
   function renderRows() {
     intervalList.replaceChildren();
-    const activeIndexes = state.rows
-      .map((row, index) => (row.deleted ? null : index))
-      .filter((index) => index !== null);
-    const finalActiveIndex = activeIndexes.at(-1);
+    const visibleRows = visibleTimingRows(state.rows);
 
-    state.rows.forEach((row, sourceIndex) => {
+    visibleRows.forEach(({ row, sourceIndex }, visibleIndex) => {
       const rowElement = document.createElement("div");
-      rowElement.className = `interval-row${row.deleted ? " pending-delete" : ""}`;
+      rowElement.className = "interval-row";
       rowElement.dataset.sourceIndex = String(sourceIndex);
 
       const numberCell = document.createElement("div");
@@ -467,8 +672,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
       const stopCell = document.createElement("div");
       const finalOpen = state.mode === "ordinary"
         && state.status === "running"
-        && !row.deleted
-        && sourceIndex === finalActiveIndex;
+        && visibleIndex === visibleRows.length - 1;
       if (finalOpen) {
         stopCell.replaceChildren();
       } else {
@@ -477,36 +681,29 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
 
       const durationCell = document.createElement("div");
       durationCell.className = "interval-duration";
-      durationCell.textContent = row.deleted ? "—" : formatDuration(row.duration_seconds);
+      durationCell.textContent = formatDuration(row.duration_seconds);
 
       const actionCell = document.createElement("div");
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = row.deleted ? "interval-undo" : "interval-delete";
-      button.textContent = row.deleted ? "Отмяна" : "×";
-      button.setAttribute(
-        "aria-label",
-        row.deleted
-          ? `Отмени изтриването на интервал ${row.display_number}`
-          : `Изтрий интервал ${row.display_number}`,
-      );
-      button.disabled = state.locked;
-      button.addEventListener("click", () => {
-        invalidatePreviewDraft();
-        state.rows = row.deleted
-          ? undoIntervalDelete(state.rows, sourceIndex)
-          : markIntervalDeleted(state.rows, sourceIndex);
-        clearAlert();
-        renderRows();
-        updateDraftInput();
-        if (
-          state.mode === "ordinary"
-          && incompleteDraftFields(state.rows, requiredDraftStatus()).length === 0
-        ) {
-          requestOrdinaryPreview();
-        }
-      });
-      actionCell.append(button);
+      if (canDeleteTimingRow(state.rows, sourceIndex, {
+        mode: state.mode,
+        status: state.status,
+      })) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "interval-delete";
+        button.dataset.sourceIndex = String(sourceIndex);
+        button.dataset.timingAction = "delete";
+        button.textContent = "Изтрий";
+        button.setAttribute("aria-label", `Изтрий интервал ${row.display_number}`);
+        button.disabled = state.locked;
+        button.addEventListener("click", () => openDeleteConfirmation({
+          row,
+          sourceIndex,
+          visibleIndex,
+          opener: button,
+        }));
+        actionCell.append(button);
+      }
       rowElement.append(numberCell, startCell, stopCell, durationCell, actionCell);
       intervalList.append(rowElement);
     });
@@ -576,6 +773,27 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     }
   }
 
+  function trapDeleteConfirmationFocus(event) {
+    const focusable = [deleteConfirmCancel, deleteConfirmSubmit].filter(
+      (element) => !element.disabled,
+    );
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (!first || !last) {
+      event.preventDefault();
+      deleteConfirmDialog.focus();
+    } else if (!deleteConfirmDialog.contains(document.activeElement)) {
+      event.preventDefault();
+      first.focus();
+    } else if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   function openMenu({ focusItem = false } = {}) {
     if (menuButton.disabled || shiftSuspended) {
       return;
@@ -607,9 +825,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     }
     modalReturnFocus = opener;
     state = createInitialState(rows, preview, mode);
-    submitting = false;
-    saveButton.disabled = state.locked;
-    addButton.disabled = state.locked;
+    setEditorSubmitting(false);
     reloadLink.hidden = !state.locked;
     dialog.querySelector("#timing-dialog-title").textContent = mode === "finish"
       ? "Корекция преди приключване"
@@ -633,14 +849,17 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   }
 
   function closeEditor({ restoreFocus = true, preserveBackground = false } = {}) {
+    if (submitting) {
+      return;
+    }
     invalidatePreviewDraft();
+    closeDeleteConfirmation({ restoreFocus: false });
     overlay.hidden = true;
     overlay.setAttribute("aria-hidden", "true");
     if (!preserveBackground) {
       setBackgroundIsolated(false);
     }
-    submitting = false;
-    saveButton.disabled = false;
+    setEditorSubmitting(false);
     if (restoreFocus) {
       (modalReturnFocus || menuButton).focus({ preventScroll: true });
     }
@@ -648,16 +867,15 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   }
 
   function cancelEditor() {
+    if (submitting) {
+      return;
+    }
     if (state.mode !== "finish") {
       closeEditor();
       return;
     }
-    closeEditor({ restoreFocus: false });
-    finishReview = null;
-    finishSubmitting = false;
-    finishNativeSubmit = false;
-    finishReturnFocus?.focus({ preventScroll: true });
-    finishReturnFocus = null;
+    closeEditor({ restoreFocus: false, preserveBackground: true });
+    openFinishSummary({ opener: finishEditButton, focusTarget: finishEditButton });
   }
 
   function finishFocusableElements() {
@@ -700,8 +918,8 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   }
 
   function renderFinishPreview(preview) {
-    finishFirstStart.textContent = preview.first_start_display || "—";
-    finishProposedStop.textContent = preview.proposed_stop_display || "—";
+    finishFirstStart.textContent = formatFinishBoundary(preview.first_start_display);
+    finishProposedStop.textContent = formatFinishBoundary(preview.proposed_stop_display);
     finishProductionTotal.textContent = formatDuration(preview.production_seconds);
     finishPausedTotal.textContent = formatDuration(preview.paused_seconds);
     const message = activeFinishForm.dataset.finishConfirmMessage || "";
@@ -715,20 +933,30 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
       return;
     }
     finishReturnFocus ||= opener.querySelector?.("button") || opener;
-    showFinishAlert([]);
+    const locked = Boolean(finishReview?.locked);
+    showFinishAlert(locked ? finishReview.lockMessages || [] : []);
     renderFinishPreview(finishReview.preview);
+    finishDialog.setAttribute("aria-busy", "false");
+    finishConfirmButton.disabled = locked;
+    finishEditButton.disabled = locked;
+    finishCancelButton.disabled = false;
     finishOverlay.hidden = false;
     finishOverlay.setAttribute("aria-hidden", "false");
     setBackgroundIsolated(true);
-    focusTarget.focus();
+    (locked ? finishCancelButton : focusTarget).focus();
   }
 
   function closeFinishSummary({ restoreFocus = true, preserveBackground = false } = {}) {
+    if (finishSubmitting) {
+      return;
+    }
     invalidatePreviewDraft();
     finishOverlay.hidden = true;
     finishOverlay.setAttribute("aria-hidden", "true");
     finishConfirmButton.disabled = false;
     finishEditButton.disabled = false;
+    finishCancelButton.disabled = false;
+    finishDialog.setAttribute("aria-busy", "false");
     if (!preserveBackground) {
       setBackgroundIsolated(false);
     }
@@ -757,23 +985,12 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   }
 
   function applyEditorPreview(preview) {
-    const previewMode = state.mode;
     const mapped = mapServerPreview(state.rows, preview);
     state.rows = mapped.rows;
     state.productionSeconds = mapped.production_seconds;
     state.pausedSeconds = mapped.paused_seconds;
     clearAlert();
-    rerenderTimingRowsPreservingFocus({
-      activeElement: document.activeElement,
-      intervalList,
-      renderRows,
-      shouldRestore: () => (
-        !overlay.hidden
-        && !state.locked
-        && !shiftSuspended
-        && state.mode === previewMode
-      ),
-    });
+    state.rows.forEach((_, sourceIndex) => updateRenderedDuration(sourceIndex));
     updateTotals();
     updateDraftInput();
   }
@@ -822,6 +1039,12 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     }
   }
 
+  function requestEditorPreview() {
+    return state.mode === "finish"
+      ? requestFinishEditorPreview()
+      : requestOrdinaryPreview();
+  }
+
   async function beginFinishReview() {
     if (finishSubmitting) {
       return;
@@ -844,28 +1067,52 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         return;
       }
       if (!response.ok || !responsePayload.ok) {
-        finishReview = {
-          reviewToken: "",
-          draft: cloneRows(timing.draft),
-          preview: timing.display,
-        };
-        finishReturnFocus = trigger;
         const hasRowErrors = (responsePayload.field_errors || []).some(
           (issue) => Number.isSafeInteger(issue.source_index) && issue.field !== "form",
         );
-        if (response.status === 409 || hasRowErrors) {
+        if (response.status === 409) {
+          finishReview = {
+            reviewToken: "",
+            draft: cloneRows(timing.draft),
+            preview: timing.display,
+          };
+          finishReturnFocus = trigger;
           openEditor({
             opener: trigger,
             mode: "finish",
             rows: finishReview.draft,
             preview: finishReview.preview,
           });
-          if (response.status === 409) {
-            lockTimingDraft(responsePayload.messages);
-          }
-          renderServerErrors(responsePayload.field_errors || []);
+          lockTimingDraft(responsePayload.messages);
+          renderServerErrors(responsePayload.field_errors || [], { focus: true });
           return;
         }
+        if (hasRowErrors) {
+          finishReview = null;
+          finishReturnFocus = null;
+          openEditor({
+            opener: trigger,
+            mode: "ordinary",
+            rows: timing.draft,
+            preview: timing.display,
+            previewOnOpen: false,
+          });
+          renderServerErrors([
+            {
+              source_index: null,
+              field: "form",
+              message: "Коригирайте времето, запишете промените и опитайте да приключите отново.",
+            },
+            ...(responsePayload.field_errors || []),
+          ], { focus: true });
+          return;
+        }
+        finishReview = {
+          reviewToken: "",
+          draft: cloneRows(timing.draft),
+          preview: timing.display,
+        };
+        finishReturnFocus = trigger;
         openFinishSummary({ opener: trigger, focusTarget: finishCancelButton });
         showFinishAlert(responsePayload.messages || ["Действието не беше изпълнено."]);
         focusFinishAlert();
@@ -898,9 +1145,20 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     }
   }
 
-  async function applyFinishDraft() {
-    submitting = true;
-    saveButton.disabled = true;
+  async function requestFinishEditorPreview({ returnToSummary = false } = {}) {
+    if (
+      shiftSuspended
+      || state.locked
+      || state.mode !== "finish"
+      || overlay.hidden
+      || incompleteDraftFields(state.rows, requiredDraftStatus()).length > 0
+    ) {
+      setPreviewLoading(false);
+      return;
+    }
+    if (returnToSummary) {
+      setEditorSubmitting(true);
+    }
     setPreviewLoading(true);
     const loadedVersion = activeFinishForm.querySelector("input[name='loaded_version']").value;
     const pendingPreview = previewCoordinator.request((signal) => postTimingRequest(
@@ -926,22 +1184,33 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         if (response.status === 409) {
           lockTimingDraft(responsePayload.messages);
         }
-        renderServerErrors(responsePayload.field_errors || []);
+        renderServerErrors(responsePayload.field_errors || [], {
+          focus: returnToSummary,
+        });
         return;
       }
-      finishReview.draft = cloneRows(responsePayload.preview.draft);
-      finishReview.preview = responsePayload.preview;
-      closeEditor({ restoreFocus: false, preserveBackground: true });
-      openFinishSummary({ opener: finishEditButton, focusTarget: finishEditButton });
+      applyEditorPreview(responsePayload.preview);
+      if (returnToSummary) {
+        finishReview.draft = cloneRows(responsePayload.preview.draft);
+        finishReview.preview = responsePayload.preview;
+        setEditorSubmitting(false);
+        closeEditor({ restoreFocus: false, preserveBackground: true });
+        openFinishSummary({ opener: finishEditButton, focusTarget: finishEditButton });
+      }
     } catch {
       showAlert(["Действието не беше изпълнено. Опитайте отново."]);
     } finally {
-      submitting = false;
-      saveButton.disabled = state.locked;
+      if (returnToSummary) {
+        setEditorSubmitting(false);
+      }
       if (previewCoordinator.generation() === requestGeneration) {
         setPreviewLoading(false);
       }
     }
+  }
+
+  async function applyFinishDraft() {
+    return requestFinishEditorPreview({ returnToSummary: true });
   }
 
   function hiddenFinishField(name) {
@@ -961,6 +1230,9 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     }
     finishSubmitting = true;
     finishConfirmButton.disabled = true;
+    finishCancelButton.disabled = true;
+    finishEditButton.disabled = true;
+    finishDialog.setAttribute("aria-busy", "true");
     const tokenInput = hiddenFinishField("review_token");
     tokenInput.name = "review_token";
     tokenInput.value = finishReview.reviewToken;
@@ -1005,10 +1277,20 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   document.addEventListener("terminal:roll-correction-open", () => {
     closeMenu({ restoreFocus: menuPanel.contains(document.activeElement) });
   });
+  dialog.addEventListener("pointerdown", (event) => {
+    timingActionPointerDown = Boolean(event.target.closest?.("button, a"));
+  });
+  document.addEventListener("pointerup", () => {
+    timingActionPointerDown = false;
+  });
+  document.addEventListener("pointercancel", () => {
+    timingActionPointerDown = false;
+  });
 
   addButton.addEventListener("click", () => {
     invalidatePreviewDraft();
-    state.rows = addIntervalDraft(state.rows, requiredDraftStatus());
+    state.rows = addIntervalDraft(state.rows, state.status);
+    invalidateDisplayedCalculations();
     clearAlert();
     renderRows();
     updateDraftInput();
@@ -1016,9 +1298,11 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     fieldInput(first?.source_index, first?.field)?.focus();
   });
   cancelButton.addEventListener("click", cancelEditor);
-  overlay.addEventListener("click", (event) => {
-    if (event.target === overlay && !state.locked) {
-      state.mode === "finish" ? cancelEditor() : closeEditor();
+  deleteConfirmCancel.addEventListener("click", () => closeDeleteConfirmation());
+  deleteConfirmSubmit.addEventListener("click", confirmIntervalDelete);
+  deleteConfirmOverlay.addEventListener("click", (event) => {
+    if (event.target === deleteConfirmOverlay) {
+      closeDeleteConfirmation();
     }
   });
   saveForm.addEventListener("submit", (event) => {
@@ -1038,8 +1322,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
       return;
     }
     updateDraftInput();
-    submitting = true;
-    saveButton.disabled = true;
+    setEditorSubmitting(true);
   });
 
   activeFinishForm.addEventListener("submit", (event) => {
@@ -1092,6 +1375,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     previewCoordinator.invalidate({ suspend: true });
     setPreviewLoading(false);
     shiftSuspended = true;
+    closeDeleteConfirmation({ restoreFocus: false });
     closeMenu();
     overlay.hidden = true;
     overlay.setAttribute("aria-hidden", "true");
@@ -1115,12 +1399,23 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   });
 
   document.addEventListener("keydown", (event) => {
+    if (!deleteConfirmOverlay.hidden) {
+      if (event.key === "Tab") {
+        trapDeleteConfirmationFocus(event);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        closeDeleteConfirmation();
+      }
+      return;
+    }
     if (!overlay.hidden) {
       if (event.key === "Tab") {
         trapDialogFocus(event);
       } else if (event.key === "Escape") {
         event.preventDefault();
-        cancelEditor();
+        if (!submitting) {
+          cancelEditor();
+        }
       }
       return;
     }
@@ -1129,7 +1424,9 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         trapFinishFocus(event);
       } else if (event.key === "Escape") {
         event.preventDefault();
-        closeFinishSummary();
+        if (!finishSubmitting) {
+          closeFinishSummary();
+        }
       }
       return;
     }
@@ -1142,7 +1439,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   if (model.editor_open) {
     openEditor({ opener: menuButton, previewOnOpen: false });
     if (Array.isArray(model.issues) && model.issues.length > 0) {
-      renderServerErrors(model.issues);
+      renderServerErrors(model.issues, { focus: true });
     }
   }
   if (model.finish_review?.open) {
@@ -1173,7 +1470,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         lockTimingDraft(retainedMessages);
       }
       renderServerErrors(model.finish_review.issues, {
-        finish: true,
+        focus: true,
         preserveAlert: model.finish_review.locked,
       });
     } else {

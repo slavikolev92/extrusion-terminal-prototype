@@ -1,15 +1,101 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import * as timingCore from "../../app/static/js/timing_interval_editor_core.mjs";
 
 import {
   addIntervalDraft,
+  canDeleteTimingRow,
   incompleteDraftFields,
   markIntervalDeleted,
   mapServerPreview,
+  maskDateInput,
   maskTimeInput,
+  maskedCaretPosition,
+  normalizeDraftDateInputs,
   serializeTimingDraft,
-  undoIntervalDelete,
+  visibleTimingRows,
 } from "../../app/static/js/timing_interval_editor_core.mjs";
+
+test("date mask uses a fixed Bulgarian day-month-year format", () => {
+  assert.equal(maskDateInput("2"), "2");
+  assert.equal(maskDateInput("20"), "20.");
+  assert.equal(maskDateInput("2007"), "20.07.");
+  assert.equal(maskDateInput("20072026"), "20.07.2026");
+  assert.equal(maskDateInput("20.07.202626"), "20.07.2026");
+  assert.equal(maskDateInput(""), "");
+});
+
+test("date segments preserve their positions independently", () => {
+  assert.deepEqual(timingCore.dateSegmentsFromValue?.("20.08.2026"), {
+    day: "20",
+    month: "08",
+    year: "2026",
+  });
+  assert.deepEqual(timingCore.dateSegmentsFromValue?.(".08.2026"), {
+    day: "",
+    month: "08",
+    year: "2026",
+  });
+  assert.equal(timingCore.dateValueFromSegments?.({
+    day: "",
+    month: "08",
+    year: "2026",
+  }), ".08.2026");
+  assert.equal(timingCore.dateValueFromSegments?.({
+    day: "20",
+    month: "",
+    year: "2026",
+  }), "20..2026");
+  assert.equal(timingCore.dateValueFromSegments?.({
+    day: "",
+    month: "",
+    year: "",
+  }), "");
+});
+
+test("finish review boundaries use the compact approved display format", () => {
+  assert.equal(
+    timingCore.formatFinishBoundary?.("20.08.2026 12:15"),
+    "20/08/26 12:15",
+  );
+  assert.equal(timingCore.formatFinishBoundary?.(""), "—");
+});
+
+test("server ISO dates reopen as deterministic Bulgarian date inputs", () => {
+  assert.deepEqual(normalizeDraftDateInputs([{
+    segment_id: 41,
+    start_date: "2026-08-19",
+    start_time: "10:00",
+    stop_date: "2026-08-20",
+    stop_time: "11:00",
+    deleted: false,
+  }]), [{
+    segment_id: 41,
+    start_date: "19.08.2026",
+    start_time: "10:00",
+    stop_date: "20.08.2026",
+    stop_time: "11:00",
+    deleted: false,
+  }]);
+});
+
+test("masked caret follows the edited digits instead of jumping to the end", () => {
+  assert.equal(maskedCaretPosition("00:0", 1), 1);
+  assert.equal(maskedCaretPosition("09:00", 2), 3);
+  assert.equal(maskedCaretPosition("20.07.2026", 4), 6);
+});
+
+test("Backspace at an inserted separator removes the preceding digit", () => {
+  assert.deepEqual(timingCore.maskedBackspaceEdit?.("10:30", 3, 3), {
+    value: "1:30",
+    caret: 1,
+  });
+  assert.deepEqual(timingCore.maskedBackspaceEdit?.("20.08.2026", 3, 3), {
+    value: "2.08.2026",
+    caret: 1,
+  });
+  assert.equal(timingCore.maskedBackspaceEdit?.("10:30", 1, 1), null);
+});
 
 test("time mask inserts one colon and rejects incomplete or impossible values", () => {
   assert.deepEqual(maskTimeInput("13"), {
@@ -56,8 +142,16 @@ test("time mask inserts one colon and rejects incomplete or impossible values", 
   }
 });
 
-test("running add interval creates blank operator-entered boundaries", () => {
+test("running add interval inserts a blank closed row before the unchanged open row", () => {
   const draft = addIntervalDraft([
+    {
+      segment_id: 40,
+      start_date: "2026-08-21",
+      start_time: "09:00",
+      stop_date: "2026-08-21",
+      stop_time: "09:30",
+      deleted: false,
+    },
     {
       segment_id: 41,
       start_date: "2026-08-21",
@@ -70,11 +164,11 @@ test("running add interval creates blank operator-entered boundaries", () => {
 
   assert.deepEqual(draft, [
     {
-      segment_id: 41,
+      segment_id: 40,
       start_date: "2026-08-21",
-      start_time: "10:00",
-      stop_date: "",
-      stop_time: "",
+      start_time: "09:00",
+      stop_date: "2026-08-21",
+      stop_time: "09:30",
       deleted: false,
       display_number: 1,
     },
@@ -87,12 +181,21 @@ test("running add interval creates blank operator-entered boundaries", () => {
       deleted: false,
       display_number: 2,
     },
+    {
+      segment_id: 41,
+      start_date: "2026-08-21",
+      start_time: "10:00",
+      stop_date: "",
+      stop_time: "",
+      deleted: false,
+      display_number: 3,
+    },
   ]);
   assert.deepEqual(incompleteDraftFields(draft, "running"), [
-    { source_index: 0, field: "stop_date" },
-    { source_index: 0, field: "stop_time" },
     { source_index: 1, field: "start_date" },
     { source_index: 1, field: "start_time" },
+    { source_index: 1, field: "stop_date" },
+    { source_index: 1, field: "stop_time" },
   ]);
 });
 
@@ -125,7 +228,7 @@ test("paused add interval creates a blank closed-row draft", () => {
   ]);
 });
 
-test("pending delete retains its displayed number and undo restores it", () => {
+test("delete keeps an existing row in the draft and serializes its deleted state", () => {
   const rows = [
     {
       segment_id: 41,
@@ -145,25 +248,122 @@ test("pending delete retains its displayed number and undo restores it", () => {
     },
   ];
 
-  const pending = markIntervalDeleted(rows, 0);
-  assert.equal(pending[0].deleted, true);
-  assert.equal(pending[0].display_number, 1);
-  assert.equal(pending[1].display_number, 2);
+  const deleted = markIntervalDeleted(rows, 0);
 
-  const restored = undoIntervalDelete(pending, 0);
-  assert.equal(restored[0].deleted, false);
-  assert.equal(restored[0].display_number, 1);
-  assert.equal(restored[1].display_number, 2);
+  assert.equal(deleted.length, 2);
+  assert.equal(deleted[0].deleted, true);
+  assert.deepEqual(serializeTimingDraft(deleted), [
+    {
+      segment_id: 41,
+      start_date: "2026-08-21",
+      start_time: "10:00",
+      stop_date: "2026-08-21",
+      stop_time: "11:00",
+      deleted: true,
+    },
+    {
+      segment_id: 42,
+      start_date: "2026-08-21",
+      start_time: "11:30",
+      stop_date: "2026-08-21",
+      stop_time: "12:30",
+      deleted: false,
+    },
+  ]);
+});
 
-  const withUnsaved = addIntervalDraft(restored, "paused");
-  assert.deepEqual(markIntervalDeleted(withUnsaved, 2), restored);
+test("delete removes an unsaved row from the draft", () => {
+  const rows = [
+    {
+      segment_id: 41,
+      start_date: "2026-08-21",
+      start_time: "10:00",
+      stop_date: "2026-08-21",
+      stop_time: "11:00",
+      deleted: false,
+    },
+    {
+      segment_id: null,
+      start_date: "",
+      start_time: "",
+      stop_date: "",
+      stop_time: "",
+      deleted: false,
+    },
+  ];
 
-  const withTwoUnsaved = addIntervalDraft(withUnsaved, "paused");
-  const withoutFirstUnsaved = markIntervalDeleted(withTwoUnsaved, 2);
-  const appendedAgain = addIntervalDraft(withoutFirstUnsaved, "paused");
-  assert.deepEqual(
-    appendedAgain.map((row) => row.display_number),
-    [1, 2, 4, 5],
+  assert.deepEqual(markIntervalDeleted(rows, 1), [{
+    ...rows[0],
+    display_number: 1,
+  }]);
+});
+
+test("visible rows omit deleted drafts and renumber visible copies", () => {
+  const rows = Object.freeze([
+    Object.freeze({ segment_id: 41, deleted: false, display_number: 4 }),
+    Object.freeze({ segment_id: 42, deleted: true, display_number: 5 }),
+    Object.freeze({ segment_id: null, deleted: false, display_number: 6 }),
+  ]);
+
+  assert.deepEqual(visibleTimingRows(rows), [
+    {
+      row: { segment_id: 41, deleted: false, display_number: 1 },
+      sourceIndex: 0,
+    },
+    {
+      row: { segment_id: null, deleted: false, display_number: 2 },
+      sourceIndex: 2,
+    },
+  ]);
+  assert.deepEqual(rows.map((row) => row.display_number), [4, 5, 6]);
+});
+
+test("delete eligibility protects only the open running final interval and a sole visible row", () => {
+  const runningRows = [
+    {
+      segment_id: 41,
+      stop_date: "2026-08-21",
+      stop_time: "11:00",
+      deleted: false,
+    },
+    { segment_id: 42, stop_date: "", stop_time: "", deleted: false },
+  ];
+  const closedFinalRows = [
+    {
+      segment_id: 41,
+      stop_date: "2026-08-21",
+      stop_time: "11:00",
+      deleted: false,
+    },
+    {
+      segment_id: 42,
+      stop_date: "2026-08-21",
+      stop_time: "12:00",
+      deleted: false,
+    },
+  ];
+
+  assert.equal(
+    canDeleteTimingRow(runningRows, 1, { mode: "ordinary", status: "running" }),
+    false,
+  );
+  assert.equal(
+    canDeleteTimingRow([{ segment_id: 41, deleted: false }], 0, {
+      mode: "ordinary",
+      status: "paused",
+    }),
+    false,
+  );
+  assert.equal(
+    canDeleteTimingRow(closedFinalRows, 1, {
+      mode: "ordinary",
+      status: "running",
+    }),
+    true,
+  );
+  assert.equal(
+    canDeleteTimingRow(runningRows, 0, { mode: "ordinary", status: "running" }),
+    true,
   );
 });
 
@@ -243,7 +443,7 @@ test("draft serializer emits only server fields and omits deleted unsaved rows",
     }),
     Object.freeze({
       segment_id: null,
-      start_date: "2026-08-21",
+      start_date: "21.08.2026",
       start_time: "16:00",
       stop_date: "",
       stop_time: "",
@@ -273,4 +473,29 @@ test("draft serializer emits only server fields and omits deleted unsaved rows",
   ]);
   assert.equal(rows.length, 3);
   assert.equal(rows[0].display_number, 1);
+});
+
+test("display dates are complete only when real and serialize back to ISO", () => {
+  const row = {
+    segment_id: 41,
+    start_date: "20.07.2026",
+    start_time: "10:00",
+    stop_date: "20.07.2026",
+    stop_time: "11:00",
+    deleted: false,
+  };
+
+  assert.deepEqual(incompleteDraftFields([row], "paused"), []);
+  assert.deepEqual(incompleteDraftFields([{
+    ...row,
+    start_date: "31.02.2026",
+  }], "paused"), [{ source_index: 0, field: "start_date" }]);
+  assert.deepEqual(serializeTimingDraft([row]), [{
+    segment_id: 41,
+    start_date: "2026-07-20",
+    start_time: "10:00",
+    stop_date: "2026-07-20",
+    stop_time: "11:00",
+    deleted: false,
+  }]);
 });

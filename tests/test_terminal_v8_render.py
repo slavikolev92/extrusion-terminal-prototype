@@ -2412,15 +2412,15 @@ def test_terminal_timing_dialog_matches_approved_v2_contract(connection):
     assert "Общо паузирано време" in html
     assert [
         html.index(">№</div>", html.index('data-timing-column-headings')),
-        html.index(">Начало</div>", html.index('data-timing-column-headings')),
-        html.index(">Край</div>", html.index('data-timing-column-headings')),
+        html.index(">Начало</span>", html.index('data-timing-column-headings')),
+        html.index(">Край</span>", html.index('data-timing-column-headings')),
         html.index(">Продължителност</div>", html.index('data-timing-column-headings')),
         html.index(">Действие</div>", html.index('data-timing-column-headings')),
     ] == sorted(
         [
             html.index(">№</div>", html.index('data-timing-column-headings')),
-            html.index(">Начало</div>", html.index('data-timing-column-headings')),
-            html.index(">Край</div>", html.index('data-timing-column-headings')),
+            html.index(">Начало</span>", html.index('data-timing-column-headings')),
+            html.index(">Край</span>", html.index('data-timing-column-headings')),
             html.index(">Продължителност</div>", html.index('data-timing-column-headings')),
             html.index(">Действие</div>", html.index('data-timing-column-headings')),
         ]
@@ -2438,7 +2438,11 @@ def test_terminal_timing_dialog_matches_approved_v2_contract(connection):
 
     dialog_rules = css_rules(html, r"(?m)^    \.timing-dialog")
     assert "width: min(1040px, calc(100vw - 40px));" in dialog_rules
-    assert "height: min(728px, calc(100vh - 40px));" in dialog_rules
+    assert re.search(
+        r"(?m)^\s*height: min\(728px, calc\(100vh - 40px\)\);$",
+        dialog_rules,
+    ) is None
+    assert "max-height: min(728px, calc(100vh - 40px));" in dialog_rules
     assert "grid-template-rows: auto auto auto minmax(0, 1fr) auto;" in dialog_rules
     overlay_rules = css_rules(html, r"(?m)^    \.timing-modal-overlay")
     assert "padding: 20px;" in overlay_rules
@@ -2446,11 +2450,24 @@ def test_terminal_timing_dialog_matches_approved_v2_contract(connection):
     assert "color: var(--primary-text);" in menu_button_rules
     scroll_rules = css_rules(html, r"(?m)^    \.interval-scroll")
     assert "overflow-y: auto;" in scroll_rules
+    assert "max-height: min(430px, calc(100vh - 338px));" in scroll_rules
     columns_rules = css_rules(
         html,
         r"(?m)^    \.interval-columns,\s*\.interval-row",
     )
-    assert "48px minmax(0, 1fr) minmax(0, 1fr) 150px 72px" in columns_rules
+    assert "48px minmax(0, 1fr) minmax(0, 1fr) 150px 96px" in columns_rules
+    row_rule_sets = css_rules_all(html, r"(?m)^    \.interval-row")
+    assert any("min-height: 72px;" in rules for rules in row_rule_sets)
+    assert any("padding: 8px 24px;" in rules for rules in row_rule_sets)
+    delete_rules = css_rules(html, r"(?m)^    \.interval-delete")
+    assert "border-color: var(--line);" in delete_rules
+    assert "background: var(--surface);" in delete_rules
+    assert "color: var(--text);" in delete_rules
+    assert "min-width: 72px;" in delete_rules
+    assert "min-height: 40px;" in delete_rules
+    segmented_date_rules = css_rules(html, r"(?m)^    \.segmented-date-input")
+    assert "grid-template-columns: 22px 5px 22px 5px 44px;" in segmented_date_rules
+    assert "justify-content: center;" in segmented_date_rules
     separator_rules = css_rules(
         html,
         r"(?m)^    \.interval-columns > div:not\(:first-child\),\s*\.interval-row > div:not\(:first-child\)",
@@ -2460,19 +2477,34 @@ def test_terminal_timing_dialog_matches_approved_v2_contract(connection):
     assert 'from "./timing_interval_editor_core.mjs"' in controller_source
     for reused_export in (
         "addIntervalDraft",
+        "canDeleteTimingRow",
+        "dateSegmentsFromValue",
+        "dateValueFromSegments",
         "incompleteDraftFields",
         "mapServerPreview",
         "markIntervalDeleted",
         "maskTimeInput",
+        "maskedCaretPosition",
         "serializeTimingDraft",
-        "undoIntervalDelete",
+        "visibleTimingRows",
     ):
         assert reused_export in controller_source
-    assert 'input.type = "date"' in controller_source
+    assert 'input.type = "date"' not in controller_source
+    assert 'group.className = "segmented-date-input"' in controller_source
+    assert 'input.dataset.dateSegment = definition.key' in controller_source
+    assert '{ key: "day", label: "ден", maxLength: 2, placeholder: "дд" }' in controller_source
+    assert '{ key: "month", label: "месец", maxLength: 2, placeholder: "мм" }' in controller_source
+    assert '{ key: "year", label: "година", maxLength: 4, placeholder: "гггг" }' in controller_source
     assert 'inputMode = "numeric"' in controller_source
     assert 'maxLength = 5' in controller_source
     assert 'stopCell.replaceChildren()' in controller_source
-    assert 'button.textContent = row.deleted ? "Отмяна" : "×"' in controller_source
+    assert 'button.textContent = "Изтрий"' in controller_source
+    assert (
+        "Сигурни ли сте, че искате да изтриете интервал "
+        "№${row.display_number}?"
+    ) in controller_source
+    assert "undoIntervalDelete" not in controller_source
+    assert "pending-delete" not in controller_source
     assert "openEditor({ opener: menuButton });" in controller_source
     assert "new Date(" not in controller_source
     assert "Date.parse(" not in controller_source
@@ -2480,7 +2512,73 @@ def test_terminal_timing_dialog_matches_approved_v2_contract(connection):
     assert "ongoing" not in html
 
 
-def test_terminal_timing_field_error_slots_preserve_timestamp_grid_columns(connection):
+def test_terminal_timing_delete_confirmation_and_presentation_contract(connection):
+    card_id = release_ready_card(
+        "26182-timing-final-correction",
+        machine_id=1,
+        sequence=1,
+    )
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+
+    html = render_terminal(card_id)
+    controller_source = Path(
+        "app/static/js/timing_interval_editor.mjs"
+    ).read_text(encoding="utf-8")
+
+    assert 'data-timing-delete-confirm-overlay hidden aria-hidden="true"' in html
+    assert 'role="dialog" aria-modal="true"' in html
+    assert 'aria-labelledby="timing-delete-confirm-title"' in html
+    assert 'aria-describedby="timing-delete-confirm-prompt"' in html
+    assert (
+        '<h2 class="finish-confirm-title" id="timing-delete-confirm-title">'
+        'Изтриване на интервал</h2>'
+    ) in html
+    assert 'data-timing-delete-confirm-prompt' in html
+    assert 'data-timing-delete-confirm-cancel>Отказ</button>' in html
+    assert 'data-timing-delete-confirm-submit>Изтрий</button>' in html
+    assert "window.confirm" not in controller_source
+    assert (
+        "Сигурни ли сте, че искате да изтриете интервал "
+        "№${row.display_number}?"
+    ) in controller_source
+
+    delete_overlay_rules = css_rules(
+        html,
+        r"(?m)^    \.timing-delete-confirm-modal",
+    )
+    assert "z-index: 120;" in delete_overlay_rules
+    delete_submit_rules = css_rules(
+        html,
+        r"(?m)^    \.timing-delete-confirm-submit",
+    )
+    assert "background: var(--surface);" in delete_submit_rules
+    assert "color: var(--primary-text);" in delete_submit_rules
+    assert "var(--red)" not in delete_submit_rules
+
+    assert '<span class="timing-column-heading--timestamp">Начало</span>' in html
+    assert '<span class="timing-column-heading--timestamp">Край</span>' in html
+    timestamp_heading_rules = css_rules(
+        html,
+        r"(?m)^    \.timing-column-heading--timestamp",
+    )
+    assert "width: 206px;" in timestamp_heading_rules
+    duration_axis_rules = css_rules(
+        html,
+        r"(?m)^    \.interval-columns > div:nth-child\(4\),\s*"
+        r"\.interval-row > div:nth-child\(4\)",
+    )
+    assert "justify-content: center;" in duration_axis_rules
+
+    assert 'separator.textContent = "/"' in controller_source
+    assert 'separator.textContent = "."' not in controller_source
+    assert "min-width: 46rem;" not in html
+    assert html.count("0 ч 00 м") == 2
+    assert "0 ч 00 мин" not in html
+    assert 'padStart(2, "0")} м`' in controller_source
+    assert 'padStart(2, "0")} мин`' not in controller_source
+
+
+def test_terminal_timing_errors_use_stable_summary_and_boundary_highlights(connection):
     card_id = release_ready_card(
         "26182-timing-error-slots",
         machine_id=1,
@@ -2492,21 +2590,13 @@ def test_terminal_timing_field_error_slots_preserve_timestamp_grid_columns(conne
         "app/static/js/timing_interval_editor.mjs"
     ).read_text(encoding="utf-8")
 
-    wrapper_rules = css_rules(html, r"(?m)^    \.timestamp-field")
-    assert "min-width: 0;" in wrapper_rules
-    assert "display: grid;" in wrapper_rules
+    assert 'id="timing-dialog-alert"' in html
     assert 'wrapper.dataset.timingFieldWrapper = "true"' in controller
-    assert 'error.dataset.timingFieldError = "true"' in controller
-    assert "error.hidden = true" in controller
-    assert "wrapper.append(input, error)" in controller
-    assert re.search(
-        r'input\.closest\("\[data-timing-field-wrapper\]"\)\?\.querySelector\(\s*'
-        r'"\[data-timing-field-error\]"',
-        controller,
-    )
-    assert 'input.setAttribute("aria-describedby", error.id)' in controller
-    assert "error.hidden = false" in controller
-    assert 'input.insertAdjacentElement("afterend", error)' not in controller
+    assert "wrapper.append(input)" in controller
+    assert "timingFieldError" not in controller
+    assert 'input.setAttribute("aria-describedby", "timing-dialog-alert")' in controller
+    assert 'input.setAttribute("aria-invalid", "true")' in controller
+    assert "showAlert(formMessages" in controller
 
 
 def test_terminal_v8_finish_form_uses_app_native_confirmation_modal(connection):
@@ -2592,6 +2682,12 @@ def test_active_finish_uses_review_while_waiting_finish_keeps_simple_confirmatio
         active_html,
         f"/terminal/cards/{active_id}/finish",
     )
+    finish_review_start = active_html.index("data-finish-review-overlay")
+    finish_review_end = active_html.index(
+        'class="finish-confirm-modal"',
+        finish_review_start,
+    )
+    finish_review_markup = active_html[finish_review_start:finish_review_end]
     controller_source = Path(
         "app/static/js/timing_interval_editor.mjs"
     ).read_text(encoding="utf-8")
@@ -2602,9 +2698,27 @@ def test_active_finish_uses_review_while_waiting_finish_keeps_simple_confirmatio
     assert 'aria-labelledby="finish-review-title"' in active_html
     assert 'role="alert" tabindex="-1" data-finish-review-alert hidden' in active_html
     assert '<h2 id="finish-review-title">Преглед преди приключване</h2>' in active_html
-    assert "Първо начало" in active_html
-    assert "Предложен край" in active_html
-    assert 'data-finish-review-edit>Редактирай интервалите</button>' in active_html
+    assert "Проверете производствените интервали" not in finish_review_markup
+    assert "Първо начало" not in finish_review_markup
+    assert "Предложен край" not in finish_review_markup
+    assert "Начало" in finish_review_markup
+    assert "Край" in finish_review_markup
+    assert 'data-finish-timing-summary' in finish_review_markup
+    assert 'data-finish-production-summary' in finish_review_markup
+    for heading in (
+        "Палет №",
+        "Брой ролки",
+        "Бруто, кг",
+        "Тегло на палета, кг",
+        "Нето, кг",
+    ):
+        assert heading in finish_review_markup
+    assert 'data-finish-pallet-weight>—</td>' in finish_review_markup
+    assert 'data-finish-pallet-weight-total>—</td>' in finish_review_markup
+    assert "Без палет" in finish_review_markup
+    assert "25.0" in finish_review_markup
+    assert "24.0" in finish_review_markup
+    assert 'data-finish-review-edit>Редактирай времето</button>' in active_html
     assert 'data-finish-review-cancel>Отказ</button>' in active_html
     assert (
         'class="finish-confirm-primary" type="button" '
@@ -2616,7 +2730,8 @@ def test_active_finish_uses_review_while_waiting_finish_keeps_simple_confirmatio
     assert "responsePayload.preview.draft" in controller_source
     assert 'name = "review_token"' in controller_source
     assert 'name = "timing_draft"' in controller_source
-    assert 'state.mode === "finish" ? cancelEditor() : closeEditor();' in controller_source
+    assert 'overlay.addEventListener("click"' not in controller_source
+    assert 'cancelButton.addEventListener("click", cancelEditor)' in controller_source
     finish_submit_start = controller_source.index(
         'activeFinishForm.addEventListener("submit", (event) => {'
     )
@@ -2801,7 +2916,8 @@ def test_terminal_timing_errors_reopen_or_lock_the_submitted_draft(connection):
     assert "model.finish_review.draft" in controller_source
     assert "retainedFinishPreview(model.finish_review, retainedDraft)" in controller_source
     assert "renderServerErrors" in controller_source
-    assert "fieldInput(issue.source_index, issue.field)" in controller_source
+    assert 'const prefix = issue.field.startsWith("start_") ? "start" : "stop"' in controller_source
+    assert "targetFields.forEach((field)" in controller_source
     assert "lockTimingDraft" in controller_source
     assert "reloadLink.hidden = false" in controller_source
     assert "finishConfirmButton.disabled = true" in controller_source
@@ -2812,11 +2928,16 @@ def test_terminal_timing_errors_reopen_or_lock_the_submitted_draft(connection):
     )
     begin_review = controller_source[begin_review_start:begin_review_end]
     assert "const hasRowErrors = (responsePayload.field_errors || []).some" in begin_review
-    stale_branch = begin_review.index("if (response.status === 409 || hasRowErrors)")
+    stale_branch = begin_review.index("if (response.status === 409)")
     assert begin_review.index("openEditor({", stale_branch) < begin_review.index(
         "lockTimingDraft(responsePayload.messages)", stale_branch
     )
-    assert "renderServerErrors(responsePayload.field_errors || [])" in begin_review
+    row_error_branch = begin_review.index("if (hasRowErrors)")
+    row_error_end = begin_review.index("openFinishSummary", row_error_branch)
+    row_error_recovery = begin_review[row_error_branch:row_error_end]
+    assert 'mode: "ordinary"' in row_error_recovery
+    assert "запишете промените" in row_error_recovery
+    assert "renderServerErrors" in row_error_recovery
     assert "finishConfirmButton.disabled = true" in begin_review
     assert "finishEditButton.disabled = true" in begin_review
     assert begin_review.count("focusFinishAlert();") == 2
@@ -2977,7 +3098,7 @@ console.log(JSON.stringify(retained));
     lock_index = hydration.index("lockTimingDraft(retainedMessages)", branch_index)
     row_errors_index = hydration.index(
         "renderServerErrors(model.finish_review.issues, {\n"
-        "        finish: true,\n"
+        "        focus: true,\n"
         "        preserveAlert: model.finish_review.locked,\n"
         "      });",
         lock_index,

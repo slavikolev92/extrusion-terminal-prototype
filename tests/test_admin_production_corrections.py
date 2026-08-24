@@ -169,6 +169,27 @@ def prepare_completed_card(order_number: str) -> int:
     add_tare(card_id)
     add_roll(card_id)
     assert db.finish_card(card_id, card_version(card_id)).ok
+    with db.connect() as connection:
+        connection.execute(
+            """
+            UPDATE production_time_segments
+            SET ended_at = datetime(started_at, '+1 minute')
+            WHERE card_id = ? AND ended_at <= started_at
+            """,
+            (card_id,),
+        )
+        connection.execute(
+            """
+            UPDATE cards
+            SET finished_at = (
+                SELECT MAX(ended_at)
+                FROM production_time_segments
+                WHERE card_id = ?
+            )
+            WHERE id = ?
+            """,
+            (card_id, card_id),
+        )
     return card_id
 
 

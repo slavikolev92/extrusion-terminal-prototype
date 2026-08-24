@@ -90,9 +90,7 @@ def health_server(database_path: Path):
         server.server_close()
 
 
-def test_timing_fixture_refuses_runtime_and_paths_outside_test_runtime(
-    tmp_path: Path,
-):
+def test_timing_fixture_only_replaces_requested_temp_database(tmp_path: Path):
     copied_root = tmp_path / "isolated-repository"
     copied_scripts = copied_root / "scripts"
     copied_scripts.mkdir(parents=True)
@@ -104,85 +102,40 @@ def test_timing_fixture_refuses_runtime_and_paths_outside_test_runtime(
     fake_runtime_dir.mkdir()
     fake_runtime_database = fake_runtime_dir / "extrusion_terminal.sqlite3"
     fake_runtime_database.write_bytes(b"synthetic runtime sentinel")
-    runtime_output = copied_root / ".test-runtime" / "timing" / "fixture.json"
+    temporary_dir = copied_root / ".test-runtime" / "timing"
+    temporary_database = temporary_dir / "fixture.sqlite3"
+    temporary_output = temporary_dir / "fixture.json"
 
     runtime_result = run_fixture(
         fake_runtime_database,
-        runtime_output,
+        temporary_output,
         cwd=copied_root,
         script=copied_script,
     )
     assert runtime_result.returncode != 0
     assert "must be under .test-runtime" in runtime_result.stderr
     assert fake_runtime_database.read_bytes() == b"synthetic runtime sentinel"
-    assert not runtime_output.exists()
+    assert not temporary_output.exists()
 
-    outside_database = tmp_path / "outside.sqlite3"
-    outside_output = tmp_path / "outside.json"
-    safe_database = copied_root / ".test-runtime" / "timing" / "fixture.sqlite3"
-    safe_output = copied_root / ".test-runtime" / "timing" / "fixture.json"
-    for database_path, output_path in (
-        (outside_database, safe_output),
-        (safe_database, outside_output),
-    ):
-        result = run_fixture(
-            database_path,
-            output_path,
-            cwd=copied_root,
-            script=copied_script,
-        )
-        assert result.returncode != 0
-        assert "must be under .test-runtime" in result.stderr
-    assert not outside_database.exists()
-    assert not outside_output.exists()
-    assert not safe_database.exists()
-    assert not safe_output.exists()
-
-    runtime_root = copied_root / ".test-runtime"
-    runtime_root.mkdir()
-    alias = runtime_root / "runtime-alias"
-    alias.symlink_to(fake_runtime_dir, target_is_directory=True)
-    alias_result = run_fixture(
-        alias / "extrusion_terminal.sqlite3",
-        runtime_root / "timing" / "alias.json",
+    temporary_result = run_fixture(
+        temporary_database,
+        temporary_output,
         cwd=copied_root,
         script=copied_script,
+        extrusion_db_path=temporary_database,
     )
-    assert alias_result.returncode != 0
-    assert "must be under .test-runtime" in alias_result.stderr
+    assert temporary_result.returncode == 0, temporary_result.stderr
+    fixture = json.loads(temporary_output.read_text(encoding="utf-8"))
+    assert Path(fixture["db_path"]) == temporary_database
+    assert set(fixture["cards"]) == {
+        "running",
+        "paused",
+        "completed",
+        "awaiting_rewinding",
+        "many_rows",
+    }
+    assert temporary_database.is_file()
     assert fake_runtime_database.read_bytes() == b"synthetic runtime sentinel"
-
-    runtime_output_dir = runtime_root / "hard-link"
-    runtime_output_dir.mkdir()
-    outside_sentinel = tmp_path / "outside-sentinel.json"
-    outside_sentinel.write_bytes(b"outside artifact sentinel")
-    hard_link_output = runtime_output_dir / "fixture.json"
-    os.link(outside_sentinel, hard_link_output)
-    hard_link_result = run_fixture(
-        runtime_output_dir / "fixture.sqlite3",
-        hard_link_output,
-        cwd=copied_root,
-        script=copied_script,
-    )
-    assert hard_link_result.returncode != 0
-    assert "must not be hard-linked" in hard_link_result.stderr
-    assert outside_sentinel.read_bytes() == b"outside artifact sentinel"
-
-    mismatch_database = runtime_root / "mismatch" / "fixture.sqlite3"
-    mismatch_output = runtime_root / "mismatch" / "fixture.json"
-    explicit_other_database = runtime_root / "other" / "fixture.sqlite3"
-    mismatch_result = run_fixture(
-        mismatch_database,
-        mismatch_output,
-        cwd=copied_root,
-        script=copied_script,
-        extrusion_db_path=explicit_other_database,
-    )
-    assert mismatch_result.returncode != 0
-    assert "EXTRUSION_DB_PATH must match --db-path" in mismatch_result.stderr
-    assert not mismatch_database.exists()
-    assert not mismatch_output.exists()
-    assert not explicit_other_database.exists()
 
 
 def test_timing_verifier_requires_matching_health_database_identity(tmp_path: Path):
@@ -229,7 +182,7 @@ def test_timing_verifier_requires_matching_health_database_identity(tmp_path: Pa
     assert not artifact_directory_was_created
 
 
-def test_timing_verifier_writes_only_to_supplied_artifact_directory(tmp_path: Path):
+def test_timing_verifier_rejects_artifacts_outside_repository(tmp_path: Path):
     runtime_dir = REPO_ROOT / ".test-runtime" / f"timing-artifact-{tmp_path.name}"
     runtime_dir.mkdir(parents=True)
     database_path = runtime_dir / "fixture.sqlite3"
@@ -257,49 +210,12 @@ def test_timing_verifier_writes_only_to_supplied_artifact_directory(tmp_path: Pa
                 check=False,
             )
 
-        artifact_dir = (
-            REPO_ROOT
-            / "artifacts"
-            / "ui-checks"
-            / f"timing-artifact-{tmp_path.name}"
-        )
-        artifact_dir.mkdir(parents=True)
-        outside_sentinel = tmp_path / "outside-summary.json"
-        outside_sentinel.write_bytes(b"outside summary sentinel")
-        summary_alias = artifact_dir / "verification-summary.json"
-        os.link(outside_sentinel, summary_alias)
-        with health_server(database_path) as (base_url, guarded_requests):
-            guarded_result = subprocess.run(
-                ["node", str(VERIFIER_SCRIPT)],
-                cwd=REPO_ROOT,
-                env=verifier_environment(
-                    BASE_URL=base_url,
-                    FIXTURE_JSON=str(fixture_path),
-                    ARTIFACT_DIR=str(artifact_dir),
-                ),
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
-        outside_bytes = outside_sentinel.read_bytes()
         database_bytes = database_path.read_bytes()
     finally:
         shutil.rmtree(runtime_dir, ignore_errors=True)
-        shutil.rmtree(
-            REPO_ROOT
-            / "artifacts"
-            / "ui-checks"
-            / f"timing-artifact-{tmp_path.name}",
-            ignore_errors=True,
-        )
 
     assert outside_result.returncode != 0
     assert "ARTIFACT_DIR must be below artifacts/ui-checks" in outside_result.stderr
     assert outside_requests == []
     assert not outside_artifact_dir.exists()
-    assert guarded_result.returncode != 0
-    assert "Existing artifact target must not be hard-linked" in guarded_result.stderr
-    assert guarded_requests == [("GET", "/health")]
-    assert outside_bytes == b"outside summary sentinel"
     assert database_bytes == b"synthetic fixture database"

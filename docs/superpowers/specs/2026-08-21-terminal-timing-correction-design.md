@@ -3,7 +3,9 @@
 Date: 2026-08-21
 
 Status: Approved through user discussion and V2 static-prototype review on
-2026-08-21.
+2026-08-21, with the timing-editor deletion and visual refinement approved on
+2026-08-23 and the final nested-confirmation/presentation correction accepted
+later that day.
 
 ## Goal
 
@@ -43,7 +45,7 @@ The editor presents chronological rows with:
 3. stop date and `HH:MM`, with a completely blank cell for the final open
    interval;
 4. calculated interval duration; and
-5. a neutral `×`/Undo control.
+5. a neutral `Изтрий` action when that interval may be deleted.
 
 It shows `Производствено време`, calculated as the sum of productive
 intervals, and `Общо паузирано време`, calculated as the sum of the gaps
@@ -62,15 +64,28 @@ The modal provides Add Interval, Save, and Cancel.
 - A running card must retain exactly one final open interval.
 - The final open interval's stop cell is blank and cannot accept an ordinary
   final-stop value while production remains running.
-- Adding an interval while running closes the preceding interval and creates a
-  new final open interval. The operator must enter the preceding stop and new
-  start; their difference is the implied pause. The editor must not silently
-  invent either timestamp.
+- Adding an interval while running inserts a fully blank closed row immediately
+  before the unchanged final open interval. The operator supplies the inserted
+  row's start and stop; the ongoing interval remains last and unchanged. The
+  editor must not silently invent either timestamp.
 - A paused card contains only closed intervals. A newly added paused-card
   interval starts with required blank fields and requires both a start and a
   stop.
-- Delete marks a row for removal and exposes Undo. No deletion is persisted
-  before Save.
+- Delete opens a small neutral in-app confirmation nested above the unchanged
+  timing editor. It is titled `Изтриване на интервал`, shows `Сигурни ли сте,
+  че искате да изтриете интервал №N?`, and offers `Отказ` and neutral `Изтрий`
+  actions. Cancel, Escape, or its backdrop dismisses only the confirmation,
+  leaves the draft unchanged, and restores focus to the initiating Delete
+  button. Confirming hides the row from the draft display, but no deletion is
+  persisted before Save. An existing row remains represented in the draft as
+  deleted so the complete ledger can be saved atomically; a new, unsaved row is
+  simply removed from the draft.
+- The required final open interval on a running card cannot be deleted and has
+  no delete action. A paused card's only remaining interval likewise has no
+  delete action because the resulting empty ledger could never be saved.
+- The editor does not expose a pending-delete row or Undo control. Cancelling
+  the complete editor still restores every interval because confirmed row
+  deletions remain draft-only until Save.
 - Cancel discards the complete draft.
 - Save writes the complete proposed ledger atomically.
 
@@ -80,9 +95,13 @@ become `00`.
 
 The time field accepts numeric input and inserts the colon automatically after
 the first two digits: `13` renders as `13:` and `1350` or `13:50` renders as
-`13:50`. Non-digits are ignored. Incomplete and invalid 24-hour values cannot
-be saved and the first invalid field receives focus. Dates use the native date
-input rendered by the workstation browser.
+`13:50`. Clicking the hour or minute part selects that complete part, and typing
+replaces it without changing the other part. Non-digits are ignored. Incomplete
+and invalid 24-hour values cannot be saved. Dates use three deterministic
+numeric segments for day, month, and year, displayed as `DD/MM/YYYY`. Clicking
+selects the complete segment, typing replaces it, and completing day or month
+advances to the next segment. Deleting one segment cannot move digits from
+either of the others, and the year retains at most four digits.
 
 ## Finish Review
 
@@ -92,15 +111,21 @@ card, loaded version, and frozen time into an authenticated, non-persistent
 review token; Preview and Confirm reject a missing, altered, or unverifiable
 token. A process restart invalidates any review that was already open.
 
-The finish summary shows:
+The finish summary shows one compact timing strip with:
 
-- first start time;
-- proposed stop time;
+- `Начало` in `DD/MM/YY HH:MM` format;
+- `Край` in `DD/MM/YY HH:MM` format;
 - `Производствено време`;
 - `Общо паузирано време`;
-- Edit Intervals;
+- `Редактирай времето`;
 - Cancel; and
 - Confirm Finish.
+
+Below the timing strip, an aggregated production table shows `Палет №`, `Брой
+ролки`, `Бруто, кг`, `Тегло на палета, кг`, and `Нето, кг`, including a total
+row. The table reuses the existing pallet summary view model. Pallet weight is
+not yet stored, so its row and total cells are deliberately unconnected `—`
+placeholders; this feature adds no pallet-weight behavior or schema field.
 
 For a running card, the frozen proposed stop closes the final open interval.
 For a paused card, the latest closed interval's stop is the proposed finish
@@ -110,11 +135,13 @@ Finish-review edits may move timestamps retrospectively but may not move any
 timestamp later than the frozen click time. This ensures that time spent in the
 review does not extend production.
 
-Edit Intervals opens the same reusable interval editor in finish-review mode.
+`Редактирай времето` opens the same reusable interval editor in finish-review
+mode. Complete edits recalculate interval durations and totals automatically.
 Applying draft changes returns to the recalculated summary without persisting
-them. Confirm Finish saves the corrected ledger and completes the card in one
-transaction. Cancel discards all finish-review changes and leaves the card
-unchanged.
+them. Cancel inside the editor discards that editor draft and returns to the
+unchanged Finish summary; Cancel on the summary discards the complete Finish
+review and leaves the card unchanged. Confirm Finish saves the corrected ledger
+and completes the card in one transaction.
 
 If finish validation fails, the card and timing ledger remain unchanged and
 the finish review stays available with a clear error. Existing roll, tare,
@@ -180,24 +207,42 @@ data.
 
 ## Approved V2 UI Contract
 
-The accepted visual reference is
+The original accepted visual reference is
 `ui-prototypes/terminal-timing-correction.html`. This written specification is
-authoritative for data behavior: unlike the prototype's illustrative demo
-script, Add Interval must not invent timestamps, and a pending-deleted row
-keeps its visible number until Save succeeds.
+authoritative for data behavior and the later approved visual refinement. As
+in the original contract, Add Interval must not invent timestamps.
 
-- The timing dialog is `1040px` wide when space permits and has a `728px`
-  working height, both limited by a `20px` viewport margin.
+- The timing dialog is `1040px` wide when space permits. Its height follows its
+  content for short ledgers and is capped at `728px`, with a `20px` viewport
+  margin.
 - The title, totals, column headings, and footer remain fixed. Only the interval
   row body scrolls; its vertical scrollbar activates automatically as rows
   exceed the available height.
 - Start, Stop, Duration, and Action columns use extra padding and subtle
   low-contrast vertical separators.
-- The compact `×` delete control and pending-delete/Undo state use neutral
-  table colors, not red emphasis.
-- The interaction includes pending deletion, validation error, stale locked
-  draft, summary-to-editor-to-summary finish review, focus trapping, Escape,
-  Cancel, focus restoration, and double-submit protection.
+- A deletable row uses a compact neutral `Изтрий` action. It must not use red
+  emphasis. Deletion uses the nested neutral in-app confirmation defined above
+  and does not add pending-delete row treatment or an Undo state.
+- Date and time controls are centered within their Start/Stop cells at `120px`
+  and `78px` respectively when space permits.
+- Finish Review uses the compact timing strip and pallet-production table
+  defined above; the obsolete explanatory paragraph and large fact cards are
+  absent. This refinement does not alter the accepted Finish Review structure
+  or behavior.
+- The interaction includes confirmed draft deletion, validation error, stale
+  locked draft, summary-to-editor-to-summary finish review, focus trapping,
+  Escape, Cancel, focus restoration, and double-submit protection.
+- Validation messages remain in one stable alert above the rows. Invalid
+  timestamp boundaries are highlighted; an explicit Save may focus the first
+  invalid boundary, while automatic previews never steal focus or rebuild the
+  active inputs. Invalid rows and totals do not retain stale calculations.
+- The timing-editor backdrop does not discard a draft. The nested deletion
+  confirmation's backdrop dismisses only that confirmation and changes no
+  draft data. All dismissal and date/time edit controls lock while an ordinary
+  Save, Finish Apply, or Finish confirmation is pending; an asynchronous Apply
+  failure restores editing.
+- The required final open interval on a running card and the sole remaining
+  interval on a paused card do not display a delete action.
 - The layout was accepted at `1366×768` and `1920×1080`.
 
 The clock may be missing only when the standalone HTML file is copied without

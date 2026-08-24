@@ -3216,24 +3216,8 @@ def _validate_timing_ledger_proposal(
         proposal.rows,
         key=lambda row: row.source_index if row.source_index is not None else -1,
     )
+    future_rows: set[int] = set()
     for row in source_ordered_rows:
-        timestamps_changed = (
-            row.segment_id is None
-            or row.started_at != row.original_started_at
-            or row.ended_at != row.original_ended_at
-        )
-        if (
-            timestamps_changed
-            and row.ended_at is not None
-            and row.ended_at <= row.started_at
-        ):
-            issues.append(
-                TimingValidationIssue(
-                    row.source_index,
-                    "stop_time",
-                    "Краят трябва да бъде след началото.",
-                )
-            )
         changed_values = (
             ("start_time", row.started_at, row.original_started_at),
             ("stop_time", row.ended_at, row.original_ended_at),
@@ -3251,6 +3235,20 @@ def _validate_timing_ledger_proposal(
                         "Времето не може да бъде в бъдещето.",
                     )
                 )
+                future_rows.add(id(row))
+        if id(row) in future_rows:
+            continue
+        if (
+            row.ended_at is not None
+            and row.ended_at <= row.started_at
+        ):
+            issues.append(
+                TimingValidationIssue(
+                    row.source_index,
+                    "stop_time",
+                    "Краят трябва да бъде след началото.",
+                )
+            )
 
     chronological_rows = sorted(
         proposal.rows,
@@ -3262,6 +3260,8 @@ def _validate_timing_ledger_proposal(
         ),
     )
     for previous, current in zip(chronological_rows, chronological_rows[1:]):
+        if id(previous) in future_rows or id(current) in future_rows:
+            continue
         if previous.ended_at is None or current.started_at < previous.ended_at:
             issues.append(
                 TimingValidationIssue(

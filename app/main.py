@@ -1030,6 +1030,8 @@ def parse_terminal_timing_draft(value: str) -> list[TimingDraftRow]:
         )
 
     for source_index, draft_row in enumerate(draft_rows):
+        if draft_row.deleted:
+            continue
         _validate_terminal_timing_local_pair(
             draft_row.start_date,
             draft_row.start_time,
