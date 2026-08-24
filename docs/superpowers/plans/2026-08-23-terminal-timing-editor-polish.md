@@ -258,3 +258,23 @@ Save after acceptance: existing atomic save persists the deletion
 - [ ] Reset the temporary fixture once more and leave exactly one server on port `8015` for user review.
 
 - [ ] Report the result with links to the changed files and evidence. Do not stage or commit unless the user gives separate explicit permission.
+
+---
+
+## Post-review Follow-up — Outstanding Before Merge
+
+Independent code review of `4433b57..66bbc5b` found no critical issues and
+identified these two important edge cases. Both were resolved and
+regression-tested by the terminal timing confidence audit before merge:
+
+- [x] Preserve and display the operator's locked timing draft when a stale Save
+  or Finish submission is rejected after the card changes from running/paused
+  to completed or cancelled in another tab or by an admin. The rejected write
+  must not mutate production data, and the submitted draft must not disappear
+  from the response.
+
+- [x] Keep interval rows and Finish boundaries chronologically consistent when
+  edited timestamps cause two valid, non-overlapping intervals to exchange
+  order. The displayed numbering, first/last boundaries, production total, and
+  paused total must all describe the same chronological ledger, including on a
+  rejected Finish submission.

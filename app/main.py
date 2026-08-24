@@ -68,6 +68,7 @@ from .db import (
     fetch_recent_import_batches,
     fetch_shift_summary,
     fetch_shift_window_state,
+    finalize_awaiting_rewinding_card,
     finish_card_with_timing_ledger,
     finish_card,
     init_db,
@@ -2838,28 +2839,35 @@ def terminal_timing_preview_response(
     *,
     review_token: str | None = None,
 ) -> JSONResponse:
+    display_payload = terminal_timing_preview_display_payload(preview)
     return JSONResponse(
         {
             "ok": True,
             "review_token": review_token,
             "preview": {
                 "reviewed_at_utc": preview.reviewed_at,
-                "first_start_display": terminal_timing_minute_display(
-                    preview.first_started_at
-                ),
-                "proposed_stop_display": terminal_timing_minute_display(
-                    preview.proposed_finished_at
-                ),
-                "production_seconds": preview.production_seconds,
-                "paused_seconds": preview.paused_seconds,
                 "draft": [
                     terminal_timing_draft_row_payload(row)
                     for row in preview.draft_rows
                 ],
-                "intervals": list(preview.intervals),
+                **display_payload,
             },
         }
     )
+
+
+def terminal_timing_preview_display_payload(preview: Any) -> dict[str, Any]:
+    return {
+        "first_start_display": terminal_timing_minute_display(
+            preview.first_started_at
+        ),
+        "proposed_stop_display": terminal_timing_minute_display(
+            preview.proposed_finished_at
+        ),
+        "production_seconds": preview.production_seconds,
+        "paused_seconds": preview.paused_seconds,
+        "intervals": list(preview.intervals),
+    }
 
 
 def terminal_timing_error_response(
@@ -2966,25 +2974,38 @@ async def finish_terminal_card(
     loaded_version: str = Form(...),
     review_token: str = Form(""),
     timing_draft: str = Form(""),
+    finish_review_preview: str = Form(""),
 ):
     notice_code = "card_finished"
     draft_rows: list[TimingDraftRow] = []
     timing_issues: tuple[TimingValidationIssue, ...] = ()
     finish_review_active = False
     finish_preview = None
+    retained_finish_preview_display = None
     parsed_version, workflow_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
         card = fetch_terminal_card_detail(card_id)
-        finish_review_active = bool(
-            card is not None
-            and str(card["status"]) in {STATUS_RUNNING, STATUS_PAUSED}
-        )
-        if finish_review_active:
-            token_payload = verified_finish_review_token_payload(
+        token_payload = (
+            verified_finish_review_token_payload(
                 review_token,
                 card_id=card_id,
                 loaded_version=parsed_version,
             )
+            if isinstance(review_token, str) and review_token.strip()
+            else None
+        )
+        finish_review_active = bool(
+            token_payload is not None
+            or (
+                card is not None
+                and str(card["status"]) in {STATUS_RUNNING, STATUS_PAUSED}
+            )
+        )
+        if token_payload is not None:
+            retained_finish_preview_display = parse_finish_review_preview_display(
+                finish_review_preview
+            )
+        if finish_review_active:
             if token_payload is None:
                 workflow_result = RuleResult(
                     False,
@@ -3005,20 +3026,27 @@ async def finish_terminal_card(
                     workflow_result = RuleResult(False, (str(error),))
                     timing_issues = (error.issue,)
                 else:
-                    outcome = finish_card_with_timing_ledger(
-                        card_id,
-                        parsed_version,
-                        draft_rows,
-                        str(token_payload["reviewed_at"]),
-                        require_active_shift=True,
-                    )
-                    workflow_result = outcome.result
-                    timing_issues = outcome.issues
-                    finish_preview = outcome.preview
+                    current_card = fetch_admin_card_detail(card_id)
+                    if (
+                        current_card is not None
+                        and int(current_card["version"]) != parsed_version
+                    ):
+                        workflow_result = RuleResult(False, (STALE_CARD_MESSAGE,))
+                    else:
+                        outcome = finish_card_with_timing_ledger(
+                            card_id,
+                            parsed_version,
+                            draft_rows,
+                            str(token_payload["reviewed_at"]),
+                            require_active_shift=True,
+                        )
+                        workflow_result = outcome.result
+                        timing_issues = outcome.issues
+                        finish_preview = outcome.preview
         else:
             workflow_result = validate_terminal_card_available_for_post(card_id)
             if workflow_result.ok:
-                workflow_result = finish_card(
+                workflow_result = finalize_awaiting_rewinding_card(
                     card_id,
                     parsed_version,
                     require_active_shift=True,
@@ -3045,10 +3073,61 @@ async def finish_terminal_card(
         finish_review_loaded_version=loaded_version,
         finish_review_issues=timing_issues,
         finish_review_preview=finish_preview,
+        finish_review_preview_display=retained_finish_preview_display,
         finish_review_stale=(
             not workflow_result.ok and STALE_CARD_MESSAGE in workflow_result.messages
         ),
     )
+
+
+def parse_finish_review_preview_display(raw_value: str) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(raw_value)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    first_start = payload.get("first_start_display")
+    proposed_stop = payload.get("proposed_stop_display")
+    production_seconds = payload.get("production_seconds")
+    paused_seconds = payload.get("paused_seconds")
+    intervals = payload.get("intervals")
+    if not (
+        isinstance(first_start, str)
+        and isinstance(proposed_stop, str)
+        and type(production_seconds) is int
+        and production_seconds >= 0
+        and type(paused_seconds) is int
+        and paused_seconds >= 0
+        and isinstance(intervals, list)
+    ):
+        return None
+    normalized_intervals: list[dict[str, int]] = []
+    for interval in intervals:
+        if not isinstance(interval, dict):
+            return None
+        source_index = interval.get("source_index")
+        duration_seconds = interval.get("duration_seconds")
+        if not (
+            type(source_index) is int
+            and source_index >= 0
+            and type(duration_seconds) is int
+            and duration_seconds >= 0
+        ):
+            return None
+        normalized_intervals.append(
+            {
+                "source_index": source_index,
+                "duration_seconds": duration_seconds,
+            }
+        )
+    return {
+        "first_start_display": first_start,
+        "proposed_stop_display": proposed_stop,
+        "production_seconds": production_seconds,
+        "paused_seconds": paused_seconds,
+        "intervals": normalized_intervals,
+    }
 
 
 async def form_text_preserving_explicit_blank(
@@ -3247,6 +3326,23 @@ def terminal_context(
     shift_reload_required: bool = False,
     **extra: Any,
 ) -> dict[str, Any]:
+    finish_review_preview = extra.get("finish_review_preview")
+    if finish_review_preview is not None:
+        extra["finish_review_preview_display"] = (
+            terminal_timing_preview_display_payload(finish_review_preview)
+        )
+    else:
+        extra.setdefault("finish_review_preview_display", None)
+    ordinary_timing_retained = "terminal_timing_draft" in extra
+    ordinary_timing_recovery = bool(extra.get("terminal_timing_stale")) and (
+        ordinary_timing_retained
+        and extra.get("terminal_timing_loaded_version") is not None
+    )
+    finish_review_recovery = bool(extra.get("finish_review_stale")) and (
+        "finish_review_draft" in extra
+        and extra.get("finish_review_loaded_version") is not None
+    )
+    timing_recovery = ordinary_timing_recovery or finish_review_recovery
     machine_queues = fetch_machine_queues()
     machines = fetch_machines()
     valid_machine_ids = {int(machine["id"]) for machine in machines}
@@ -3275,6 +3371,8 @@ def terminal_context(
             )
 
     selected_card = fetch_terminal_card_detail(selected_card_id) if selected_card_id else None
+    if selected_card is None and selected_card_id and timing_recovery:
+        selected_card = fetch_admin_card_detail(selected_card_id)
     if selected_card:
         selected_card["total_production_duration"] = format_duration(
             selected_card["total_production_seconds"],
@@ -3353,11 +3451,19 @@ def terminal_context(
         server_now_utc=str(terminal_snapshot["server_now_utc"]),
         retained_draft=(
             extra.get("terminal_timing_draft")
-            if "terminal_timing_draft" in extra
+            if ordinary_timing_retained
+            else extra.get("finish_review_draft")
+            if finish_review_recovery
             else None
         ),
-        retained_loaded_version=extra.get("terminal_timing_loaded_version"),
-        stale=bool(extra.get("terminal_timing_stale")),
+        retained_loaded_version=(
+            extra.get("terminal_timing_loaded_version")
+            if ordinary_timing_retained
+            else extra.get("finish_review_loaded_version")
+            if finish_review_recovery
+            else None
+        ),
+        stale=timing_recovery,
     )
 
     context: dict[str, Any] = {
@@ -3391,10 +3497,20 @@ def build_terminal_timing_model(
     retained_loaded_version: Any = None,
     stale: bool = False,
 ) -> dict[str, Any] | None:
+    recovery_only = bool(
+        stale
+        and retained_draft is not None
+        and retained_loaded_version is not None
+    )
     if (
         selected_card is None
-        or not active_shift_exists
-        or selected_card.get("status") not in {STATUS_RUNNING, STATUS_PAUSED}
+        or (
+            not recovery_only
+            and (
+                not active_shift_exists
+                or selected_card.get("status") not in {STATUS_RUNNING, STATUS_PAUSED}
+            )
+        )
     ):
         return None
 

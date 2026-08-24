@@ -17,8 +17,21 @@ function assert(condition, message) {
 }
 
 
+function comparable(value) {
+  if (Array.isArray(value)) {
+    return value.map(comparable);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, comparable(value[key])]),
+    );
+  }
+  return value;
+}
+
+
 function assertEqual(actual, expected, label) {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+  if (JSON.stringify(comparable(actual)) !== JSON.stringify(comparable(expected))) {
     throw new Error(
       `${label}: expected ${JSON.stringify(expected)}, found ${JSON.stringify(actual)}`,
     );
@@ -91,6 +104,18 @@ const deleteConfirmationScreenshot1366 = path.join(
   "timing-delete-confirmation-1366x768.png",
 );
 const screenshot1920 = path.join(artifactDir, "finish-review-1920x1080.png");
+const lockedStaleScreenshot1366 = path.join(
+  artifactDir,
+  "timing-locked-stale-1366x768.png",
+);
+const finishFailureScreenshot1366 = path.join(
+  artifactDir,
+  "finish-validation-failure-1366x768.png",
+);
+const reorderedScreenshot1366 = path.join(
+  artifactDir,
+  "timing-reordered-1366x768.png",
+);
 
 
 function writeSummary() {
@@ -146,6 +171,41 @@ const summary = {
 
 function passed(label) {
   summary.assertions.push(label);
+}
+
+
+const monitoredPages = new WeakSet();
+
+
+function monitorPage(page) {
+  if (monitoredPages.has(page)) {
+    return;
+  }
+  monitoredPages.add(page);
+  page.on("pageerror", (error) => summary.pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") summary.consoleErrors.push(message.text());
+  });
+  page.on("requestfailed", (request) => {
+    const failure = {
+      method: request.method(),
+      url: request.url(),
+      error: request.failure()?.errorText || "unknown",
+    };
+    const pathname = new URL(request.url()).pathname;
+    if (
+      failure.method === "POST"
+      && pathname.endsWith("/timing-ledger/preview")
+      && failure.error === "net::ERR_ABORTED"
+    ) {
+      summary.abortedPreviewRequests.push(failure);
+      return;
+    }
+    summary.failedRequests.push(failure);
+  });
+  page.on("request", (request) => {
+    assertEqual(new URL(request.url()).origin, baseOrigin, "browser request origin");
+  });
 }
 
 
@@ -249,6 +309,265 @@ function mutateCardVersion(cardId) {
 }
 
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
+
+function activeShiftSnapshot() {
+  const program = [
+    "import json, sqlite3, sys",
+    "connection = sqlite3.connect(sys.argv[1])",
+    "connection.row_factory = sqlite3.Row",
+    "row = connection.execute(\"SELECT id, shift_number, version, ended_at FROM shift_occurrences WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1\").fetchone()",
+    "print(json.dumps(dict(row) if row is not None else None))",
+  ].join("; ");
+  return JSON.parse(runPython(program, [databasePath], "active shift snapshot failed"));
+}
+
+
+async function timingDraftPayload(page) {
+  const raw = await page.locator("[data-timing-draft-input]").inputValue();
+  return JSON.parse(raw);
+}
+
+
+async function terminalTimingModel(page) {
+  return JSON.parse(await page.locator("[data-terminal-timing-model]").textContent());
+}
+
+
+async function visibleTimingState(page) {
+  return page.locator("[data-timing-interval-list] .interval-row").evaluateAll((rows) => (
+    rows.map((row) => ({
+      sourceIndex: Number(row.dataset.sourceIndex),
+      number: row.querySelector(".interval-number")?.textContent.trim() || "",
+      startDate: Array.from(
+        row.querySelectorAll('[data-timing-date-field="start_date"] input'),
+      ).map((input) => input.value).join("/"),
+      startTime: row.querySelector('[data-timing-field="start_time"]')?.value || "",
+      stopDate: Array.from(
+        row.querySelectorAll('[data-timing-date-field="stop_date"] input'),
+      ).map((input) => input.value).join("/"),
+      stopTime: row.querySelector('[data-timing-field="stop_time"]')?.value || "",
+      duration: row.querySelector(".interval-duration")?.textContent.trim() || "",
+    }))
+  ));
+}
+
+
+async function finishSummaryValues(page) {
+  const overlay = page.locator("[data-finish-review-overlay]");
+  return {
+    firstStart: normalized(await overlay.locator("[data-finish-first-start]").textContent()),
+    proposedStop: normalized(await overlay.locator("[data-finish-proposed-stop]").textContent()),
+    production: normalized(await overlay.locator("[data-finish-production-total]").textContent()),
+    paused: normalized(await overlay.locator("[data-finish-paused-total]").textContent()),
+  };
+}
+
+
+async function setTimingValuesWithoutBlur(page, changes) {
+  await page.evaluate((updates) => {
+    updates.forEach(({ sourceIndex, field, value }) => {
+      const input = document.querySelector(
+        `[data-timing-interval-list] [data-source-index="${sourceIndex}"]`
+          + `[data-timing-field="${field}"]`,
+      );
+      if (!input) throw new Error(`Missing timing field ${sourceIndex}:${field}`);
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }, changes);
+}
+
+
+async function installHeldResponses(page, pathname) {
+  const pattern = `**${pathname}`;
+  const entries = [];
+  const countWaiters = [];
+  const registrations = new Set();
+  const observedRequests = [];
+  const lateRequests = [];
+  const handlerFailures = [];
+  const classificationWaiters = [];
+  let accepting = true;
+  let boundaryRequestCount = null;
+  let classifiedRequestCount = 0;
+  let routeInstalled = true;
+  const observeRequest = (request) => {
+    if (
+      request.method() === "POST"
+      && new URL(request.url()).pathname === pathname
+    ) {
+      observedRequests.push(request);
+    }
+  };
+  page.on("request", observeRequest);
+  const handler = async (route) => {
+    const registration = deferred();
+    registrations.add(registration.promise);
+    const holdAtBoundary = (
+      Number.isSafeInteger(boundaryRequestCount)
+      && classifiedRequestCount < boundaryRequestCount
+    );
+    classifiedRequestCount += 1;
+    classificationWaiters.splice(0).forEach((notify) => notify());
+    if (!accepting && !holdAtBoundary) {
+      lateRequests.push(route.request());
+      registration.resolve();
+      await route.continue();
+      return;
+    }
+    try {
+      const response = await route.fetch();
+      const releaseGate = deferred();
+      const completed = deferred();
+      const entry = {
+        response,
+        release: releaseGate.resolve,
+        done: completed.promise,
+      };
+      entries.push(entry);
+      registration.resolve();
+      countWaiters.splice(0).forEach((notify) => notify());
+      await releaseGate.promise;
+      try {
+        await route.fulfill({ response });
+      } finally {
+        completed.resolve();
+      }
+    } catch (error) {
+      handlerFailures.push(error);
+      registration.resolve();
+      throw error;
+    }
+  };
+  await page.route(pattern, handler);
+
+  const waitForCount = async (expected) => {
+    while (entries.length < expected) {
+      const waiter = deferred();
+      countWaiters.push(waiter.resolve);
+      await waiter.promise;
+    }
+    return entries.slice(0, expected);
+  };
+
+  const stopAccepting = async () => {
+    boundaryRequestCount ??= observedRequests.length;
+    accepting = false;
+    while (classifiedRequestCount < boundaryRequestCount) {
+      const waiter = deferred();
+      classificationWaiters.push(waiter.resolve);
+      await waiter.promise;
+    }
+    await Promise.all([...registrations]);
+    return entries.slice();
+  };
+
+  const cleanup = async () => {
+    try {
+      await stopAccepting();
+      entries.forEach((entry) => entry.release());
+      await Promise.allSettled(entries.map((entry) => entry.done));
+      await Promise.all([...registrations]);
+      if (routeInstalled) {
+        routeInstalled = false;
+        await page.unroute(pattern, handler);
+      }
+    } finally {
+      page.off("request", observeRequest);
+    }
+  };
+
+  return {
+    entries,
+    observedRequests,
+    lateRequests,
+    handlerFailures,
+    waitForCount,
+    stopAccepting,
+    cleanup,
+  };
+}
+
+
+async function suppressSnapshotPolling(page) {
+  const pattern = "**/terminal/snapshot?*";
+  const handler = async (route) => {
+    await route.fulfill({ status: 204, body: "" });
+  };
+  await page.route(pattern, handler);
+  return () => page.unroute(pattern, handler);
+}
+
+
+async function completePausedCardThroughSecondPage(context, cardId) {
+  const competingPage = await context.newPage();
+  monitorPage(competingPage);
+  try {
+    const response = await competingPage.goto(`${baseURL}/terminal/cards/${cardId}`, {
+      waitUntil: "networkidle",
+    });
+    assert(response?.ok(), `Competing terminal page returned HTTP ${response?.status()}.`);
+    const payload = await beginFinishReview(competingPage, cardId);
+    assert(payload.ok, "Competing Finish Review did not open.");
+    await Promise.all([
+      competingPage.waitForURL(
+        (url) => url.pathname === `/terminal/cards/${cardId}`
+          && url.searchParams.get("notice") === "card_finished",
+        { waitUntil: "networkidle" },
+      ),
+      competingPage.locator("[data-finish-review-confirm]").click(),
+    ]);
+  } finally {
+    await competingPage.close();
+  }
+}
+
+
+async function cancelCardThroughSecondPage(context, cardId) {
+  const competingPage = await context.newPage();
+  monitorPage(competingPage);
+  try {
+    const response = await competingPage.goto(`${baseURL}/admin/cards/${cardId}`, {
+      waitUntil: "networkidle",
+    });
+    assert(response?.ok(), `Competing admin page returned HTTP ${response?.status()}.`);
+    const form = competingPage.locator(`form[action="/admin/cards/${cardId}/cancel"]`);
+    assertEqual(await form.count(), 1, "competing admin Cancel form");
+    await Promise.all([
+      competingPage.waitForNavigation({ waitUntil: "networkidle" }),
+      form.locator('button[type="submit"]').click(),
+    ]);
+  } finally {
+    await competingPage.close();
+  }
+}
+
+
+async function endActiveShiftThroughRoute(request, selectedCardId) {
+  const shift = activeShiftSnapshot();
+  assert(shift !== null, "Audit fixture has no active shift to end.");
+  const response = await request.post(`${baseURL}/terminal/shifts/current/end`, {
+    form: {
+      shift_occurrence_id: String(shift.id),
+      loaded_version: String(shift.version),
+      selected_card_id: String(selectedCardId),
+    },
+  });
+  assert(response.ok(), `End-shift route returned HTTP ${response.status()}.`);
+  assertEqual(activeShiftSnapshot(), null, "active shift after competing end route");
+}
+
+
 async function parkAndReset(page) {
   await page.goto("about:blank");
   resetFixtureDatabase();
@@ -288,6 +607,24 @@ async function openTimingEditor(page) {
 
 function timingRow(page, index) {
   return page.locator("[data-timing-interval-list] .interval-row").nth(index);
+}
+
+
+async function acceptTimingDeleteAndSettle(page, cardId, confirmation) {
+  const previewResponse = page.waitForResponse(
+    (response) => response.request().method() === "POST"
+      && new URL(response.url()).pathname
+        === `/terminal/cards/${cardId}/timing-ledger/preview`,
+  );
+  await confirmation.locator("[data-timing-delete-confirm-submit]").click();
+  const response = await previewResponse;
+  assert(response.ok(), `Accepted Delete preview returned HTTP ${response.status()}.`);
+  await page.waitForFunction(() => (
+    document.querySelector("[data-timing-totals]")?.getAttribute("aria-busy") === "false"
+  ));
+  await page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
 }
 
 
@@ -699,13 +1036,12 @@ async function verifyRunningOrdinarySave(page) {
     "Сигурни ли сте, че искате да изтриете интервал №3?",
     "inserted interval confirmation",
   );
-  await insertedConfirmation.locator("[data-timing-delete-confirm-submit]").click();
+  await acceptTimingDeleteAndSettle(page, cardId, insertedConfirmation);
   assertEqual(
     await page.locator("[data-timing-interval-list] .interval-row").count(),
     3,
     "unsaved inserted row removal",
   );
-  await page.waitForTimeout(50);
   assert(
     await timingRow(page, 1).getByRole("button", { name: "Изтрий интервал 2" }).evaluate(
       (button) => document.activeElement === button,
@@ -817,7 +1153,7 @@ async function verifyInAppDeleteConfirmation(page) {
 
   await firstDelete.click();
   await confirmation.waitFor({ state: "visible" });
-  await confirmation.locator("[data-timing-delete-confirm-submit]").click();
+  await acceptTimingDeleteAndSettle(page, cardId, confirmation);
   assertEqual(await page.locator("[data-timing-interval-list] .interval-row").count(), 2, "accepted deletion rows");
   assertEqual(
     await page.locator("[data-timing-interval-list] .interval-number").allTextContents(),
@@ -829,7 +1165,7 @@ async function verifyInAppDeleteConfirmation(page) {
 
   const remainingDelete = timingRow(page, 0).getByRole("button", { name: "Изтрий интервал 1" });
   await remainingDelete.click();
-  await confirmation.locator("[data-timing-delete-confirm-submit]").click();
+  await acceptTimingDeleteAndSettle(page, cardId, confirmation);
   assertEqual(await page.locator("[data-timing-interval-list] .interval-row").count(), 1, "second accepted deletion rows");
   await page.waitForFunction(() => document.activeElement?.hasAttribute("data-timing-add-interval"));
   assertEqual(saveRequests, [], "cascaded deletion timing Save requests");
@@ -840,7 +1176,7 @@ async function verifyInAppDeleteConfirmation(page) {
   editor = await openTimingEditor(page);
   const middleDelete = timingRow(page, 1).getByRole("button", { name: "Изтрий интервал 2" });
   await middleDelete.click();
-  await confirmation.locator("[data-timing-delete-confirm-submit]").click();
+  await acceptTimingDeleteAndSettle(page, cardId, confirmation);
   await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Изтрий интервал 1");
   assertEqual(
     await page.locator("[data-timing-interval-list] .interval-number").allTextContents(),
@@ -868,7 +1204,7 @@ async function verifyInAppDeleteConfirmation(page) {
   editor = await openTimingEditor(page);
   assertEqual(await page.locator("[data-timing-interval-list] .interval-row").count(), 2, "paused initial rows");
   await timingRow(page, 0).getByRole("button", { name: "Изтрий интервал 1" }).click();
-  await confirmation.locator("[data-timing-delete-confirm-submit]").click();
+  await acceptTimingDeleteAndSettle(page, cardId, confirmation);
   assertEqual(await page.locator("[data-timing-interval-list] .interval-row").count(), 1, "paused sole remaining row");
   assertEqual(
     await timingRow(page, 0).getByRole("button", { name: /Изтрий интервал/ }).count(),
@@ -1094,8 +1430,8 @@ async function verifyRunningPreviewDoesNotReplaceInputs(page) {
   await navigate(page, "running");
   const editor = await openTimingEditor(page);
   const date = timingRow(page, 0).locator('[data-timing-field="start_date"]');
+  const logicalValue = await date.inputValue();
   await date.focus();
-  await date.evaluate((input) => { input.dataset.previewIdentity = "retained"; });
   const previewResponse = page.waitForResponse(
     (response) => response.request().method() === "POST"
       && new URL(response.url()).pathname.endsWith("/timing-ledger/preview"),
@@ -1104,10 +1440,11 @@ async function verifyRunningPreviewDoesNotReplaceInputs(page) {
     detail: { serverNowUtc: new Date().toISOString() },
   })));
   assert((await previewResponse).ok(), "Running server-time preview failed.");
-  assertEqual(await date.getAttribute("data-preview-identity"), "retained", "preview input DOM identity");
-  assert(await date.evaluate((input) => document.activeElement === input), "Running preview moved focus.");
+  const focusedDate = page.locator(':focus[data-timing-field="start_date"]');
+  assertEqual(await focusedDate.inputValue(), logicalValue, "preview focused logical date value");
+  assertEqual(await focusedDate.getAttribute("data-source-index"), "0", "preview focused logical row");
   await editor.locator("[data-timing-cancel]").click();
-  passed("running previews update calculations without replacing active inputs");
+  passed("running previews update calculations while preserving the focused logical field");
 }
 
 
@@ -1338,6 +1675,12 @@ async function beginFinishReview(page, cardId, { doubleSubmit = false } = {}) {
   const response = await responsePromise;
   const payload = await response.json();
   await page.locator("[data-finish-review-overlay]").waitFor({ state: "visible" });
+  await page.waitForFunction((selectedCardId) => {
+    const trigger = document.querySelector(
+      `form[action="/terminal/cards/${selectedCardId}/finish"] button[type="submit"]`,
+    );
+    return trigger instanceof HTMLButtonElement && !trigger.disabled;
+  }, cardId);
   return payload;
 }
 
@@ -1629,37 +1972,613 @@ async function verifyStaleTakeover(page) {
 }
 
 
+async function verifyPreviewResponseOrdering(page) {
+  await parkAndReset(page);
+  await navigate(page, "paused");
+  const editor = await openTimingEditor(page);
+  const pathname = `/terminal/cards/${fixture.cards.paused}/timing-ledger/preview`;
+  const held = await installHeldResponses(page, pathname);
+  try {
+    const stopTime = timingRow(page, 0).locator('[data-timing-field="stop_time"]');
+    await stopTime.fill("1150");
+    await stopTime.press("Tab");
+    const [older] = await held.waitForCount(1);
+    assertEqual(older.response.status(), 422, "older overlapping preview response status");
+
+    await stopTime.fill("1110");
+    await stopTime.press("Tab");
+    const [, newer] = await held.waitForCount(2);
+    assertEqual(newer.response.status(), 200, "newer valid preview response status");
+
+    newer.release();
+    await newer.done;
+    await page.waitForFunction(() => (
+      document.querySelector("[data-timing-totals]")?.getAttribute("aria-busy") === "false"
+        && document.querySelector("[data-timing-production-total]")?.textContent.trim() !== "—"
+    ));
+    const newestState = {
+      production: normalized(await editor.locator("[data-timing-production-total]").textContent()),
+      paused: normalized(await editor.locator("[data-timing-paused-total]").textContent()),
+      draft: await timingDraftPayload(page),
+    };
+    assertEqual(newestState.draft[0].stop_time, "11:10", "newest preview draft stop");
+    assert(await editor.locator("[data-timing-alert]").isHidden(), "Newest valid preview retained an error.");
+
+    older.release();
+    await older.done;
+    await page.evaluate(() => new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    }));
+    assertEqual(
+      {
+        production: normalized(await editor.locator("[data-timing-production-total]").textContent()),
+        paused: normalized(await editor.locator("[data-timing-paused-total]").textContent()),
+        draft: await timingDraftPayload(page),
+      },
+      newestState,
+      "newest preview state after older response release",
+    );
+    assert(await editor.locator("[data-timing-alert]").isHidden(), "Older invalid preview restored its error.");
+    summary.requestCounts.reversePreviewResponses = held.entries.length;
+  } finally {
+    await held.cleanup();
+  }
+  await editor.locator("[data-timing-cancel]").click();
+  passed("reverse-order preview responses leave only the newest totals and errors authoritative");
+}
+
+
+async function verifyIncompleteDraftInvalidatesPendingPreview(page) {
+  await parkAndReset(page);
+  await navigate(page, "paused");
+  const editor = await openTimingEditor(page);
+  const pathname = `/terminal/cards/${fixture.cards.paused}/timing-ledger/preview`;
+  const held = await installHeldResponses(page, pathname);
+  try {
+    const stopTime = timingRow(page, 0).locator('[data-timing-field="stop_time"]');
+    await stopTime.fill("1120");
+    await stopTime.press("Tab");
+    const [pending] = await held.waitForCount(1);
+    assertEqual(pending.response.status(), 200, "held valid preview response status");
+
+    await stopTime.fill("11");
+    assertEqual(await stopTime.inputValue(), "11:", "incomplete logical source field");
+    assertEqual(
+      normalized(await editor.locator("[data-timing-production-total]").textContent()),
+      "—",
+      "incomplete pending preview production total",
+    );
+    assertEqual(
+      normalized(await editor.locator("[data-timing-paused-total]").textContent()),
+      "—",
+      "incomplete pending preview paused total",
+    );
+    pending.release();
+    await pending.done;
+    await page.evaluate(() => new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    }));
+    assertEqual(held.entries.length, 1, "incomplete source replacement preview count");
+    assertEqual(await stopTime.inputValue(), "11:", "incomplete draft after old response release");
+    assert(
+      await stopTime.evaluate((input) => document.activeElement === input),
+      "Old preview response moved focus from the incomplete logical field.",
+    );
+    assertEqual(
+      [
+        normalized(await editor.locator("[data-timing-production-total]").textContent()),
+        normalized(await editor.locator("[data-timing-paused-total]").textContent()),
+      ],
+      ["—", "—"],
+      "cleared totals after old response release",
+    );
+    summary.requestCounts.incompletePreviewResponses = held.entries.length;
+  } finally {
+    await held.cleanup();
+  }
+  await editor.locator("[data-timing-cancel]").click();
+  passed("an incomplete source field invalidates pending preview work without losing focus");
+}
+
+
+async function verifyOrdinaryLifecycleRaceRecovery(page, context) {
+  await parkAndReset(page);
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const cardId = await navigate(page, "paused");
+  const before = cardSnapshot(cardId);
+  const editor = await openTimingEditor(page);
+  await fillTimingField(page, 0, "start_time", "1031");
+  const exactDraft = await timingDraftPayload(page);
+  const restoreSnapshotPolling = await suppressSnapshotPolling(page);
+
+  await completePausedCardThroughSecondPage(context, cardId);
+  const competingWinner = cardSnapshot(cardId);
+  assertEqual(competingWinner.card.status, "completed", "ordinary race competing status");
+  assertEqual(competingWinner.card.version, before.card.version + 1, "ordinary race competing version");
+
+  const [response] = await Promise.all([
+    page.waitForNavigation({ waitUntil: "networkidle" }),
+    editor.locator("[data-timing-save]").click(),
+  ]);
+  assert(response?.ok(), `Ordinary stale response returned HTTP ${response?.status()}.`);
+  const lockedEditor = page.locator("[data-timing-editor-overlay]");
+  const model = await terminalTimingModel(page);
+  assert(
+    await lockedEditor.isVisible(),
+    `Ordinary stale editor stayed hidden: ${JSON.stringify({
+      responseUrl: response?.url(),
+      pageUrl: page.url(),
+      editorOpen: model.editor_open,
+      locked: model.timing?.locked,
+      status: model.timing?.status,
+      messages: model.finish_review?.messages,
+    })}`,
+  );
+  assert(model.timing.locked, "Ordinary lifecycle race did not hydrate a locked editor.");
+  assertEqual(model.timing.draft, exactDraft, "ordinary lifecycle exact retained model draft");
+  assertEqual(await timingDraftPayload(page), exactDraft, "ordinary lifecycle exact visible draft");
+  assert(
+    await lockedEditor.locator("[data-timing-interval-list] input").evaluateAll(
+      (inputs) => inputs.length > 0 && inputs.every((input) => input.disabled),
+    ),
+    "Ordinary lifecycle retained inputs were not locked.",
+  );
+  assert(await lockedEditor.locator("[data-timing-save]").isDisabled(), "Ordinary stale Save remained enabled.");
+  assert(
+    await lockedEditor.locator("[data-timing-reload]").evaluate(
+      (link) => document.activeElement === link,
+    ),
+    "Ordinary lifecycle Reload did not receive focus.",
+  );
+  assertEqual(cardSnapshot(cardId), competingWinner, "ordinary lifecycle database winner preservation");
+  await captureScreenshot(page, lockedStaleScreenshot1366, { width: 1366, height: 768 });
+  summary.screenshots.push(path.relative(repoRoot, lockedStaleScreenshot1366));
+  await lockedEditor.locator("[data-timing-cancel]").click();
+  await restoreSnapshotPolling();
+  passed("ordinary Save after competing completion retains the exact locked draft and database winner");
+}
+
+
+async function verifyOrdinaryCancelledRecoveryCancelNavigation(page, context) {
+  await parkAndReset(page);
+  const cardId = await navigate(page, "paused");
+  const orderNumber = fixture.orders.paused;
+  const editor = await openTimingEditor(page);
+  await fillTimingField(page, 0, "start_time", "1031");
+  const restoreSnapshotPolling = await suppressSnapshotPolling(page);
+
+  await cancelCardThroughSecondPage(context, cardId);
+  assertEqual(cardSnapshot(cardId).card.status, "cancelled", "ordinary Cancel race status");
+  const [staleResponse] = await Promise.all([
+    page.waitForNavigation({ waitUntil: "networkidle" }),
+    editor.locator("[data-timing-save]").click(),
+  ]);
+  assert(staleResponse?.ok(), `Ordinary cancelled recovery returned HTTP ${staleResponse?.status()}.`);
+  const lockedEditor = page.locator("[data-timing-editor-overlay]");
+  await lockedEditor.waitFor({ state: "visible" });
+  const model = await terminalTimingModel(page);
+  assert(model.timing.locked, "Ordinary cancelled recovery was not locked.");
+  assertEqual(model.timing.status, "cancelled", "ordinary cancelled recovery model status");
+  const reloadHref = await lockedEditor.locator("[data-timing-reload]").getAttribute("href");
+
+  const [reloadResponse] = await Promise.all([
+    page.waitForNavigation({ waitUntil: "networkidle", timeout: 5000 }),
+    lockedEditor.locator("[data-timing-cancel]").click(),
+  ]);
+  assert(reloadResponse?.ok(), `Ordinary cancelled recovery reload returned HTTP ${reloadResponse?.status()}.`);
+  assertEqual(new URL(page.url()).pathname, reloadHref, "ordinary cancelled recovery reload target");
+  assert(
+    !normalized(await page.locator("body").innerText()).includes(orderNumber),
+    "Ordinary recovery Cancel left the cancelled order visible on the terminal.",
+  );
+  await restoreSnapshotPolling();
+  passed("ordinary cancelled recovery Cancel reloads and removes cancelled order details");
+}
+
+
+async function verifyFinishLifecycleRaceRecovery(page, context) {
+  await parkAndReset(page);
+  const cardId = await navigate(page, "running");
+  const before = cardSnapshot(cardId);
+  const initialReview = await beginFinishReview(page, cardId);
+  const finishOverlay = page.locator("[data-finish-review-overlay]");
+  await finishOverlay.locator("[data-finish-review-edit]").click();
+  const editor = page.locator("[data-timing-editor-overlay]");
+  await editor.waitFor({ state: "visible" });
+  await fillTimingField(page, 0, "start_time", "1003");
+  await applyFinishEditor(page);
+  const exactDraft = await timingDraftPayload(page);
+  const exactSummary = await finishSummaryValues(page);
+  const restoreSnapshotPolling = await suppressSnapshotPolling(page);
+
+  await cancelCardThroughSecondPage(context, cardId);
+  const competingWinner = cardSnapshot(cardId);
+  assertEqual(competingWinner.card.status, "cancelled", "Finish race competing status");
+  assertEqual(competingWinner.card.version, before.card.version + 1, "Finish race competing version");
+
+  const [response] = await Promise.all([
+    page.waitForNavigation({ waitUntil: "networkidle" }),
+    finishOverlay.locator("[data-finish-review-confirm]").click(),
+  ]);
+  assert(response?.ok(), `Finish stale response returned HTTP ${response?.status()}.`);
+  const lockedEditor = page.locator("[data-timing-editor-overlay]");
+  await lockedEditor.waitFor({ state: "visible" });
+  const model = await terminalTimingModel(page);
+  assert(model.finish_review.locked, "Finish lifecycle race did not hydrate locked recovery.");
+  assertEqual(
+    model.finish_review.review_token,
+    initialReview.review_token,
+    "Finish lifecycle exact retained review token",
+  );
+  assertEqual(model.finish_review.draft, exactDraft, "Finish lifecycle exact retained model draft");
+  assertEqual(await timingDraftPayload(page), exactDraft, "Finish lifecycle exact visible draft");
+  assert(
+    await lockedEditor.locator("[data-timing-interval-list] input").evaluateAll(
+      (inputs) => inputs.length > 0 && inputs.every((input) => input.disabled),
+    ),
+    "Finish lifecycle retained inputs were not locked.",
+  );
+  assert(
+    await lockedEditor.locator("[data-timing-reload]").evaluate(
+      (link) => document.activeElement === link,
+    ),
+    "Finish lifecycle Reload did not receive focus.",
+  );
+  assertEqual(cardSnapshot(cardId), competingWinner, "Finish lifecycle database winner preservation");
+  await lockedEditor.locator("[data-timing-cancel]").click();
+  await page.locator("[data-finish-review-overlay]").waitFor({ state: "visible" });
+  assertEqual(await finishSummaryValues(page), exactSummary, "Finish lifecycle retained summary values");
+  assert(await page.locator("[data-finish-review-edit]").isDisabled(), "Locked Finish Edit was re-enabled.");
+  assert(await page.locator("[data-finish-review-confirm]").isDisabled(), "Locked Finish Confirm was re-enabled.");
+  const reloadHref = await lockedEditor.locator("[data-timing-reload]").getAttribute("href");
+  const [reloadResponse] = await Promise.all([
+    page.waitForNavigation({ waitUntil: "networkidle", timeout: 5000 }),
+    page.locator("[data-finish-review-cancel]").click(),
+  ]);
+  assert(reloadResponse?.ok(), `Finish cancelled recovery reload returned HTTP ${reloadResponse?.status()}.`);
+  assertEqual(new URL(page.url()).pathname, reloadHref, "Finish cancelled recovery reload target");
+  assert(
+    !normalized(await page.locator("body").innerText()).includes(fixture.orders.running),
+    "Finish recovery Cancel left the cancelled order visible on the terminal.",
+  );
+  await restoreSnapshotPolling();
+  passed("authenticated Finish race retains exact recovery and Cancel removes cancelled details");
+}
+
+
+async function verifyShiftEndInvalidatesPendingPreview(page, context) {
+  await parkAndReset(page);
+  const cardId = await navigate(page, "running");
+  const before = cardSnapshot(cardId);
+  const editor = await openTimingEditor(page);
+  const pathname = `/terminal/cards/${cardId}/timing-ledger/preview`;
+  const held = await installHeldResponses(page, pathname);
+  try {
+    const stopTime = timingRow(page, 0).locator('[data-timing-field="stop_time"]');
+    await stopTime.fill("1059");
+    await stopTime.press("Tab");
+    const [pending] = await held.waitForCount(1);
+    assertEqual(pending.response.status(), 200, "shift-end held preview response status");
+    const exactDraft = await timingDraftPayload(page);
+
+    await timingRow(page, 1).getByRole("button", { name: "Изтрий интервал 2" }).click();
+    const deleteConfirmation = page.locator("[data-timing-delete-confirm-overlay]");
+    await deleteConfirmation.waitFor({ state: "visible" });
+    await endActiveShiftThroughRoute(context.request, cardId);
+    await page.waitForFunction(() => {
+      const shiftWindow = document.querySelector('[data-shift-window="true"]');
+      return shiftWindow && !shiftWindow.hidden && shiftWindow.dataset.shiftState === "reload";
+    });
+    const heldAtSuspension = await held.stopAccepting();
+    const requestCountAtSuspension = held.observedRequests.length;
+    assert(heldAtSuspension.length > 0, "Shift-end suspension captured no held previews.");
+    assertEqual(
+      heldAtSuspension.length,
+      requestCountAtSuspension,
+      "shift-end held responses versus observed requests at suspension boundary",
+    );
+    heldAtSuspension.forEach((entry) => entry.release());
+    await Promise.all(heldAtSuspension.map((entry) => entry.done));
+    await page.waitForFunction(() => (
+      document.querySelector("[data-timing-totals]")?.getAttribute("aria-busy") === "false"
+    ));
+    await page.evaluate(() => new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    }));
+    await editor.waitFor({ state: "hidden" });
+    await deleteConfirmation.waitFor({ state: "hidden" });
+    assertEqual(
+      held.entries.length,
+      heldAtSuspension.length,
+      "shift-end held entry count after suspension settlement",
+    );
+    assertEqual(
+      held.observedRequests.length,
+      requestCountAtSuspension,
+      "shift-end preview request count after suspension settlement",
+    );
+    assertEqual(held.lateRequests.length, 0, "shift-end late held requests");
+    assertEqual(held.handlerFailures.length, 0, "shift-end held handler failures");
+    assertEqual(
+      await page.locator('[data-shift-window="true"]').getAttribute("data-shift-state"),
+      "reload",
+      "shift-reload state after pending preview release",
+    );
+    assert(await editor.isHidden(), "Pending preview reopened the timing editor after shift end.");
+    assert(await deleteConfirmation.isHidden(), "Pending preview reopened deletion confirmation after shift end.");
+    assertEqual(await timingDraftPayload(page), exactDraft, "shift-end retained hidden draft");
+    assertEqual(cardSnapshot(cardId), before, "shift-end card database preservation");
+    summary.requestCounts.shiftEndPendingPreviewResponses = heldAtSuspension.length;
+  } finally {
+    await held.cleanup();
+  }
+  passed("ending the active shift invalidates pending preview work and closes nested correction state");
+}
+
+
+async function verifyServerRenderedFinishFailureRecovery(page) {
+  await parkAndReset(page);
+  await page.setViewportSize({ width: 1366, height: 768 });
+  let cardId = await navigate(page, "finish_failure");
+  let before = cardSnapshot(cardId);
+  let review = await beginFinishReview(page, cardId);
+  let finishOverlay = page.locator("[data-finish-review-overlay]");
+  const exactDraft = review.preview.draft;
+  const exactSummary = await finishSummaryValues(page);
+  const finishPath = `/terminal/cards/${cardId}/finish`;
+  await page.locator('form[data-timing-finish-review="true"]').evaluate((form) => {
+    form.addEventListener("submit", () => {
+      const overlay = document.querySelector("[data-finish-review-overlay]");
+      sessionStorage.setItem("timing-audit-finish-pending", JSON.stringify({
+        busy: overlay?.querySelector("[data-finish-review-dialog]")?.getAttribute("aria-busy"),
+        editDisabled: overlay?.querySelector("[data-finish-review-edit]")?.disabled,
+        cancelDisabled: overlay?.querySelector("[data-finish-review-cancel]")?.disabled,
+        confirmDisabled: overlay?.querySelector("[data-finish-review-confirm]")?.disabled,
+      }));
+    }, { once: true });
+  });
+  const finishResponse = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+      && new URL(response.url()).pathname === finishPath
+  ));
+  await finishOverlay.locator("[data-finish-review-confirm]").click();
+  const response = await finishResponse;
+  const pendingState = await page.evaluate(() => {
+    const raw = sessionStorage.getItem("timing-audit-finish-pending");
+    sessionStorage.removeItem("timing-audit-finish-pending");
+    return raw ? JSON.parse(raw) : null;
+  });
+  assertEqual(pendingState, {
+    busy: "true",
+    editDisabled: true,
+    cancelDisabled: true,
+    confirmDisabled: true,
+  }, "pending failing Finish action locks");
+  assert(response.ok(), `Server-rendered Finish failure returned HTTP ${response.status()}.`);
+
+  finishOverlay = page.locator("[data-finish-review-overlay]");
+  await finishOverlay.waitFor({ state: "visible" });
+  const model = await terminalTimingModel(page);
+  assertEqual(model.finish_review.review_token, review.review_token, "Finish failure retained review token");
+  assertEqual(model.finish_review.draft, exactDraft, "Finish failure retained exact draft");
+  assertEqual(await finishSummaryValues(page), exactSummary, "Finish failure retained summary values");
+  assert(
+    normalized(await finishOverlay.locator("[data-finish-review-alert]").textContent()).includes(
+      "Поне едно бруто тегло на ролка",
+    ),
+    "Real Finish validation message is missing.",
+  );
+  assert(
+    await finishOverlay.locator("[data-finish-review-alert]").evaluate(
+      (alert) => document.activeElement === alert,
+    ),
+    "Server-rendered Finish failure alert did not receive focus.",
+  );
+  assert(await finishOverlay.locator("[data-finish-review-edit]").isDisabled(), "Failed Finish Edit was enabled.");
+  assert(await finishOverlay.locator("[data-finish-review-confirm]").isDisabled(), "Failed Finish Confirm was enabled.");
+  assertEqual(cardSnapshot(cardId), before, "Finish validation failure atomic database snapshot");
+  await captureScreenshot(page, finishFailureScreenshot1366, { width: 1366, height: 768 });
+  summary.screenshots.push(path.relative(repoRoot, finishFailureScreenshot1366));
+  await finishOverlay.locator("[data-finish-review-cancel]").click();
+  await finishOverlay.waitFor({ state: "hidden" });
+
+  await parkAndReset(page);
+  cardId = await navigate(page, "running");
+  before = cardSnapshot(cardId);
+  review = await beginFinishReview(page, cardId);
+  finishOverlay = page.locator("[data-finish-review-overlay]");
+  const originalSummary = await finishSummaryValues(page);
+  await page.locator('form[data-timing-finish-review="true"]').evaluate((form) => {
+    form.addEventListener("submit", () => {
+      const input = form.querySelector('input[name="timing_draft"]');
+      const draft = JSON.parse(input.value);
+      draft[0].start_time = "99:99";
+      input.value = JSON.stringify(draft);
+    }, { once: true });
+  });
+  const invalidResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+      && new URL(response.url()).pathname === `/terminal/cards/${cardId}/finish`
+  ));
+  await finishOverlay.locator("[data-finish-review-confirm]").click({ noWaitAfter: true });
+  const invalidResponse = await invalidResponsePromise;
+  assert(invalidResponse.ok(), `Server-rendered timing failure returned HTTP ${invalidResponse.status()}.`);
+  const failureEditor = page.locator("[data-timing-editor-overlay]");
+  await failureEditor.waitFor({ state: "visible" });
+  assertEqual(
+    await timingRow(page, 0).locator('[data-timing-field="start_time"]').inputValue(),
+    "99:99",
+    "server-rendered invalid Finish draft retention",
+  );
+  assert(
+    normalized(await failureEditor.locator("[data-timing-alert]").textContent()).length > 0,
+    "Server-rendered timing failure message is missing.",
+  );
+  assertEqual(cardSnapshot(cardId), before, "row-level Finish failure atomic database snapshot");
+  await failureEditor.locator("[data-timing-cancel]").click();
+  await page.locator("[data-finish-review-overlay]").waitFor({ state: "visible" });
+  assertEqual(await finishSummaryValues(page), originalSummary, "Cancel from Finish failure editor summary");
+  await page.locator("[data-finish-review-cancel]").click();
+  passed("real server-rendered Finish failures retain review state, focus errors, and persist nothing");
+}
+
+
+async function verifyChronologicalReorderRoundTrip(page) {
+  await parkAndReset(page);
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const cardId = await navigate(page, "paused");
+  const before = cardSnapshot(cardId);
+  const firstSegmentId = before.timing[0][0];
+  const secondSegmentId = before.timing[1][0];
+  let editor = await openTimingEditor(page);
+  await setTimingValuesWithoutBlur(page, [
+    { sourceIndex: 0, field: "start_time", value: "1230" },
+    { sourceIndex: 0, field: "stop_time", value: "1330" },
+    { sourceIndex: 1, field: "start_time", value: "1000" },
+    { sourceIndex: 1, field: "stop_time", value: "1100" },
+  ]);
+  const originalFirstStart = timingRow(page, 0).locator('[data-timing-field="start_time"]');
+  const previewResponse = page.waitForResponse(
+    (response) => response.request().method() === "POST"
+      && new URL(response.url()).pathname === `/terminal/cards/${cardId}/timing-ledger/preview`,
+  );
+  await originalFirstStart.evaluate((input) => {
+    input.focus();
+    input.setSelectionRange(0, 2);
+    input.dispatchEvent(new FocusEvent("blur", { relatedTarget: null }));
+  });
+  assert((await previewResponse).ok(), "Chronological reorder preview failed.");
+  await page.waitForFunction(() => (
+    document.querySelector("[data-timing-totals]")?.getAttribute("aria-busy") === "false"
+  ));
+
+  const reorderedDraft = await timingDraftPayload(page);
+  assertEqual(
+    reorderedDraft.map((row) => row.segment_id),
+    [secondSegmentId, firstSegmentId],
+    "chronological preview segment identity order",
+  );
+  assertEqual(
+    await visibleTimingState(page),
+    [
+      {
+        sourceIndex: 0,
+        number: "1",
+        startDate: "20/08/2026",
+        startTime: "10:00",
+        stopDate: "20/08/2026",
+        stopTime: "11:00",
+        duration: "1 ч 00 м",
+      },
+      {
+        sourceIndex: 1,
+        number: "2",
+        startDate: "20/08/2026",
+        startTime: "12:30",
+        stopDate: "20/08/2026",
+        stopTime: "13:30",
+        duration: "1 ч 00 м",
+      },
+    ],
+    "chronological preview visible rows",
+  );
+  assertEqual(
+    [
+      normalized(await editor.locator("[data-timing-production-total]").textContent()),
+      normalized(await editor.locator("[data-timing-paused-total]").textContent()),
+    ],
+    ["2 ч 00 м", "1 ч 30 м"],
+    "chronological preview totals",
+  );
+  const focused = page.locator(':focus[data-timing-field="start_time"]');
+  assertEqual(await focused.inputValue(), "12:30", "chronological preview focused logical value");
+  assertEqual(await focused.getAttribute("data-source-index"), "1", "chronological preview remapped focus identity");
+
+  await Promise.all([
+    page.waitForURL((url) => url.searchParams.get("notice") === "timing_saved", { waitUntil: "networkidle" }),
+    editor.locator("[data-timing-save]").click(),
+  ]);
+  const saved = cardSnapshot(cardId);
+  assertEqual(saved.card.version, before.card.version + 1, "chronological reorder version increment");
+  assertEqual(
+    saved.timing,
+    [
+      [secondSegmentId, "2026-08-20 07:00:00", "2026-08-20 08:00:00", "pause"],
+      [firstSegmentId, "2026-08-20 09:30:00", "2026-08-20 10:30:00", "pause"],
+    ],
+    "chronological stored reload order",
+  );
+
+  editor = await openTimingEditor(page);
+  assertEqual(
+    (await timingDraftPayload(page)).map((row) => row.segment_id),
+    [secondSegmentId, firstSegmentId],
+    "chronological ordinary reopen identities",
+  );
+  assertEqual(
+    (await visibleTimingState(page)).map((row) => [row.number, row.startTime, row.stopTime, row.duration]),
+    [["1", "10:00", "11:00", "1 ч 00 м"], ["2", "12:30", "13:30", "1 ч 00 м"]],
+    "chronological ordinary reopen rows",
+  );
+  await editor.locator("[data-timing-cancel]").click();
+
+  await beginFinishReview(page, cardId);
+  let finishOverlay = page.locator("[data-finish-review-overlay]");
+  const finishBoundaries = await finishSummaryValues(page);
+  assertEqual(
+    finishBoundaries,
+    {
+      firstStart: "20/08/26 10:00",
+      proposedStop: "20/08/26 13:30",
+      production: "2 ч 00 м",
+      paused: "1 ч 30 м",
+    },
+    "chronological Finish boundaries",
+  );
+  await finishOverlay.locator("[data-finish-review-edit]").click();
+  editor = page.locator("[data-timing-editor-overlay]");
+  await editor.waitFor({ state: "visible" });
+  await applyFinishEditor(page);
+  assertEqual(await finishSummaryValues(page), finishBoundaries, "Finish Apply summary idempotency");
+  await finishOverlay.locator("[data-finish-review-edit]").click();
+  await editor.waitFor({ state: "visible" });
+  assertEqual(
+    (await timingDraftPayload(page)).map((row) => row.segment_id),
+    [secondSegmentId, firstSegmentId],
+    "Finish Edit Apply Edit identity order",
+  );
+  assertEqual(
+    (await visibleTimingState(page)).map((row) => [row.number, row.startTime, row.stopTime, row.duration]),
+    [["1", "10:00", "11:00", "1 ч 00 м"], ["2", "12:30", "13:30", "1 ч 00 м"]],
+    "Finish Edit Apply Edit visible idempotency",
+  );
+  await captureScreenshot(page, reorderedScreenshot1366, { width: 1366, height: 768 });
+  summary.screenshots.push(path.relative(repoRoot, reorderedScreenshot1366));
+  await editor.locator("[data-timing-cancel]").click();
+  await finishOverlay.waitFor({ state: "visible" });
+  assertEqual(await finishSummaryValues(page), finishBoundaries, "Finish editor Cancel retained boundaries");
+  assertEqual(cardSnapshot(cardId), saved, "Finish reorder review database preservation");
+  await finishOverlay.locator("[data-finish-review-cancel]").click();
+  passed("chronological reorder preserves identities, totals, focus, storage, and Finish boundaries");
+}
+
+
 async function main() {
   let browser;
   try {
     browser = await chromium.launch();
     const context = await browser.newContext();
     const page = await context.newPage();
-    page.on("pageerror", (error) => summary.pageErrors.push(error.message));
-    page.on("console", (message) => {
-      if (message.type() === "error") summary.consoleErrors.push(message.text());
-    });
-    page.on("requestfailed", (request) => {
-      const failure = {
-        method: request.method(),
-        url: request.url(),
-        error: request.failure()?.errorText || "unknown",
-      };
-      const pathname = new URL(request.url()).pathname;
-      if (
-        failure.method === "POST"
-        && pathname.endsWith("/timing-ledger/preview")
-        && failure.error === "net::ERR_ABORTED"
-      ) {
-        summary.abortedPreviewRequests.push(failure);
-        return;
-      }
-      summary.failedRequests.push(failure);
-    });
-    page.on("request", (request) => {
-      assertEqual(new URL(request.url()).origin, baseOrigin, "browser request origin");
-    });
+    monitorPage(page);
 
+    await verifyPreviewResponseOrdering(page);
+    await verifyIncompleteDraftInvalidatesPendingPreview(page);
+    await verifyOrdinaryLifecycleRaceRecovery(page, context);
+    await verifyOrdinaryCancelledRecoveryCancelNavigation(page, context);
+    await verifyFinishLifecycleRaceRecovery(page, context);
+    await verifyShiftEndInvalidatesPendingPreview(page, context);
+    await verifyServerRenderedFinishFailureRecovery(page);
+    await verifyChronologicalReorderRoundTrip(page);
     await verifyLifecycleAndIcon(page);
     await verifyCancelFocusEscapeAndTrap(page);
     await verifyShortLedgerLayouts(page);

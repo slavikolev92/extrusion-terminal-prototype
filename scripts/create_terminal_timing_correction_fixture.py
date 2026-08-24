@@ -22,6 +22,7 @@ SCENARIOS = (
     "completed",
     "awaiting_rewinding",
     "many_rows",
+    "finish_failure",
 )
 
 
@@ -100,7 +101,9 @@ def import_scenarios() -> dict[str, int]:
             "SELECT id, order_number FROM cards ORDER BY order_number"
         ).fetchall()
     if len(rows) != len(SCENARIOS):
-        raise RuntimeError("Fixture import did not create exactly five cards.")
+        raise RuntimeError(
+            f"Fixture import did not create exactly {len(SCENARIOS)} cards."
+        )
     return {
         scenario: int(row["id"])
         for scenario, row in zip(SCENARIOS, rows, strict=True)
@@ -286,6 +289,7 @@ def create_fixture(database_path: Path) -> dict[str, object]:
     release(cards["completed"], 3, 1)
     release(cards["awaiting_rewinding"], 3, 1)
     release(cards["many_rows"], 4, 1)
+    release(cards["finish_failure"], 3, 3)
 
     start(cards["running"])
     set_roll_defaults(cards["running"], pallet="7")
@@ -313,6 +317,8 @@ def create_fixture(database_path: Path) -> dict[str, object]:
     set_roll_defaults(cards["many_rows"], pallet="9")
     add_roll(cards["many_rows"], "50.00", pallet="9")
 
+    start(cards["finish_failure"])
+
     replace_timing(
         cards["running"],
         [
@@ -339,6 +345,10 @@ def create_fixture(database_path: Path) -> dict[str, object]:
         finished_at="2026-08-20 08:05:29",
     )
     replace_timing(cards["many_rows"], many_timing_rows())
+    replace_timing(
+        cards["finish_failure"],
+        [("2026-08-20 09:30:17", None, None)],
+    )
 
     active_shift = db.fetch_active_shift()
     if active_shift is None:

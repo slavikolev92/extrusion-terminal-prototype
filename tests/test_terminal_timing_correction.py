@@ -7,6 +7,12 @@ import hashlib
 import hmac
 import io
 import json
+import re
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from itertools import permutations
+from threading import Event, local
+from typing import Callable
 
 import pytest
 from starlette.requests import Request
@@ -231,6 +237,17 @@ def finish_review_preview_endpoint():
     return route.endpoint
 
 
+def terminal_timing_model_from_response(response) -> dict[str, object]:
+    match = re.search(
+        rb'<script type="application/json" data-terminal-timing-model>\s*'
+        rb'(?P<payload>.*?)\s*</script>',
+        response.body,
+        flags=re.S,
+    )
+    assert match is not None
+    return json.loads(match.group("payload"))
+
+
 def stored_finish_snapshot(card_id: int) -> dict[str, object]:
     with db.connect() as connection:
         card = dict(
@@ -251,7 +268,164 @@ def stored_finish_snapshot(card_id: int) -> dict[str, object]:
                 (card_id,),
             ).fetchall()
         ]
-    return {"card": card, "timing_rows": timing_rows}
+        roll_rows = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM roll_entries WHERE card_id = ? ORDER BY id",
+                (card_id,),
+            ).fetchall()
+        ]
+        recipe_rows = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT *
+                FROM recipe_actual_entries
+                WHERE card_id = ?
+                ORDER BY component_key
+                """,
+                (card_id,),
+            ).fetchall()
+        ]
+    return {
+        "card": card,
+        "timing_rows": timing_rows,
+        "roll_rows": roll_rows,
+        "recipe_rows": recipe_rows,
+    }
+
+
+def preserved_snapshot(
+    snapshot: dict[str, object],
+    *,
+    allowed_card_changes: set[str],
+) -> dict[str, object]:
+    card = snapshot["card"]
+    assert isinstance(card, dict)
+    return {
+        "card": {
+            key: value
+            for key, value in card.items()
+            if key not in allowed_card_changes
+        },
+        "roll_rows": snapshot["roll_rows"],
+        "recipe_rows": snapshot["recipe_rows"],
+    }
+
+
+def seed_timing_audit_unrelated_data(card_id: int) -> None:
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.25").ok
+    assert db.update_current_pallet_number(card_id, card_version(card_id), "7").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "25.50").ok
+    assert db.update_terminal_recipe_actual_entries(
+        card_id,
+        card_version(card_id),
+        {
+            "raw_material_a": {
+                "actual_material_used": "Audit material",
+                "batch_lot": "AUDIT-LOT",
+            }
+        },
+    ).ok
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET actual_raw_material_used = 'Retain card material',
+                raw_material_brand_grade = 'Retain audit grade',
+                raw_material_batch_lot = 'Retain audit batch'
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+
+
+def run_serialized_timing_writers(
+    monkeypatch: pytest.MonkeyPatch,
+    winner_action: Callable[[], db.TimingLedgerOutcome],
+    stale_action: Callable[[], db.TimingLedgerOutcome],
+) -> tuple[db.TimingLedgerOutcome, db.TimingLedgerOutcome, bool]:
+    """Prove writer two hits SQLite's lock before writer one commits."""
+
+    real_connect = db.connect
+    real_current_database_timestamp = db.current_database_timestamp
+    writer_role = local()
+    winner_has_lock = Event()
+    release_winner = Event()
+    retry_stale_writer = Event()
+    contention_proved = Event()
+
+    class LockProvingConnection:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def __enter__(self):
+            self.connection.__enter__()
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return self.connection.__exit__(exc_type, exc_value, traceback)
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+        def execute(self, statement, parameters=()):
+            if statement.strip().upper() != "BEGIN IMMEDIATE":
+                return self.connection.execute(statement, parameters)
+            try:
+                return self.connection.execute(statement, parameters)
+            except sqlite3.OperationalError as error:
+                assert str(error) in {
+                    "database is locked",
+                    "database table is locked",
+                }
+                contention_proved.set()
+                assert retry_stale_writer.wait(timeout=3)
+                return self.connection.execute(statement, parameters)
+
+    def synchronized_connect():
+        connection = real_connect()
+        if getattr(writer_role, "name", None) == "stale":
+            connection.execute("PRAGMA busy_timeout = 0")
+            return LockProvingConnection(connection)
+        return connection
+
+    def synchronized_transaction_time(connection):
+        if getattr(writer_role, "name", None) == "winner":
+            winner_has_lock.set()
+            assert release_winner.wait(timeout=3)
+        return real_current_database_timestamp(connection)
+
+    def invoke(role: str, action: Callable[[], db.TimingLedgerOutcome]):
+        writer_role.name = role
+        try:
+            return action()
+        finally:
+            del writer_role.name
+
+    monkeypatch.setattr(db, "connect", synchronized_connect)
+    monkeypatch.setattr(
+        db,
+        "current_database_timestamp",
+        synchronized_transaction_time,
+    )
+
+    executor = ThreadPoolExecutor(max_workers=2)
+    try:
+        winner_future = executor.submit(invoke, "winner", winner_action)
+        assert winner_has_lock.wait(timeout=3)
+        stale_future = executor.submit(invoke, "stale", stale_action)
+        assert contention_proved.wait(timeout=3)
+        assert not stale_future.done()
+        release_winner.set()
+        winner = winner_future.result(timeout=3)
+        retry_stale_writer.set()
+        stale = stale_future.result(timeout=3)
+        return winner, stale, contention_proved.is_set()
+    finally:
+        release_winner.set()
+        retry_stale_writer.set()
+        executor.shutdown(wait=True, cancel_futures=True)
 
 
 def timing_draft_json(*rows: db.TimingDraftRow) -> str:
@@ -268,6 +442,65 @@ def timing_draft_json(*rows: db.TimingDraftRow) -> str:
             for row in rows
         ]
     )
+
+
+def prepare_status_transition_race(
+    order_number: str,
+    target_status: str,
+) -> tuple[int, int, int]:
+    card_id = release_ready_card(order_number, 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:17",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    if target_status == STATUS_COMPLETED:
+        assert db.update_tare_weight(card_id, card_version(card_id), "1.25").ok
+        assert db.add_roll_gross_weight(
+            card_id,
+            card_version(card_id),
+            "25.50",
+        ).ok
+    elif target_status == STATUS_AWAITING_REWINDING:
+        assert db.update_rewinding_roll_count(
+            card_id,
+            card_version(card_id),
+            1,
+        ).ok
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET actual_raw_material_used = 'Retain material',
+                raw_material_brand_grade = 'Retain grade',
+                raw_material_batch_lot = 'Retain batch'
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+    return card_id, segment_id, card_version(card_id)
+
+
+def commit_competing_status_transition(
+    card_id: int,
+    loaded_version: int,
+    target_status: str,
+) -> None:
+    if target_status == STATUS_CANCELLED:
+        result = db.cancel_card(card_id, loaded_version)
+    else:
+        result = db.finish_card(
+            card_id,
+            loaded_version,
+            require_active_shift=True,
+        )
+    assert result.ok
+    stored = db.fetch_admin_card_detail(card_id)
+    assert stored is not None
+    assert stored["status"] == target_status
 
 
 def test_terminal_timing_save_allows_running_and_paused_with_active_shift(connection):
@@ -1481,6 +1714,216 @@ def test_terminal_timing_save_route_locks_retained_stale_draft(connection):
     assert timing_snapshot(card_id) == before
 
 
+@pytest.mark.parametrize(
+    "target_status",
+    (STATUS_COMPLETED, STATUS_CANCELLED, STATUS_AWAITING_REWINDING),
+)
+def test_terminal_timing_status_transition_retained_exact_locked_save_draft(
+    connection,
+    target_status,
+):
+    card_id, segment_id, loaded_version = prepare_status_transition_race(
+        f"27019-save-status-transition-retained-{target_status}",
+        target_status,
+    )
+    submitted_payload = [
+        {
+            "segment_id": segment_id,
+            "start_date": "2026-01-15",
+            "start_time": "10:05",
+            "stop_date": "",
+            "stop_time": "",
+            "deleted": False,
+        }
+    ]
+    submitted_json = json.dumps(submitted_payload, separators=(",", ":"))
+    commit_competing_status_transition(card_id, loaded_version, target_status)
+    after_competing_write = stored_finish_snapshot(card_id)
+
+    response = asyncio.run(
+        main.save_terminal_timing_ledger(
+            make_test_request(f"/terminal/cards/{card_id}/timing-ledger"),
+            card_id,
+            loaded_version=str(loaded_version),
+            timing_draft=submitted_json,
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.context["timing_result"].messages == (db.STALE_CARD_MESSAGE,)
+    assert response.context["terminal_timing_dialog_open"] is True
+    assert response.context["terminal_timing_draft_json"] == submitted_json
+    assert response.context["terminal_timing"]["draft"] == submitted_payload
+    assert response.context["terminal_timing"]["locked"] is True
+    assert response.context["terminal_timing"]["loaded_version"] == loaded_version
+    assert response.context["terminal_timing"]["status"] == target_status
+    assert b"data-terminal-timing-model" in response.body
+    assert stored_finish_snapshot(card_id) == after_competing_write
+
+
+@pytest.mark.parametrize(
+    "target_status",
+    (STATUS_COMPLETED, STATUS_CANCELLED, STATUS_AWAITING_REWINDING),
+)
+def test_terminal_finish_status_transition_retained_authenticated_locked_review(
+    connection,
+    target_status,
+):
+    card_id, _, loaded_version = prepare_status_transition_race(
+        f"27019-finish-status-transition-retained-{target_status}",
+        target_status,
+    )
+    review_response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    submitted_json = json.dumps(
+        review_payload["preview"]["draft"],
+        separators=(",", ":"),
+    )
+    submitted_draft = main.parse_terminal_timing_draft(submitted_json)
+    commit_competing_status_transition(card_id, loaded_version, target_status)
+    after_competing_write = stored_finish_snapshot(card_id)
+
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=submitted_json,
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (db.STALE_CARD_MESSAGE,)
+    assert response.context["finish_review_open"] is True
+    assert response.context["finish_review_stale"] is True
+    assert response.context["finish_review_token"] == review_payload["review_token"]
+    assert response.context["finish_review_draft"] == submitted_draft
+    assert response.context["finish_review_draft_json"] == submitted_json
+    assert response.context["terminal_timing"]["locked"] is True
+    assert response.context["terminal_timing"]["status"] == target_status
+    assert b"data-terminal-timing-model" in response.body
+    assert b"data-finish-review-overlay" in response.body
+    assert stored_finish_snapshot(card_id) == after_competing_write
+
+
+@pytest.mark.parametrize(
+    "target_status",
+    (STATUS_COMPLETED, STATUS_CANCELLED),
+)
+def test_terminal_finish_status_transition_interleaving_retained_locked_review(
+    connection,
+    monkeypatch,
+    target_status,
+):
+    card_id, _, loaded_version = prepare_status_transition_race(
+        f"27019-finish-interleaving-retained-{target_status}",
+        target_status,
+    )
+    review_response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    submitted_json = json.dumps(
+        review_payload["preview"]["draft"],
+        separators=(",", ":"),
+    )
+    submitted_draft = main.parse_terminal_timing_draft(submitted_json)
+    real_finish = main.finish_card_with_timing_ledger
+    competing_snapshot: dict[str, object] = {}
+    interleaving_calls = 0
+
+    def finish_after_competing_transition(*args, **kwargs):
+        nonlocal interleaving_calls
+        interleaving_calls += 1
+        commit_competing_status_transition(card_id, loaded_version, target_status)
+        competing_snapshot.update(stored_finish_snapshot(card_id))
+        return real_finish(*args, **kwargs)
+
+    monkeypatch.setattr(
+        main,
+        "finish_card_with_timing_ledger",
+        finish_after_competing_transition,
+    )
+
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=submitted_json,
+        )
+    )
+
+    assert interleaving_calls == 1
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (db.STALE_CARD_MESSAGE,)
+    assert response.context["finish_review_open"] is True
+    assert response.context["finish_review_stale"] is True
+    assert response.context["finish_review_token"] == review_payload["review_token"]
+    assert response.context["finish_review_draft"] == submitted_draft
+    assert response.context["finish_review_draft_json"] == submitted_json
+    assert response.context["terminal_timing"]["draft"] == [
+        main.terminal_timing_draft_row_payload(row) for row in submitted_draft
+    ]
+    assert response.context["terminal_timing"]["locked"] is True
+    assert response.context["terminal_timing"]["status"] == target_status
+    assert b"data-terminal-timing-model" in response.body
+    assert b"data-finish-review-overlay" in response.body
+    assert stored_finish_snapshot(card_id) == competing_snapshot
+
+
+@pytest.mark.parametrize("current_status", (STATUS_COMPLETED, STATUS_CANCELLED))
+def test_finish_review_transaction_same_version_ineligible_status_is_not_stale(
+    connection,
+    current_status,
+):
+    card_id, segment_id, loaded_version = prepare_status_transition_race(
+        f"27019-finish-same-version-{current_status}",
+        current_status,
+    )
+    with db.connect() as status_connection:
+        status_connection.execute(
+            "UPDATE cards SET status = ? WHERE id = ?",
+            (current_status, card_id),
+        )
+    before = stored_finish_snapshot(card_id)
+
+    outcome = db.finish_card_with_timing_ledger(
+        card_id,
+        loaded_version,
+        [
+            db.TimingDraftRow(
+                segment_id,
+                "2026-01-15",
+                "10:00",
+                "2026-01-15",
+                "11:00",
+            )
+        ],
+        "2026-01-15 12:34:56",
+    )
+
+    assert not outcome.result.ok
+    assert outcome.result.messages == (
+        "Производственото време може да се коригира само за карта "
+        "в изработване или на пауза.",
+    )
+    assert db.STALE_CARD_MESSAGE not in outcome.result.messages
+    assert stored_finish_snapshot(card_id) == before
+
+
 def test_terminal_timing_preview_route_returns_authoritative_json(connection):
     card_id = release_ready_card("27020", 1)
     start_card(card_id)
@@ -1528,6 +1971,183 @@ def test_terminal_timing_preview_route_returns_authoritative_json(connection):
     assert payload["preview"]["production_seconds"] >= 0
     assert payload["preview"]["paused_seconds"] == 0
     assert payload["preview"]["intervals"][0]["source_index"] == 0
+
+
+def test_terminal_timing_reordered_intervals_preview_save_and_reload_chronologically(
+    connection,
+):
+    card_id = release_ready_card("27020-reordered-save", 1)
+    start_card(card_id)
+    later_segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:17",
+        ended_at="2026-01-15 09:00:23",
+        end_reason="pause",
+        status=STATUS_PAUSED,
+    )
+    earlier_segment_id = insert_segment(
+        card_id,
+        started_at="2026-01-15 10:00:31",
+        ended_at="2026-01-15 11:00:41",
+        end_reason="correction",
+    )
+    loaded_version = card_version(card_id)
+    submitted_rows = [
+        db.TimingDraftRow(
+            later_segment_id,
+            "2026-01-15",
+            "11:00",
+            "2026-01-15",
+            "13:00",
+        ),
+        db.TimingDraftRow(
+            earlier_segment_id,
+            "2026-01-15",
+            "08:00",
+            "2026-01-15",
+            "09:00",
+        ),
+    ]
+    submitted_json = timing_draft_json(*submitted_rows)
+
+    preview_response = asyncio.run(
+        main.preview_terminal_timing_ledger_route(
+            make_test_request(
+                f"/terminal/cards/{card_id}/timing-ledger/preview"
+            ),
+            card_id,
+            loaded_version=str(loaded_version),
+            timing_draft=submitted_json,
+        )
+    )
+
+    assert preview_response.status_code == 200
+    preview = json.loads(preview_response.body)["preview"]
+    assert [row["source_index"] for row in preview["intervals"]] == [1, 0]
+    assert [row["duration_seconds"] for row in preview["intervals"]] == [3_600, 7_200]
+    assert preview["first_start_display"] == "15.01.2026 08:00"
+    assert preview["proposed_stop_display"] == "15.01.2026 13:00"
+    assert preview["production_seconds"] == 10_800
+    assert preview["paused_seconds"] == 7_200
+
+    save_response = asyncio.run(
+        main.save_terminal_timing_ledger(
+            make_test_request(f"/terminal/cards/{card_id}/timing-ledger"),
+            card_id,
+            loaded_version=str(loaded_version),
+            timing_draft=submitted_json,
+        )
+    )
+
+    assert save_response.status_code == 303
+    reloaded = db.fetch_terminal_card_detail(card_id)
+    assert reloaded is not None
+    assert [
+        row["id"] for row in reloaded["timing_segments"]
+    ] == [earlier_segment_id, later_segment_id]
+    assert [
+        row["started_at"] for row in reloaded["timing_segments"]
+    ] == ["2026-01-15 06:00:00", "2026-01-15 09:00:00"]
+
+
+def test_terminal_finish_reordered_preview_and_rejected_confirmation_retain_chronology(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("27020-reordered-finish", 1)
+    start_card(card_id)
+    later_segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 07:00:17",
+        ended_at="2026-01-15 08:00:23",
+        end_reason="pause",
+        status=STATUS_RUNNING,
+    )
+    earlier_segment_id = insert_segment(
+        card_id,
+        started_at="2026-01-15 09:00:31",
+        ended_at=None,
+        end_reason=None,
+    )
+    loaded_version = card_version(card_id)
+    before = stored_finish_snapshot(card_id)
+    monkeypatch.setattr(
+        db,
+        "current_database_timestamp",
+        lambda connection: "2026-01-15 12:00:00",
+    )
+    review_response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    submitted_rows = [
+        db.TimingDraftRow(
+            later_segment_id,
+            "2026-01-15",
+            "11:00",
+            "2026-01-15",
+            "13:00",
+        ),
+        db.TimingDraftRow(
+            earlier_segment_id,
+            "2026-01-15",
+            "08:00",
+            "2026-01-15",
+            "09:00",
+        ),
+    ]
+    submitted_json = timing_draft_json(*submitted_rows)
+
+    preview_response = asyncio.run(
+        finish_review_preview_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review/preview"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=submitted_json,
+        )
+    )
+
+    assert preview_response.status_code == 200
+    preview = json.loads(preview_response.body)["preview"]
+    assert [row["source_index"] for row in preview["intervals"]] == [1, 0]
+    assert [row["duration_seconds"] for row in preview["intervals"]] == [3_600, 7_200]
+    assert preview["first_start_display"] == "15.01.2026 08:00"
+    assert preview["proposed_stop_display"] == "15.01.2026 13:00"
+    assert preview["production_seconds"] == 10_800
+    assert preview["paused_seconds"] == 7_200
+
+    rejected_response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=submitted_json,
+        )
+    )
+
+    expected_message = "Поне едно бруто тегло на ролка е задължително преди приключване."
+    assert rejected_response.context["workflow_result"].messages == (expected_message,)
+    retained_model = terminal_timing_model_from_response(rejected_response)
+    assert [
+        row["segment_id"] for row in retained_model["finish_review"]["draft"]
+    ] == [later_segment_id, earlier_segment_id]
+    assert retained_model["finish_review"]["preview"] == {
+        "first_start_display": "15.01.2026 08:00",
+        "proposed_stop_display": "15.01.2026 13:00",
+        "production_seconds": 10_800,
+        "paused_seconds": 7_200,
+        "intervals": [
+            {"source_index": 1, "duration_seconds": 3_600},
+            {"source_index": 0, "duration_seconds": 7_200},
+        ],
+    }
+    assert stored_finish_snapshot(card_id) == before
 
 
 def test_terminal_timing_routes_parse_before_database_adapter(connection, monkeypatch):
@@ -2535,3 +3155,857 @@ def test_finish_preview_rejects_unchanged_submitted_time_after_frozen_review(
         "Времето не може да бъде в бъдещето."
     ]
     assert stored_finish_snapshot(card_id) == before
+
+
+_AUDIT_INTERVALS = (
+    (10 * 60, 10 * 60 + 10),
+    (10 * 60 + 10, 10 * 60 + 25),
+    (10 * 60 + 35, 11 * 60),
+    (11 * 60 + 20, 11 * 60 + 25),
+)
+
+
+def audit_interval_draft(
+    interval: tuple[int, int],
+    *,
+    segment_id: int | None,
+) -> db.TimingDraftRow:
+    start_minute, stop_minute = interval
+    return db.TimingDraftRow(
+        segment_id,
+        "2026-01-15",
+        f"{start_minute // 60:02d}:{start_minute % 60:02d}",
+        "2026-01-15",
+        f"{stop_minute // 60:02d}:{stop_minute % 60:02d}",
+    )
+
+
+def audit_interval_totals(
+    intervals: tuple[tuple[int, int], ...],
+) -> tuple[int, int]:
+    ordered = sorted(intervals)
+    production_seconds = sum((stop - start) * 60 for start, stop in ordered)
+    paused_seconds = sum(
+        (current[0] - previous[1]) * 60
+        for previous, current in zip(ordered, ordered[1:])
+    )
+    return production_seconds, paused_seconds
+
+
+def test_terminal_timing_interval_oracle_normalizes_all_bounded_valid_permutations(
+    connection,
+):
+    """Catches input-order totals or source indices replacing chronology."""
+
+    card_id = release_ready_card("27034-oracle-valid", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:00",
+        ended_at="2026-01-15 08:10:00",
+        end_reason="pause",
+        status=STATUS_PAUSED,
+    )
+    loaded_version = card_version(card_id)
+    before = stored_finish_snapshot(card_id)
+    checked_ledgers = 0
+
+    for interval_count in range(1, 5):
+        canonical = _AUDIT_INTERVALS[:interval_count]
+        expected_production, expected_paused = audit_interval_totals(canonical)
+        for source_order in permutations(range(interval_count)):
+            draft_rows = [
+                audit_interval_draft(
+                    canonical[canonical_index],
+                    segment_id=(segment_id if source_index == 0 else None),
+                )
+                for source_index, canonical_index in enumerate(source_order)
+            ]
+
+            outcome = db.preview_terminal_timing_ledger(
+                card_id,
+                loaded_version,
+                draft_rows,
+                preview_at="2026-01-15 22:00:00",
+            )
+
+            assert outcome.result.ok
+            assert outcome.preview is not None
+            assert outcome.preview.production_seconds == expected_production
+            assert outcome.preview.paused_seconds == expected_paused
+            assert [
+                row["source_index"] for row in outcome.preview.intervals
+            ] == [source_order.index(index) for index in range(interval_count)]
+            checked_ledgers += 1
+
+    assert checked_ledgers == 33
+    assert stored_finish_snapshot(card_id) == before
+
+
+@pytest.mark.parametrize(
+    ("case_name", "intervals", "expected_issues"),
+    [
+        (
+            "equality",
+            ((10 * 60, 10 * 60),),
+            (
+                db.TimingValidationIssue(
+                    0,
+                    "stop_time",
+                    "Краят трябва да бъде след началото.",
+                ),
+            ),
+        ),
+        (
+            "reversal",
+            ((10 * 60 + 10, 10 * 60),),
+            (
+                db.TimingValidationIssue(
+                    0,
+                    "stop_time",
+                    "Краят трябва да бъде след началото.",
+                ),
+            ),
+        ),
+        (
+            "overlap",
+            ((10 * 60 + 20, 10 * 60 + 40), (10 * 60, 10 * 60 + 30)),
+            (
+                db.TimingValidationIssue(
+                    0,
+                    "start_time",
+                    "Времевите сегменти не могат да се застъпват.",
+                ),
+            ),
+        ),
+    ],
+    ids=("equality", "reversal", "overlap"),
+)
+def test_terminal_timing_interval_oracle_targets_invalid_boundaries_without_mutation(
+    connection,
+    case_name,
+    intervals,
+    expected_issues,
+):
+    """Catches equal/reversed/overlapping ledgers reaching persistence."""
+
+    card_id = release_ready_card(f"27035-oracle-{case_name}", 1)
+    start_card(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:17",
+        ended_at="2026-01-15 08:10:23",
+        end_reason="pause",
+        status=STATUS_PAUSED,
+    )
+    draft_rows = [
+        audit_interval_draft(
+            interval,
+            segment_id=(segment_id if source_index == 0 else None),
+        )
+        for source_index, interval in enumerate(intervals)
+    ]
+    loaded_version = card_version(card_id)
+    before = stored_finish_snapshot(card_id)
+
+    preview = db.preview_terminal_timing_ledger(
+        card_id,
+        loaded_version,
+        draft_rows,
+        preview_at="2026-01-15 22:00:00",
+    )
+    save = db.update_terminal_timing_ledger(
+        card_id,
+        loaded_version,
+        draft_rows,
+    )
+
+    assert not preview.result.ok
+    assert preview.issues == expected_issues
+    assert not save.result.ok
+    assert save.issues == expected_issues
+    assert stored_finish_snapshot(card_id) == before
+
+
+def test_terminal_timing_save_serializes_two_committed_writers_without_mixing(
+    connection,
+    monkeypatch,
+):
+    """Catches a stale timing writer overwriting the committed winner."""
+
+    card_id = release_ready_card("27036-save-serialized", 1)
+    start_card(card_id)
+    seed_timing_audit_unrelated_data(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:17",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    loaded_version = card_version(card_id)
+    before = stored_finish_snapshot(card_id)
+    winner_draft = [
+        db.TimingDraftRow(segment_id, "2026-01-15", "10:05", "", "")
+    ]
+    stale_draft = [
+        db.TimingDraftRow(segment_id, "2026-01-15", "10:10", "", "")
+    ]
+
+    winner, stale, contention_proved = run_serialized_timing_writers(
+        monkeypatch,
+        lambda: db.update_terminal_timing_ledger(
+            card_id,
+            loaded_version,
+            winner_draft,
+        ),
+        lambda: db.update_terminal_timing_ledger(
+            card_id,
+            loaded_version,
+            stale_draft,
+        ),
+    )
+
+    after = stored_finish_snapshot(card_id)
+    assert contention_proved
+    assert sorted(outcome.result.ok for outcome in (winner, stale)) == [False, True]
+    assert winner.result.ok
+    assert stale.result.messages == (db.STALE_CARD_MESSAGE,)
+    assert after["card"]["version"] == loaded_version + 1
+    assert after["card"]["status"] == STATUS_RUNNING
+    assert after["card"]["first_started_at"] == "2026-01-15 08:05:00"
+    assert [
+        (
+            row["id"],
+            row["started_at"],
+            row["ended_at"],
+            row["end_reason"],
+        )
+        for row in after["timing_rows"]
+    ] == [(segment_id, "2026-01-15 08:05:00", None, None)]
+    assert preserved_snapshot(
+        after,
+        allowed_card_changes={"first_started_at", "updated_at", "version"},
+    ) == preserved_snapshot(
+        before,
+        allowed_card_changes={"first_started_at", "updated_at", "version"},
+    )
+
+
+def test_reviewed_finish_serializes_two_committed_writers_without_mixing(
+    connection,
+    monkeypatch,
+):
+    """Catches a stale reviewed Finish partially replacing winner lifecycle."""
+
+    card_id = release_ready_card("27037-finish-serialized", 1)
+    start_card(card_id)
+    seed_timing_audit_unrelated_data(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:17",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    loaded_version = card_version(card_id)
+    before = stored_finish_snapshot(card_id)
+    active_shift = db.fetch_active_shift()
+    assert active_shift is not None
+    active_shift_occurrence_id = int(active_shift["id"])
+    reviewed_at = "2026-01-15 12:34:56"
+    winner_draft = [
+        db.TimingDraftRow(
+            segment_id,
+            "2026-01-15",
+            "10:00",
+            "2026-01-15",
+            "14:00",
+        )
+    ]
+    stale_draft = [
+        db.TimingDraftRow(
+            segment_id,
+            "2026-01-15",
+            "10:00",
+            "2026-01-15",
+            "14:15",
+        )
+    ]
+
+    winner, stale, contention_proved = run_serialized_timing_writers(
+        monkeypatch,
+        lambda: db.finish_card_with_timing_ledger(
+            card_id,
+            loaded_version,
+            winner_draft,
+            reviewed_at,
+        ),
+        lambda: db.finish_card_with_timing_ledger(
+            card_id,
+            loaded_version,
+            stale_draft,
+            reviewed_at,
+        ),
+    )
+
+    after = stored_finish_snapshot(card_id)
+    assert contention_proved
+    assert sorted(outcome.result.ok for outcome in (winner, stale)) == [False, True]
+    assert winner.result.ok
+    assert stale.result.messages == (db.STALE_CARD_MESSAGE,)
+    assert after["card"]["version"] == loaded_version + 1
+    assert after["card"]["status"] == STATUS_COMPLETED
+    assert after["card"]["machine_sequence"] == 1
+    assert (
+        after["card"]["final_extrusion_shift_occurrence_id"]
+        == active_shift_occurrence_id
+    )
+    assert after["card"]["first_started_at"] == "2026-01-15 08:00:17"
+    assert after["card"]["finished_at"] == "2026-01-15 12:00:00"
+    assert [
+        (
+            row["id"],
+            row["started_at"],
+            row["ended_at"],
+            row["end_reason"],
+        )
+        for row in after["timing_rows"]
+    ] == [
+        (
+            segment_id,
+            "2026-01-15 08:00:17",
+            "2026-01-15 12:00:00",
+            "finish",
+        )
+    ]
+    allowed_finish_changes = {
+        "final_extrusion_shift_occurrence_id",
+        "finished_at",
+        "first_started_at",
+        "status",
+        "updated_at",
+        "version",
+    }
+    assert preserved_snapshot(
+        after,
+        allowed_card_changes=allowed_finish_changes,
+    ) == preserved_snapshot(
+        before,
+        allowed_card_changes=allowed_finish_changes,
+    )
+
+
+def test_terminal_timing_save_applies_multirow_add_delete_as_one_structure(
+    connection,
+):
+    """Catches partial delete/add writes or wrong IDs/reasons/totals."""
+
+    card_id = release_ready_card("27038-save-structure", 1)
+    start_card(card_id)
+    seed_timing_audit_unrelated_data(card_id)
+    first_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:17",
+        ended_at="2026-01-15 08:30:23",
+        end_reason="pause",
+        status=STATUS_PAUSED,
+    )
+    deleted_id = insert_segment(
+        card_id,
+        started_at="2026-01-15 09:30:00",
+        ended_at="2026-01-15 09:45:00",
+        end_reason="pause",
+    )
+    last_id = insert_segment(
+        card_id,
+        started_at="2026-01-15 10:00:31",
+        ended_at="2026-01-15 10:30:41",
+        end_reason="pause",
+    )
+    loaded_version = card_version(card_id)
+    before = stored_finish_snapshot(card_id)
+    with db.connect() as id_connection:
+        next_id = int(
+            id_connection.execute(
+                "SELECT seq + 1 FROM sqlite_sequence WHERE name = ?",
+                ("production_time_segments",),
+            ).fetchone()[0]
+        )
+    draft_rows = [
+        db.TimingDraftRow(
+            last_id,
+            "2026-01-15",
+            "12:00",
+            "2026-01-15",
+            "12:30",
+        ),
+        db.TimingDraftRow(
+            None,
+            "2026-01-15",
+            "11:00",
+            "2026-01-15",
+            "11:20",
+        ),
+        db.TimingDraftRow(deleted_id, "", "", "", "", deleted=True),
+        db.TimingDraftRow(
+            first_id,
+            "2026-01-15",
+            "10:00",
+            "2026-01-15",
+            "10:30",
+        ),
+        db.TimingDraftRow(
+            None,
+            "2026-01-15",
+            "10:35",
+            "2026-01-15",
+            "10:50",
+        ),
+    ]
+
+    preview = db.preview_terminal_timing_ledger(
+        card_id,
+        loaded_version,
+        draft_rows,
+        preview_at="2026-01-15 22:00:00",
+    )
+    outcome = db.update_terminal_timing_ledger(
+        card_id,
+        loaded_version,
+        draft_rows,
+    )
+
+    after = stored_finish_snapshot(card_id)
+    assert preview.result.ok
+    assert preview.preview is not None
+    assert preview.preview.production_seconds == 5_716
+    assert preview.preview.paused_seconds == 3_308
+    assert outcome.result.ok
+    assert after["card"]["version"] == loaded_version + 1
+    assert after["card"]["first_started_at"] == "2026-01-15 08:00:17"
+    assert after["card"]["finished_at"] is None
+    detail = db.fetch_admin_card_detail(card_id)
+    assert detail is not None
+    assert detail["total_production_seconds"] == 5_716
+    assert [
+        (
+            row["id"],
+            row["started_at"],
+            row["ended_at"],
+            row["end_reason"],
+        )
+        for row in after["timing_rows"]
+    ] == [
+        (
+            first_id,
+            "2026-01-15 08:00:17",
+            "2026-01-15 08:30:23",
+            "pause",
+        ),
+        (
+            next_id + 1,
+            "2026-01-15 08:35:00",
+            "2026-01-15 08:50:00",
+            "correction",
+        ),
+        (
+            next_id,
+            "2026-01-15 09:00:00",
+            "2026-01-15 09:20:00",
+            "correction",
+        ),
+        (
+            last_id,
+            "2026-01-15 10:00:31",
+            "2026-01-15 10:30:41",
+            "pause",
+        ),
+    ]
+    assert deleted_id not in {row["id"] for row in after["timing_rows"]}
+    assert preserved_snapshot(
+        after,
+        allowed_card_changes={"first_started_at", "updated_at", "version"},
+    ) == preserved_snapshot(
+        before,
+        allowed_card_changes={"first_started_at", "updated_at", "version"},
+    )
+
+
+def test_reviewed_finish_applies_multirow_add_delete_and_lifecycle_once(
+    connection,
+):
+    """Catches structural timing edits committing separately from Finish."""
+
+    card_id = release_ready_card("27039-finish-structure", 1)
+    start_card(card_id)
+    open_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 10:00:41",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    first_id = insert_segment(
+        card_id,
+        started_at="2026-01-15 08:00:17",
+        ended_at="2026-01-15 08:30:23",
+        end_reason="pause",
+    )
+    deleted_id = insert_segment(
+        card_id,
+        started_at="2026-01-15 09:30:00",
+        ended_at="2026-01-15 09:45:00",
+        end_reason="pause",
+    )
+    seed_timing_audit_unrelated_data(card_id)
+    loaded_version = card_version(card_id)
+    before = stored_finish_snapshot(card_id)
+    active_shift = db.fetch_active_shift()
+    assert active_shift is not None
+    active_shift_occurrence_id = int(active_shift["id"])
+    with db.connect() as id_connection:
+        next_id = int(
+            id_connection.execute(
+                "SELECT seq + 1 FROM sqlite_sequence WHERE name = ?",
+                ("production_time_segments",),
+            ).fetchone()[0]
+        )
+    draft_rows = [
+        db.TimingDraftRow(
+            open_id,
+            "2026-01-15",
+            "12:00",
+            "2026-01-15",
+            "14:00",
+        ),
+        db.TimingDraftRow(deleted_id, "", "", "", "", deleted=True),
+        db.TimingDraftRow(
+            None,
+            "2026-01-15",
+            "11:00",
+            "2026-01-15",
+            "11:20",
+        ),
+        db.TimingDraftRow(
+            first_id,
+            "2026-01-15",
+            "10:00",
+            "2026-01-15",
+            "10:30",
+        ),
+    ]
+
+    outcome = db.finish_card_with_timing_ledger(
+        card_id,
+        loaded_version,
+        draft_rows,
+        "2026-01-15 12:34:56",
+    )
+
+    after = stored_finish_snapshot(card_id)
+    assert outcome.result.ok
+    assert outcome.preview is not None
+    assert outcome.preview.production_seconds == 10_165
+    assert outcome.preview.paused_seconds == 4_218
+    assert after["card"]["version"] == loaded_version + 1
+    assert after["card"]["status"] == STATUS_COMPLETED
+    assert (
+        after["card"]["final_extrusion_shift_occurrence_id"]
+        == active_shift_occurrence_id
+    )
+    assert after["card"]["first_started_at"] == "2026-01-15 08:00:17"
+    assert after["card"]["finished_at"] == "2026-01-15 12:00:00"
+    detail = db.fetch_admin_card_detail(card_id)
+    assert detail is not None
+    assert detail["total_production_seconds"] == 10_165
+    assert [
+        (
+            row["id"],
+            row["started_at"],
+            row["ended_at"],
+            row["end_reason"],
+        )
+        for row in after["timing_rows"]
+    ] == [
+        (
+            first_id,
+            "2026-01-15 08:00:17",
+            "2026-01-15 08:30:23",
+            "pause",
+        ),
+        (
+            next_id,
+            "2026-01-15 09:00:00",
+            "2026-01-15 09:20:00",
+            "correction",
+        ),
+        (
+            open_id,
+            "2026-01-15 10:00:41",
+            "2026-01-15 12:00:00",
+            "finish",
+        ),
+    ]
+    assert deleted_id not in {row["id"] for row in after["timing_rows"]}
+    allowed_finish_changes = {
+        "final_extrusion_shift_occurrence_id",
+        "finished_at",
+        "first_started_at",
+        "status",
+        "updated_at",
+        "version",
+    }
+    assert preserved_snapshot(
+        after,
+        allowed_card_changes=allowed_finish_changes,
+    ) == preserved_snapshot(
+        before,
+        allowed_card_changes=allowed_finish_changes,
+    )
+
+
+@pytest.mark.parametrize("token_kind", ("missing", "tampered", "restart"))
+def test_actual_finish_endpoint_rejects_invalid_review_tokens_without_any_write(
+    connection,
+    monkeypatch,
+    token_kind,
+):
+    """Catches Finish submission bypassing authenticated review boundaries."""
+
+    monkeypatch.setattr(main, "FINISH_REVIEW_TOKEN_KEY", b"a" * 32)
+    monkeypatch.setattr(
+        db,
+        "current_database_timestamp",
+        lambda connection: "2026-01-15 12:34:56",
+    )
+    card_id = release_ready_card(f"27040-token-{token_kind}", 1)
+    start_card(card_id)
+    seed_timing_audit_unrelated_data(card_id)
+    set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:17",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    loaded_version = card_version(card_id)
+    review_response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    submitted_json = json.dumps(review_payload["preview"]["draft"])
+    submitted_token = review_payload["review_token"]
+    if token_kind == "missing":
+        submitted_token = ""
+    elif token_kind == "tampered":
+        payload_part, signature_part = submitted_token.split(".")
+        replacement = "A" if signature_part[0] != "A" else "B"
+        submitted_token = (
+            f"{payload_part}.{replacement}{signature_part[1:]}"
+        )
+    else:
+        monkeypatch.setattr(main, "FINISH_REVIEW_TOKEN_KEY", b"b" * 32)
+    before = stored_finish_snapshot(card_id)
+
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=submitted_token,
+            timing_draft=submitted_json,
+        )
+    )
+
+    after = stored_finish_snapshot(card_id)
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (
+        main.INVALID_FINISH_REVIEW_MESSAGE,
+    )
+    assert response.context["finish_review_open"] is True
+    assert after == before
+
+
+def test_tokenless_finish_cannot_use_pending_preread_to_finish_newly_running_card(
+    connection,
+    monkeypatch,
+):
+    """Catches route dispatch authorizing active Finish from an unlocked pre-read."""
+
+    card_id = release_ready_card("27040-tokenless-dispatch-race", 1)
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            "UPDATE cards SET rewinding_roll_count = 1 WHERE id = ?",
+            (card_id,),
+        )
+    pending_version = card_version(card_id)
+    submitted_version = pending_version + 1
+    real_fetch = main.fetch_terminal_card_detail
+    started_snapshot: dict[str, object] = {}
+    pre_read_count = 0
+
+    def pending_preread_then_start(selected_card_id):
+        nonlocal pre_read_count
+        card = real_fetch(selected_card_id)
+        pre_read_count += 1
+        if pre_read_count == 1:
+            assert card is not None
+            assert card["status"] == STATUS_PENDING
+            start_card(card_id)
+            started_snapshot.update(stored_finish_snapshot(card_id))
+        return card
+
+    monkeypatch.setattr(
+        main,
+        "fetch_terminal_card_detail",
+        pending_preread_then_start,
+    )
+
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(submitted_version),
+        )
+    )
+
+    after = stored_finish_snapshot(card_id)
+    assert pre_read_count >= 1
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (db.STALE_CARD_MESSAGE,)
+    assert response.context["finish_review_open"] is False
+    assert after == started_snapshot
+    assert after["card"]["status"] == STATUS_RUNNING
+    assert after["card"]["version"] == submitted_version
+    assert after["card"]["finished_at"] is None
+    assert after["card"]["final_extrusion_shift_occurrence_id"] is None
+    assert len(after["timing_rows"]) == 1
+    assert after["timing_rows"][0]["ended_at"] is None
+    assert after["timing_rows"][0]["end_reason"] is None
+
+
+def test_tokenless_finish_route_still_finalizes_awaiting_rewinding_card(connection):
+    """Catches route-safe waiting finalization being lost while closing the race."""
+
+    card_id = release_ready_card("27040-tokenless-waiting", 1)
+    start_card(card_id)
+    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 1).ok
+    assert db.finish_card(
+        card_id,
+        card_version(card_id),
+        require_active_shift=True,
+    ).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "25.00").ok
+    waiting = stored_finish_snapshot(card_id)
+    assert waiting["card"]["status"] == STATUS_AWAITING_REWINDING
+
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(waiting["card"]["version"]),
+        )
+    )
+
+    after = stored_finish_snapshot(card_id)
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=card_finished"
+    )
+    assert after["card"]["status"] == STATUS_COMPLETED
+    assert after["card"]["version"] == waiting["card"]["version"] + 1
+    assert after["card"]["finished_at"] == waiting["card"]["finished_at"]
+    assert after["card"]["final_extrusion_shift_occurrence_id"] == (
+        waiting["card"]["final_extrusion_shift_occurrence_id"]
+    )
+    assert after["timing_rows"] == waiting["timing_rows"]
+
+
+def test_actual_finish_endpoint_rejects_replayed_authenticated_review_token(
+    connection,
+    monkeypatch,
+):
+    """Catches an authenticated Finish review being accepted twice."""
+
+    monkeypatch.setattr(main, "FINISH_REVIEW_TOKEN_KEY", b"a" * 32)
+    monkeypatch.setattr(
+        db,
+        "current_database_timestamp",
+        lambda connection: "2026-01-15 12:34:56",
+    )
+    card_id = release_ready_card("27041-token-replay", 1)
+    start_card(card_id)
+    seed_timing_audit_unrelated_data(card_id)
+    segment_id = set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:17",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    loaded_version = card_version(card_id)
+    review_response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    submitted_json = json.dumps(review_payload["preview"]["draft"])
+    before = stored_finish_snapshot(card_id)
+
+    first_response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=submitted_json,
+        )
+    )
+    after_first = stored_finish_snapshot(card_id)
+    replay_response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=submitted_json,
+        )
+    )
+    after_replay = stored_finish_snapshot(card_id)
+
+    assert first_response.status_code == 303
+    assert after_first["card"]["status"] == STATUS_COMPLETED
+    assert after_first["card"]["version"] == loaded_version + 1
+    assert after_first["card"]["finished_at"] == "2026-01-15 12:34:56"
+    assert [
+        (
+            row["id"],
+            row["started_at"],
+            row["ended_at"],
+            row["end_reason"],
+        )
+        for row in after_first["timing_rows"]
+    ] == [
+        (
+            segment_id,
+            "2026-01-15 08:00:17",
+            "2026-01-15 12:34:56",
+            "finish",
+        )
+    ]
+    assert after_first != before
+    assert replay_response.context["workflow_result"].messages == (
+        db.STALE_CARD_MESSAGE,
+    )
+    assert replay_response.context["finish_review_open"] is True
+    assert replay_response.context["finish_review_stale"] is True
+    assert after_replay == after_first

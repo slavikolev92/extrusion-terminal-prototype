@@ -5339,6 +5339,20 @@
     </div>
   {% endif %}
   {% if terminal_timing %}
+    {% if selected_card.status not in ["running", "paused"] %}
+      <div data-timing-menu hidden aria-hidden="true">
+        <button type="button" data-timing-menu-button disabled></button>
+        <div data-timing-menu-panel hidden>
+          <button type="button" data-timing-menu-open disabled></button>
+        </div>
+      </div>
+      <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post"
+            data-timing-finish-review="true" data-finish-confirm-message=""
+            hidden aria-hidden="true">
+        <input type="hidden" name="loaded_version" value="{{ terminal_timing.loaded_version }}">
+        <button type="submit" disabled></button>
+      </form>
+    {% endif %}
     <script type="application/json" data-terminal-timing-model>
       {
         "timing": {{ terminal_timing | tojson }},
@@ -5379,10 +5393,12 @@
           ],
           "messages": {{ (workflow_result.messages if workflow_result is defined and workflow_result else ()) | tojson }},
           "locked": {{ (finish_review_stale | default(false)) | tojson }},
-          "preview": {% if finish_review_preview is defined and finish_review_preview %}{
-            "production_seconds": {{ finish_review_preview.production_seconds | tojson }},
-            "paused_seconds": {{ finish_review_preview.paused_seconds | tojson }},
-            "intervals": {{ finish_review_preview.intervals | tojson }}
+          "preview": {% if finish_review_preview_display is defined and finish_review_preview_display %}{
+            "first_start_display": {{ finish_review_preview_display.first_start_display | tojson }},
+            "proposed_stop_display": {{ finish_review_preview_display.proposed_stop_display | tojson }},
+            "production_seconds": {{ finish_review_preview_display.production_seconds | tojson }},
+            "paused_seconds": {{ finish_review_preview_display.paused_seconds | tojson }},
+            "intervals": {{ finish_review_preview_display.intervals | tojson }}
           }{% else %}null{% endif %}
         }
       }

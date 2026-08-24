@@ -399,7 +399,10 @@ test("server preview maps interval productive and paused seconds without Date pa
     proposed_stop_display: "21.08.2026 13:15",
     production_seconds: 999,
     paused_seconds: 888,
-    intervals: [{ source_index: 0, duration_seconds: 999 }],
+    intervals: [
+      { source_index: 0, duration_seconds: 999 },
+      { source_index: 2, duration_seconds: 100 },
+    ],
   });
   const latest = mapServerPreview(previous.rows, {
     first_start_display: "21.08.2026 10:00",
@@ -407,16 +410,243 @@ test("server preview maps interval productive and paused seconds without Date pa
     production_seconds: 5400,
     paused_seconds: 5400,
     intervals: [
-      { source_index: 2, duration_seconds: 1800 },
+      { source_index: 1, duration_seconds: 1800 },
       { source_index: 0, duration_seconds: 3600 },
     ],
   });
 
-  assert.deepEqual(latest.rows.map((row) => row.duration_seconds), [3600, null, 1800]);
+  assert.deepEqual(latest.rows.map((row) => row.duration_seconds), [1800, 3600, null]);
   assert.equal(latest.production_seconds, 5400);
   assert.equal(latest.paused_seconds, 5400);
   assert.equal(latest.first_start_display, "21.08.2026 10:00");
   assert.equal(latest.proposed_stop_display, "21.08.2026 13:30");
+});
+
+test("successful preview normalizes active rows to chronological server order", () => {
+  const rows = [
+    {
+      segment_id: 202,
+      start_date: "20.08.2026",
+      start_time: "10:00",
+      stop_date: "20.08.2026",
+      stop_time: "12:00",
+      deleted: false,
+    },
+    {
+      segment_id: 101,
+      start_date: "20.08.2026",
+      start_time: "08:00",
+      stop_date: "20.08.2026",
+      stop_time: "09:00",
+      deleted: false,
+    },
+    {
+      segment_id: 303,
+      start_date: "20.08.2026",
+      start_time: "06:00",
+      stop_date: "20.08.2026",
+      stop_time: "07:00",
+      deleted: true,
+    },
+  ];
+
+  const result = mapServerPreview(rows, {
+    first_start_display: "20.08.2026 08:00",
+    proposed_stop_display: "20.08.2026 12:00",
+    production_seconds: 10_800,
+    paused_seconds: 3_600,
+    intervals: [
+      { source_index: 1, duration_seconds: 3_600 },
+      { source_index: 0, duration_seconds: 7_200 },
+    ],
+  });
+
+  const activeRows = result.rows.filter((row) => !row.deleted);
+  assert.deepEqual(activeRows.map((row) => row.segment_id), [101, 202]);
+  assert.deepEqual(activeRows.map((row) => row.display_number), [1, 2]);
+  assert.deepEqual(activeRows.map((row) => row.duration_seconds), [3_600, 7_200]);
+  assert.equal(result.production_seconds, 10_800);
+  assert.equal(result.paused_seconds, 3_600);
+  assert.equal(result.first_start_display, "20.08.2026 08:00");
+  assert.equal(result.proposed_stop_display, "20.08.2026 12:00");
+  assert.deepEqual(result.source_index_map, [1, 0, 2]);
+  assert.deepEqual(serializeTimingDraft(result.rows), [
+    {
+      segment_id: 101,
+      start_date: "2026-08-20",
+      start_time: "08:00",
+      stop_date: "2026-08-20",
+      stop_time: "09:00",
+      deleted: false,
+    },
+    {
+      segment_id: 202,
+      start_date: "2026-08-20",
+      start_time: "10:00",
+      stop_date: "2026-08-20",
+      stop_time: "12:00",
+      deleted: false,
+    },
+    {
+      segment_id: 303,
+      start_date: "2026-08-20",
+      start_time: "06:00",
+      stop_date: "2026-08-20",
+      stop_time: "07:00",
+      deleted: true,
+    },
+  ]);
+  assert.deepEqual(
+    visibleTimingRows(result.rows).map(({ row }) => row.display_number),
+    [1, 2],
+  );
+});
+
+test("chronological normalization remaps focus without changing its logical field", () => {
+  assert.deepEqual(timingCore.remapFocusedTimingField?.({
+    sourceIndex: 0,
+    field: "start_date",
+    dateSegment: "month",
+    selectionStart: 0,
+    selectionEnd: 2,
+  }, [1, 0, 2]), {
+    sourceIndex: 1,
+    field: "start_date",
+    dateSegment: "month",
+    selectionStart: 0,
+    selectionEnd: 2,
+  });
+});
+
+test("locked recovery can map display data without reordering the retained draft", () => {
+  const rows = [
+    { segment_id: 202, deleted: false },
+    { segment_id: 101, deleted: false },
+  ];
+
+  const result = mapServerPreview(rows, {
+    first_start_display: "20.08.2026 08:00",
+    proposed_stop_display: "20.08.2026 12:00",
+    production_seconds: 10_800,
+    paused_seconds: 3_600,
+    intervals: [
+      { source_index: 1, duration_seconds: 3_600 },
+      { source_index: 0, duration_seconds: 7_200 },
+    ],
+  }, { normalizeOrder: false });
+
+  assert.deepEqual(result.rows.map((row) => row.segment_id), [202, 101]);
+  assert.deepEqual(result.rows.map((row) => row.duration_seconds), [7_200, 3_600]);
+  assert.deepEqual(result.source_index_map, [0, 1]);
+});
+
+test("Finish Apply preview remains idempotent when Edit is reopened", () => {
+  const submittedRows = [
+    {
+      segment_id: 202,
+      start_date: "20.08.2026",
+      start_time: "10:00",
+      stop_date: "20.08.2026",
+      stop_time: "12:00",
+      deleted: false,
+    },
+    {
+      segment_id: 101,
+      start_date: "20.08.2026",
+      start_time: "08:00",
+      stop_date: "20.08.2026",
+      stop_time: "09:00",
+      deleted: false,
+    },
+  ];
+  const submittedPreview = {
+    first_start_display: "20.08.2026 08:00",
+    proposed_stop_display: "20.08.2026 12:00",
+    production_seconds: 10_800,
+    paused_seconds: 3_600,
+    intervals: [
+      { source_index: 1, duration_seconds: 3_600 },
+      { source_index: 0, duration_seconds: 7_200 },
+    ],
+  };
+
+  const applied = mapServerPreview(submittedRows, submittedPreview);
+  const reopened = mapServerPreview(
+    applied.rows,
+    applied.normalized_preview ?? submittedPreview,
+  );
+
+  assert.deepEqual(
+    reopened.rows.map((row) => [
+      row.segment_id,
+      row.duration_seconds,
+      row.display_number,
+    ]),
+    [[101, 3_600, 1], [202, 7_200, 2]],
+  );
+  assert.deepEqual(applied.normalized_preview?.intervals, [
+    { source_index: 0, duration_seconds: 3_600 },
+    { source_index: 1, duration_seconds: 7_200 },
+  ]);
+  assert.equal(reopened.production_seconds, 10_800);
+  assert.equal(reopened.paused_seconds, 3_600);
+  assert.equal(reopened.first_start_display, "20.08.2026 08:00");
+  assert.equal(reopened.proposed_stop_display, "20.08.2026 12:00");
+  assert.deepEqual(serializeTimingDraft(reopened.rows), [
+    {
+      segment_id: 101,
+      start_date: "2026-08-20",
+      start_time: "08:00",
+      stop_date: "2026-08-20",
+      stop_time: "09:00",
+      deleted: false,
+    },
+    {
+      segment_id: 202,
+      start_date: "2026-08-20",
+      start_time: "10:00",
+      stop_date: "2026-08-20",
+      stop_time: "12:00",
+      deleted: false,
+    },
+  ]);
+});
+
+test("Finish summary stale lock retains the applied draft and duration pairing", () => {
+  const submittedRows = [
+    { segment_id: 202, deleted: false },
+    { segment_id: 101, deleted: false },
+  ];
+  const submittedPreview = {
+    first_start_display: "20.08.2026 08:00",
+    proposed_stop_display: "20.08.2026 12:00",
+    production_seconds: 10_800,
+    paused_seconds: 3_600,
+    intervals: [
+      { source_index: 1, duration_seconds: 3_600 },
+      { source_index: 0, duration_seconds: 7_200 },
+    ],
+  };
+  const applied = mapServerPreview(submittedRows, submittedPreview);
+
+  const staleLocked = mapServerPreview(
+    applied.rows,
+    applied.normalized_preview ?? submittedPreview,
+    { normalizeOrder: false },
+  );
+
+  assert.deepEqual(
+    staleLocked.rows.map((row) => [
+      row.segment_id,
+      row.duration_seconds,
+      row.display_number,
+    ]),
+    [[101, 3_600, 1], [202, 7_200, 2]],
+  );
+  assert.equal(staleLocked.production_seconds, 10_800);
+  assert.equal(staleLocked.paused_seconds, 3_600);
+  assert.equal(staleLocked.first_start_display, "20.08.2026 08:00");
+  assert.equal(staleLocked.proposed_stop_display, "20.08.2026 12:00");
 });
 
 test("draft serializer emits only server fields and omits deleted unsaved rows", () => {

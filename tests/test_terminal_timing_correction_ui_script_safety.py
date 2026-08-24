@@ -133,6 +133,7 @@ def test_timing_fixture_only_replaces_requested_temp_database(tmp_path: Path):
         "completed",
         "awaiting_rewinding",
         "many_rows",
+        "finish_failure",
     }
     assert temporary_database.is_file()
     assert fake_runtime_database.read_bytes() == b"synthetic runtime sentinel"
@@ -219,3 +220,24 @@ def test_timing_verifier_rejects_artifacts_outside_repository(tmp_path: Path):
     assert outside_requests == []
     assert not outside_artifact_dir.exists()
     assert database_bytes == b"synthetic fixture database"
+
+
+def test_timing_verifier_wires_condition_driven_confidence_audit_scenarios():
+    source = VERIFIER_SCRIPT.read_text(encoding="utf-8")
+    scenario_functions = (
+        "verifyPreviewResponseOrdering",
+        "verifyIncompleteDraftInvalidatesPendingPreview",
+        "verifyOrdinaryLifecycleRaceRecovery",
+        "verifyFinishLifecycleRaceRecovery",
+        "verifyShiftEndInvalidatesPendingPreview",
+        "verifyServerRenderedFinishFailureRecovery",
+        "verifyChronologicalReorderRoundTrip",
+    )
+
+    for function_name in scenario_functions:
+        assert f"async function {function_name}(" in source
+        assert f"await {function_name}(" in source
+
+    audit_start = source.index("async function verifyPreviewResponseOrdering(")
+    audit_end = source.index("async function main()", audit_start)
+    assert "waitForTimeout(" not in source[audit_start:audit_end]

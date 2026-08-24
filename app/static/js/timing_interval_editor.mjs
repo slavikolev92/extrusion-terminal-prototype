@@ -11,6 +11,7 @@ import {
   maskTimeInput,
   maskedCaretPosition,
   normalizeDraftDateInputs,
+  remapFocusedTimingField,
   serializeTimingDraft,
   visibleTimingRows,
 } from "./timing_interval_editor_core.mjs";
@@ -81,6 +82,19 @@ export function retainedFinishReviewMessages(finishReview) {
   ].filter(Boolean))];
 }
 
+export function initialFinishReviewHydration(
+  finishReview,
+  timingDraft,
+  timingDisplay,
+) {
+  return {
+    draft: finishReview.draft.length > 0 ? finishReview.draft : timingDraft,
+    preview: finishReview.preview || timingDisplay,
+    locked: Boolean(finishReview.locked),
+    lockedMessages: retainedFinishReviewMessages(finishReview),
+  };
+}
+
 const modelElement = document.querySelector("[data-terminal-timing-model]");
 const menu = document.querySelector("[data-timing-menu]");
 const menuButton = menu?.querySelector("[data-timing-menu-button]");
@@ -147,6 +161,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   let finishNativeSubmit = false;
   let shiftSuspended = false;
   let timingActionPointerDown = false;
+  let previewRenderInProgress = false;
   let pendingDeleteConfirmation = null;
   const previewCoordinator = createPreviewCoordinator();
 
@@ -158,10 +173,12 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     rows = timing.draft,
     previewPayload = timing.display,
     mode = "ordinary",
+    { locked = Boolean(timing.locked) } = {},
   ) {
     const preview = mapServerPreview(
       normalizeDraftDateInputs(cloneRows(rows)),
       previewPayload,
+      { normalizeOrder: !locked },
     );
     return {
       status: timing.status,
@@ -169,7 +186,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
       rows: preview.rows,
       productionSeconds: preview.production_seconds,
       pausedSeconds: preview.paused_seconds,
-      locked: Boolean(timing.locked),
+      locked,
     };
   }
 
@@ -186,29 +203,12 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     return `${hours} ч ${String(minutes).padStart(2, "0")} м`;
   }
 
-  function formatDraftBoundary(row, prefix) {
-    const date = row?.[`${prefix}_date`] || "";
-    const time = row?.[`${prefix}_time`] || "";
-    const displayMatch = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(date);
-    const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
-    if ((!displayMatch && !isoMatch) || !/^\d{2}:\d{2}$/.test(time)) {
-      return "";
-    }
-    return displayMatch
-      ? `${date} ${time}`
-      : `${isoMatch[3]}.${isoMatch[2]}.${isoMatch[1]} ${time}`;
-  }
-
   function retainedFinishPreview(finishModel, draft) {
+    void draft;
     if (!finishModel.preview) {
       return timing.display;
     }
-    const activeRows = draft.filter((row) => !row.deleted);
-    return {
-      ...finishModel.preview,
-      first_start_display: formatDraftBoundary(activeRows[0], "start"),
-      proposed_stop_display: formatDraftBoundary(activeRows.at(-1), "stop"),
-    };
+    return finishModel.preview;
   }
 
   function updateDraftInput() {
@@ -228,6 +228,87 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     if (row && duration) {
       duration.textContent = row.deleted ? "—" : formatDuration(row.duration_seconds);
     }
+  }
+
+  function focusedTimingField() {
+    const activeElement = document.activeElement;
+    if (!activeElement || !intervalList.contains(activeElement)) {
+      return null;
+    }
+    const sourceIndex = Number(activeElement.dataset.sourceIndex);
+    const field = activeElement.dataset.timingCombinedField
+      || activeElement.dataset.timingField;
+    if (!Number.isSafeInteger(sourceIndex) || !field) {
+      return null;
+    }
+    return {
+      sourceIndex,
+      field,
+      dateSegment: activeElement.dataset.dateSegment || null,
+      selectionStart: activeElement.selectionStart,
+      selectionEnd: activeElement.selectionEnd,
+    };
+  }
+
+  function restoreFocusedTimingField(focusedField, sourceIndexMap) {
+    const remappedField = remapFocusedTimingField(focusedField, sourceIndexMap);
+    if (!remappedField) {
+      return;
+    }
+    const inputs = fieldInputs(remappedField.sourceIndex, remappedField.field);
+    const target = remappedField.dateSegment
+      ? inputs.find((input) => input.dataset.dateSegment === remappedField.dateSegment)
+      : inputs[0];
+    if (!target || target.disabled) {
+      return;
+    }
+    target.focus({ preventScroll: true });
+    if (
+      Number.isSafeInteger(remappedField.selectionStart)
+      && Number.isSafeInteger(remappedField.selectionEnd)
+      && typeof target.setSelectionRange === "function"
+    ) {
+      const selectionStart = Math.min(remappedField.selectionStart, target.value.length);
+      const selectionEnd = Math.min(remappedField.selectionEnd, target.value.length);
+      target.setSelectionRange(selectionStart, selectionEnd);
+    }
+  }
+
+  function focusedTimingAction() {
+    const activeElement = document.activeElement;
+    if (activeElement === addButton) {
+      return { action: "add", sourceIndex: null };
+    }
+    if (
+      !activeElement
+      || !intervalList.contains(activeElement)
+      || activeElement.dataset.timingAction !== "delete"
+    ) {
+      return null;
+    }
+    const sourceIndex = Number(activeElement.dataset.sourceIndex);
+    return Number.isSafeInteger(sourceIndex)
+      ? { action: "delete", sourceIndex }
+      : null;
+  }
+
+  function restoreFocusedTimingAction(focusedAction, sourceIndexMap) {
+    if (!focusedAction) {
+      return;
+    }
+    if (focusedAction.action === "add") {
+      if (!addButton.disabled) addButton.focus({ preventScroll: true });
+      return;
+    }
+    const sourceIndex = sourceIndexMap[focusedAction.sourceIndex];
+    if (!Number.isSafeInteger(sourceIndex)) {
+      return;
+    }
+    const action = intervalList.querySelector(
+      `[data-source-index="${sourceIndex}"]`
+        + '[data-timing-action="delete"]:not([disabled])',
+    );
+    action?.focus({ preventScroll: true });
   }
 
   function invalidateDisplayedCalculations(sourceIndexes = []) {
@@ -398,6 +479,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     if (
       !submitting
       && !timingActionPointerDown
+      && !previewRenderInProgress
       && incompleteDraftFields(state.rows, requiredDraftStatus()).length === 0
     ) {
       requestEditorPreview();
@@ -819,12 +901,14 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     rows = timing.draft,
     preview = timing.display,
     previewOnOpen = true,
+    locked = Boolean(timing.locked),
+    lockedMessages = null,
   } = {}) {
     if (shiftSuspended) {
       return;
     }
     modalReturnFocus = opener;
-    state = createInitialState(rows, preview, mode);
+    state = createInitialState(rows, preview, mode, { locked });
     setEditorSubmitting(false);
     reloadLink.hidden = !state.locked;
     dialog.querySelector("#timing-dialog-title").textContent = mode === "finish"
@@ -839,7 +923,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     overlay.setAttribute("aria-hidden", "false");
     setBackgroundIsolated(true);
     if (state.locked) {
-      lockTimingDraft();
+      lockTimingDraft(lockedMessages || undefined);
     } else {
       dialog.focus();
       if (mode === "ordinary" && previewOnOpen) {
@@ -871,6 +955,10 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
       return;
     }
     if (state.mode !== "finish") {
+      if (state.locked && state.status === "cancelled") {
+        window.location.assign(reloadLink.href);
+        return;
+      }
       closeEditor();
       return;
     }
@@ -971,6 +1059,14 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     }
   }
 
+  function cancelFinishSummary() {
+    if (finishReview?.locked && timing.status === "cancelled") {
+      window.location.assign(reloadLink.href);
+      return;
+    }
+    closeFinishSummary();
+  }
+
   async function postTimingRequest(url, fields, signal = undefined) {
     const body = new FormData();
     Object.entries(fields).forEach(([name, value]) => body.set(name, value));
@@ -985,14 +1081,26 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   }
 
   function applyEditorPreview(preview) {
+    const focusedField = focusedTimingField();
+    const focusedAction = focusedTimingAction();
     const mapped = mapServerPreview(state.rows, preview);
     state.rows = mapped.rows;
     state.productionSeconds = mapped.production_seconds;
     state.pausedSeconds = mapped.paused_seconds;
     clearAlert();
-    state.rows.forEach((_, sourceIndex) => updateRenderedDuration(sourceIndex));
-    updateTotals();
-    updateDraftInput();
+    previewRenderInProgress = true;
+    try {
+      renderRows();
+      updateTotals();
+      updateDraftInput();
+      restoreFocusedTimingField(focusedField, mapped.source_index_map);
+      if (!focusedField) {
+        restoreFocusedTimingAction(focusedAction, mapped.source_index_map);
+      }
+    } finally {
+      previewRenderInProgress = false;
+    }
+    return mapped;
   }
 
   async function requestOrdinaryPreview() {
@@ -1189,10 +1297,10 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         });
         return;
       }
-      applyEditorPreview(responsePayload.preview);
+      const mapped = applyEditorPreview(responsePayload.preview);
       if (returnToSummary) {
-        finishReview.draft = cloneRows(responsePayload.preview.draft);
-        finishReview.preview = responsePayload.preview;
+        finishReview.draft = cloneRows(state.rows);
+        finishReview.preview = mapped.normalized_preview;
         setEditorSubmitting(false);
         closeEditor({ restoreFocus: false, preserveBackground: true });
         openFinishSummary({ opener: finishEditButton, focusTarget: finishEditButton });
@@ -1239,6 +1347,8 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     const timingInput = hiddenFinishField("timing_draft");
     timingInput.name = "timing_draft";
     timingInput.value = JSON.stringify(serializeTimingDraft(finishReview.draft));
+    const previewInput = hiddenFinishField("finish_review_preview");
+    previewInput.value = JSON.stringify(finishReview.preview);
     finishNativeSubmit = true;
     try {
       activeFinishForm.requestSubmit();
@@ -1347,7 +1457,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
       preview: finishReview.preview,
     });
   });
-  finishCancelButton.addEventListener("click", () => closeFinishSummary());
+  finishCancelButton.addEventListener("click", cancelFinishSummary);
   finishConfirmButton.addEventListener("click", confirmFinishReview);
 
   window.addEventListener("terminal:card-stale", (event) => {
@@ -1366,7 +1476,10 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         mode: "finish",
         rows: finishReview.draft,
         preview: finishReview.preview,
+        locked: true,
+        lockedMessages: staleMessages,
       });
+      return;
     }
     lockTimingDraft(staleMessages);
   }, { capture: true });
@@ -1425,7 +1538,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
       } else if (event.key === "Escape") {
         event.preventDefault();
         if (!finishSubmitting) {
-          closeFinishSummary();
+          cancelFinishSummary();
         }
       }
       return;
@@ -1443,10 +1556,13 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     }
   }
   if (model.finish_review?.open) {
-    const retainedDraft = model.finish_review.draft.length > 0
-      ? model.finish_review.draft
-      : timing.draft;
-    const retainedMessages = retainedFinishReviewMessages(model.finish_review);
+    const finishHydration = initialFinishReviewHydration(
+      model.finish_review,
+      timing.draft,
+      timing.display,
+    );
+    const retainedDraft = finishHydration.draft;
+    const retainedMessages = finishHydration.lockedMessages;
     finishReview = {
       reviewToken: model.finish_review.review_token,
       draft: cloneRows(retainedDraft),
@@ -1465,10 +1581,9 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         mode: "finish",
         rows: finishReview.draft,
         preview: finishReview.preview,
+        locked: finishHydration.locked,
+        lockedMessages: retainedMessages,
       });
-      if (model.finish_review.locked) {
-        lockTimingDraft(retainedMessages);
-      }
       renderServerErrors(model.finish_review.issues, {
         focus: true,
         preserveAlert: model.finish_review.locked,

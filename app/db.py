@@ -1748,6 +1748,40 @@ def finish_card(
         )
 
 
+def finalize_awaiting_rewinding_card(
+    card_id: int,
+    loaded_version: int,
+    *,
+    require_active_shift: bool = False,
+) -> RuleResult:
+    """Finalize only a waiting card under the route's write transaction."""
+
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        card = fetch_finish_review_action_card(connection, card_id)
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return version_result
+        assert card is not None
+        if str(card["status"]) != STATUS_AWAITING_REWINDING:
+            return RuleResult(False, (STALE_CARD_MESSAGE,))
+
+        active_shift = None
+        active_shift_checked = False
+        if require_active_shift:
+            active_shift = fetch_active_shift_row(connection)
+            active_shift_checked = True
+            if active_shift is None:
+                return RuleResult(False, (NO_ACTIVE_SHIFT_MESSAGE,))
+        return _finish_card_with_connection(
+            connection,
+            card,
+            loaded_version,
+            active_shift=active_shift,
+            active_shift_checked=active_shift_checked,
+        )
+
+
 def _finish_card_with_connection(
     connection: sqlite3.Connection,
     card: sqlite3.Row,
@@ -2394,7 +2428,7 @@ def finish_card_with_timing_ledger(
             )
             return _terminal_timing_issue_outcome((issue,))
 
-        card = fetch_finish_action_card(connection, card_id)
+        card = fetch_finish_review_action_card(connection, card_id)
         version_result = validate_loaded_card_version(card, loaded_version)
         if not version_result.ok:
             return TimingLedgerOutcome(version_result)
@@ -3576,6 +3610,23 @@ def fetch_finish_action_card(
           AND status IN ({", ".join("?" for _ in finish_statuses)})
         """,
         (card_id, *finish_statuses),
+    ).fetchone()
+
+
+def fetch_finish_review_action_card(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> sqlite3.Row | None:
+    return connection.execute(
+        """
+        SELECT id, order_number, status, machine_id, machine_sequence,
+               tare_weight, rewinding_roll_count,
+               final_extrusion_shift_occurrence_id, first_started_at,
+               finished_at, version
+        FROM cards
+        WHERE id = ?
+        """,
+        (card_id,),
     ).fetchone()
 
 

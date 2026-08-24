@@ -131,7 +131,7 @@ until reload; Cancel is still allowed. The newer card is never overwritten.
 
 No migration required.
 
-## Verification Record
+## Earlier UI Verification Record
 
 The temporary browser fixture creates deterministic running, paused, completed,
 awaiting-rewinding, and many-interval cards plus an active shift. A simple path
@@ -205,3 +205,150 @@ git diff --check
 ```
 
 The full suite passed with 1133 tests; the whitespace check was clean.
+
+## Final Confidence Audit — 2026-08-24
+
+This record supersedes the counts in the earlier UI-only record above. It is
+tied to HEAD `66bbc5b21a5bc30d2d66438a557ff8a1f5ca1ca8` plus the reviewable
+uncommitted confidence-audit diff. Python was `3.12.3`, pytest `9.1.0`, Node
+`v22.23.2`, and the repository-local Playwright CLI `1.61.0`.
+
+### Automated and browser evidence
+
+```bash
+.venv/bin/python -m compileall -q app tests scripts
+EXTRUSION_DB_PATH=$PWD/.test-runtime/terminal-timing-confidence-audit/import-check/import.sqlite3 \
+  .venv/bin/python -c 'import app.main; print("app.main import ok")'
+node --test tests/js/timing_interval_editor_core.test.mjs
+.venv/bin/python -m pytest \
+  tests/test_terminal_timing_correction.py \
+  tests/test_terminal_v8_render.py \
+  tests/test_terminal_timing_correction_ui_script_safety.py -q
+.venv/bin/python -m pytest -q
+git diff --check
+```
+
+Results: compile/import passed; `21` Node tests passed; `247` focused Python
+tests passed; the complete suite passed with `1159` tests in `223.92s`; and
+`git diff --check` was clean.
+
+The complete Chromium verifier was then run three times on fresh fixtures. Each
+run used `127.0.0.1:8016`, and `/health` had to report the exact resolved
+temporary database before the verifier could proceed:
+
+```bash
+EXTRUSION_DB_PATH=$PWD/.test-runtime/terminal-timing-confidence-audit/run-N/fixture.sqlite3 \
+EXTRUSION_DATA_DIR=$PWD/.test-runtime/terminal-timing-confidence-audit/run-N \
+.venv/bin/python scripts/create_terminal_timing_correction_fixture.py \
+  --db-path .test-runtime/terminal-timing-confidence-audit/run-N/fixture.sqlite3 \
+  --output .test-runtime/terminal-timing-confidence-audit/run-N/fixture.json
+
+BASE_URL=http://127.0.0.1:8016 \
+FIXTURE_JSON=.test-runtime/terminal-timing-confidence-audit/run-N/fixture.json \
+ARTIFACT_DIR=artifacts/ui-checks/terminal-timing-confidence-audit/run-N \
+node scripts/verify_terminal_timing_correction_ui.mjs
+```
+
+Runs `1`, `2`, and `3` each passed `54` assertion groups with zero console
+errors, page errors, or unexpected failed requests. Expected `422` validation
+responses and intentionally superseded preview aborts are classified
+separately. The ten screenshots and machine-readable summary for each run are
+under:
+
+- `artifacts/ui-checks/terminal-timing-confidence-audit/run-1/`
+- `artifacts/ui-checks/terminal-timing-confidence-audit/run-2/`
+- `artifacts/ui-checks/terminal-timing-confidence-audit/run-3/`
+
+Direct inspection of the run-3 evidence confirmed: the short two-row editor is
+compact and column-aligned at both `1366x768` and `1920x1080`; the 18-row
+ledger keeps its header, totals, and footer fixed while rows scroll at
+`1366x768`; the Finish Review is centered, legible, and unclipped at
+`1920x1080`; and validation, stale-lock, chronological-reorder, date/time
+selection, and in-app Delete-confirmation states remain coherent without text
+or control clipping.
+
+### Findings and fixes
+
+The two review follow-ups are resolved: stale lifecycle submissions retain the
+exact locked operator draft without persistence, and valid reordered intervals
+stay chronologically consistent across rows, totals, boundaries, Save/reload,
+and Finish Review.
+
+The browser audit also found and fixed four product defects: Delete focus loss
+after preview rerender; missing stale-editor initialization after a competing
+completion; replacement of the retained Finish summary by the lifecycle
+winner's stored timing; and recursive preview requests during focused
+chronological rerender. The final gate found no additional product defect.
+
+### Storage, isolation, and limits
+
+The repository backup/restore implementation was exercised only on
+`.test-runtime/terminal-timing-confidence-audit/recovery/source.sqlite3`.
+`PRAGMA integrity_check` returned `ok`, `PRAGMA foreign_key_check` returned no
+rows, `python -m app.backups backup` created a SQLite-safe image, and
+`python -m app.backups restore` restored a separate database. Exact `SELECT *`
+snapshots of all `6` cards, `26` timing segments, and `6` roll entries matched;
+both snapshot SHA-256 values were
+`2e1bce58b4eeabaf54b63a515a21595382a9f107f8ef28b4bb9201a2fc01dc74`.
+
+The real runtime database was never opened by the audit. Its before/after
+size (`200704`), mtime (`1787556171`), inode (`1471548`), and SHA-256
+(`67292a7407312b1b51130377fd105076bee50149047091a966ab4162c04c7266`)
+were identical. `.test-runtime/` and `artifacts/` are ignored. Audit port `8016`
+was stopped after every run; the pre-existing LAN process on `0.0.0.0:8015`,
+PID `1265451`, was not altered.
+
+The supported browser evidence is the repository-local Playwright Chromium
+used above; it is not a multi-browser certification, a full WCAG audit, or a
+guarantee against future browser/OS changes, power loss, or hardware failure.
+The retained stale Finish summary is token-gated, structurally validated,
+display-only, and never persisted, but its display payload is not separately
+cryptographically bound to the review token. In this bounded no-auth local
+pilot, reload remains mandatory and restores canonical server state. Revisit
+that display-only hardening only if the threat model expands.
+
+### Final-review follow-up — 2026-08-24
+
+The independent final review found two additional lifecycle edges after the
+initial confidence gate above. First, an unlocked pending-card pre-read could
+select the tokenless Finish branch before the same card became running. The
+terminal route now calls a dedicated waiting-finalization entry point that
+checks version and `awaiting_rewinding` status in the same `BEGIN IMMEDIATE`
+transaction. Active running/paused Finish remains review-token-only; direct
+`db.finish_card()` behavior used elsewhere is unchanged. Second, Cancel from a
+locked recovery now follows the existing reload link when the winning status is
+`cancelled`, so cancelled details disappear from the workstation. Completed and
+awaiting-rewinding recovery Cancel behavior remains unchanged.
+
+TDD evidence was captured before each production change. The route race test
+returned `303` and ended the newly running card before the backend fix; it and
+the waiting-finalization control both pass afterward. The browser verifier then
+failed on the exact cancelled-recovery navigation condition before the JS fix
+and passed both ordinary and Finish recovery paths afterward.
+
+Final follow-up verification:
+
+```bash
+node --test tests/js/timing_interval_editor_core.test.mjs
+.venv/bin/python -m pytest \
+  tests/test_terminal_timing_correction.py \
+  tests/test_terminal_v8_render.py \
+  tests/test_terminal_timing_correction_ui_script_safety.py \
+  tests/test_rewinding_workflow.py -q
+.venv/bin/python -m pytest -q
+.venv/bin/python -m compileall -q app tests scripts
+node --check app/static/js/timing_interval_editor.mjs
+node --check scripts/verify_terminal_timing_correction_ui.mjs
+git diff --check
+```
+
+Results: `21` Node tests passed; `317` focused Python tests passed; the
+complete suite passed with `1161` tests in `223.79s`; compile/import, JS syntax,
+and whitespace checks were clean. One complete fresh Chromium run passed `56`
+assertion groups with zero unexpected console errors, page errors, or failed
+requests. Its ten screenshots and summary are under
+`artifacts/ui-checks/terminal-timing-confidence-audit/final-review-fix1-green/`.
+The deliberate browser RED is preserved under the adjacent
+`final-review-fix1-red/` directory. Audit port `8016` was stopped; the existing
+LAN server on `0.0.0.0:8015`, PID `1265451`, was not altered. The runtime
+database was not used.

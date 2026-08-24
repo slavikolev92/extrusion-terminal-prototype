@@ -216,23 +216,98 @@ export function canDeleteTimingRow(rows, sourceIndex, { mode, status }) {
   );
 }
 
-export function mapServerPreview(rows, preview) {
+export function mapServerPreview(
+  rows,
+  preview,
+  { normalizeOrder = true } = {},
+) {
+  const numberedRows = withDisplayNumbers(rows);
   const durationBySourceIndex = new Map(
     preview.intervals.map((interval) => [
       interval.source_index,
       interval.duration_seconds,
     ]),
   );
-  return {
-    rows: withDisplayNumbers(rows).map((row, sourceIndex) => ({
+  const orderedSourceIndexes = [];
+  const includedSourceIndexes = new Set();
+  if (normalizeOrder) {
+    preview.intervals.forEach((interval) => {
+      const sourceIndex = interval.source_index;
+      if (
+        Number.isSafeInteger(sourceIndex)
+        && sourceIndex >= 0
+        && sourceIndex < numberedRows.length
+        && !numberedRows[sourceIndex].deleted
+        && !includedSourceIndexes.has(sourceIndex)
+      ) {
+        orderedSourceIndexes.push(sourceIndex);
+        includedSourceIndexes.add(sourceIndex);
+      }
+    });
+    numberedRows.forEach((row, sourceIndex) => {
+      if (!row.deleted && !includedSourceIndexes.has(sourceIndex)) {
+        orderedSourceIndexes.push(sourceIndex);
+        includedSourceIndexes.add(sourceIndex);
+      }
+    });
+    numberedRows.forEach((row, sourceIndex) => {
+      if (row.deleted) {
+        orderedSourceIndexes.push(sourceIndex);
+      }
+    });
+  } else {
+    numberedRows.forEach((_, sourceIndex) => {
+      orderedSourceIndexes.push(sourceIndex);
+    });
+  }
+
+  const sourceIndexMap = Array(numberedRows.length);
+  let displayNumber = 0;
+  const normalizedRows = orderedSourceIndexes.map((sourceIndex, normalizedIndex) => {
+    const row = numberedRows[sourceIndex];
+    sourceIndexMap[sourceIndex] = normalizedIndex;
+    if (row.deleted) {
+      return { ...row, duration_seconds: null };
+    }
+    displayNumber += 1;
+    return {
       ...row,
+      display_number: displayNumber,
       duration_seconds: durationBySourceIndex.get(sourceIndex) ?? null,
-    })),
+    };
+  });
+  const normalizedPreview = {
+    ...preview,
+    intervals: preview.intervals.flatMap((interval) => {
+      const sourceIndex = sourceIndexMap[interval.source_index];
+      return Number.isSafeInteger(sourceIndex)
+        ? [{ ...interval, source_index: sourceIndex }]
+        : [];
+    }),
+  };
+  if (Array.isArray(preview.draft)) {
+    normalizedPreview.draft = serializeTimingDraft(normalizedRows);
+  }
+  return {
+    rows: normalizedRows,
+    source_index_map: sourceIndexMap,
+    normalized_preview: normalizedPreview,
     production_seconds: preview.production_seconds,
     paused_seconds: preview.paused_seconds,
     first_start_display: preview.first_start_display,
     proposed_stop_display: preview.proposed_stop_display,
   };
+}
+
+export function remapFocusedTimingField(focusedField, sourceIndexMap) {
+  if (!focusedField) {
+    return null;
+  }
+  const sourceIndex = sourceIndexMap[focusedField.sourceIndex];
+  if (!Number.isSafeInteger(sourceIndex)) {
+    return null;
+  }
+  return { ...focusedField, sourceIndex };
 }
 
 export function serializeTimingDraft(rows) {

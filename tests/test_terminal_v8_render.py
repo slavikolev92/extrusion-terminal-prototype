@@ -2903,6 +2903,8 @@ def test_terminal_timing_errors_reopen_or_lock_the_submitted_draft(connection):
         "messages": [hostile_message],
         "locked": True,
         "preview": {
+            "first_start_display": "15.01.2026 10:00",
+            "proposed_stop_display": "15.01.2026 11:00",
             "production_seconds": 3600,
             "paused_seconds": 600,
             "intervals": [{"source_index": 0, "duration_seconds": 3600}],
@@ -2913,7 +2915,8 @@ def test_terminal_timing_errors_reopen_or_lock_the_submitted_draft(connection):
         "app/static/js/timing_interval_editor.mjs"
     ).read_text(encoding="utf-8")
     assert "if (model.finish_review?.open)" in controller_source
-    assert "model.finish_review.draft" in controller_source
+    assert "initialFinishReviewHydration(" in controller_source
+    assert "finishReview.draft.length > 0" in controller_source
     assert "retainedFinishPreview(model.finish_review, retainedDraft)" in controller_source
     assert "renderServerErrors" in controller_source
     assert 'const prefix = issue.field.startsWith("start_") ? "start" : "stop"' in controller_source
@@ -2987,6 +2990,7 @@ def test_terminal_finish_no_roll_failure_retains_message_in_review_model(connect
             str(loaded_version),
             review_token=review_payload["review_token"],
             timing_draft=json.dumps(review_payload["preview"]["draft"]),
+            finish_review_preview=json.dumps(review_payload["preview"]),
         )
     )
 
@@ -3002,10 +3006,173 @@ def test_terminal_finish_no_roll_failure_retains_message_in_review_model(connect
     controller_source = Path(
         "app/static/js/timing_interval_editor.mjs"
     ).read_text(encoding="utf-8")
-    assert "retainedFinishReviewMessages(model.finish_review)" in controller_source
+    assert "retainedFinishReviewMessages(finishReview)" in controller_source
     assert "finishEditButton.disabled = retainedMessages.length > 0" in controller_source
     assert "finishConfirmButton.disabled = retainedMessages.length > 0" in controller_source
     assert "focusFinishAlert();" in controller_source
+
+
+def test_terminal_initial_stale_finish_hydration_preserves_exact_locked_draft(
+    connection,
+):
+    card_id = release_ready_card(
+        "26184-reviewed-stale-hydration-order",
+        machine_id=1,
+        sequence=1,
+    )
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.pause_production_timing(card_id, card_version(card_id)).ok
+    loaded_version = card_version(card_id)
+    retained_rows = [
+        db.TimingDraftRow(
+            202,
+            "2026-08-20",
+            "10:00",
+            "2026-08-20",
+            "12:00",
+        ),
+        db.TimingDraftRow(
+            101,
+            "2026-08-20",
+            "08:00",
+            "2026-08-20",
+            "09:00",
+        ),
+    ]
+    retained_preview = db.TimingLedgerPreview(
+        draft_rows=tuple(retained_rows),
+        intervals=(
+            {"source_index": 1, "duration_seconds": 3_600},
+            {"source_index": 0, "duration_seconds": 7_200},
+        ),
+        first_started_at="2026-08-20 05:00:00",
+        proposed_finished_at="2026-08-20 09:00:00",
+        production_seconds=10_800,
+        paused_seconds=3_600,
+        reviewed_at="2026-08-20 09:00:00",
+    )
+
+    html = render_terminal(
+        card_id,
+        finish_review_open=True,
+        finish_review_token="opaque-stale-review-token",
+        finish_review_draft=retained_rows,
+        finish_review_loaded_version=str(loaded_version),
+        finish_review_issues=(),
+        finish_review_preview=retained_preview,
+        finish_review_stale=True,
+        workflow_result=RuleResult(False, (STALE_CARD_MESSAGE,)),
+    )
+    model = terminal_timing_model_from_html(html)
+    controller_path = Path("app/static/js/timing_interval_editor.mjs")
+    core_path = Path("app/static/js/timing_interval_editor_core.mjs")
+    execution = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            f"""
+globalThis.document = {{
+  querySelector: () => null,
+  querySelectorAll: () => [],
+}};
+const controller = await import({json.dumps(controller_path.resolve().as_uri())});
+const core = await import({json.dumps(core_path.resolve().as_uri())});
+const model = {json.dumps(model)};
+const finishModel = model.finish_review;
+const hydration = typeof controller.initialFinishReviewHydration === "function"
+  ? controller.initialFinishReviewHydration(
+      finishModel,
+      model.timing.draft,
+      model.timing.display,
+    )
+  : {{
+      draft: finishModel.draft,
+      preview: finishModel.preview,
+      locked: false,
+      lockedMessages: [],
+    }};
+const mapped = core.mapServerPreview(
+  core.normalizeDraftDateInputs(hydration.draft),
+  hydration.preview,
+  {{ normalizeOrder: !hydration.locked }},
+);
+console.log(JSON.stringify({{
+  rows: mapped.rows.map((row) => ({{
+    segment_id: row.segment_id,
+    start_date: row.start_date,
+    start_time: row.start_time,
+    stop_date: row.stop_date,
+    stop_time: row.stop_time,
+    duration_seconds: row.duration_seconds,
+    display_number: row.display_number,
+  }})),
+  raw_draft: core.serializeTimingDraft(mapped.rows),
+  actions_disabled: hydration.locked,
+  stale_messages: hydration.lockedMessages,
+  summary: {{
+    first_start_display: hydration.preview.first_start_display,
+    proposed_stop_display: hydration.preview.proposed_stop_display,
+    production_seconds: hydration.preview.production_seconds,
+    paused_seconds: hydration.preview.paused_seconds,
+  }},
+}}));
+""",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    hydrated = json.loads(execution.stdout)
+    assert hydrated == {
+        "rows": [
+            {
+                "segment_id": 202,
+                "start_date": "20.08.2026",
+                "start_time": "10:00",
+                "stop_date": "20.08.2026",
+                "stop_time": "12:00",
+                "duration_seconds": 7_200,
+                "display_number": 1,
+            },
+            {
+                "segment_id": 101,
+                "start_date": "20.08.2026",
+                "start_time": "08:00",
+                "stop_date": "20.08.2026",
+                "stop_time": "09:00",
+                "duration_seconds": 3_600,
+                "display_number": 2,
+            },
+        ],
+        "raw_draft": [
+            {
+                "segment_id": 202,
+                "start_date": "2026-08-20",
+                "start_time": "10:00",
+                "stop_date": "2026-08-20",
+                "stop_time": "12:00",
+                "deleted": False,
+            },
+            {
+                "segment_id": 101,
+                "start_date": "2026-08-20",
+                "start_time": "08:00",
+                "stop_date": "2026-08-20",
+                "stop_time": "09:00",
+                "deleted": False,
+            },
+        ],
+        "actions_disabled": True,
+        "stale_messages": [STALE_CARD_MESSAGE],
+        "summary": {
+            "first_start_display": "20.08.2026 08:00",
+            "proposed_stop_display": "20.08.2026 12:00",
+            "production_seconds": 10_800,
+            "paused_seconds": 3_600,
+        },
+    }
 
 
 def test_terminal_stale_confirmed_finish_retains_locked_alert_and_reload_focus(connection):
@@ -3052,6 +3219,7 @@ def test_terminal_stale_confirmed_finish_retains_locked_alert_and_reload_focus(c
             str(loaded_version),
             review_token=review_payload["review_token"],
             timing_draft=json.dumps(review_payload["preview"]["draft"]),
+            finish_review_preview=json.dumps(review_payload["preview"]),
         )
     )
 
@@ -3063,6 +3231,13 @@ def test_terminal_stale_confirmed_finish_retains_locked_alert_and_reload_focus(c
     assert model["finish_review"]["locked"] is True
     assert model["finish_review"]["issues"] == []
     assert model["finish_review"]["messages"] == [STALE_CARD_MESSAGE]
+    assert model["finish_review"]["preview"] == {
+        "first_start_display": review_payload["preview"]["first_start_display"],
+        "proposed_stop_display": review_payload["preview"]["proposed_stop_display"],
+        "production_seconds": review_payload["preview"]["production_seconds"],
+        "paused_seconds": review_payload["preview"]["paused_seconds"],
+        "intervals": review_payload["preview"]["intervals"],
+    }
 
     controller_path = Path("app/static/js/timing_interval_editor.mjs")
     controller_source = controller_path.read_text(encoding="utf-8")
@@ -3091,19 +3266,34 @@ console.log(JSON.stringify(retained));
 
     hydration_start = controller_source.index("if (model.finish_review?.open)")
     hydration = controller_source[hydration_start:]
+    finish_hydration_index = hydration.index(
+        "const finishHydration = initialFinishReviewHydration("
+    )
     retained_index = hydration.index(
-        "const retainedMessages = retainedFinishReviewMessages(model.finish_review);"
+        "const retainedMessages = finishHydration.lockedMessages;"
     )
     branch_index = hydration.index("const mustShowEditor")
-    lock_index = hydration.index("lockTimingDraft(retainedMessages)", branch_index)
+    open_index = hydration.index("openEditor({", branch_index)
+    locked_index = hydration.index("locked: finishHydration.locked", open_index)
+    messages_index = hydration.index(
+        "lockedMessages: retainedMessages", locked_index
+    )
     row_errors_index = hydration.index(
         "renderServerErrors(model.finish_review.issues, {\n"
         "        focus: true,\n"
         "        preserveAlert: model.finish_review.locked,\n"
         "      });",
-        lock_index,
+        messages_index,
     )
-    assert retained_index < branch_index < lock_index < row_errors_index
+    assert (
+        finish_hydration_index
+        < retained_index
+        < branch_index
+        < open_index
+        < locked_index
+        < messages_index
+        < row_errors_index
+    )
 
     render_errors_start = controller_source.index("function renderServerErrors")
     render_errors_end = controller_source.index(
@@ -3114,6 +3304,17 @@ console.log(JSON.stringify(retained));
     assert "if (!preserveAlert)" in render_errors
     assert "firstEditableTarget.focus()" in render_errors
     assert "reloadLink.focus();" in controller_source
+
+    stale_listener_start = controller_source.index(
+        'window.addEventListener("terminal:card-stale"'
+    )
+    stale_listener_end = controller_source.index(
+        'window.addEventListener("terminal:shift-stale"',
+        stale_listener_start,
+    )
+    stale_listener = controller_source[stale_listener_start:stale_listener_end]
+    assert "locked: true" in stale_listener
+    assert "lockedMessages: staleMessages" in stale_listener
 
 
 def test_terminal_finish_confirmation_warns_only_for_mixed_saved_gross_roll_pallets(
@@ -5301,7 +5502,7 @@ def test_terminal_roll_route_blocks_archived_card_direct_post(connection):
     assert updated["version"] == loaded_version
 
 
-def test_terminal_finish_failure_renders_inline_without_redirect(connection):
+def test_terminal_tokenless_nonwaiting_finish_requires_reload_without_redirect(connection):
     card_id = release_ready_card("26171", machine_id=1, sequence=1)
 
     response = asyncio.run(
@@ -5315,9 +5516,7 @@ def test_terminal_finish_failure_renders_inline_without_redirect(connection):
     assert response.status_code == 200
     assert "location" not in response.headers
     assert "workflow_result" in response.context
-    assert response.context["workflow_result"].messages == (
-        "Времето трябва да бъде стартирано преди приключване.",
-    )
+    assert response.context["workflow_result"].messages == (STALE_CARD_MESSAGE,)
     assert 'class="terminal-toast"' not in response.body.decode("utf-8")
 
 
