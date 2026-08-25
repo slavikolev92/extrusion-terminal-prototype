@@ -634,6 +634,16 @@ async function verifyTerminalBehavior(page, viewport) {
   const firstRollTare = await firstRow.locator("input[name='tare_weight']").inputValue();
   await firstRow.locator("input[name='pallet_number']").fill("15+1");
   await firstRow.locator("input[name='gross_weight']").fill("99.99");
+  assertEqual(
+    await firstRow.evaluate((form) => Object.fromEntries(new FormData(form))),
+    {
+      loaded_version: firstRollLoadedVersion,
+      gross_weight: "99.99",
+      tare_weight: firstRollTare,
+      pallet_number: "15+1",
+    },
+    `malformed row form immediately before submit at ${viewport.width}x${viewport.height}`,
+  );
   const malformedCorrectionPostStart = mutationPosts.length;
   await submitAndWait(page, () => firstActions.locator("[data-roll-row-save]").click());
   const malformedCorrectionPosts = mutationPosts.slice(malformedCorrectionPostStart);
@@ -648,7 +658,7 @@ async function verifyTerminalBehavior(page, viewport) {
         pallet_number: "15+1",
       },
     }],
-    "malformed row-scoped roll correction request",
+    `malformed row-scoped roll correction request at ${viewport.width}x${viewport.height}`,
   );
   assert(
     normalizeText(await page.locator(`[data-feedback-roll-id='${firstRollId}']`).textContent())
@@ -683,12 +693,19 @@ async function verifyTerminalBehavior(page, viewport) {
     "assigned pallet before clear",
   );
   await clearedRow.locator("input[name='pallet_number']").fill("");
+  assertEqual(
+    await clearedRow.evaluate((form) => Object.fromEntries(new FormData(form))).then(
+      (fields) => fields.pallet_number,
+    ),
+    "",
+    `cleared pallet form immediately before submit at ${viewport.width}x${viewport.height}`,
+  );
   await submitAndWait(page, () => clearedActions.locator("[data-roll-row-save]").click());
   clearedRow = page.locator(`.roll-row[data-roll-id='${clearCandidateRollId}']`);
   assertEqual(
     normalizeText(await clearedRow.locator("[data-roll-display='pallet']").textContent()),
     "-",
-    "cleared pallet display",
+    `cleared pallet display at ${viewport.width}x${viewport.height}`,
   );
   await page.reload({ waitUntil: "networkidle" });
   clearedRow = page.locator(`.roll-row[data-roll-id='${clearCandidateRollId}']`);
