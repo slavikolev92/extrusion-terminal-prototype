@@ -1,6 +1,6 @@
 <header class="admin-header">
   <div class="admin-shell">
-    <a class="logo-link" href="/admin/cards" aria-label="Admin home">
+    <a class="logo-link" href="/admin/dashboard" aria-label="Начало на администрацията">
       <img class="admin-logo" src="{{ url_for('static', path='/images/kolev-logo.png') }}" alt="Kolev">
     </a>
 
@@ -8,6 +8,7 @@
       <a class="admin-nav-link {% if admin_section == 'import' %}is-active{% endif %}" href="/admin/import" {% if admin_section == 'import' %}aria-current="page"{% endif %}>Импорт</a>
       <a class="admin-nav-link {% if admin_section == 'planning' %}is-active{% endif %}" href="/admin/planning" {% if admin_section == 'planning' %}aria-current="page"{% endif %}>Планиране</a>
       <a class="admin-nav-link {% if admin_section == 'cards' %}is-active{% endif %}" href="/admin/cards" {% if admin_section == 'cards' %}aria-current="page"{% endif %}>Технологични карти</a>
+      <a class="admin-nav-link {% if admin_section == 'dashboard' %}is-active{% endif %}" href="/admin/dashboard" {% if admin_section == 'dashboard' %}aria-current="page"{% endif %}>Табло</a>
       <a class="admin-nav-link {% if admin_section == 'settings' %}is-active{% endif %}" href="/admin/settings" {% if admin_section == 'settings' %}aria-current="page"{% endif %}>Настройки</a>
     </nav>
 

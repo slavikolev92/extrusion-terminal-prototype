@@ -27,7 +27,15 @@ Confirmed workflow facts:
 
 - There is one terminal.
 - The extrusion area should be represented as four fixed machines in the app. One of the machines may not be operational, but it should still exist in the app.
-- The app should model only simple machine assignment, sequencing, and navigation. It should not model detailed machine performance or downtime.
+- In addition to simple machine assignment, sequencing, and navigation, the
+  shift-manager admin area includes a bounded read-only view of the previous
+  24 hours of machine production time. It derives running, paused, and idle
+  intervals from the existing timing ledger and compares order productivity
+  with earlier production-complete orders on the same machine having the exact
+  same normalized width and thickness.
+- The dashboard is an operational review aid, not a general-purpose OEE system:
+  it records no downtime reasons, makes no automatic worker-performance
+  judgment, and does not change production data.
 - The terminal receives and executes extrusion operational cards assigned to those machines.
 - The shift manager continues using the existing Excel workbook.
 - The shift manager assigns each released card to a machine and gives it a simple numeric queue position.

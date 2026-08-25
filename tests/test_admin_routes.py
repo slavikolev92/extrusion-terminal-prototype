@@ -30,6 +30,7 @@ def test_admin_routes_are_registered():
     route_paths = {route.path for route in app.routes}
 
     assert "/admin" in route_paths
+    assert "/admin/dashboard" in route_paths
     assert "/admin/import" in route_paths
     assert "/admin/planning" in route_paths
     assert "/admin/cards" in route_paths
@@ -71,11 +72,11 @@ def test_workstation_cancel_restore_routes_are_not_registered():
     assert "/terminal/cards/{card_id}/restore" not in route_paths
 
 
-def test_admin_redirects_to_import():
+def test_admin_redirects_to_dashboard():
     response = asyncio.run(admin())
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/admin/import"
+    assert response.headers["location"] == "/admin/dashboard"
 
 
 def test_admin_import_explains_overwrite_scope(connection):
@@ -176,7 +177,17 @@ def assert_admin_global_nav(html: str, active_label: str) -> None:
     assert 'href="/admin/import"' in html
     assert 'href="/admin/planning"' in html
     assert 'href="/admin/cards"' in html
+    assert 'href="/admin/dashboard"' in html
     assert 'href="/admin/settings"' in html
+    nav_html = html.split('<nav class="main-nav"', 1)[1].split("</nav>", 1)[0]
+    assert_html_order(
+        nav_html,
+        'href="/admin/import"',
+        'href="/admin/planning"',
+        'href="/admin/cards"',
+        'href="/admin/dashboard"',
+        'href="/admin/settings"',
+    )
     assert 'href="/terminal"' in html
     assert "Терминал" in html
     assert f'aria-current="page">{active_label}</a>' in html

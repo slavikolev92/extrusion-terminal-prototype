@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import hashlib
 import hmac
@@ -106,6 +106,7 @@ from .importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
 from .pallet_summary import build_terminal_pallet_summary
 from .printing import build_print_readiness
 from .presentation import next_operation_display
+from .production_dashboard import build_machine_time_dashboard, parse_dashboard_day
 from .recipe_parser import RECIPE_SOURCE_FIELDS
 from .recipe_parser import parse_recipe_source_fields
 from .rules import RECIPE_RELEASE_FIELD_LABELS, RuleResult, target_gross_weight_from_card
@@ -1178,7 +1179,27 @@ async def print_card(
 
 @app.get("/admin")
 async def admin() -> RedirectResponse:
-    return RedirectResponse(url="/admin/import", status_code=303)
+    return RedirectResponse(url="/admin/dashboard", status_code=303)
+
+
+@app.get("/admin/dashboard")
+async def admin_dashboard(request: Request, day: str | None = None):
+    reference_time = datetime.now(timezone.utc).replace(microsecond=0)
+    try:
+        selected_day = parse_dashboard_day(day, reference_time)
+    except ValueError:
+        return RedirectResponse(url="/admin/dashboard", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "admin_dashboard.html",
+        {
+            "admin_section": "dashboard",
+            "dashboard": build_machine_time_dashboard(
+                reference_time,
+                selected_day=selected_day,
+            ),
+        },
+    )
 
 
 @app.get("/admin/import")

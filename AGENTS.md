@@ -21,6 +21,9 @@ Confirmed scope:
 - Terminal execution of released extrusion operational cards.
 - Roll gross-weight entry, order-level tare weight, calculated net totals.
 - Production timing with start, pause, resume, and finish segments.
+- Read-only shift-manager dashboard for the previous 24 hours of machine
+  production, pauses, idle gaps, and exact-dimension historical productivity
+  comparison.
 - Bounded extrusion-card return tracking for rolls sent to rewinding: a marker,
   explicit waiting state after extrusion ends, returned-roll entry, and
   deliberate terminal finalization.
@@ -38,7 +41,8 @@ Explicitly out of scope unless the user confirms otherwise:
 - Rewinding-department scheduling, processing, timing, work queues, roll
   lineage, or batch/event history. The bounded extrusion-card return workflow
   above remains in scope.
-- Detailed machine performance or downtime tracking.
+- General-purpose OEE, downtime-reason entry, automatic anomaly verdicts, or
+  machine-performance data beyond the bounded read-only dashboard above.
 - Writing terminal-entered data back to Excel.
 - Public internet exposure.
 - Expanding this pilot into a permanent ERP replacement.

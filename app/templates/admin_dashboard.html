@@ -1,0 +1,296 @@
+{% extends "base.html" %}
+
+{% block title %}Производствено време по машини - Терминал Екструдиране{% endblock %}
+
+{% block body %}
+<main class="page wide-page admin-page machine-dashboard-page">
+  {% include "_admin_nav.html" %}
+
+  <section class="dashboard" aria-labelledby="dashboard-title">
+    <header class="dashboard-head">
+      <div class="dashboard-title">
+        <h1 id="dashboard-title">Производствено време по машини</h1>
+        <p>{% if dashboard.window.mode == "calendar_day" %}Избран ден{% else %}Последни 24 часа{% endif %} · {{ dashboard.window.range_display }}</p>
+      </div>
+      <div class="dashboard-controls">
+        <form class="dashboard-day-form" action="/admin/dashboard" method="get" data-dashboard-day-form>
+          <label class="visually-hidden" for="dashboard-day">Избери завършен ден</label>
+          <input
+            class="dashboard-day-input"
+            id="dashboard-day"
+            name="day"
+            type="date"
+            value="{{ dashboard.window.selected_day }}"
+            max="{{ dashboard.window.max_selectable_day }}"
+          >
+          <button class="dashboard-day-submit" type="submit" data-dashboard-day-submit>Покажи</button>
+        </form>
+        {% if dashboard.window.mode == "calendar_day" %}
+          <a class="dashboard-window-reset" href="/admin/dashboard" data-dashboard-window-reset>Последни 24 часа</a>
+        {% endif %}
+        <button class="refresh-button" type="button">Обнови</button>
+      </div>
+    </header>
+
+    <div class="dashboard-body">
+      <ul class="legend" aria-label="Легенда">
+        <li><span class="legend-swatch order" aria-hidden="true"></span>Поръчка</li>
+        <li><span class="legend-swatch pause" aria-hidden="true"></span>Пауза</li>
+        <li><span class="legend-swatch idle" aria-hidden="true"></span>Без производство</li>
+      </ul>
+
+      <div class="timeline-chart">
+        <div class="timeline-grid" aria-hidden="true">
+          {% for tick in dashboard.axis %}
+            <span class="grid-line" style="--position: {{ tick.position }}%"></span>
+          {% endfor %}
+        </div>
+
+        <div class="timeline-axis" aria-label="Времева ос">
+          {% for tick in dashboard.axis %}
+            <time style="--position: {{ tick.position }}%" datetime="{{ tick.utc }}">{{ tick.display }}</time>
+          {% endfor %}
+        </div>
+
+        <div class="machine-list">
+          {% for machine in dashboard.machines %}
+            <article class="machine-row" data-machine-row="{{ machine.id }}" aria-labelledby="machine-{{ machine.id }}-title">
+              <header class="machine-meta">
+                <h2 id="machine-{{ machine.id }}-title">{{ machine.name }}</h2>
+                <p>Активна {{ machine.active_duration }} ({{ machine.active_percent }}%)</p>
+              </header>
+              <div class="machine-track" aria-label="Активност на {{ machine.name }}">
+                {% for interval in machine.timeline %}
+                  {% if interval.kind == "order" %}
+                    <span class="timeline-segment order"
+                          data-kind="order"
+                          data-machine="{{ machine.name }}"
+                          data-order="{{ interval.order_number }}"
+                          data-customer="{{ interval.customer }}"
+                          data-productivity="{% if interval.productivity is not none %}{{ interval.productivity }} кг/ч{% endif %}"
+                          data-start="{{ interval.start_display }}"
+                          data-end="{{ interval.end_display }}"
+                          data-duration="{{ interval.duration_display }}"
+                          style="--span: {{ interval.duration_seconds }}"
+                          tabindex="0"
+                          aria-describedby="order-tooltip"
+                          aria-label="{{ machine.name }}, поръчка {{ interval.order_number }}, {{ interval.customer }}, от {{ interval.start_display }} до {{ interval.end_display }}, {{ interval.duration_display }}">
+                      <span class="segment-primary">
+                        <span class="segment-order">{{ interval.order_number }}</span>
+                        {% if interval.productivity is not none %}<span class="segment-rate">({{ interval.productivity }} кг/ч)</span>{% endif %}
+                      </span>
+                      <span class="segment-customer" title="{{ interval.customer }}">{{ interval.customer }}</span>
+                    </span>
+                  {% else %}
+                    <span class="timeline-segment {{ interval.kind }}"
+                          data-kind="{{ interval.kind }}"
+                          data-machine="{{ machine.name }}"
+                          data-start="{{ interval.start_display }}"
+                          data-end="{{ interval.end_display }}"
+                          data-duration="{{ interval.duration_display }}"
+                          style="--span: {{ interval.duration_seconds }}"
+                          tabindex="0"
+                          aria-describedby="order-tooltip"
+                          aria-label="{{ machine.name }}, {% if interval.kind == 'pause' %}пауза{% else %}без производство{% endif %} от {{ interval.start_display }} до {{ interval.end_display }}, {{ interval.duration_display }}">{{ interval.duration_display }}</span>
+                  {% endif %}
+                {% endfor %}
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="productivity-review" aria-labelledby="productivity-review-title">
+    <header class="productivity-review-head">
+      <h2 id="productivity-review-title">Производителност по поръчки</h2>
+    </header>
+
+    <div class="productivity-machine-groups">
+      {% for machine in dashboard.machines %}
+        <section class="productivity-machine-group" aria-labelledby="productivity-machine-{{ machine.id }}">
+          <h3 class="productivity-machine-title" id="productivity-machine-{{ machine.id }}">{{ machine.name }}</h3>
+          <table class="productivity-table">
+            <colgroup>
+              <col style="width: 24%">
+              <col style="width: 13%">
+              <col style="width: 13%">
+              <col style="width: 12%">
+              <col style="width: 38%">
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col"><span class="header-label">Поръчка</span></th>
+                <th scope="col"><span class="header-label">Размер</span><span class="header-unit">(мм)</span></th>
+                <th scope="col"><span class="header-label">Произведено</span><span class="header-unit">(кг)</span></th>
+                <th scope="col"><span class="header-label">Време</span></th>
+                <th scope="col"><span class="header-label">Производителност</span><span class="header-unit">(кг/ч)</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for order in machine.orders %}
+                <tr class="productivity-row" data-order-row="{{ order.order_number }}">
+                  <td class="review-order" data-label="Поръчка"><strong>{{ order.order_number }}</strong><span title="{{ order.customer }}">{{ order.customer }}</span></td>
+                  <td class="review-spec review-size" data-label="Размер (мм)"><strong>{{ order.dimensions }}</strong></td>
+                  <td class="review-produced" data-label="Произведено (кг)"><strong>{% if order.produced is not none %}{{ order.produced }}{% endif %}</strong></td>
+                  <td class="review-time" data-label="Време"><strong>{{ order.active_duration }}</strong></td>
+                  <td class="review-productivity" data-label="Производителност (кг/ч)">
+                    <div class="productivity-cell-layout">
+                      <strong class="productivity-actual">{% if order.productivity is not none %}{{ order.productivity }}{% endif %}</strong>
+                      {% if order.baseline %}
+                        <div class="productivity-gauge{% if order.baseline.is_single_sample %} is-single-sample{% endif %}"
+                             data-min="{{ order.baseline.minimum }}"
+                             data-current="{{ order.productivity }}"
+                             data-max="{{ order.baseline.maximum }}"
+                             data-sample-count="{{ order.baseline.sample_count }}"
+                             style="--range-start: {{ order.baseline.range_start }}%; --range-end: {{ order.baseline.range_end }}%; --marker-position: {{ order.baseline.marker_position }}%"
+                             tabindex="0"
+                             aria-describedby="productivity-tooltip"
+                             aria-label="Текуща производителност {{ order.productivity }}, исторически диапазон от {{ order.baseline.minimum }} до {{ order.baseline.maximum }} килограма на час, изчислен от {{ order.baseline.sample_count }} поръчки със същия размер">
+                          <div class="productivity-gauge-track" aria-hidden="true"><span class="productivity-gauge-band"></span><span class="productivity-gauge-marker"></span></div>
+                          {% if order.baseline.is_single_sample %}
+                            <span class="productivity-gauge-single" aria-hidden="true">{{ order.baseline.minimum }}</span>
+                          {% else %}
+                            <span class="productivity-gauge-min" aria-hidden="true">{{ order.baseline.minimum }}</span>
+                            <span class="productivity-gauge-max" aria-hidden="true">{{ order.baseline.maximum }}</span>
+                          {% endif %}
+                          {% for sample in order.baseline.samples %}
+                            <span class="productivity-sample-data" hidden
+                                  data-order="{{ sample.order_number }}"
+                                  data-dimensions="{{ sample.dimensions }}"
+                                  data-productivity="{{ sample.productivity }}"></span>
+                          {% endfor %}
+                        </div>
+                      {% else %}
+                        <div class="productivity-no-baseline" aria-hidden="true"></div>
+                      {% endif %}
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </section>
+      {% endfor %}
+    </div>
+  </section>
+</main>
+
+<aside class="order-tooltip" id="order-tooltip" role="tooltip" aria-hidden="true">
+  <h3 data-tooltip-title></h3>
+  <p class="order-tooltip-customer" data-tooltip-subtitle></p>
+  <dl class="order-tooltip-details">
+    <div data-tooltip-productivity-row><dt>Производителност</dt><dd data-tooltip-productivity></dd></div>
+    <div><dt data-tooltip-duration-label></dt><dd data-tooltip-duration></dd></div>
+    <div><dt>Начало</dt><dd data-tooltip-start></dd></div>
+    <div><dt>Край</dt><dd data-tooltip-end></dd></div>
+  </dl>
+</aside>
+
+<aside class="productivity-tooltip" id="productivity-tooltip" role="tooltip" aria-hidden="true">
+  <h3>Историческа база</h3>
+  <p class="productivity-tooltip-count"><strong data-productivity-sample-count></strong> <span data-productivity-sample-label></span></p>
+  <ul class="productivity-tooltip-samples" data-productivity-samples></ul>
+</aside>
+
+<script>
+  (() => {
+    const timelineTooltip = document.getElementById("order-tooltip");
+    const productivityTooltip = document.getElementById("productivity-tooltip");
+    const refreshButton = document.querySelector(".refresh-button");
+
+    const hideTooltip = (tooltip) => {
+      tooltip.classList.remove("is-visible");
+      tooltip.setAttribute("aria-hidden", "true");
+    };
+
+    const positionTooltip = (tooltip, target) => {
+      const targetRect = target.getBoundingClientRect();
+      const tooltipRect = tooltip.getBoundingClientRect();
+      const left = Math.min(
+        Math.max(12, targetRect.left + (targetRect.width - tooltipRect.width) / 2),
+        window.innerWidth - tooltipRect.width - 12,
+      );
+      const below = targetRect.bottom + 10;
+      const top = below + tooltipRect.height <= window.innerHeight - 12
+        ? below
+        : Math.max(12, targetRect.top - tooltipRect.height - 10);
+      tooltip.style.left = `${Math.round(left)}px`;
+      tooltip.style.top = `${Math.round(top)}px`;
+    };
+
+    const showTimelineTooltip = (segment) => {
+      const isOrder = segment.dataset.kind === "order";
+      const hasProductivity = isOrder && Boolean(segment.dataset.productivity);
+      const title = isOrder
+        ? `Поръчка ${segment.dataset.order}`
+        : segment.dataset.kind === "pause" ? "Пауза" : "Без производство";
+      timelineTooltip.querySelector("[data-tooltip-title]").textContent = title;
+      timelineTooltip.querySelector("[data-tooltip-subtitle]").textContent = isOrder
+        ? segment.dataset.customer
+        : segment.dataset.machine;
+      timelineTooltip.querySelector("[data-tooltip-productivity-row]").hidden = !hasProductivity;
+      timelineTooltip.querySelector("[data-tooltip-productivity]").textContent = hasProductivity
+        ? segment.dataset.productivity
+        : "";
+      timelineTooltip.querySelector("[data-tooltip-duration-label]").textContent = isOrder
+        ? "Активно време"
+        : "Продължителност";
+      timelineTooltip.querySelector("[data-tooltip-duration]").textContent = segment.dataset.duration;
+      timelineTooltip.querySelector("[data-tooltip-start]").textContent = segment.dataset.start;
+      timelineTooltip.querySelector("[data-tooltip-end]").textContent = segment.dataset.end;
+      timelineTooltip.classList.add("is-visible");
+      timelineTooltip.setAttribute("aria-hidden", "false");
+      positionTooltip(timelineTooltip, segment);
+    };
+
+    const showProductivityTooltip = (gauge) => {
+      const count = Number(gauge.dataset.sampleCount || 0);
+      const list = productivityTooltip.querySelector("[data-productivity-samples]");
+      productivityTooltip.querySelector("[data-productivity-sample-count]").textContent = count;
+      productivityTooltip.querySelector("[data-productivity-sample-label]").textContent = count === 1
+        ? "поръчка със същия размер"
+        : "поръчки със същия размер";
+      list.replaceChildren();
+      gauge.querySelectorAll(".productivity-sample-data").forEach((sample) => {
+        const item = document.createElement("li");
+        [sample.dataset.order, sample.dataset.dimensions, `${sample.dataset.productivity} кг/ч`]
+          .forEach((value) => {
+            const field = document.createElement("span");
+            field.textContent = value;
+            item.append(field);
+          });
+        list.append(item);
+      });
+      productivityTooltip.classList.add("is-visible");
+      productivityTooltip.setAttribute("aria-hidden", "false");
+      positionTooltip(productivityTooltip, gauge);
+    };
+
+    document.querySelectorAll(".timeline-segment[data-kind]").forEach((segment) => {
+      segment.addEventListener("pointerenter", () => showTimelineTooltip(segment));
+      segment.addEventListener("pointerleave", () => hideTooltip(timelineTooltip));
+      segment.addEventListener("focus", () => showTimelineTooltip(segment));
+      segment.addEventListener("blur", () => hideTooltip(timelineTooltip));
+    });
+
+    document.querySelectorAll(".productivity-gauge").forEach((gauge) => {
+      gauge.addEventListener("pointerenter", () => showProductivityTooltip(gauge));
+      gauge.addEventListener("pointerleave", () => hideTooltip(productivityTooltip));
+      gauge.addEventListener("focus", () => showProductivityTooltip(gauge));
+      gauge.addEventListener("blur", () => hideTooltip(productivityTooltip));
+    });
+
+    window.addEventListener("resize", () => {
+      hideTooltip(timelineTooltip);
+      hideTooltip(productivityTooltip);
+    });
+    window.addEventListener("scroll", () => {
+      hideTooltip(timelineTooltip);
+      hideTooltip(productivityTooltip);
+    }, true);
+    refreshButton.addEventListener("click", () => window.location.reload());
+  })();
+</script>
+{% endblock %}
