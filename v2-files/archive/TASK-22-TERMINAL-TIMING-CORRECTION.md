@@ -2,9 +2,9 @@
 
 ## Status
 
-Complete in source as of August 25, 2026. The reviewed implementation is
-pushed on branch `terminal-timing-correction` through commit `4635a3d`. It has
-not yet been merged or deployed.
+Complete, reviewed, and merged into `origin/main` as of August 25, 2026. The
+feature implementation is recorded through commit `4635a3d` and its completion
+record at `82114ed`. It has not yet been deployed.
 
 No schema migration or new dependency is required.
 
@@ -60,6 +60,7 @@ in `docs/implementation-notes/terminal-timing-correction.md`.
 
 ## Completion Boundary
 
-The feature implementation and review are complete. Remaining release work is
-only repository integration and a separately authorized deployment. This task
-does not close or expand any broader future order-finish review task.
+The feature implementation, review, and repository integration are complete.
+The only remaining release action is a separately authorized production
+deployment. This task does not close or expand any broader future order-finish
+review task.

@@ -15,11 +15,12 @@ complete. Persist the completed status and any remaining work here.
   `95093c0`. No later production deployment is recorded or authorized by this
   tracker update.
 - Task 22, terminal production-time correction and the timing-aware Finish
-  Review, is complete in source and pushed on branch
-  `terminal-timing-correction` through `4635a3d`. It requires no migration or
-  new dependency. Final verification passed 1,161 Python tests, 21 JavaScript
-  tests, and a 56-group live Chromium workflow. It has not yet been merged or
-  deployed. See `v2-files/archive/TASK-22-TERMINAL-TIMING-CORRECTION.md` and
+  Review, is complete, reviewed, and merged into `origin/main`. The feature
+  implementation is recorded through `4635a3d` and its completion record at
+  `82114ed`. It requires no migration or new dependency. Final verification
+  passed 1,161 Python tests, 21 JavaScript tests, and a 56-group live Chromium
+  workflow. It has not yet been deployed. See
+  `v2-files/archive/TASK-22-TERMINAL-TIMING-CORRECTION.md` and
   `docs/implementation-notes/terminal-timing-correction.md`.
 - The production profile, deterministic M006 normalization, production-clone
   migration/rollback rehearsal, final production migration, and deployment
@@ -499,9 +500,10 @@ deferred status. It is grouped by affected surface and rough complexity.
    - Surface: `/terminal`, production timing ledger, and the existing Finish
      flow.
    - Complexity: medium to large.
-   - Status: complete in source and pushed on branch
-     `terminal-timing-correction` through `4635a3d`; not yet merged or
-     deployed. No schema migration or new dependency is required.
+   - Status: complete, reviewed, and merged into `origin/main`. The feature
+     implementation is recorded through `4635a3d` and its completion record at
+     `82114ed`. It has not yet been deployed. No schema migration or new
+     dependency is required.
    - Implemented behavior: operators can correct productive intervals while a
      running or paused card remains active. Gaps between intervals calculate
      paused time. Finish freezes the proposed stop time, presents the timing
