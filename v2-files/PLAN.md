@@ -9,11 +9,18 @@ When a workstream starts, explore it with the user and create a temporary task
 tracker only if needed. Delete that temporary tracker after the workstream is
 complete. Persist the completed status and any remaining work here.
 
-## Current Production Status — August 3, 2026
+## Current Production Status — August 25, 2026
 
 - The production VM remains on the last confirmed deployed revision,
   `95093c0`. No later production deployment is recorded or authorized by this
   tracker update.
+- Task 22, terminal production-time correction and the timing-aware Finish
+  Review, is complete in source and pushed on branch
+  `terminal-timing-correction` through `4635a3d`. It requires no migration or
+  new dependency. Final verification passed 1,161 Python tests, 21 JavaScript
+  tests, and a 56-group live Chromium workflow. It has not yet been merged or
+  deployed. See `v2-files/archive/TASK-22-TERMINAL-TIMING-CORRECTION.md` and
+  `docs/implementation-notes/terminal-timing-correction.md`.
 - The production profile, deterministic M006 normalization, production-clone
   migration/rollback rehearsal, final production migration, and deployment
   through that revision were completed. The app was confirmed running in
@@ -487,6 +494,32 @@ deferred status. It is grouped by affected surface and rough complexity.
      prevention of accidental acknowledgement on the wrong machine, stale-tab
      behavior, keyboard/focus handling, event propagation, and supported
      viewport geometry.
+
+22. **Terminal production-time correction and timing-aware Finish Review**
+   - Surface: `/terminal`, production timing ledger, and the existing Finish
+     flow.
+   - Complexity: medium to large.
+   - Status: complete in source and pushed on branch
+     `terminal-timing-correction` through `4635a3d`; not yet merged or
+     deployed. No schema migration or new dependency is required.
+   - Implemented behavior: operators can correct productive intervals while a
+     running or paused card remains active. Gaps between intervals calculate
+     paused time. Finish freezes the proposed stop time, presents the timing
+     and pallet-production review, permits timing edits, and applies the
+     reviewed timing plus lifecycle transition atomically on confirmation.
+     Completed-card timing remains read-only on the terminal.
+   - Safety: backend validation covers invalid, future, overlapping, stale,
+     malformed, and state-incompatible ledgers. The final review resolved the
+     tokenless Finish race and cancelled-card stale-recovery navigation edge.
+   - Verification: 1,161 full-suite Python tests, 317 focused Python tests, 21
+     JavaScript tests, syntax/import checks, and a fresh 56-group Chromium
+     workflow passed without unexpected console, page, or request errors.
+   - Relationship: this completed timing-correction feature is independent of
+     any broader future order-finish review task; it does not close or silently
+     expand such a task.
+   - Durable references:
+     `v2-files/archive/TASK-22-TERMINAL-TIMING-CORRECTION.md` and
+     `docs/implementation-notes/terminal-timing-correction.md`.
 
 ## Current Next Step And Future Order
 
