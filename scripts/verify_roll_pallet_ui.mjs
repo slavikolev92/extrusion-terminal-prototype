@@ -813,7 +813,7 @@ async function verifyTerminalBehavior(page, viewport) {
     clearedDisplayAfterReload: "-",
     palletOnlyToastExact: true,
     mixedModalExact: true,
-    noRequestOnNo: true,
+    onlyFinishReviewRequestOnCancel: true,
     correctionClosedOnNo: true,
   });
 }

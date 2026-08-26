@@ -1052,22 +1052,47 @@ def test_dashboard_is_timing_neutral_when_corrected_paused_finish_is_finalized(
         ).fetchone()["version"]
     )
 
-    finish_outcome = db.finish_card_with_timing_ledger(
-        card_id,
-        loaded_version,
+    review_response = asyncio.run(
+        main.finish_terminal_card_review(
+            make_request(
+                f"/terminal/cards/{card_id}/finish-review",
+                method="POST",
+            ),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    corrected_draft = json.dumps(
         [
-            db.TimingDraftRow(
-                segment_id,
-                "2026-08-24",
-                "10:00",
-                "2026-08-24",
-                "11:30",
-            )
+            {
+                "segment_id": segment_id,
+                "start_date": "2026-08-24",
+                "start_time": "10:00",
+                "stop_date": "2026-08-24",
+                "stop_time": "11:30",
+                "deleted": False,
+            }
         ],
-        "2026-08-24 09:00:00",
+        separators=(",", ":"),
+    )
+    reviewed_finish_response = asyncio.run(
+        main.finish_terminal_card(
+            make_request(f"/terminal/cards/{card_id}/finish", method="POST"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=corrected_draft,
+        )
     )
 
-    assert finish_outcome.result.ok
+    assert review_response.status_code == 200
+    assert review_payload["ok"] is True
+    assert review_payload["review_token"]
+    assert reviewed_finish_response.status_code == 303
+    assert reviewed_finish_response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=card_awaiting_rewinding"
+    )
     waiting_card = db.fetch_admin_card_detail(card_id)
     assert waiting_card is not None
     assert waiting_card["status"] == STATUS_AWAITING_REWINDING
