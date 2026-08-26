@@ -766,6 +766,8 @@ Confirmed direction:
 - Configure auto-login into a Chromium-only kiosk session.
 - Prevent sleep, screen blanking, and lock interruptions during shifts.
 - Use `scripts/provision_workstation_kiosk.sh` to automate repeatable workstation provisioning.
+- Use the repository `workstation-maintenance/` bundle for the separately
+  installed kiosk maintenance display and controller.
 - Workstation printing is out of scope for this prototype pass.
 - Do not block setup on the likely weak CMOS battery; record it as a known risk.
 - Kiosk provisioning should launch the browser in kiosk mode and point to the URL from:
@@ -815,6 +817,32 @@ Acceptance:
 - The kiosk URL can be changed by editing `/etc/extrusion-kiosk-url`.
 - Maintenance remains possible through the existing admin user.
 
+### Workstation maintenance display
+
+The complete repository `workstation-maintenance/` folder is the copyable
+maintenance bundle. Copy the whole folder to the workstation; its installer
+consumes its sibling files and installs:
+
+- `/usr/local/bin/extrusion-kiosk-maintenance`
+- `/usr/local/bin/extrusion-kiosk-session`
+- `/usr/local/share/extrusion-kiosk/maintenance.html`
+- `/usr/local/share/extrusion-kiosk/gears.png`
+- state directory `/var/lib/extrusion-kiosk/`
+
+The launcher records its display environment in
+`/run/user/<kiosk UID>/extrusion-kiosk-session.env` and uses
+`/run/user/<kiosk UID>/extrusion-chromium-http-cache` for disposable HTTP cache.
+Install or update the bundle, then perform one required reboot. Base kiosk
+provisioning remains independent and can replace the launcher, so always run
+the base provisioner first, then rerun this installer and reboot.
+
+Acceptance checks are manual: `notify 30`, `on`, `status`, and `off`, confirming
+the physical kiosk switches to maintenance and back without affecting LAN
+clients. See the [maintenance display design](superpowers/specs/2026-08-07-workstation-maintenance-display-design.md), the
+[implementation plan](superpowers/plans/2026-08-07-workstation-maintenance-display.md), and the
+[authoritative runbook](../workstation-maintenance/README.md). The keyboard
+shortcut restriction remains separate from this maintenance bundle.
+
 Record:
 
 ```text
@@ -854,7 +882,7 @@ Detailed execution plan: docs/superpowers/plans/2026-06-20-workstation-kiosk-pro
 
 Preferred automated setup flow:
 
-1. Copy or clone this repository onto the workstation, or copy only scripts/provision_workstation_kiosk.sh onto the workstation.
+1. Copy or clone this repository onto the workstation before base kiosk provisioning.
 2. Run the first provisioning pass with the intended terminal URL, without auto-login:
 
 sudo bash scripts/provision_workstation_kiosk.sh --terminal-url http://192.168.1.83:8000/terminal

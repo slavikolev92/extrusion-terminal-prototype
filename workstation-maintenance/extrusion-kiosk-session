@@ -1,0 +1,99 @@
+#!/bin/sh
+set -eu
+
+URL_FILE="${EXTRUSION_KIOSK_URL_FILE:-/etc/extrusion-kiosk-url}"
+DEFAULT_URL="http://127.0.0.1:8000/terminal"
+MAINTENANCE_MARKER="${EXTRUSION_KIOSK_MAINTENANCE_MARKER:-/var/lib/extrusion-kiosk/maintenance-enabled}"
+MAINTENANCE_PAGE="${EXTRUSION_KIOSK_MAINTENANCE_PAGE:-/usr/local/share/extrusion-kiosk/maintenance.html}"
+PROFILE_DIR="${EXTRUSION_KIOSK_PROFILE_DIR:-$HOME/.config/extrusion-chromium}"
+RUNTIME_DIR="${EXTRUSION_KIOSK_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+case "$RUNTIME_DIR" in
+    //*)
+        echo "Runtime directory must not use multiple leading slashes." >&2
+        exit 1
+        ;;
+    /*) ;;
+    *)
+        echo "Runtime directory must be absolute." >&2
+        exit 1
+        ;;
+esac
+
+if [ "$RUNTIME_DIR" = "/" ]; then
+    echo "Runtime directory must not be the filesystem root." >&2
+    exit 1
+fi
+
+case "/$RUNTIME_DIR/" in
+    */./* | */../*)
+        echo "Runtime directory must not contain dot path components." >&2
+        exit 1
+        ;;
+esac
+
+SESSION_ENV_FILE="${RUNTIME_DIR}/extrusion-kiosk-session.env"
+CACHE_DIR="${RUNTIME_DIR}/extrusion-chromium-http-cache"
+
+mkdir -p "$RUNTIME_DIR"
+umask 077
+SESSION_ENV_TEMP="${SESSION_ENV_FILE}.tmp.$$"
+trap 'rm -f "$SESSION_ENV_TEMP"' EXIT HUP INT TERM
+printf 'DISPLAY=%s\nXAUTHORITY=%s\n' "${DISPLAY:-}" "${XAUTHORITY:-}" > "$SESSION_ENV_TEMP"
+chmod 0600 "$SESSION_ENV_TEMP"
+mv -f "$SESSION_ENV_TEMP" "$SESSION_ENV_FILE"
+trap - EXIT HUP INT TERM
+
+xset s off || true
+xset s noblank || true
+xset -dpms || true
+export XDG_CURRENT_DESKTOP=XFCE
+export DESKTOP_SESSION=xfce
+if command -v xfwm4 >/dev/null 2>&1; then
+    xfwm4 --replace &
+    sleep 1
+fi
+unclutter -idle 2 -root &
+
+mkdir -p "$PROFILE_DIR"
+
+while true; do
+    BROWSER="$(command -v chromium || command -v chromium-browser || command -v google-chrome || true)"
+    if [ -z "$BROWSER" ]; then
+        sleep 10
+        continue
+    fi
+
+    if [ -e "$MAINTENANCE_MARKER" ]; then
+        KIOSK_URL="file://$MAINTENANCE_PAGE"
+    elif [ -r "$URL_FILE" ]; then
+        KIOSK_URL="$(head -n 1 "$URL_FILE")"
+    else
+        KIOSK_URL="$DEFAULT_URL"
+    fi
+
+    case "$CACHE_DIR" in
+        "$RUNTIME_DIR/extrusion-chromium-http-cache") ;;
+        *) exit 1 ;;
+    esac
+    rm -rf -- "$CACHE_DIR"
+    mkdir -m 0700 -- "$CACHE_DIR"
+
+    "$BROWSER" \
+        --kiosk \
+        --disable-gpu \
+        --disable-gpu-compositing \
+        --no-first-run \
+        --disable-infobars \
+        --disable-session-crashed-bubble \
+        --disable-features=Translate \
+        --password-store=basic \
+        --user-data-dir="$PROFILE_DIR" \
+        --disk-cache-dir="$CACHE_DIR" \
+        "$KIOSK_URL" || true
+
+    if [ "${EXTRUSION_KIOSK_RUN_ONCE:-}" = "1" ]; then
+        exit 0
+    fi
+    sleep 2
+done

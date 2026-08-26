@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+KIOSK_USER="${EXTRUSION_KIOSK_USER:-kiosk}"
+SHARE_DIR="${EXTRUSION_KIOSK_SHARE_DIR:-/usr/local/share/extrusion-kiosk}"
+STATE_DIR="${EXTRUSION_KIOSK_STATE_DIR:-/var/lib/extrusion-kiosk}"
+MARKER_FILE="${STATE_DIR}/maintenance-enabled"
+PAGE_FILE="${SHARE_DIR}/maintenance.html"
+IMAGE_FILE="${SHARE_DIR}/gears.png"
+
+if [ -n "${EXTRUSION_KIOSK_SESSION_ENV_FILE:-}" ]; then
+    SESSION_ENV_FILE="$EXTRUSION_KIOSK_SESSION_ENV_FILE"
+else
+    KIOSK_UID="$(id -u "$KIOSK_USER")"
+    SESSION_ENV_FILE="/run/user/${KIOSK_UID}/extrusion-kiosk-session.env"
+fi
+
+usage() {
+    printf 'Usage: %s notify MINUTES|on|off|status\n' "$0" >&2
+}
+
+die() {
+    printf 'Error: %s\n' "$*" >&2
+    exit 1
+}
+
+validate_absolute_paths() {
+    local path
+    for path in "$SHARE_DIR" "$STATE_DIR" "$SESSION_ENV_FILE"; do
+        case "$path" in
+            /*) ;;
+            *) die "path must be absolute: $path" ;;
+        esac
+    done
+
+    [ "$STATE_DIR" != "/" ] || die "state directory must not be /"
+}
+
+read_session_env() {
+    local key value
+    local display_count=0
+    local xauthority_count=0
+    DISPLAY_VALUE=""
+    XAUTHORITY_VALUE=""
+
+    [ -r "$SESSION_ENV_FILE" ] || die "session environment file is not readable"
+    while IFS='=' read -r key value || [ -n "$key" ]; do
+        case "$key" in
+            DISPLAY)
+                [ -n "$value" ] || die "DISPLAY must not be blank"
+                display_count=$((display_count + 1))
+                [ "$display_count" -eq 1 ] || die "DISPLAY must appear once"
+                DISPLAY_VALUE="$value"
+                ;;
+            XAUTHORITY)
+                [ -n "$value" ] || die "XAUTHORITY must not be blank"
+                xauthority_count=$((xauthority_count + 1))
+                [ "$xauthority_count" -eq 1 ] || die "XAUTHORITY must appear once"
+                XAUTHORITY_VALUE="$value"
+                ;;
+            *) die "unknown session environment key: $key" ;;
+        esac
+    done < "$SESSION_ENV_FILE"
+
+    [ "$display_count" -eq 1 ] || die "DISPLAY must appear once"
+    [ "$xauthority_count" -eq 1 ] || die "XAUTHORITY must appear once"
+    case "$XAUTHORITY_VALUE" in
+        /*) ;;
+        *) die "XAUTHORITY must be an absolute path" ;;
+    esac
+    [ -r "$XAUTHORITY_VALUE" ] || die "XAUTHORITY is not readable"
+}
+
+stop_kiosk_browser() {
+    local browser status
+    for browser in chromium chromium-browser google-chrome; do
+        if pkill -TERM -u "$KIOSK_USER" -x "$browser"; then
+            continue
+        else
+            status=$?
+        fi
+
+        [ "$status" -eq 1 ] && continue
+        return "$status"
+    done
+}
+
+notify_operator() {
+    local minutes="$1"
+    local minute_word
+    [[ "$minutes" =~ ^[1-9][0-9]*$ ]] || die "minutes must be a positive integer"
+    [ -f "$IMAGE_FILE" ] && [ -r "$IMAGE_FILE" ] || die "maintenance image is not a readable regular file"
+    read_session_env
+
+    if [ "$minutes" = "1" ]; then
+        minute_word="минута"
+    else
+        minute_word="минути"
+    fi
+
+    runuser -u "$KIOSK_USER" -- env \
+        "DISPLAY=$DISPLAY_VALUE" \
+        "XAUTHORITY=$XAUTHORITY_VALUE" \
+        yad \
+        '--title=Предстояща техническа поддръжка' \
+        "--image=$IMAGE_FILE" \
+        --image-on-top \
+        "--text=След приблизително ${minutes} ${minute_word} терминалът ще бъде временно недостъпен поради техническа поддръжка. Моля, планирайте текущата работа." \
+        --text-align=center \
+        --button=OK:0 \
+        --buttons-layout=center \
+        --center \
+        --on-top \
+        --no-escape \
+        --fixed \
+        --width=640
+}
+
+enable_maintenance() {
+    [ -f "$PAGE_FILE" ] && [ -r "$PAGE_FILE" ] || die "maintenance page is not a readable regular file"
+    [ -f "$IMAGE_FILE" ] && [ -r "$IMAGE_FILE" ] || die "maintenance image is not a readable regular file"
+    install -d -m 0755 "$STATE_DIR"
+    install -m 0644 /dev/null "$MARKER_FILE"
+    stop_kiosk_browser
+}
+
+disable_maintenance() {
+    rm -f -- "$MARKER_FILE"
+    stop_kiosk_browser
+}
+
+print_status() {
+    if [ -e "$MARKER_FILE" ]; then
+        printf 'mode=maintenance\n'
+    else
+        printf 'mode=terminal\n'
+    fi
+}
+
+validate_absolute_paths
+
+case "$#" in
+    1)
+        case "$1" in
+            on) enable_maintenance ;;
+            off) disable_maintenance ;;
+            status) print_status ;;
+            *) usage; exit 64 ;;
+        esac
+        ;;
+    2)
+        if [ "$1" = "notify" ]; then
+            notify_operator "$2"
+        else
+            usage
+            exit 64
+        fi
+        ;;
+    *)
+        usage
+        exit 64
+        ;;
+esac

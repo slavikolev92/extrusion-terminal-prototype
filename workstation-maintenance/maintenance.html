@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="bg">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Техническа поддръжка</title>
+    <style>
+      :root {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #1f2937;
+        background: #f3f4f6;
+      }
+
+      html,
+      body {
+        min-height: 100%;
+        margin: 0;
+      }
+
+      body {
+        min-height: 100vh;
+      }
+
+      .maintenance {
+        box-sizing: border-box;
+        display: flex;
+        min-height: 100vh;
+        padding: 2rem;
+        align-items: center;
+        flex-direction: column;
+        justify-content: center;
+        text-align: center;
+      }
+
+      .maintenance img {
+        display: block;
+        width: min(512px, 70vw, 52vh);
+        height: auto;
+        margin-bottom: 2rem;
+      }
+
+      h1 {
+        max-width: 48rem;
+        margin: 0;
+        font-size: clamp(2rem, 4vw, 3.5rem);
+        font-weight: 700;
+        letter-spacing: -0.035em;
+        line-height: 1.15;
+      }
+
+      p {
+        max-width: 42rem;
+        margin: 1rem 0 0;
+        color: #64748b;
+        font-size: clamp(1.1rem, 2vw, 1.5rem);
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="maintenance" aria-labelledby="maintenance-title">
+      <img src="gears.png" alt="" width="512" height="512">
+      <h1 id="maintenance-title">Извършва се техническа поддръжка</h1>
+      <p>Терминалът временно не е достъпен. Моля, изчакайте.</p>
+    </main>
+  </body>
+</html>

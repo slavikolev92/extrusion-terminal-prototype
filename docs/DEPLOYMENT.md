@@ -22,6 +22,10 @@ bash scripts/deploy_production.sh
 
 Enter the `sudo` password when the script asks for it. The password prompt happens when the script restarts `extrusion-terminal.service`.
 
+For optional physical-workstation maintenance cover, use the standalone
+[workstation maintenance runbook](../workstation-maintenance/README.md). The
+production deploy script does not activate or clear workstation maintenance.
+
 ## What Success Looks Like
 
 The script should finish with:
