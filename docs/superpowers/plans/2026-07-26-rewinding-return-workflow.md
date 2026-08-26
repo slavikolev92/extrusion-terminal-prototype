@@ -11,9 +11,9 @@
 ## Global Constraints
 
 - Treat [README.md](/home/sk/projects/extrusion-terminal/README.md) as authoritative and expand its extrusion-only lifecycle narrowly: this feature tracks an extrusion card awaiting returned rolls; it does not manage rewinding/slitting work.
-- Follow [AGENTS.md](/home/sk/projects/extrusion-terminal/AGENTS.md) and [v2-files/AGENTS.md](/home/sk/projects/extrusion-terminal/v2-files/AGENTS.md). Do not touch `data/extrusion_terminal.sqlite3`; tests and browser checks must use temporary databases.
+- Follow [AGENTS.md](/home/sk/projects/extrusion-terminal/AGENTS.md) and the [SQLite migration and deployment playbook](/home/sk/projects/extrusion-terminal/docs/implementation-notes/sqlite-migration-and-deployment-playbook.md). Do not touch `data/extrusion_terminal.sqlite3`; tests and browser checks must use temporary databases.
 - Preserve the one-app, SQLite, server-rendered pilot architecture. Add no dependency, client framework, background service, user/permission system, Task 10 roll-change/countdown behavior, or Task 12 pallet/transportation lifecycle expansion.
-- Use [v2-files/TASK-11-REWINDING.md](/home/sk/projects/extrusion-terminal/v2-files/TASK-11-REWINDING.md) as the approved behavioral specification. The standalone prototype was an implementation-time reference; its disposable source was removed after acceptance, and the accepted design is embodied in the terminal template and Task 11 automated/live verification.
+- Use [v2-files/archive/TASK-11-REWINDING.md](/home/sk/projects/extrusion-terminal/v2-files/archive/TASK-11-REWINDING.md) as the approved behavioral specification. The standalone prototype was an implementation-time reference; its disposable source was removed after acceptance, and the accepted design is embodied in the terminal template and Task 11 automated/live verification.
 - Keep the rewinding count informational. It is either `NULL` or an integer from `1` through `999`; blank or zero clears it. It never has to match the number of rolls later returned.
 - A positive rewinding count permits `Приключи` from either `running` or `paused` without tare, pallet, or roll entries. Running closes its open timing segment; paused remains paused in timing history and gains no artificial segment.
 - Waiting cards are extrusion-ended and terminal-visible, but are not active, completed, archived, or printable. Their machine is free because status excludes them from active work; remaining active queue positions are normalized while the card's saved machine/sequence history remains unchanged, matching current completion behavior.
@@ -65,7 +65,7 @@
 - `tests/test_admin_card_detail_redesign.py`: waiting admin detail rendering/actions.
 - `tests/test_print_output.py`: waiting remains non-printable.
 - `tests/test_baseline.py`: overwrite re-import preservation for both new card fields.
-- `README.md`, `AGENTS.md`, `v2-files/PLAN.md`, and `v2-files/AGENTS.md`: confirmed scope, current behavior, task status, and migration register.
+- `README.md`, `AGENTS.md`, `v2-files/PLAN.md`, and the SQLite migration and deployment playbook: confirmed scope, current behavior, task status, and migration procedure.
 
 ## Task 1: Make the Cards Schema Migration-Safe and Add M004
 
@@ -1241,8 +1241,8 @@ git commit -m "Add rewinding workflow browser verification"
 - Modify: `README.md`
 - Modify: `AGENTS.md`
 - Modify: `v2-files/PLAN.md`
-- Modify: `v2-files/AGENTS.md`
-- Verify: `v2-files/TASK-11-REWINDING.md`
+- Modify: `docs/implementation-notes/rewinding-return-workflow.md`
+- Verify: `v2-files/archive/TASK-11-REWINDING.md`
 
 - [ ] **Step 1: Write the implementation note from verified behavior**
 
@@ -1266,7 +1266,8 @@ In `README.md` and root `AGENTS.md`, replace the broad rewinding exclusion with 
 
 In `v2-files/PLAN.md`, mark Task 11 implemented only after every verification below passes; retain any independent task statuses unchanged.
 
-In `v2-files/AGENTS.md`, append M004 to the migration register with:
+In `docs/implementation-notes/rewinding-return-workflow.md`, record the M004
+migration assessment with:
 
 - migration name and files;
 - schema fields/constraints/foreign key;
@@ -1276,7 +1277,7 @@ In `v2-files/AGENTS.md`, append M004 to the migration register with:
 
 - [ ] **Step 3: Reconcile the approved Task 11 spec**
 
-Read `v2-files/TASK-11-REWINDING.md` against the implementation. Correct only
+Read `v2-files/archive/TASK-11-REWINDING.md` against the implementation. Correct only
 factual drift discovered during implementation; do not silently alter approved
 product behavior. Preserve the accepted visual design and all previously
 approved unrelated roll-panel visual changes.
@@ -1356,7 +1357,7 @@ Run:
 
 ```bash
 rg -n 'TB[D]|TO[DO]|implement lat[e]r|appropriate error handl[ing]|handle edge cas[es]|Write tests for the abov[e]|Similar to Tas[k]' \
-  app tests scripts docs v2-files/TASK-11-REWINDING.md \
+  app tests scripts docs v2-files/archive/TASK-11-REWINDING.md \
   docs/superpowers/plans/2026-07-26-rewinding-return-workflow.md
 git diff --check
 git status --short
@@ -1370,7 +1371,7 @@ Review the complete diff by file and ensure unrelated user changes remain untouc
 
 ```bash
 git diff --stat
-git diff -- README.md AGENTS.md app docs scripts tests v2-files/PLAN.md v2-files/AGENTS.md v2-files/TASK-11-REWINDING.md
+git diff -- README.md AGENTS.md app docs scripts tests v2-files/PLAN.md v2-files/archive/TASK-11-REWINDING.md
 ```
 
 If and only if the user explicitly authorizes the final commit, stage the exact reviewed Task 11 paths and commit:
@@ -1389,7 +1390,7 @@ git add \
   tests/test_admin_production_corrections.py tests/test_admin_card_detail_redesign.py tests/test_print_output.py \
   tests/test_baseline.py tests/test_shift_routes.py \
   tests/test_rewinding_ui_script_safety.py \
-  v2-files/PLAN.md v2-files/AGENTS.md v2-files/TASK-11-REWINDING.md
+  v2-files/PLAN.md v2-files/archive/TASK-11-REWINDING.md
 git commit -m "Implement rewinding return workflow"
 ```
 

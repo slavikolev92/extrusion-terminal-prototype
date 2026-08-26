@@ -4,7 +4,7 @@
 > Task 10 implementation. Its instructions that anchor acknowledgement to click
 > time and forbid multi-interval catch-up are superseded by
 > [`2026-07-28-scheduled-countdown-and-machine-dot.md`](2026-07-28-scheduled-countdown-and-machine-dot.md)
-> and the current `v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md`. Preserve the rest
+> and the archived `v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md`. Preserve the rest
 > of this file as implementation history; do not use its old cadence rules for
 > future changes.
 
@@ -18,8 +18,8 @@
 
 ## Global Constraints
 
-- [README.md](../../../README.md), [AGENTS.md](../../../AGENTS.md), and [v2-files/AGENTS.md](../../../v2-files/AGENTS.md) govern the implementation. Do not mutate `data/extrusion_terminal.sqlite3`; every automated and browser test uses a temporary database under `.test-runtime/`.
-- [v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md](../../../v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md) is the approved behavioral contract. This plan may make implementation details explicit but may not expand the feature.
+- [README.md](../../../README.md), [AGENTS.md](../../../AGENTS.md), and the [SQLite migration and deployment playbook](../../implementation-notes/sqlite-migration-and-deployment-playbook.md) govern the implementation. Do not mutate `data/extrusion_terminal.sqlite3`; every automated and browser test uses a temporary database under `.test-runtime/`.
+- [v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md](../../../v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md) is the approved behavioral contract. This plan may make implementation details explicit but may not expand the feature.
 - There is one optional schedule per machine's current card and one schedule represents every synchronized winding lane on that machine. Do not add per-roll, per-lane, per-pallet, or per-spindle countdowns.
 - The frequent acknowledgement uses its click time as the new previous/start anchor and sets the next expected time to exactly one interval after that click; it never jumps by multiple intervals to catch up automatically.
 - Track only `running` and `paused` cards. Starting a card does not create a schedule. A pending, awaiting-rewinding, completed, archived, cancelled, replaced, or moved card clears its former schedule.
@@ -53,8 +53,8 @@
 - `tests/test_terminal_v8_render.py`: server-rendered state-dot, host, editor, control-eligibility, Task 11 boundary, and layout-contract tests.
 - `README.md`: replace the deferred timer statement with the accepted optional workstation pace-clock behavior and explicitly distinguish it from production timing.
 - `v2-files/PLAN.md`: point Task 10 at this implementation plan and record implementation/verification status only after it is actually complete.
-- `v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md`: change only its workflow status after implementation and verification; do not rewrite the approved behavioral sections.
-- `v2-files/AGENTS.md`: update the migration assessment log only if the user has invoked its migration-maintenance command; the expected completed-diff decision is no migration.
+- `v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md`: change only its workflow status after implementation and verification; do not rewrite the approved behavioral sections.
+- `docs/implementation-notes/roll-change-countdown.md`: record the completed migration assessment; the expected completed-diff decision is no migration.
 
 ## Shared JavaScript Contracts
 
@@ -1180,12 +1180,12 @@ git commit -m "Verify roll-change countdown workflow"
 - Create: `docs/implementation-notes/roll-change-countdown.md`
 - Modify: `README.md` (workstation behavior near lines 152-225; deferred functionality near lines 812-821)
 - Modify: `v2-files/PLAN.md` (Task 10 near lines 260-282)
-- Modify: `v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md` (status and handoff sections only)
-- Modify only after the repository's migration-maintenance command is authorized: `v2-files/AGENTS.md` (migration assessment log)
+- Modify: `v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md` (status and handoff sections only)
+- Modify after the completed-diff assessment: `docs/implementation-notes/roll-change-countdown.md`
 
 **Interfaces:**
 
-- Consumes: the finished implementation diff, test evidence, browser summary, approved Task 10 specification, and the migration-decision procedure in `v2-files/AGENTS.md`.
+- Consumes: the finished implementation diff, test evidence, browser summary, approved Task 10 specification, and the SQLite migration and deployment playbook.
 - Produces: durable operating/design documentation, current task status, an evidence-backed migration decision, and final verification evidence for review.
 
 - [ ] **Step 1: Write the durable implementation note**
@@ -1236,7 +1236,9 @@ Migration assessment
 - Deployment constraint: deploy the static/template change with the application after the repository's existing M001 profile and final release-candidate gates; browser-local countdowns are not restored from SQLite backups
 ```
 
-If the actual diff adds or reinterprets persistent data, stop and reclassify from the diff; do not force the expected no-migration result. Update the `v2-files/AGENTS.md` assessment log only when its user trigger has been invoked.
+If the actual diff adds or reinterprets persistent data, stop and reclassify
+from the diff; do not force the expected no-migration result. Record the final
+assessment in `docs/implementation-notes/roll-change-countdown.md`.
 
 - [ ] **Step 4: Run final syntax, focused, and full automated verification**
 
@@ -1270,7 +1272,8 @@ git diff --stat
 git status --short
 ```
 
-Confirm unrelated existing changes in `v2-files/AGENTS.md`, `v2-files/PLAN.md`, and `v2-files/TASK-13-BACKUP-RESILIENCE.md` were preserved and not staged.
+Confirm unrelated existing changes in `v2-files/PLAN.md` and
+`v2-files/TASK-13-BACKUP-RESILIENCE.md` were preserved and not staged.
 
 - [ ] **Step 7: Final review checkpoint and conditional documentation commit**
 
@@ -1278,14 +1281,14 @@ Run:
 
 ```bash
 git diff --check
-git diff -- README.md v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md docs/implementation-notes/roll-change-countdown.md docs/superpowers/plans/2026-07-27-roll-change-countdown.md
+git diff -- README.md v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md docs/implementation-notes/roll-change-countdown.md docs/superpowers/plans/2026-07-27-roll-change-countdown.md
 git status --short
 ```
 
 If and only if the user has explicitly authorized commits, stage only reviewed Task 10 paths and commit:
 
 ```bash
-git add README.md v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md docs/implementation-notes/roll-change-countdown.md docs/superpowers/plans/2026-07-27-roll-change-countdown.md
+git add README.md v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md docs/implementation-notes/roll-change-countdown.md docs/superpowers/plans/2026-07-27-roll-change-countdown.md
 git commit -m "Document roll-change countdown workflow"
 ```
 

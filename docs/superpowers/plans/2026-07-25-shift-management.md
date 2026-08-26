@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Read `AGENTS.md`, `v2-files/AGENTS.md`, and `v2-files/TASK-01-SHIFT-MANAGEMENT.md` before implementation. Do not use `README.md` as a source for this V2 feature.
+- Read `AGENTS.md`, the current SQLite migration playbook, and `v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md` before interpreting this completed V2 feature.
 - Do not mutate `data/extrusion_terminal.sqlite3` or any production/runtime database during implementation or tests.
 - Do not infer historical shift assignments. Every pre-M002 roll remains unattributed unless a later explicit roll-creation rule applies.
 - Do not add people count, notes, workers, crews, rosters, packaging, pallet tracking, shift cancellation, time editing, admin shift operation/review, printable shift reports, or shift fields on the operational-card printout.
@@ -82,8 +82,8 @@ The configuration upper bound is dynamic and cannot be expressed as a cross-tabl
 - Modify `tests/test_terminal_sync.py`: shift/configuration snapshot signatures.
 - Modify `tests/test_terminal_v8_render.py`: global button, modal states, confirmation behavior, and blocking refresh rendering.
 - Create `scripts/verify_shift_management_ui.mjs`: focused browser workflow and screenshots against a temporary database.
-- Modify `v2-files/AGENTS.md`: M002 migration register/assessment evidence after tests pass.
-- Modify `v2-files/PLAN.md` and `v2-files/TASK-01-SHIFT-MANAGEMENT.md`: mark implementation/verification status only after the feature is actually complete.
+- Modify `docs/implementation-notes/shift-management.md`: M002 migration assessment evidence after tests pass.
+- Modify `v2-files/PLAN.md` and `v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md`: mark implementation/verification status only after the feature is actually complete.
 - Create `docs/implementation-notes/shift-management.md`: durable invariants, attribution rules, and recovery notes.
 
 ---
@@ -101,7 +101,7 @@ The configuration upper bound is dynamic and cannot be expressed as a cross-tabl
 
 ```bash
 git status --short
-git diff -- v2-files/PLAN.md v2-files/TASK-01-SHIFT-MANAGEMENT.md
+git diff -- v2-files/PLAN.md v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md
 ```
 
 Expected: preserve the existing approved-spec/tracker changes and this plan. Do not overwrite or revert them.
@@ -122,7 +122,7 @@ Expected at plan-writing time: `485 passed`. If the baseline has changed, record
 - Modify: `tests/test_migrations.py`
 - Modify: `app/migrations.py`
 - Modify: `app/db.py:193-204`
-- Modify after passing tests: `v2-files/AGENTS.md`
+- Modify after passing tests: `docs/implementation-notes/shift-management.md`
 
 **Consumes:** Existing migration runner `apply_pending_migrations()`, caller-owned transaction in `init_db()`, legacy database fixture in `tests/test_migrations.py`.
 
@@ -222,7 +222,8 @@ Expected: all migration tests PASS, including second-run idempotence, injected r
 
 - [ ] **Step 6: Record the completed migration evidence**
 
-Only after the focused tests pass, append M002 `shift_management` to the migration register and assessment log in `v2-files/AGENTS.md`:
+Only after the focused tests pass, record the M002 `shift_management`
+assessment in `docs/implementation-notes/shift-management.md`:
 
 - Decision: schema-only.
 - Transformation: no existing values changed; legacy rolls remain `NULL`.
@@ -824,7 +825,7 @@ Review terminal compact-height layouts, keyboard/focus behavior, one-modal rule,
 - Create: `scripts/verify_shift_management_ui.mjs`
 - Create: `docs/implementation-notes/shift-management.md`
 - Modify after verification: `v2-files/PLAN.md`
-- Modify after verification: `v2-files/TASK-01-SHIFT-MANAGEMENT.md`
+- Modify after verification: `v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md`
 - Artifacts: `artifacts/ui-checks/shift-management/`
 
 **Consumes:** Completed Tasks 1-7.
@@ -934,7 +935,7 @@ In `docs/implementation-notes/shift-management.md`, record:
 - the still-unresolved M001 production legacy-data profile gate as well as the release-candidate rehearsal gate;
 - terminal gate and concurrency/reload behavior.
 
-Only now update `v2-files/PLAN.md` and the `Next technical work`/status text in `v2-files/TASK-01-SHIFT-MANAGEMENT.md` to say implementation and verification are complete. Preserve unrelated existing user changes in those files.
+Only now update `v2-files/PLAN.md` and the `Next technical work`/status text in `v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md` to say implementation and verification are complete. Preserve unrelated existing user changes in those files.
 
 - [ ] **Step 7: Final review checkpoint**
 
@@ -944,7 +945,7 @@ Report focused/full test counts, exact UI verification command, screenshot paths
 
 ## Self-Review Checklist
 
-- [x] Every approved behavior in `v2-files/TASK-01-SHIFT-MANAGEMENT.md` maps to a task and an automated or browser check.
+- [x] Every approved behavior in `v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md` maps to a task and an automated or browser check.
 - [x] Schema uses a permanent unique occurrence ID, not copied shift numbers or timestamp inference.
 - [x] The database enforces at most one open occurrence.
 - [x] Existing rolls remain unattributed; no guessed backfill exists.

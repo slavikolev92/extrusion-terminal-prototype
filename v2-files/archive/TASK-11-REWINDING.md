@@ -1,8 +1,9 @@
 # Task 11: Rewinding Return Workflow Specification
 
-Status: implemented and verified locally on July 27, 2026. This document remains
-the approved functional design record. The executed implementation plan is at
-`docs/superpowers/plans/2026-07-26-rewinding-return-workflow.md`; the durable
+Archive status: completed, verified, and deployed in production through
+revision `95093c0` on July 28, 2026. This document remains the approved
+functional design record, not an open task. The executed implementation plan is
+at `docs/superpowers/plans/2026-07-26-rewinding-return-workflow.md`; the durable
 shipped-behavior, migration, recovery, and verification record is at
 `docs/implementation-notes/rewinding-return-workflow.md`.
 
@@ -586,7 +587,7 @@ must pass before completion can be claimed.
 ## Migration Direction
 
 Persistent structure and status meaning changed. The implemented feature was
-therefore assessed under `v2-files/AGENTS.md` and uses schema-only M004,
+therefore assessed under the migration procedure and uses schema-only M004,
 `rewinding_return_workflow`.
 
 The approved data rule for existing rows is deterministic:
@@ -600,8 +601,10 @@ The approved data rule for existing rows is deterministic:
 M004 rebuilds `cards` to add the accepted status constraint and nullable
 rewinding/final-shift columns with their constraints and foreign key. Startup
 validation, rollback guarantees, and the synthetic fixture matrix are recorded
-in `v2-files/AGENTS.md` and the implementation note. No runtime or production
-database was opened or changed during implementation or verification.
+in the implementation note and archived production report. Future assessments
+follow `docs/implementation-notes/sqlite-migration-and-deployment-playbook.md`.
+No runtime or production database was opened or changed during implementation
+or verification.
 
 ## Out Of Scope
 

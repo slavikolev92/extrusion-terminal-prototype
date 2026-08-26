@@ -1,9 +1,9 @@
 # Task 01: Shift Management Functionality Specification
 
-Status: complete in local code and visually accepted on July 26, 2026. The
-final adversarial review findings were corrected and the complete automated and
-temporary-database browser gates pass. Production deployment remains separately
-gated by the M001 legacy-data profile and final release-candidate rehearsal.
+Archive status: completed, verified, and deployed in production through
+revision `95093c0` on July 28, 2026. The former M001 profile and release-
+candidate gates were completed and are not open work. This file is the retained
+behavior specification, not a current task tracker.
 
 ## Purpose
 
@@ -326,12 +326,10 @@ malformed partial schema that contains the attribution column without its
 required foreign key. Terminal production writes recheck the active shift
 inside their write transaction.
 
-Local Task 01 work is complete. Deployment still requires:
-
-1. Profile an immutable SQLite-safe production backup to resolve the older M001
-   legacy import-field deployment gate without guessing values.
-2. Rehearse the final release candidate and complete migration chain on a fresh
-   clone of a SQLite-safe production backup.
-3. Deploy the application and M002 together only after those gates, backup,
-   integrity, foreign-key, application smoke, repeat-run, and rollback checks
-   pass.
+Task 01 and its deployment work are complete. The immutable production profile,
+M001 treatment, full M001-M006 clone rehearsal, SQLite-safe final backup,
+integrity/foreign-key checks, application smokes, repeat-run idempotence,
+rollback rehearsal, and production deployment all passed on July 28, 2026. See
+`v2-files/archive/MIGRATION-REPORT-2026-07-28.md` for the point-in-time
+evidence. Future migrations follow
+`docs/implementation-notes/sqlite-migration-and-deployment-playbook.md`.

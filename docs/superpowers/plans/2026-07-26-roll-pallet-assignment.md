@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Read `README.md`, the repository `AGENTS.md` instructions supplied for the task, `v2-files/AGENTS.md`, and the approved design at `docs/superpowers/specs/2026-07-26-roll-pallet-assignment-design.md` before implementation.
+- Read `README.md`, the repository `AGENTS.md` instructions supplied for the task, the SQLite migration and deployment playbook, and the approved design at `docs/superpowers/specs/2026-07-26-roll-pallet-assignment-design.md` before implementation.
 - Do not mutate `data/extrusion_terminal.sqlite3`, any production database, or any production backup. All automated and browser checks use temporary paths under `.test-runtime/` or `artifacts/ui-checks/`.
 - Preserve the unrelated in-progress `v2-files/PLAN.md` and `v2-files/TASK-13-BACKUP-RESILIENCE.md` work. Re-read their diffs before any V2 recordkeeping edit and never overwrite concurrent Task 13 changes.
 - Do not stage or commit unless the user explicitly asks. Every task ends at a review checkpoint, not a commit.
@@ -138,7 +138,7 @@ def split_pallet_summary(
 - Modify `README.md`: add the user-approved pallet attribution and operational-card summary to the authoritative pilot contract.
 - Modify `docs/implementation-notes/print-output-reference.md`: replace the obsolete exactly-two-pages rule with the approved conditional overflow contract and field mapping.
 - Create `docs/implementation-notes/roll-pallet-assignment.md`: durable data, migration, validation, correction, and recovery notes.
-- Modify `v2-files/AGENTS.md`: record M003 only after implementation and verified evidence exist.
+- Modify `docs/implementation-notes/roll-pallet-assignment.md`: record M003 only after implementation and verified evidence exist.
 - Modify only Task 12/status text in `v2-files/PLAN.md`: replace the superseded package/label lifecycle with the approved bounded feature, while preserving concurrent Task 13 edits.
 
 ---
@@ -156,7 +156,7 @@ def split_pallet_summary(
 
 ```bash
 sed -n '1,360p' README.md
-sed -n '1,360p' v2-files/AGENTS.md
+sed -n '1,260p' docs/implementation-notes/sqlite-migration-and-deployment-playbook.md
 sed -n '1,320p' docs/superpowers/specs/2026-07-26-roll-pallet-assignment-design.md
 ```
 
@@ -970,7 +970,7 @@ Set the production constants to the greatest verified whole-row counts reported 
 - Modify: `README.md`
 - Modify: `docs/implementation-notes/print-output-reference.md`
 - Create: `docs/implementation-notes/roll-pallet-assignment.md`
-- Modify: `v2-files/AGENTS.md`
+- Modify: `docs/implementation-notes/roll-pallet-assignment.md`
 - Modify carefully: `v2-files/PLAN.md`
 
 **Consumes:** Actual finished behavior, measured print capacities, test evidence, and final diff.
@@ -1007,7 +1007,12 @@ Record that the implemented feature is per-roll pallet attribution plus operatio
 
 - [ ] **Step 5: Maintain the migration register from evidence**
 
-Append M003 `roll_pallet_assignment` to `v2-files/AGENTS.md` only after tests pass. Record schema-only/no-value-change behavior, focused/full test counts, integrity/foreign-key results, browser/PDF evidence, and that no production snapshot is needed for M003 itself. Preserve the separate M001 profiling and final release-candidate rehearsal deployment gates.
+Record the M003 `roll_pallet_assignment` assessment in
+`docs/implementation-notes/roll-pallet-assignment.md` only after tests pass.
+Include schema-only/no-value-change behavior, focused/full test counts,
+integrity/foreign-key results, browser/PDF evidence, and the production
+snapshot decision. The later archived production report records completion of
+the release-wide migration gates.
 
 Use this final user-facing structure:
 

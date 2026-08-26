@@ -24,7 +24,7 @@
 - Do not add configurable thresholds, dependencies, database fields, migrations, production-data writes, reporting, notifications, or machine integration.
 - Use `.venv`, the repository-local Node/Playwright installation, temporary databases under `.test-runtime/`, and evidence under `artifacts/ui-checks/`.
 - Never open or mutate `data/extrusion_terminal.sqlite3` during tests or browser verification.
-- Preserve the pre-existing worktree changes in `design-qa.md`, `v2-files/PLAN.md`, `docs/implementation-notes/excel-csv-import-contract-debug-handoff.md`, and `v2-files/MIGRATION-REPORT-2026-07-28.md`.
+- Preserve the pre-existing worktree changes in `design-qa.md`, `v2-files/PLAN.md`, `docs/implementation-notes/excel-csv-import-contract-debug-handoff.md`, and the migration report now retained under `v2-files/archive/`.
 - Do not stage or commit unless the user explicitly requests it.
 
 ## File Structure
@@ -35,7 +35,7 @@
 - `tests/test_roll_change_countdown_ui_script_safety.py`: owns the static contract that the guarded verifier retains explicit threshold-tone coverage without installing browser tooling.
 - `README.md`: authoritative project behavior; add the accepted threshold contract.
 - `docs/implementation-notes/roll-change-countdown.md`: durable implementation and operational explanation.
-- `v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md`: current detailed Task 10 behavior and verification contract; remove superseded 5-minute-warning/1-minute-urgent wording.
+- `v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md`: retained detailed Task 10 behavior and verification contract; remove superseded 5-minute-warning/1-minute-urgent wording.
 - `app/static/js/roll_change_countdown.mjs` and `app/templates/terminal.html`: verify unchanged; they already propagate and style the model's tone on both surfaces.
 
 ---
@@ -339,7 +339,7 @@ Confirm `app/templates/terminal.html` has no diff, the verifier uses stable valu
 **Files:**
 - Modify: `README.md:184-200`
 - Modify: `docs/implementation-notes/roll-change-countdown.md:37-56`
-- Modify: `v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md:156-186,447-475`
+- Modify: `v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md:156-186,447-475`
 - Reference: `docs/superpowers/specs/2026-08-01-roll-change-indicator-thresholds-design.md`
 
 **Interfaces:**
@@ -384,7 +384,7 @@ Do not rewrite the storage, acknowledgement, recovery, or verification contracts
 
 - [ ] **Step 3: Replace superseded Task 10 state and test wording**
 
-In `v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md`, replace the three active-state descriptions with:
+In `v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md`, replace the three active-state descriptions with:
 
 ```markdown
 ### Active, normal
@@ -425,7 +425,7 @@ rg -n \
   'More than five minutes|From exactly `05:00` remaining through `01:01`|From exactly `01:00`|five-minute warning|one-minute urgent' \
   README.md \
   docs/implementation-notes/roll-change-countdown.md \
-  v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md
+  v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md
 ```
 
 Expected: no matches. Do not mass-edit historical implementation plans; the new dated design and plan supersede their historical threshold text.
@@ -438,7 +438,7 @@ Run:
 git diff -- \
   README.md \
   docs/implementation-notes/roll-change-countdown.md \
-  v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md
+  v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md
 ```
 
 Confirm every current document agrees on inclusive 15-minute yellow and inclusive 5-minute red boundaries, explicitly retains display rounding and pause/resume overrides, and contains no reset-button relocation. Do not stage or commit.
@@ -525,7 +525,7 @@ git diff -- \
   tests/test_roll_change_countdown_ui_script_safety.py \
   README.md \
   docs/implementation-notes/roll-change-countdown.md \
-  v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md \
+  v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md \
   app/static/js/roll_change_countdown.mjs \
   app/templates/terminal.html \
   app/main.py \

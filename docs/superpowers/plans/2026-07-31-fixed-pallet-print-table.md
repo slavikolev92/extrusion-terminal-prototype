@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Read root `AGENTS.md`, `README.md`, `v2-files/AGENTS.md`, the approved design at `docs/superpowers/specs/2026-07-31-fixed-pallet-print-table-design.md`, `docs/implementation-notes/print-output-reference.md`, and `docs/implementation-notes/roll-pallet-assignment.md` before implementation.
+- Read root `AGENTS.md`, `README.md`, the SQLite migration and deployment playbook, the approved design at `docs/superpowers/specs/2026-07-31-fixed-pallet-print-table-design.md`, `docs/implementation-notes/print-output-reference.md`, and `docs/implementation-notes/roll-pallet-assignment.md` before implementation.
 - Do not modify pallet grouping, sorting, roll counts, gross/net calculations, `PALLET_BACK_COLUMN_CAPACITY = 8`, or `PALLET_OVERFLOW_PAGE_CAPACITY = 48`.
 - Do not modify `app/printing.py`, `app/templates/print_card.html`, database schema, migrations, routes, production writes, terminal behavior, or admin behavior unless new evidence proves the approved CSS-only diagnosis false. Stop and return to systematic debugging if that happens.
 - A pallet table contains one fixed-height header and exactly one fixed-height data row per rendered pallet. Do not create filler rows or fixed-height empty table frames.
@@ -21,7 +21,7 @@
 - Preserve normal two-page A4 output, whole-summary overflow beginning on page 3, and the current number of pages produced by the 97-row guarded overflow fixture.
 - Use only the repository-local `.venv` and `node_modules`; do not install or download Python, Node, Playwright, or browser dependencies.
 - All browser and PDF checks must use a database below `.test-runtime/` and artifacts below `artifacts/ui-checks/`. Never open or mutate `data/extrusion_terminal.sqlite3` or a production database/backup.
-- Preserve the user's unrelated working-tree changes: deleted `design-qa.md`, modified `v2-files/PLAN.md`, untracked `docs/implementation-notes/excel-csv-import-contract-debug-handoff.md`, and untracked `v2-files/MIGRATION-REPORT-2026-07-28.md`.
+- Preserve the user's unrelated working-tree changes: deleted `design-qa.md`, modified `v2-files/PLAN.md`, untracked `docs/implementation-notes/excel-csv-import-contract-debug-handoff.md`, and the migration report now retained under `v2-files/archive/`.
 - Do not stage or commit. The repository policy requires separate explicit user authorization.
 
 ## File Map
@@ -33,7 +33,7 @@
 - Modify `tests/test_roll_pallet_ui_script_safety.py`: verify the expanded fixture contract and require the new geometry result from the guarded live verifier.
 - Modify `docs/implementation-notes/print-output-reference.md`: record the fixed-row/no-filler/no-stretch print contract.
 - Modify `docs/implementation-notes/roll-pallet-assignment.md`: record the sparse and overflow table behavior and verification coverage.
-- Modify `v2-files/AGENTS.md`: append the completed feature's display-only/no-migration assessment after the implementation diff and verification are final.
+- Modify `docs/implementation-notes/roll-pallet-assignment.md`: append the completed feature's display-only/no-migration assessment after the implementation diff and verification are final.
 
 No application Python, Jinja template, or SQLite file changes are expected.
 
@@ -694,7 +694,7 @@ Do not stage or commit.
 **Files:**
 - Modify: `docs/implementation-notes/print-output-reference.md:256-285`
 - Modify: `docs/implementation-notes/roll-pallet-assignment.md:105-118`
-- Modify: `v2-files/AGENTS.md` migration assessment log
+- Modify: `docs/implementation-notes/roll-pallet-assignment.md`
 
 **Interfaces:**
 - Consumes: the verified CSS behavior and `summary.print.fixedTableGeometry` evidence from Task 1.
@@ -740,7 +740,7 @@ full page-2 blocks, and a one-row final overflow page.
 
 Inspect the final implementation diff. Confirm it changes only print CSS,
 temporary fixture/verifier code, tests, and documentation. Append one row to
-the migration assessment log in `v2-files/AGENTS.md`:
+the migration assessment in `docs/implementation-notes/roll-pallet-assignment.md`:
 
 ```markdown
 | 2026-07-31 | Fixed pallet print-table geometry | No migration | Top-aligned existing print-grid children and added sparse/full/overflow Chromium/PDF regression coverage plus documentation. No table, column, constraint, migration record, stored value, persisted meaning, pallet calculation, or historical data changed; no production snapshot is needed. |
@@ -788,7 +788,7 @@ git diff -- \
   tests/test_roll_pallet_ui_script_safety.py \
   docs/implementation-notes/print-output-reference.md \
   docs/implementation-notes/roll-pallet-assignment.md \
-  v2-files/AGENTS.md
+  docs/implementation-notes/roll-pallet-assignment.md
 git status --short
 ```
 

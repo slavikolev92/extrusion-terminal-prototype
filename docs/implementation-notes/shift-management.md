@@ -1,8 +1,8 @@
 # Shift Management
 
 This note records the implemented July 25, 2026 shift-management behavior and
-the deployment constraints that must remain visible after the development
-workspace is gone.
+the migration boundaries that future changes must preserve. The original
+production gates were completed on July 28, 2026.
 
 ## Identity And Database Invariants
 
@@ -111,17 +111,15 @@ now verifies the exact `ON DELETE RESTRICT` foreign key to
 relationship is missing. The application code and M002 must be deployed
 together after a SQLite-safe backup.
 
-The July 26 final-review fixes add runtime validation and transaction hardening
-but no new persistent structure or stored-data transformation. M002 validation
-was strengthened without adding a migration version, so no additional migration
-is required. Deployment is still blocked by both of these gates:
-
-1. The unresolved M001 production legacy-data profile must be performed on an
-   immutable SQLite-safe backup. M001 deliberately did not guess how legacy
-   quantity/unit values map to the final Shift Manager import fields.
-2. The final release candidate and complete migration chain must be rehearsed
-   on a fresh clone of a SQLite-safe production backup, including repeat-run,
-   integrity, foreign-key, application, and rollback checks.
+The July 26 final-review fixes added runtime validation and transaction
+hardening but no new persistent structure or stored-data transformation. M002
+validation was strengthened without adding a migration version, so no
+additional migration was required. The former M001 production profile and full
+release rehearsal were completed, M001-M006 were applied, and Task 01 was
+deployed on July 28, 2026. The exact evidence is retained in
+`v2-files/archive/MIGRATION-REPORT-2026-07-28.md`; future schema or stored-data
+work follows
+`docs/implementation-notes/sqlite-migration-and-deployment-playbook.md`.
 
 ## Verification Record
 

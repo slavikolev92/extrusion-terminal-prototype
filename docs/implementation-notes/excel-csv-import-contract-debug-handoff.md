@@ -40,7 +40,7 @@ There is a proven importer/exporter version split.
    rejected by the current importer before any data row is processed.
 4. Production was subsequently migrated and deployed to `95093c0` on July 28,
    2026. That revision uses the strict 29-column importer. The durable evidence
-   is `v2-files/MIGRATION-REPORT-2026-07-28.md`.
+   is `v2-files/archive/MIGRATION-REPORT-2026-07-28.md`.
 5. Therefore the known production pairing is current 29-column app plus the
    obsolete 26-column exporter embedded in the inspected V14.07 workbook. If
    diagnosing a different server instance, fingerprint it first through
@@ -772,11 +772,12 @@ If the target server is current-29:
 If the target server is legacy-26:
 
 - Do not change the authoritative current app contract back to 26 fields.
-- Confirm whether the planned current application+migration deployment has not
-  happened. The migration register currently records M001-M006 production as
-  not run.
+- Identify the server's exact deployed revision and inspect that database's
+  `schema_migrations` history on a safe clone. The confirmed production server
+  was migrated through M006 at revision `95093c0` on July 28, 2026, but a
+  different or restored target may be older.
 - Follow the repository's migration, SQLite-safe backup, deployment, rehearsal,
-  and rollback process before moving that server to the current code.
+  and rollback playbook before moving that server to the current code.
 - Deploy the app and corrected workbook exporter as a coordinated pair.
 
 Do not implement a dual-format importer as a shortcut. The authoritative
@@ -823,7 +824,7 @@ Read these in order:
    `tests/test_recipe_parser.py` for recipe behavior.
 9. `docs/implementation-notes/shift-manager-export-import-field-correctness.md`
    for the approved 2026-07-25 contract decision.
-10. `v2-files/MIGRATION-REPORT-2026-07-28.md` for the confirmed production
+10. `v2-files/archive/MIGRATION-REPORT-2026-07-28.md` for the confirmed production
     migration and deployed revision.
 11. `docs/workbook-tooling.md` for repository ownership boundaries.
 

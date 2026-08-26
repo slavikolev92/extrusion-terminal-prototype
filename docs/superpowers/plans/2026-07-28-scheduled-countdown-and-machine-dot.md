@@ -224,11 +224,11 @@ Confirm the verifier still checks both supported viewports, lifecycle locking, e
 
 **Files:**
 - Modify: `README.md:180-200`
-- Modify: `v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md:100-145,200-206,289-296,450-456,510-516`
+- Modify: `v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md:100-145,200-206,289-296,450-456,510-516`
 - Modify: `v2-files/PLAN.md:350-405`
-- Modify: `v2-files/RELEASE-CANDIDATE-VERDICT.md`
-- Modify: `v2-files/RELEASE-CANDIDATE-AUDIT.md`
-- Modify: `v2-files/AGENTS.md` migration assessment log
+- Historical record: update the then-current release verdict (later superseded and pruned)
+- Historical record: update the then-current release audit (later completed and pruned)
+- Modify: `docs/implementation-notes/roll-change-countdown.md` migration assessment
 - Verify: `scripts/verify_roll_change_countdown_ui.mjs`
 
 **Interfaces:**

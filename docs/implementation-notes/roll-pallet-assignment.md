@@ -128,9 +128,12 @@ full page-2 blocks, and a one-row final overflow page.
 
 M003 and the application code that reads/writes these columns must deploy
 together after a SQLite-safe backup. M003 itself needs no production snapshot:
-historical values deliberately remain `NULL`. The separate unresolved M001
-legacy-data profile and final release-candidate rehearsal remain deployment
-gates.
+historical values deliberately remain `NULL`. The former M001 profile and full
+release rehearsal were completed, and M001-M006—including M003—were deployed
+on July 28, 2026. See
+`v2-files/archive/MIGRATION-REPORT-2026-07-28.md` for the production evidence.
+Future migrations follow
+`docs/implementation-notes/sqlite-migration-and-deployment-playbook.md`.
 
 Do not hand-edit or drop M003 columns to roll back. If deployment must be
 reversed, stop the application and restore the verified pre-deployment

@@ -273,9 +273,10 @@ and documentation only. It neither adds persistent fields nor changes the
 meaning of existing stored values.
 
 Implementation must still inspect its final diff and complete the formal
-migration assessment required by `v2-files/AGENTS.md`. If the final diff remains
-within the expected presentation surface, no production snapshot or data
-transformation is needed for Task 15.
+migration assessment required by
+`docs/implementation-notes/sqlite-migration-and-deployment-playbook.md`. If the
+final diff remains within the expected presentation surface, no production
+snapshot or data transformation is needed for Task 15.
 
 ## Explicitly Out Of Scope
 

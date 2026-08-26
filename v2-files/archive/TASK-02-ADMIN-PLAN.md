@@ -747,7 +747,7 @@ commit. Stop for specification-compliance and code-quality review.
 
 - Modify after verification: `v2-files/archive/TASK-02-STRUCTURE-CLEANUP.md`
 - Create untracked evidence: `artifacts/ui-checks/v2/admin/*.png`
-- Do not modify: `v2-files/AGENTS.md` unless the user separately invokes the phrase `maintain the database migration system`.
+- Historical instruction: do not alter the then-current migration register as part of this Admin-only task. The former register has since been pruned.
 
 **Interfaces:**
 
@@ -931,8 +931,8 @@ In `v2-files/archive/TASK-02-STRUCTURE-CLEANUP.md`:
 - state that no new migration was introduced; and
 - leave Tasks 3-8 otherwise unchanged.
 
-Do not update `v2-files/AGENTS.md` unless the user explicitly invokes
-`maintain the database migration system`.
+Do not create migration recordkeeping for this Admin-only task. The former
+manual register was later pruned in favor of the durable migration playbook.
 
 - [ ] **Step 12: Final review checkpoint**
 

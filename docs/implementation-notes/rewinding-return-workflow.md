@@ -189,9 +189,12 @@ No runtime or production database was opened or mutated. M004 itself does not
 need a production snapshot because its rule is schema-only and changes no
 existing value. The application and M004 must deploy together after a
 SQLite-safe backup. Production rollback is restoration of that verified backup
-plus the matching prior application revision, not reverse SQL. The unresolved
-M001 legacy-data profile and final release-candidate rehearsal remain separate
-deployment gates.
+plus the matching prior application revision, not reverse SQL. The former M001
+profile and full release rehearsal were completed, and M001-M006—including
+M004—were deployed on July 28, 2026. See
+`v2-files/archive/MIGRATION-REPORT-2026-07-28.md` for the production evidence;
+future migrations follow
+`docs/implementation-notes/sqlite-migration-and-deployment-playbook.md`.
 
 ## Verification Record
 

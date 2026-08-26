@@ -4,7 +4,7 @@
 > approved a five-row overview preview and Bulgarian timestamps without the
 > `г.` suffix. Those refinements supersede the older three-row/`г.` examples
 > retained in this historical execution plan. The authoritative behavior is
-> `v2-files/TASK-01-SHIFT-MANAGEMENT.md`.
+> `v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -16,7 +16,7 @@
 
 ## Global Constraints
 
-- The approved behavior source is `v2-files/TASK-01-SHIFT-MANAGEMENT.md`.
+- The approved behavior source is `v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md`.
 - Use `source-files/new-design.JPG` only as the terminal-header reference; do not copy its unrelated machine-card or selected-order changes.
 - Use `source-files/screen_start_shift.png`, `source-files/screen_start_shift_confirmation.png`, and `source-files/main_shift_button.png` as visual references, with the written specification controlling every conflict.
 - Do not read or derive V2 requirements from the repository-root `README.md`.
@@ -53,7 +53,7 @@
 - `tests/test_shift_management_ui_script_safety.py` — retain fail-closed temporary-database protection and pin the expanded browser evidence contract.
 - `docs/implementation-notes/shift-management.md` — record the accepted final UI structure, browser command, and evidence paths after implementation.
 - `v2-files/PLAN.md` — keep Task 01 open until live UI acceptance, then record completion separately from production deployment gates.
-- `v2-files/AGENTS.md` — append the required final migration assessment; the expected result is `No migration` only if the actual final diff is presentation-only.
+- `docs/implementation-notes/shift-management.md` — append the required final migration assessment; the expected result is `No migration` only if the actual final diff is presentation-only.
 
 ---
 
@@ -61,8 +61,8 @@
 
 **Files:**
 - Inspect: `AGENTS.md`
-- Inspect: `v2-files/AGENTS.md`
-- Inspect: `v2-files/TASK-01-SHIFT-MANAGEMENT.md`
+- Inspect: `docs/implementation-notes/sqlite-migration-and-deployment-playbook.md`
+- Inspect: `v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md`
 - Inspect: `docs/superpowers/plans/2026-07-26-shift-management-ui-redesign.md`
 
 **Interfaces:**
@@ -74,9 +74,9 @@
 Use `superpowers:using-git-worktrees` at execution time. If the approved documentation changes are still uncommitted, preserve only these files before creating the worktree:
 
 ```text
-v2-files/AGENTS.md
+docs/implementation-notes/sqlite-migration-and-deployment-playbook.md
 v2-files/PLAN.md
-v2-files/TASK-01-SHIFT-MANAGEMENT.md
+v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md
 docs/superpowers/plans/2026-07-26-shift-management-ui-redesign.md
 ```
 
@@ -1223,7 +1223,7 @@ git commit -m "Verify shift UI redesign in browser"
 **Files:**
 - Modify: `docs/implementation-notes/shift-management.md`
 - Modify: `v2-files/PLAN.md`
-- Modify: `v2-files/AGENTS.md`
+- Modify: `docs/implementation-notes/shift-management.md`
 - Verify: all source and test files changed in Tasks 1–5
 
 **Interfaces:**
@@ -1265,7 +1265,8 @@ Repeat Task 5 Step 9 with a new `mktemp` artifact directory. Confirm every scree
 
 - [ ] **Step 4: Perform the required migration decision procedure**
 
-Inspect the actual final diff against `v2-files/AGENTS.md`.
+Inspect the actual final diff against
+`docs/implementation-notes/sqlite-migration-and-deployment-playbook.md`.
 
 If the diff changes only Python presentation helpers, templates, CSS/JavaScript, tests, browser verification, and documentation, append an assessment row with:
 
@@ -1312,13 +1313,13 @@ Identify the branch/worktree being shown and do not imply that the runtime datab
 
 - [ ] **Step 8: Record completion only after explicit visual acceptance**
 
-After the user accepts the live UI, update `v2-files/PLAN.md` and the status line in `v2-files/TASK-01-SHIFT-MANAGEMENT.md` to mark Task 01 complete while keeping the two production deployment gates separate and unresolved.
+After the user accepts the live UI, update `v2-files/PLAN.md` and the status line in `v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md` to mark Task 01 complete while keeping the two production deployment gates separate and unresolved.
 
 - [ ] **Step 9: Commit the final documentation after authorization**
 
 ```bash
 git add docs/implementation-notes/shift-management.md \
-  v2-files/PLAN.md v2-files/TASK-01-SHIFT-MANAGEMENT.md v2-files/AGENTS.md
+  v2-files/PLAN.md v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md
 git commit -m "Document accepted shift UI redesign"
 ```
 

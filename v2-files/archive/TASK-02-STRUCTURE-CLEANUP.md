@@ -65,7 +65,7 @@ databases, repo-local Playwright, HTML/CSS print output.
   SQLite-safe backup is supplied; they are not incomplete application cleanup.
 - Next feature workstream: explore the current app and database for the
   already-approved shift-management specification in
-  `v2-files/TASK-01-SHIFT-MANAGEMENT.md`, then brainstorm and write its
+  `v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md`, then brainstorm and write its
   implementation plan. Do not modify that specification.
 - Printing uses the four final ordered amounts in equal-width front cells and
   preserves the accepted two-page A4 output.

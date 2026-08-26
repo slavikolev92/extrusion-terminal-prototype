@@ -162,7 +162,7 @@ Update the current authoritative behavior descriptions:
 - `README.md` with the exact display-aligned 15-minute and 5-minute thresholds;
 - `docs/implementation-notes/roll-change-countdown.md` with the durable running
   threshold table and unchanged pause/resume precedence; and
-- `v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md` by replacing the superseded
+- `v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md` by replacing the superseded
   five-minute-warning/one-minute-urgent requirements and test wording.
 
 Historical implementation plans remain historical records; this approved

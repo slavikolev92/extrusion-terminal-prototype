@@ -1,9 +1,11 @@
 # Task 10: Roll-Change Countdown Specification
 
-Status: implemented and verified on July 27, 2026. The accepted behavior below
-is implemented without SQLite persistence or production-data coupling. Final
-evidence and the durable operating boundary are linked in the implementation
-handoff.
+Archive status: the core countdown was completed, verified, and deployed in
+production through revision `95093c0` on July 28, 2026. The later August 1
+15-minute-yellow/5-minute-red threshold follow-up is completed and verified in
+source through `f1d276f`, but its production rollout remains a separate current
+tracker decision. This file is retained as the behavior specification, not an
+open task.
 
 ## Purpose
 
@@ -424,10 +426,11 @@ migration.
   editing the countdown must not silently discard roll, tare, pallet, recipe,
   or other unsaved terminal input.
 
-The final implementation diff must still receive the formal migration
-assessment required by `v2-files/AGENTS.md`. The expected decision is no
-migration because the state is browser-local, but that decision must be based on
-the actual finished diff.
+The final implementation diff received the formal migration assessment now
+retained in the implementation note. The decision was no migration because the
+state is browser-local. Future assessments follow
+`docs/implementation-notes/sqlite-migration-and-deployment-playbook.md` and
+must still be based on the actual finished diff.
 
 ## Accessibility And Interaction Safety
 
@@ -534,11 +537,12 @@ Verify at minimum `1920x768` and `1366x768`:
 Implementation and verification are complete. Continue from these durable
 references:
 
-- [July 28 scheduled-cadence correction plan](../docs/superpowers/plans/2026-07-28-scheduled-countdown-and-machine-dot.md)
-- [Original Task 10 implementation plan (historical; its click-time cadence is superseded)](../docs/superpowers/plans/2026-07-27-roll-change-countdown.md)
-- [Roll-change countdown implementation note](../docs/implementation-notes/roll-change-countdown.md)
-- [V2 plan status and final evidence](PLAN.md)
+- [July 28 scheduled-cadence correction plan](../../docs/superpowers/plans/2026-07-28-scheduled-countdown-and-machine-dot.md)
+- [Original Task 10 implementation plan (historical; its click-time cadence is superseded)](../../docs/superpowers/plans/2026-07-27-roll-change-countdown.md)
+- [Roll-change countdown implementation note](../../docs/implementation-notes/roll-change-countdown.md)
+- [V2 plan status and final evidence](../PLAN.md)
 
-Deployment remains separate work and must retain the repository's existing
-M001 production-profile and final release-candidate gates. Browser-local
+The core countdown was included in the July 28 production release. The later
+August 1 threshold follow-up is source-complete and remains part of the next
+separately authorized rollout recorded in `v2-files/PLAN.md`. Browser-local
 countdowns are not restored from SQLite backups.
