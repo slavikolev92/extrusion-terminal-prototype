@@ -31,6 +31,13 @@ Base kiosk provisioning is independent and can overwrite the launcher. Rerun
 `sudo bash install.sh` from this copied folder, then reboot, after every future
 base kiosk provisioning.
 
+While the kiosk browser is active, the launcher writes its PID, Linux process
+start time, and selected browser name to
+`/run/user/<kiosk UID>/extrusion-kiosk-browser.pid`. `on` and `off` signal only
+that recorded process after confirming the PID still has the same start time,
+belongs to the `kiosk` user, and has the expected command and executable
+identity for the selected supported browser.
+
 ## Run a maintenance window
 
 After reconnecting to the workstation, run the following in order when doing a
@@ -64,6 +71,9 @@ If `off` exposes an app connection error, run `on` and fix the app separately.
   then rerun this installer and reboot.
 - **Invalid runtime environment:** confirm the kiosk X session is running and
   its runtime directory is available before using `notify`.
+- **Invalid browser PID record:** confirm the kiosk launcher is running. If the
+  error persists, rerun the bundle installer and reboot during an approved
+  quiet window.
 - **Dialog failure:** leave the terminal mode unchanged, resolve the kiosk
   session/display issue, and run `notify` again if the warning is still needed.
 - **Already-stopped Chromium:** `on` and `off` still complete; the kiosk

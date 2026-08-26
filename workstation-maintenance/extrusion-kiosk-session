@@ -34,6 +34,7 @@ esac
 
 SESSION_ENV_FILE="${RUNTIME_DIR}/extrusion-kiosk-session.env"
 CACHE_DIR="${RUNTIME_DIR}/extrusion-chromium-http-cache"
+BROWSER_PID_FILE="${RUNTIME_DIR}/extrusion-kiosk-browser.pid"
 
 mkdir -p "$RUNTIME_DIR"
 umask 077
@@ -56,6 +57,7 @@ fi
 unclutter -idle 2 -root &
 
 mkdir -p "$PROFILE_DIR"
+rm -f -- "$BROWSER_PID_FILE"
 
 while true; do
     BROWSER="$(command -v chromium || command -v chromium-browser || command -v google-chrome || true)"
@@ -90,7 +92,29 @@ while true; do
         --password-store=basic \
         --user-data-dir="$PROFILE_DIR" \
         --disk-cache-dir="$CACHE_DIR" \
-        "$KIOSK_URL" || true
+        "$KIOSK_URL" &
+    BROWSER_PID=$!
+    BROWSER_RECORDED=0
+    if BROWSER_START_TIME="$(awk '{print $22}' "/proc/${BROWSER_PID}/stat" 2>/dev/null)"; then
+        case "$BROWSER_START_TIME" in
+            ''|*[!0-9]*) ;;
+            *) BROWSER_RECORDED=1 ;;
+        esac
+    fi
+    if [ "$BROWSER_RECORDED" -eq 1 ]; then
+        BROWSER_NAME="${BROWSER##*/}"
+        BROWSER_PID_TEMP="${BROWSER_PID_FILE}.tmp.$$"
+        trap 'rm -f -- "$BROWSER_PID_TEMP" "$BROWSER_PID_FILE"' EXIT HUP INT TERM
+        printf 'PID=%s\nSTART_TIME=%s\nBROWSER=%s\n' \
+            "$BROWSER_PID" "$BROWSER_START_TIME" "$BROWSER_NAME" > "$BROWSER_PID_TEMP"
+        chmod 0600 "$BROWSER_PID_TEMP"
+        mv -f "$BROWSER_PID_TEMP" "$BROWSER_PID_FILE"
+        wait "$BROWSER_PID" || true
+        rm -f -- "$BROWSER_PID_FILE"
+        trap - EXIT HUP INT TERM
+    else
+        wait "$BROWSER_PID" || true
+    fi
 
     if [ "${EXTRUSION_KIOSK_RUN_ONCE:-}" = "1" ]; then
         exit 0

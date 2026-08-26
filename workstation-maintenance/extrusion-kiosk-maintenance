@@ -7,6 +7,7 @@ STATE_DIR="${EXTRUSION_KIOSK_STATE_DIR:-/var/lib/extrusion-kiosk}"
 MARKER_FILE="${STATE_DIR}/maintenance-enabled"
 PAGE_FILE="${SHARE_DIR}/maintenance.html"
 IMAGE_FILE="${SHARE_DIR}/gears.png"
+KILL_COMMAND="${EXTRUSION_KIOSK_KILL:-kill}"
 
 if [ -n "${EXTRUSION_KIOSK_SESSION_ENV_FILE:-}" ]; then
     SESSION_ENV_FILE="$EXTRUSION_KIOSK_SESSION_ENV_FILE"
@@ -14,6 +15,9 @@ else
     KIOSK_UID="$(id -u "$KIOSK_USER")"
     SESSION_ENV_FILE="/run/user/${KIOSK_UID}/extrusion-kiosk-session.env"
 fi
+SESSION_DIR="${SESSION_ENV_FILE%/*}"
+[ -n "$SESSION_DIR" ] || SESSION_DIR="/"
+BROWSER_PID_FILE="${EXTRUSION_KIOSK_BROWSER_PID_FILE:-${SESSION_DIR}/extrusion-kiosk-browser.pid}"
 
 usage() {
     printf 'Usage: %s notify MINUTES|on|off|status\n' "$0" >&2
@@ -26,7 +30,7 @@ die() {
 
 validate_absolute_paths() {
     local path
-    for path in "$SHARE_DIR" "$STATE_DIR" "$SESSION_ENV_FILE"; do
+    for path in "$SHARE_DIR" "$STATE_DIR" "$SESSION_ENV_FILE" "$BROWSER_PID_FILE"; do
         case "$path" in
             /*) ;;
             *) die "path must be absolute: $path" ;;
@@ -71,18 +75,105 @@ read_session_env() {
     [ -r "$XAUTHORITY_VALUE" ] || die "XAUTHORITY is not readable"
 }
 
-stop_kiosk_browser() {
-    local browser status
-    for browser in chromium chromium-browser google-chrome; do
-        if pkill -TERM -u "$KIOSK_USER" -x "$browser"; then
-            continue
-        else
-            status=$?
-        fi
+read_browser_pid_record() {
+    local key value
+    local pid_count=0
+    local start_time_count=0
+    local browser_count=0
+    BROWSER_PID_VALUE=""
+    BROWSER_START_TIME_VALUE=""
+    BROWSER_NAME_VALUE=""
 
-        [ "$status" -eq 1 ] && continue
-        return "$status"
-    done
+    [ -f "$BROWSER_PID_FILE" ] && [ -r "$BROWSER_PID_FILE" ] || die "browser PID record is not a readable regular file"
+    while IFS='=' read -r key value || [ -n "$key" ]; do
+        case "$key" in
+            PID)
+                pid_count=$((pid_count + 1))
+                [ "$pid_count" -eq 1 ] || die "PID must appear once"
+                BROWSER_PID_VALUE="$value"
+                ;;
+            START_TIME)
+                start_time_count=$((start_time_count + 1))
+                [ "$start_time_count" -eq 1 ] || die "START_TIME must appear once"
+                BROWSER_START_TIME_VALUE="$value"
+                ;;
+            BROWSER)
+                browser_count=$((browser_count + 1))
+                [ "$browser_count" -eq 1 ] || die "BROWSER must appear once"
+                BROWSER_NAME_VALUE="$value"
+                ;;
+            *) die "unknown browser PID record key: $key" ;;
+        esac
+    done < "$BROWSER_PID_FILE"
+
+    [ "$pid_count" -eq 1 ] || die "PID must appear once"
+    [ "$start_time_count" -eq 1 ] || die "START_TIME must appear once"
+    [ "$browser_count" -eq 1 ] || die "BROWSER must appear once"
+    [[ "$BROWSER_PID_VALUE" =~ ^[1-9][0-9]*$ ]] || die "browser PID must be a positive integer"
+    [[ "$BROWSER_START_TIME_VALUE" =~ ^[1-9][0-9]*$ ]] || die "browser START_TIME must be a positive integer"
+    case "$BROWSER_NAME_VALUE" in
+        chromium|chromium-browser|google-chrome) ;;
+        *) die "browser name is not supported" ;;
+    esac
+}
+
+stop_kiosk_browser() {
+    local current_start_time kiosk_uid process_command process_command_name
+    local process_executable process_executable_name process_uid status
+
+    [ -e "$BROWSER_PID_FILE" ] || return 0
+    read_browser_pid_record
+    [ -d "/proc/${BROWSER_PID_VALUE}" ] || return 0
+
+    current_start_time="$(awk '{print $22}' "/proc/${BROWSER_PID_VALUE}/stat" 2>/dev/null)" || return 0
+    [ "$current_start_time" = "$BROWSER_START_TIME_VALUE" ] || return 0
+
+    kiosk_uid="$(id -u "$KIOSK_USER")" || die "kiosk user does not exist"
+    process_uid="$(awk '/^Uid:/ {print $2; exit}' "/proc/${BROWSER_PID_VALUE}/status" 2>/dev/null)" || return 0
+    [ "$process_uid" = "$kiosk_uid" ] || die "recorded browser process is not owned by $KIOSK_USER"
+
+    process_command=""
+    if ! IFS= read -r -d '' process_command < "/proc/${BROWSER_PID_VALUE}/cmdline" 2>/dev/null; then
+        [ -n "$process_command" ] || return 0
+    fi
+    process_executable="$(readlink -e -- "/proc/${BROWSER_PID_VALUE}/exe" 2>/dev/null)" || return 0
+    process_command_name="${process_command##*/}"
+    process_executable_name="${process_executable##*/}"
+    case "$BROWSER_NAME_VALUE" in
+        chromium)
+            [ "$process_command_name" = "chromium" ] && [ "$process_executable_name" = "chromium" ] || die "recorded browser process identity is not supported"
+            ;;
+        chromium-browser)
+            case "$process_command_name" in
+                chromium-browser|chromium) ;;
+                *) die "recorded browser process identity is not supported" ;;
+            esac
+            case "$process_executable_name" in
+                chromium-browser|chromium) ;;
+                *) die "recorded browser process identity is not supported" ;;
+            esac
+            ;;
+        google-chrome)
+            case "$process_command_name" in
+                google-chrome|chrome) ;;
+                *) die "recorded browser process identity is not supported" ;;
+            esac
+            case "$process_executable_name" in
+                google-chrome|chrome) ;;
+                *) die "recorded browser process identity is not supported" ;;
+            esac
+            ;;
+    esac
+
+    current_start_time="$(awk '{print $22}' "/proc/${BROWSER_PID_VALUE}/stat" 2>/dev/null)" || return 0
+    [ "$current_start_time" = "$BROWSER_START_TIME_VALUE" ] || return 0
+    if "$KILL_COMMAND" -TERM -- "$BROWSER_PID_VALUE"; then
+        return 0
+    else
+        status=$?
+    fi
+    [ "$status" -eq 1 ] && return 0
+    return "$status"
 }
 
 notify_operator() {

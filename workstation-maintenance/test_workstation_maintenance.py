@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import pwd
 import shutil
+import signal
 import stat
 import subprocess
 from pathlib import Path
@@ -17,7 +19,6 @@ INSTALLER = BUNDLE_DIR / "install.sh"
 PAGE = BUNDLE_DIR / "maintenance.html"
 GEARS = BUNDLE_DIR / "gears.png"
 VERIFIER = BUNDLE_DIR / "verify-ui.mjs"
-BROWSER_PROCESS_NAMES = ("chromium", "chromium-browser", "google-chrome")
 
 
 def write_executable(path: Path, source: str) -> None:
@@ -36,13 +37,24 @@ def run_script(script: Path, *args: str, env: dict[str, str]) -> subprocess.Comp
     )
 
 
-def expected_browser_termination_calls(repetitions: int = 1) -> list[str]:
-    return [
-        argument
-        for _ in range(repetitions)
-        for browser in BROWSER_PROCESS_NAMES
-        for argument in ("-TERM", "-u", "kiosk", "-x", browser)
-    ]
+def process_start_time(pid: int) -> int:
+    stat_source = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    fields_after_command = stat_source[stat_source.rfind(")") + 2 :].split()
+    return int(fields_after_command[19])
+
+
+def write_browser_pid_record(
+    path: Path,
+    process: subprocess.Popen[bytes],
+    browser: str,
+    *,
+    start_time: int | None = None,
+) -> None:
+    recorded_start = process_start_time(process.pid) if start_time is None else start_time
+    path.write_text(
+        f"PID={process.pid}\nSTART_TIME={recorded_start}\nBROWSER={browser}\n",
+        encoding="utf-8",
+    )
 
 
 def controller_environment(tmp_path: Path) -> tuple[dict[str, str], dict[str, Path]]:
@@ -59,6 +71,7 @@ def controller_environment(tmp_path: Path) -> tuple[dict[str, str], dict[str, Pa
     gears = share / "gears.png"
     xauthority = runtime / "Xauthority"
     session_env = runtime / "extrusion-kiosk-session.env"
+    browser_pid_file = runtime / "extrusion-kiosk-browser.pid"
     runuser_log = tmp_path / "runuser.log"
     pkill_log = tmp_path / "pkill.log"
     page.write_text("maintenance page", encoding="utf-8")
@@ -85,6 +98,7 @@ def controller_environment(tmp_path: Path) -> tuple[dict[str, str], dict[str, Pa
             "EXTRUSION_KIOSK_SHARE_DIR": str(share),
             "EXTRUSION_KIOSK_STATE_DIR": str(state),
             "EXTRUSION_KIOSK_SESSION_ENV_FILE": str(session_env),
+            "EXTRUSION_KIOSK_BROWSER_PID_FILE": str(browser_pid_file),
             "EXTRUSION_TEST_RUNUSER_LOG": str(runuser_log),
             "EXTRUSION_TEST_PKILL_LOG": str(pkill_log),
         }
@@ -98,6 +112,7 @@ def controller_environment(tmp_path: Path) -> tuple[dict[str, str], dict[str, Pa
         "gears": gears,
         "xauthority": xauthority,
         "session_env": session_env,
+        "browser_pid_file": browser_pid_file,
         "runuser_log": runuser_log,
         "pkill_log": pkill_log,
     }
@@ -263,73 +278,167 @@ def test_on_rejects_nonregular_maintenance_assets_before_creating_marker(tmp_pat
     assert not paths["pkill_log"].exists()
 
 
-def test_on_creates_marker_and_targets_only_kiosk_supported_browsers(tmp_path):
+def test_on_creates_marker_when_launcher_has_no_active_browser(tmp_path):
     env, paths = controller_environment(tmp_path)
 
     result = run_script(CONTROLLER, "on", env=env)
 
     assert result.returncode == 0
     assert (paths["state"] / "maintenance-enabled").exists()
-    assert paths["pkill_log"].read_text(encoding="utf-8").splitlines() == expected_browser_termination_calls()
+    assert not paths["pkill_log"].exists()
 
 
+@pytest.mark.parametrize("browser_name", ["chromium", "chromium-browser", "google-chrome"])
 @pytest.mark.parametrize("command", ["on", "off"])
-def test_maintenance_mode_changes_terminate_all_launcher_supported_browser_names(
-    tmp_path, command
+def test_maintenance_mode_change_terminates_real_supported_browser_from_pid_record(
+    tmp_path, command, browser_name
 ):
-    """A fallback browser must be restarted even when chromium is absent."""
     env, paths = controller_environment(tmp_path)
     marker = paths["state"] / "maintenance-enabled"
     if command == "off":
         marker.write_text("", encoding="utf-8")
-    write_executable(
-        paths["bin"] / "pkill",
-        "#!/bin/sh\n"
-        "printf '%s\\n' \"$@\" >> \"$EXTRUSION_TEST_PKILL_LOG\"\n"
-        "case \"$5\" in\n"
-        "  chromium|chromium-browser) exit 1 ;;\n"
-        "  google-chrome) exit 0 ;;\n"
-        "  *) exit 2 ;;\n"
-        "esac\n",
+    browser = paths["bin"] / browser_name
+    shutil.copy2("/bin/sleep", browser)
+    process = subprocess.Popen([str(browser), "30"])
+    try:
+        env["EXTRUSION_KIOSK_USER"] = pwd.getpwuid(os.getuid()).pw_name
+        write_browser_pid_record(paths["browser_pid_file"], process, browser_name)
+
+        result = run_script(CONTROLLER, command, env=env)
+
+        assert result.returncode == 0, result.stderr
+        try:
+            returncode = process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pytest.fail(f"controller left the recorded {browser_name} process running")
+        assert returncode == -signal.SIGTERM
+        assert marker.exists() is (command == "on")
+        assert not paths["pkill_log"].exists()
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=1)
+
+
+def test_stale_browser_pid_record_cannot_terminate_reused_unrelated_process(tmp_path):
+    env, paths = controller_environment(tmp_path)
+    process = subprocess.Popen(["/bin/sleep", "30"])
+    try:
+        env["EXTRUSION_KIOSK_USER"] = pwd.getpwuid(os.getuid()).pw_name
+        write_browser_pid_record(
+            paths["browser_pid_file"],
+            process,
+            "chromium-browser",
+            start_time=process_start_time(process.pid) + 1,
+        )
+
+        result = run_script(CONTROLLER, "on", env=env)
+
+        assert result.returncode == 0, result.stderr
+        assert process.poll() is None
+        assert not paths["pkill_log"].exists()
+    finally:
+        process.terminate()
+        process.wait(timeout=1)
+
+
+def test_browser_pid_record_rejects_unrelated_process_identity(tmp_path):
+    env, paths = controller_environment(tmp_path)
+    process = subprocess.Popen(["/bin/sleep", "30"])
+    try:
+        env["EXTRUSION_KIOSK_USER"] = pwd.getpwuid(os.getuid()).pw_name
+        write_browser_pid_record(paths["browser_pid_file"], process, "chromium-browser")
+
+        result = run_script(CONTROLLER, "on", env=env)
+
+        assert result.returncode != 0
+        assert "identity" in result.stderr
+        assert process.poll() is None
+        assert not paths["pkill_log"].exists()
+    finally:
+        process.terminate()
+        process.wait(timeout=1)
+
+
+def test_browser_pid_record_rejects_supported_argv_with_unrelated_executable(tmp_path):
+    env, paths = controller_environment(tmp_path)
+    process = subprocess.Popen(
+        ["chromium-browser", "30"],
+        executable="/bin/sleep",
     )
+    try:
+        env["EXTRUSION_KIOSK_USER"] = pwd.getpwuid(os.getuid()).pw_name
+        write_browser_pid_record(paths["browser_pid_file"], process, "chromium-browser")
 
-    result = run_script(CONTROLLER, command, env=env)
+        result = run_script(CONTROLLER, "on", env=env)
 
-    assert result.returncode == 0
-    assert paths["pkill_log"].read_text(encoding="utf-8").splitlines() == [
-        "-TERM", "-u", "kiosk", "-x", "chromium",
-        "-TERM", "-u", "kiosk", "-x", "chromium-browser",
-        "-TERM", "-u", "kiosk", "-x", "google-chrome",
-    ]
-    assert marker.exists() is (command == "on")
+        assert result.returncode != 0
+        assert "identity" in result.stderr
+        assert process.poll() is None
+    finally:
+        if process.poll() is None:
+            process.terminate()
+        process.wait(timeout=1)
 
 
-def test_off_propagates_pkill_error_higher_than_one_without_trying_later_browser_names(
-    tmp_path,
+def test_browser_pid_record_rejects_unrelated_argv_with_supported_executable(tmp_path):
+    env, paths = controller_environment(tmp_path)
+    browser = paths["bin"] / "chromium-browser"
+    shutil.copy2("/bin/sleep", browser)
+    process = subprocess.Popen(
+        ["unrelated-process", "30"],
+        executable=str(browser),
+    )
+    try:
+        env["EXTRUSION_KIOSK_USER"] = pwd.getpwuid(os.getuid()).pw_name
+        write_browser_pid_record(paths["browser_pid_file"], process, "chromium-browser")
+
+        result = run_script(CONTROLLER, "on", env=env)
+
+        assert result.returncode != 0
+        assert "identity" in result.stderr
+        assert process.poll() is None
+    finally:
+        if process.poll() is None:
+            process.terminate()
+        process.wait(timeout=1)
+
+
+@pytest.mark.parametrize("command", ["on", "off"])
+def test_mode_change_propagates_real_browser_termination_error_after_marker_change(
+    tmp_path, command
 ):
-    """A real signal failure is not mistaken for an absent fallback browser."""
     env, paths = controller_environment(tmp_path)
     marker = paths["state"] / "maintenance-enabled"
-    marker.write_text("", encoding="utf-8")
+    if command == "off":
+        marker.write_text("", encoding="utf-8")
+    browser = paths["bin"] / "chromium"
+    shutil.copy2("/bin/sleep", browser)
+    process = subprocess.Popen([str(browser), "30"])
+    kill_log = tmp_path / "kill.log"
     write_executable(
-        paths["bin"] / "pkill",
-        "#!/bin/sh\n"
-        "printf '%s\\n' \"$@\" >> \"$EXTRUSION_TEST_PKILL_LOG\"\n"
-        "case \"$5\" in\n"
-        "  chromium) exit 1 ;;\n"
-        "  chromium-browser) exit 23 ;;\n"
-        "  *) exit 2 ;;\n"
-        "esac\n",
+        paths["bin"] / "kill-browser",
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$EXTRUSION_TEST_KILL_LOG\"\nexit 23\n",
     )
+    try:
+        env["EXTRUSION_KIOSK_USER"] = pwd.getpwuid(os.getuid()).pw_name
+        env["EXTRUSION_KIOSK_KILL"] = str(paths["bin"] / "kill-browser")
+        env["EXTRUSION_TEST_KILL_LOG"] = str(kill_log)
+        write_browser_pid_record(paths["browser_pid_file"], process, "chromium")
 
-    result = run_script(CONTROLLER, "off", env=env)
+        result = run_script(CONTROLLER, command, env=env)
 
-    assert result.returncode == 23
-    assert not marker.exists()
-    assert paths["pkill_log"].read_text(encoding="utf-8").splitlines() == [
-        "-TERM", "-u", "kiosk", "-x", "chromium",
-        "-TERM", "-u", "kiosk", "-x", "chromium-browser",
-    ]
+        assert result.returncode == 23
+        assert marker.exists() is (command == "on")
+        assert process.poll() is None
+        assert kill_log.read_text(encoding="utf-8").splitlines() == [
+            "-TERM",
+            "--",
+            str(process.pid),
+        ]
+    finally:
+        process.terminate()
+        process.wait(timeout=1)
 
 
 def test_on_is_idempotent(tmp_path):
@@ -341,22 +450,11 @@ def test_on_is_idempotent(tmp_path):
     assert first.returncode == 0
     assert second.returncode == 0
     assert (paths["state"] / "maintenance-enabled").exists()
-    assert paths["pkill_log"].read_text(encoding="utf-8").splitlines() == expected_browser_termination_calls(2)
-
-
-def test_on_propagates_browser_termination_errors_higher_than_one(tmp_path):
-    env, paths = controller_environment(tmp_path)
-    write_executable(paths["bin"] / "pkill", "#!/bin/sh\nexit 2\n")
-
-    result = run_script(CONTROLLER, "on", env=env)
-
-    assert result.returncode == 2
-    assert (paths["state"] / "maintenance-enabled").exists()
+    assert not paths["pkill_log"].exists()
 
 
 def test_on_accepts_an_absent_browser_process(tmp_path):
     env, paths = controller_environment(tmp_path)
-    write_executable(paths["bin"] / "pkill", "#!/bin/sh\nexit 1\n")
 
     result = run_script(CONTROLLER, "on", env=env)
 
@@ -364,16 +462,10 @@ def test_on_accepts_an_absent_browser_process(tmp_path):
     assert (paths["state"] / "maintenance-enabled").exists()
 
 
-def test_off_removes_marker_before_browser_restart_and_is_idempotent(tmp_path):
+def test_off_removes_marker_without_an_active_browser_and_is_idempotent(tmp_path):
     env, paths = controller_environment(tmp_path)
     marker = paths["state"] / "maintenance-enabled"
     marker.write_text("", encoding="utf-8")
-    write_executable(
-        paths["bin"] / "pkill",
-        "#!/bin/sh\n"
-        "test ! -e \"$EXTRUSION_KIOSK_STATE_DIR/maintenance-enabled\" || exit 71\n"
-        "printf '%s\\n' \"$@\" >> \"$EXTRUSION_TEST_PKILL_LOG\"\n",
-    )
 
     first = run_script(CONTROLLER, "off", env=env)
     second = run_script(CONTROLLER, "off", env=env)
@@ -381,7 +473,7 @@ def test_off_removes_marker_before_browser_restart_and_is_idempotent(tmp_path):
     assert first.returncode == 0
     assert second.returncode == 0
     assert not marker.exists()
-    assert paths["pkill_log"].read_text(encoding="utf-8").splitlines() == expected_browser_termination_calls(2)
+    assert not paths["pkill_log"].exists()
 
 
 def test_status_reports_terminal_or_maintenance(tmp_path):
@@ -540,6 +632,40 @@ def test_launcher_writes_only_display_and_xauthority_atomically_with_mode_0600(t
     assert stat.S_IMODE(session_env.stat().st_mode) == 0o600
 
 
+def test_launcher_records_active_browser_pid_start_time_and_selected_name(tmp_path):
+    env, paths = launcher_environment(tmp_path)
+    record_log = tmp_path / "browser-record.log"
+    process_log = tmp_path / "browser-process.log"
+    env["EXTRUSION_TEST_BROWSER_RECORD_LOG"] = str(record_log)
+    env["EXTRUSION_TEST_BROWSER_PROCESS_LOG"] = str(process_log)
+    write_executable(
+        paths["bin"] / "chromium",
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$$\" > \"$EXTRUSION_TEST_BROWSER_PROCESS_LOG\"\n"
+        "record=\"$EXTRUSION_KIOSK_RUNTIME_DIR/extrusion-kiosk-browser.pid\"\n"
+        "attempt=0\n"
+        "while [ ! -f \"$record\" ] && [ \"$attempt\" -lt 100 ]; do\n"
+        "  /bin/sleep 0.01\n"
+        "  attempt=$((attempt + 1))\n"
+        "done\n"
+        "[ -f \"$record\" ] || exit 88\n"
+        "cp \"$record\" \"$EXTRUSION_TEST_BROWSER_RECORD_LOG\"\n",
+    )
+
+    result = run_script(LAUNCHER, env=env)
+
+    assert result.returncode == 0
+    record = dict(
+        line.split("=", 1)
+        for line in record_log.read_text(encoding="utf-8").splitlines()
+    )
+    assert set(record) == {"PID", "START_TIME", "BROWSER"}
+    assert record["PID"] == process_log.read_text(encoding="utf-8").strip()
+    assert record["BROWSER"] == "chromium"
+    assert record["START_TIME"].isascii() and record["START_TIME"].isdigit()
+    assert not (paths["runtime"] / "extrusion-kiosk-browser.pid").exists()
+
+
 @pytest.mark.parametrize(
     ("runtime_dir", "should_launch"),
     [
@@ -641,6 +767,7 @@ def installer_environment(tmp_path: Path) -> tuple[dict[str, str], dict[str, Pat
     bin_dir = tmp_path / "bin"
     apt_log = tmp_path / "apt-get.log"
     id_log = tmp_path / "id.log"
+    install_log = tmp_path / "install.log"
     root.mkdir()
     bin_dir.mkdir()
     write_executable(
@@ -651,17 +778,31 @@ def installer_environment(tmp_path: Path) -> tuple[dict[str, str], dict[str, Pat
         bin_dir / "id",
         "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$EXTRUSION_TEST_ID_LOG\"\nexit 0\n",
     )
+    write_executable(
+        bin_dir / "install",
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$@\" >> \"$EXTRUSION_TEST_INSTALL_LOG\"\n"
+        "exec /usr/bin/install \"$@\"\n",
+    )
     env = os.environ.copy()
     env.update(
         {
             "EXTRUSION_INSTALL_ROOT": str(root),
             "EXTRUSION_INSTALL_APT_GET": str(bin_dir / "apt-get"),
             "EXTRUSION_INSTALL_ID": str(bin_dir / "id"),
+            "EXTRUSION_INSTALL_INSTALL": str(bin_dir / "install"),
             "EXTRUSION_TEST_APT_LOG": str(apt_log),
             "EXTRUSION_TEST_ID_LOG": str(id_log),
+            "EXTRUSION_TEST_INSTALL_LOG": str(install_log),
         }
     )
-    return env, {"root": root, "bin": bin_dir, "apt_log": apt_log, "id_log": id_log}
+    return env, {
+        "root": root,
+        "bin": bin_dir,
+        "apt_log": apt_log,
+        "id_log": id_log,
+        "install_log": install_log,
+    }
 
 
 def prepare_existing_kiosk_runtime(root: Path, marker_contents: bytes = b"marker\n") -> Path:
@@ -726,6 +867,30 @@ def test_installer_rejects_symlinked_root_test_prefix_before_any_mutation(tmp_pa
     assert not paths["id_log"].exists()
     assert not paths["apt_log"].exists()
     assert not (paths["root"] / "usr/local/share/extrusion-kiosk").exists()
+
+
+@pytest.mark.parametrize("escaped_parent", ["etc", "usr/local", "var/lib"])
+def test_installer_rejects_nested_test_root_symlink_escape_before_any_mutation(
+    tmp_path, escaped_parent
+):
+    env, paths = installer_environment(tmp_path)
+    prepare_existing_kiosk_runtime(paths["root"])
+    rooted_parent = paths["root"] / escaped_parent
+    outside_parent = tmp_path / "outside" / escaped_parent
+    outside_parent.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(rooted_parent, outside_parent)
+    shutil.rmtree(rooted_parent)
+    rooted_parent.symlink_to(outside_parent, target_is_directory=True)
+
+    result = run_script(INSTALLER, env=env)
+
+    assert result.returncode != 0
+    assert "escapes EXTRUSION_INSTALL_ROOT" in result.stderr
+    assert not paths["id_log"].exists()
+    assert not paths["apt_log"].exists()
+    assert not paths["install_log"].exists()
+    assert not (paths["root"] / "usr/local/bin/extrusion-kiosk-maintenance").exists()
+    assert not (outside_parent / "bin/extrusion-kiosk-maintenance").exists()
 
 
 def test_installer_preflights_runtime_bundle_before_apt(tmp_path):

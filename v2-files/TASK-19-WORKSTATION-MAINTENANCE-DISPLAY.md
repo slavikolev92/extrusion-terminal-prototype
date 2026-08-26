@@ -30,7 +30,10 @@ sudo extrusion-kiosk-maintenance off
   creates no timer, schedule, or automatic maintenance transition.
 - `on` manually restarts only the kiosk user's supported browser processes
   (`chromium`, `chromium-browser`, or `google-chrome`) and covers the physical
-  kiosk with the local Bulgarian maintenance page.
+  kiosk with the local Bulgarian maintenance page. The launcher records the
+  active PID, process start time, and selected browser; the controller verifies
+  that record against current process start time, kiosk ownership, command,
+  and executable identity before signalling it.
 - `status` reports whether the persistent workstation marker selects terminal
   or maintenance mode; it is not an application-health check.
 - `off` manually removes the marker and restarts Chromium at the configured
@@ -52,7 +55,7 @@ The bundle contains:
 - the authoritative installation, operation, and troubleshooting runbook at
   `workstation-maintenance/README.md`.
 
-Final local verification passed:
+The original August 8 local verification passed:
 
 ```text
 68 workstation-maintenance tests
@@ -60,6 +63,11 @@ Final local verification passed:
 Bash, POSIX shell, and Node syntax checks
 Playwright 1.61.0 local-page verification at 1366x768
 ```
+
+The August 26 source-integration safety follow-up passed 85 focused
+workstation-maintenance tests plus the Bash, POSIX-shell, Node, and local-page
+checks. The repository-wide suite remains part of the consolidation's final
+combined gate.
 
 The accepted source and bundled `gears.png` files are byte-identical. The
 verified screenshot is retained at:
