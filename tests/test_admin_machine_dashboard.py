@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timedelta, timezone
+import json
 import sqlite3
 from zoneinfo import ZoneInfo
 
 import pytest
 from starlette.requests import Request
 
+from app import db, main
+from app.constants import STATUS_AWAITING_REWINDING, STATUS_COMPLETED
 from app.main import app
 from app.production_dashboard import (
     build_machine_time_dashboard,
@@ -99,11 +102,11 @@ def machine(dashboard: dict[str, object], machine_id: int) -> dict[str, object]:
     )
 
 
-def make_request(path: str) -> Request:
+def make_request(path: str, method: str = "GET") -> Request:
     return Request(
         {
             "type": "http",
-            "method": "GET",
+            "method": method,
             "path": path,
             "headers": [],
             "query_string": b"",
@@ -891,6 +894,254 @@ class FixedDateTime(datetime):
     def now(cls, tz=None):
         value = DAY_SELECTION_REFERENCE_TIME
         return value if tz is None else value.astimezone(tz)
+
+
+class IntegrationReferenceDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        value = REFERENCE_TIME
+        return value if tz is None else value.astimezone(tz)
+
+
+def test_dashboard_route_observes_running_terminal_timing_correction(
+    connection,
+    active_test_shift,
+    monkeypatch,
+):
+    """Catches the dashboard reading stale card markers instead of the corrected ledger."""
+
+    card_id = insert_card(
+        connection,
+        order_number="CORRECTED-RUNNING",
+        machine_id=1,
+        status="running",
+        first_started_at="2026-08-24 06:00:00",
+    )
+    insert_segment(
+        connection,
+        card_id=card_id,
+        started_at="2026-08-24 06:00:00",
+        ended_at=None,
+    )
+    insert_roll(
+        connection,
+        card_id=card_id,
+        order_number="CORRECTED-RUNNING",
+        roll_number=1,
+        net_weight="90",
+    )
+    connection.commit()
+    segment_id = int(
+        connection.execute(
+            "SELECT id FROM production_time_segments WHERE card_id = ?",
+            (card_id,),
+        ).fetchone()["id"]
+    )
+    loaded_version = int(
+        connection.execute(
+            "SELECT version FROM cards WHERE id = ?",
+            (card_id,),
+        ).fetchone()["version"]
+    )
+    draft = json.dumps(
+        [
+            {
+                "segment_id": segment_id,
+                "start_date": "2026-08-24",
+                "start_time": "11:00",
+                "stop_date": "",
+                "stop_time": "",
+                "deleted": False,
+            }
+        ]
+    )
+
+    correction_response = asyncio.run(
+        main.save_terminal_timing_ledger(
+            make_request(
+                f"/terminal/cards/{card_id}/timing-ledger",
+                method="POST",
+            ),
+            card_id,
+            loaded_version=str(loaded_version),
+            timing_draft=draft,
+        )
+    )
+
+    assert correction_response.status_code == 303
+    assert correction_response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=timing_saved"
+    )
+    corrected_card = db.fetch_admin_card_detail(card_id)
+    assert corrected_card is not None
+    assert corrected_card["first_started_at"] == "2026-08-24 08:00:00"
+    assert corrected_card["timing_segments"] == [
+        {
+            "id": segment_id,
+            "started_at": "2026-08-24 08:00:00",
+            "ended_at": None,
+            "end_reason": None,
+        }
+    ]
+
+    monkeypatch.setattr(main, "datetime", IntegrationReferenceDateTime)
+    endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if route.path == "/admin/dashboard"
+    )
+    dashboard_response = asyncio.run(endpoint(make_request("/admin/dashboard")))
+    dashboard = dashboard_response.context["dashboard"]
+    machine_one = machine(dashboard, 1)
+    order_interval = next(
+        interval
+        for interval in machine_one["timeline"]
+        if interval.get("order_number") == "CORRECTED-RUNNING"
+    )
+    productivity = next(
+        row
+        for row in machine_one["orders"]
+        if row["order_number"] == "CORRECTED-RUNNING"
+    )
+
+    assert dashboard_response.status_code == 200
+    assert order_interval["start_utc"] == "2026-08-24T08:00:00Z"
+    assert order_interval["end_utc"] == "2026-08-24T10:00:00Z"
+    assert order_interval["duration_seconds"] == 2 * 60 * 60
+    assert productivity["active_seconds"] == 2 * 60 * 60
+    assert productivity["produced"] == 90
+    assert productivity["productivity"] == 45
+
+
+def test_dashboard_is_timing_neutral_when_corrected_paused_finish_is_finalized(
+    connection,
+    active_test_shift,
+    monkeypatch,
+):
+    """Catches waiting finalization moving the corrected extrusion ledger or finish time."""
+
+    card_id = insert_card(
+        connection,
+        order_number="CORRECTED-WAITING",
+        machine_id=2,
+        status="paused",
+        first_started_at="2026-08-24 06:00:00",
+    )
+    connection.execute(
+        "UPDATE cards SET rewinding_roll_count = 1 WHERE id = ?",
+        (card_id,),
+    )
+    insert_segment(
+        connection,
+        card_id=card_id,
+        started_at="2026-08-24 06:00:00",
+        ended_at="2026-08-24 06:30:00",
+        end_reason="pause",
+    )
+    connection.commit()
+    segment_id = int(
+        connection.execute(
+            "SELECT id FROM production_time_segments WHERE card_id = ?",
+            (card_id,),
+        ).fetchone()["id"]
+    )
+    loaded_version = int(
+        connection.execute(
+            "SELECT version FROM cards WHERE id = ?",
+            (card_id,),
+        ).fetchone()["version"]
+    )
+
+    finish_outcome = db.finish_card_with_timing_ledger(
+        card_id,
+        loaded_version,
+        [
+            db.TimingDraftRow(
+                segment_id,
+                "2026-08-24",
+                "10:00",
+                "2026-08-24",
+                "11:30",
+            )
+        ],
+        "2026-08-24 09:00:00",
+    )
+
+    assert finish_outcome.result.ok
+    waiting_card = db.fetch_admin_card_detail(card_id)
+    assert waiting_card is not None
+    assert waiting_card["status"] == STATUS_AWAITING_REWINDING
+    assert waiting_card["first_started_at"] == "2026-08-24 07:00:00"
+    assert waiting_card["finished_at"] == "2026-08-24 08:30:00"
+    assert waiting_card["timing_segments"] == [
+        {
+            "id": segment_id,
+            "started_at": "2026-08-24 07:00:00",
+            "ended_at": "2026-08-24 08:30:00",
+            "end_reason": "pause",
+        }
+    ]
+    assert db.update_tare_weight(card_id, int(waiting_card["version"]), "1.00").ok
+    waiting_card = db.fetch_admin_card_detail(card_id)
+    assert waiting_card is not None
+    assert db.add_roll_gross_weight(card_id, int(waiting_card["version"]), "101.00").ok
+    waiting_card = db.fetch_admin_card_detail(card_id)
+    assert waiting_card is not None
+
+    monkeypatch.setattr(main, "datetime", IntegrationReferenceDateTime)
+    endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if route.path == "/admin/dashboard"
+    )
+    before_response = asyncio.run(endpoint(make_request("/admin/dashboard")))
+    before_machine = machine(before_response.context["dashboard"], 2)
+    before_interval = next(
+        interval
+        for interval in before_machine["timeline"]
+        if interval.get("order_number") == "CORRECTED-WAITING"
+    )
+    before_productivity = next(
+        row
+        for row in before_machine["orders"]
+        if row["order_number"] == "CORRECTED-WAITING"
+    )
+    before_timing = waiting_card["timing_segments"]
+    before_finished_at = waiting_card["finished_at"]
+
+    finalization_response = asyncio.run(
+        main.finish_terminal_card(
+            make_request(f"/terminal/cards/{card_id}/finish", method="POST"),
+            card_id,
+            loaded_version=str(waiting_card["version"]),
+        )
+    )
+    completed_card = db.fetch_admin_card_detail(card_id)
+    assert completed_card is not None
+    after_response = asyncio.run(endpoint(make_request("/admin/dashboard")))
+    after_machine = machine(after_response.context["dashboard"], 2)
+    after_interval = next(
+        interval
+        for interval in after_machine["timeline"]
+        if interval.get("order_number") == "CORRECTED-WAITING"
+    )
+    after_productivity = next(
+        row
+        for row in after_machine["orders"]
+        if row["order_number"] == "CORRECTED-WAITING"
+    )
+
+    assert finalization_response.status_code == 303
+    assert completed_card["status"] == STATUS_COMPLETED
+    assert completed_card["finished_at"] == before_finished_at
+    assert completed_card["timing_segments"] == before_timing
+    assert before_interval == after_interval
+    assert before_productivity == after_productivity
+    assert after_interval["start_utc"] == "2026-08-24T07:00:00Z"
+    assert after_interval["end_utc"] == "2026-08-24T08:30:00Z"
+    assert after_productivity["active_seconds"] == 90 * 60
+    assert after_productivity["produced"] == 100
+    assert after_productivity["productivity"] == 67
 
 
 def test_admin_dashboard_renders_selected_day_control(connection, monkeypatch):
