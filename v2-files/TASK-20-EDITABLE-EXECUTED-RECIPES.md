@@ -1,8 +1,26 @@
 # Task 20: Editable Executed Recipes And Material Catalogue
 
-Status: scope approved on August 11, 2026. The initial forward-looking phase is
-ready for implementation. Application, schema, and production deployment work
-have not yet started.
+Status: workflow scope approved on August 11, 2026 and retained as the next
+pilot workstream. The initial forward-looking phase is unimplemented and is not
+ready for application, schema, migration, or test implementation.
+
+> **SUPERSESSION AND START GATE — 2026-08-26:** Do not implement from this
+> document as written. Its seven-column `RecipeCatalogExtrusion` authority,
+> `FullMaterialName` identity, name-based catalogue matching, and dependent
+> schema/test details are superseded by
+> `v2-files/inventory-and-materials/ITEM-MASTER-SKU-DESIGN.md`. Task 20 remains
+> next, but its first step is a bounded reconciliation of this specification
+> and its companion implementation plan to SKU identity, a published Item
+> Master snapshot or extrusion-specific projection, and historical snapshot
+> safety. A catalogue-backed executed row must retain SKU plus the relevant
+> human-readable snapshots; later catalogue refreshes must not rewrite planned
+> or executed production history, and free-text exceptions must not receive an
+> invented SKU. Item Master v1 must first confirm the remaining SKU allocation,
+> required-field/family, Item Name, alias, lifecycle, and published snapshot
+> schema/version decisions. This consolidation does not decide that contract or
+> expand pilot scope. All unreconciled catalogue, persistence, comparison,
+> estimate, and verification details below are retained only as the prior
+> workflow baseline.
 
 ## Purpose
 
@@ -194,6 +212,12 @@ and version increment. A failure at any point leaves the previous executed
 recipe completely intact.
 
 ## Material Catalogue
+
+> **Superseded source contract:** The seven-column CSV and
+> `FullMaterialName`-as-identity rules in this section must not be implemented.
+> They remain visible only so the bounded Task 20 reconciliation can identify
+> every dependent rule that must move to the approved SKU/published-snapshot
+> contract after the Item Master start gate is satisfied.
 
 ### Source Contract
 
@@ -770,14 +794,12 @@ agent review above.
 
 ## Initial Delivery Estimate
 
-Estimated active agent work for the approved forward-looking phase is
-approximately **10-14 hours**, including implementation, automated tests,
-browser verification, screenshot inspection, and the final agent review.
-
-That estimate covers the executed-recipe schema and resolver, catalogue import
-and search, Terminal/Admin editing, migration tests, workflow tests, and UI
-verification. The later work below is recorded for continuity and will be
-estimated separately when activated.
+The former **10-14 hour** implementation estimate is withdrawn. The retained
+latest Item Master design changes catalogue identity, source, synchronization,
+and snapshot requirements, so the estimate must be revisited only after the
+remaining Item Master v1 decisions are confirmed and both Task 20 documents are
+reconciled and approved. The later work below remains recorded for continuity
+and will be estimated separately when activated.
 
 ## Required Future Follow-Ups
 

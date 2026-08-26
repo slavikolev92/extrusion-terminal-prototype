@@ -8,13 +8,9 @@ import { chromium } from "playwright";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const prototypePath = path.join(scriptDir, "admin-machine-time-dashboard.html");
-const sourceVisualPath = path.join(
-  process.env.HOME,
-  ".codex",
-  "generated_images",
-  "01a02b41-501a-77e1-8865-62b5af0eb7ed",
-  "exec-ff6b1ad8-dc16-4a64-a0fc-418dad1ac608.png",
-);
+const sourceVisualPath = process.env.DASHBOARD_SOURCE_VISUAL
+  ? path.resolve(repoRoot, process.env.DASHBOARD_SOURCE_VISUAL)
+  : null;
 const artifactDir = path.join(
   repoRoot,
   "artifacts",
@@ -615,30 +611,32 @@ try {
 
   await page.setViewportSize({ width: 1440, height: 1024 });
 
-  const sourceDataUrl = `data:image/png;base64,${(await readFile(sourceVisualPath)).toString("base64")}`;
-  const prototypeDataUrl = `data:image/png;base64,${(await readFile(viewportScreenshotPath)).toString("base64")}`;
-  const comparisonPage = await browser.newPage({ viewport: { width: 1440, height: 560 } });
-  await comparisonPage.setContent(`
-    <!doctype html>
-    <html>
-      <head>
-        <style>
-          * { box-sizing: border-box; }
-          body { margin: 0; padding: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: #111827; font: 700 14px "Segoe UI", sans-serif; color: white; }
-          figure { margin: 0; display: grid; gap: 8px; }
-          figcaption { text-align: center; }
-          img { display: block; width: 100%; height: 510px; object-fit: fill; background: white; }
-        </style>
-      </head>
-      <body>
-        <figure><figcaption>Избран визуален източник</figcaption><img src="${sourceDataUrl}" alt=""></figure>
-        <figure><figcaption>HTML прототип</figcaption><img src="${prototypeDataUrl}" alt=""></figure>
-      </body>
-    </html>
-  `);
-  await comparisonPage.locator("img").last().waitFor();
-  await comparisonPage.screenshot({ path: comparisonPath, fullPage: true });
-  await comparisonPage.close();
+  if (sourceVisualPath) {
+    const sourceDataUrl = `data:image/png;base64,${(await readFile(sourceVisualPath)).toString("base64")}`;
+    const prototypeDataUrl = `data:image/png;base64,${(await readFile(viewportScreenshotPath)).toString("base64")}`;
+    const comparisonPage = await browser.newPage({ viewport: { width: 1440, height: 560 } });
+    await comparisonPage.setContent(`
+      <!doctype html>
+      <html>
+        <head>
+          <style>
+            * { box-sizing: border-box; }
+            body { margin: 0; padding: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: #111827; font: 700 14px "Segoe UI", sans-serif; color: white; }
+            figure { margin: 0; display: grid; gap: 8px; }
+            figcaption { text-align: center; }
+            img { display: block; width: 100%; height: 510px; object-fit: fill; background: white; }
+          </style>
+        </head>
+        <body>
+          <figure><figcaption>Избран визуален източник</figcaption><img src="${sourceDataUrl}" alt=""></figure>
+          <figure><figcaption>HTML прототип</figcaption><img src="${prototypeDataUrl}" alt=""></figure>
+        </body>
+      </html>
+    `);
+    await comparisonPage.locator("img").last().waitFor();
+    await comparisonPage.screenshot({ path: comparisonPath, fullPage: true });
+    await comparisonPage.close();
+  }
 
   process.stdout.write(`Verified dashboard prototype: ${screenshotPath}\n`);
   process.stdout.write(`Saved hover-state evidence: ${hoverScreenshotPath}\n`);
@@ -648,7 +646,13 @@ try {
   process.stdout.write(`Saved productivity hover evidence: ${productivityHoverScreenshotPath}\n`);
   process.stdout.write(`Saved responsive evidence: ${responsiveScreenshotPath}\n`);
   process.stdout.write(`Saved narrow evidence: ${narrowScreenshotPath}\n`);
-  process.stdout.write(`Saved visual comparison: ${comparisonPath}\n`);
+  if (sourceVisualPath) {
+    process.stdout.write(`Saved visual comparison: ${comparisonPath}\n`);
+  } else {
+    process.stdout.write(
+      "Skipped visual comparison: DASHBOARD_SOURCE_VISUAL is not set.\n",
+    );
+  }
 } finally {
   await browser.close();
 }

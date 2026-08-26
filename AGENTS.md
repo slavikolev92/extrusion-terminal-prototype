@@ -33,13 +33,19 @@ Confirmed scope:
 - HTML/CSS print output for completed and archived cards, matching the existing
   Excel front/back operational card as closely as possible.
 - SQLite-safe backups and documented recovery before pilot use.
-- Task 20's approved next pilot slice is explicitly unimplemented: preserve the
-  import-owned planned recipe as a separate record; add a complete executed-
-  recipe snapshot plus maintained material catalogue; atomically snapshot the
-  complete planned recipe at first successful production start when no
-  executed recipe exists; and use a schema-only migration whose new storage is
-  empty with no historical backfill. That migration must preserve legacy
-  actual-material/batch values and every existing production record. Historical
+- Task 20 remains the next approved pilot workstream and is explicitly
+  unimplemented. Its first step is a bounded reconciliation of its existing
+  specification and implementation plan with the retained latest Item Master
+  design; do not begin application, schema, or test implementation from the
+  current Task 20 documents. The revision must use SKU as catalogue identity,
+  consume a published Item Master snapshot or extrusion projection, retain the
+  relevant human-readable snapshots without allowing later catalogue refreshes
+  to rewrite production history, and keep free-text exceptions without invented
+  SKUs. Item Master v1 must first confirm its remaining SKU allocation, field,
+  naming, alias, lifecycle, and publication/version contract decisions. The
+  planned/executed recipe separation, complete first-start snapshot, empty
+  forward-looking storage, no historical backfill, and preservation of every
+  legacy production value remain the approved pilot boundary. Historical
   normalization, recipe-difference notifications, and inventory integration or
   posting are later phases outside the initial implementation.
 
@@ -91,6 +97,13 @@ Until Task 20 is implemented, treat README's existing third-column
 `Използван материал` plus independent `Партида` behavior as the current
 application contract. Do not describe the approved executed-recipe/catalogue
 model as already implemented or deployed.
+
+Do not execute the current Task 20 specification or implementation plan as
+code. Their seven-column `RecipeCatalogExtrusion` authority and
+`FullMaterialName` identity are superseded by
+`v2-files/inventory-and-materials/ITEM-MASTER-SKU-DESIGN.md`; Task 20 must pass
+the documented Item Master confirmation and design/plan reconciliation gate
+first.
 
 Use `docs/implementation-notes/` for durable implementation notes that future prototype or ERP work may need to understand why a feature was built a certain way. Current contents include `print-output-reference.md`, which preserves the accepted print-output requirements, field mapping, validation/formatting rules, and the note that the remaining two-sheet print issue is local workstation/printer setup rather than an app defect, and `rewinding-return-workflow.md`, which preserves the bounded waiting/return lifecycle and M004 safety record.
 

@@ -2,18 +2,23 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let the shift manager retain the rolling latest-24-hours dashboard by default and select any completed Sofia calendar day for the same machine-time and productivity review.
+**Goal:** Let the shift manager retain the rolling latest-24-hours dashboard by default and explicitly load any completed Sofia calendar day for the same machine-time and productivity review.
 
-**Architecture:** Extend the existing dashboard view-model builder with an optional `date` and derive one explicit UTC window from either the request time or Sofia local midnights. The existing read-only GET route will accept a strict ISO `day` query parameter, while the current Jinja page adds a native date input and a canonical reset link; no database, schema, or productivity-matching changes are required.
+**Architecture:** Extend the existing dashboard view-model builder with an optional `date` and derive one explicit UTC window from either the request time or Sofia local midnights. The existing read-only GET route accepts a strict ISO `day` query parameter. The Jinja page keeps rolling mode as the current view while prefilling the date input with the latest completed Sofia day, requires the shift manager to press `Покажи` to load it, and provides a canonical reset link in selected-day mode; no database, schema, or productivity-matching changes are required.
 
 **Tech Stack:** Python 3.12, FastAPI, direct `sqlite3`, Jinja2, existing CSS and browser JavaScript, pytest, repo-local Playwright.
 
 **Spec:** `docs/superpowers/specs/2026-08-24-admin-machine-time-dashboard-design.md` (this bounded plan extends its “Time Window And Presentation” section with the user-approved calendar-day behavior restated below).
 
+**Accepted interaction ruling:** The later approved interaction supersedes the earlier interaction draft. Rolling mode remains the active latest-24-hour view even though its input is prefilled with the latest completed Sofia day. Changing the input does not navigate; `Покажи` must be pressed. Selected-day mode shows `Последни 24 часа` as the reset action, and `Обнови` reloads the current URL so the active query is preserved.
+
 ## Global Constraints
 
 - `GET /admin/dashboard` with no query continues to show the rolling 24 hours ending at request time.
 - `GET /admin/dashboard?day=YYYY-MM-DD` shows that complete `Europe/Sofia` calendar date, from local midnight to the following local midnight.
+- In rolling mode, the date input is prefilled with the latest completed Sofia day as a selectable value; it does not describe or change the active rolling window.
+- A changed date is loaded only after the shift manager explicitly presses `Покажи`; the date input has no change-submit listener.
+- Selected-day mode shows a `Последни 24 часа` reset link. `Обнови` reloads the current URL and therefore preserves either rolling mode or the active `day` query.
 - Only completed Sofia dates through yesterday are selectable; today, future dates, and malformed values redirect to canonical `/admin/dashboard`.
 - A selected daylight-saving transition date uses its real elapsed duration: 23, 24, or 25 hours. Timeline widths, clipping, idle complement, and active percentage all use that same duration.
 - The selected window controls both the machine timeline and which orders appear in the productivity table. Existing exact-dimension historical comparison rules do not change.
@@ -29,8 +34,8 @@
 
 - `app/production_dashboard.py` — resolve rolling/calendar windows, apply dynamic duration to the existing timeline model, and expose strict day parsing.
 - `app/main.py` — validate the optional `day` query and pass one consistent request time into parsing and view-model construction.
-- `app/templates/admin_dashboard.html` — render the date form, selected/default caption, reset action, and auto-submit behavior.
-- `app/static/css/app.css` — style only the compact dashboard controls and their responsive/focus states.
+- `app/templates/admin_dashboard.html` — render the prefilled date form, explicit `Покажи` submit, selected/default caption, reset action, and query-preserving refresh behavior.
+- `app/static/css/app.css` — style only the compact date input, submit, reset, and refresh controls and their responsive/focus states.
 - `tests/test_admin_machine_dashboard.py` — cover window bounds, daylight saving, clipping, productivity cutoff separation, route validation, and rendered controls.
 - `artifacts/ui-checks/admin-dashboard-day-selection/` — ignored temporary database, verification script, screenshots, and browser-check output.
 
@@ -82,7 +87,7 @@ def test_selected_sofia_day_has_local_midnight_bounds(connection):
         "range_display": "24 авг. 00:00 – 25 авг. 00:00",
     }
     assert dashboard["axis"][0]["display"] == "00:00"
-    assert dashboard["axis"][-1]["display"] == "00:00"
+    assert dashboard["axis"][-1]["display"] == "24:00"
     assert dashboard["axis"][0]["position"] == 0
     assert dashboard["axis"][-1]["position"] == 100
 ```
@@ -150,11 +155,11 @@ def _resolve_dashboard_window(
     )
 ```
 
-In `build_machine_time_dashboard`, derive `window_seconds = int((end_utc - start_utc).total_seconds())`. Use it for `window.seconds` and `active_percent` instead of `WINDOW_SECONDS`. Add the mode, selected value, and maximum date to `window` exactly as follows:
+In `build_machine_time_dashboard`, derive `window_seconds = int((end_utc - start_utc).total_seconds())`. Use it for `window.seconds` and `active_percent` instead of `WINDOW_SECONDS`. Add the mode, form value, and maximum date to `window` exactly as follows. The form value uses the selected date in calendar mode and the latest completed Sofia day in rolling mode; `mode` remains the source of truth for the active window:
 
 ```python
 "mode": "calendar_day" if selected_day is not None else "rolling",
-"selected_day": selected_day.isoformat() if selected_day is not None else "",
+"selected_day": (selected_day or max_day).isoformat(),
 "max_selectable_day": max_day.isoformat(),
 ```
 
@@ -175,7 +180,7 @@ The timeline uses `end_utc`; complete-order productivity uses `reference_utc`.
 
 - [ ] **Step 4: Implement a proportional axis for the resolved window**
 
-Change `_build_axis` to receive both boundaries and the optional selected day. Rolling mode retains nine absolute three-hour ticks. Calendar mode creates local civil ticks for 00:00, 03:00, …, 24:00 and converts each to UTC. In both modes compute each position from elapsed UTC seconds rather than `index * 12.5`:
+Change `_build_axis` to receive both boundaries and the optional selected day. Rolling mode retains nine absolute three-hour ticks. Calendar mode creates local civil ticks for 00:00, 03:00, …, 24:00 and converts each to UTC for positioning. Preserve the civil hour itself as the display label instead of formatting the normalized UTC instant back through `Europe/Sofia`; this keeps the exact `00:00` through `24:00` labels on ordinary, 23-hour, and 25-hour dates, including the nonexistent spring `03:00` label. In both modes compute each position from elapsed UTC seconds rather than `index * 12.5`:
 
 ```python
 position = (
@@ -189,7 +194,10 @@ This keeps segment widths and grid positions on the same scale on 23- and 25-hou
 
 - [ ] **Step 5: Add DST and productivity-cutoff regression tests**
 
-Add parameterized assertions for Sofia’s 2026 transitions:
+Add parameterized assertions for Sofia’s 2026 transitions. Assert the exact
+calendar-axis display sequence `00:00`, `03:00`, `06:00`, `09:00`, `12:00`,
+`15:00`, `18:00`, `21:00`, `24:00` for an ordinary date and for both transition
+dates, independently of their 23/24/25-hour elapsed durations:
 
 ```python
 @pytest.mark.parametrize(
@@ -241,7 +249,7 @@ Review the diff for host-timezone dependence, fixed 86,400-second assumptions, o
 - Consumes: `parse_dashboard_day(day, reference_time)` and `build_machine_time_dashboard(reference_time, selected_day=...)` from Task 1.
 - Produces: `GET /admin/dashboard?day=YYYY-MM-DD` for valid completed dates.
 - Produces: a 303 redirect to `/admin/dashboard` for malformed, today, or future values.
-- Produces selectors: `[data-dashboard-day-form]`, `#dashboard-day`, and `[data-dashboard-window-reset]` for browser verification.
+- Produces selectors: `[data-dashboard-day-form]`, `#dashboard-day`, `[data-dashboard-day-submit]`, and `[data-dashboard-window-reset]` for browser verification.
 
 - [ ] **Step 1: Write failing route and rendering tests**
 
@@ -271,6 +279,8 @@ def test_admin_dashboard_renders_selected_day_control(connection, monkeypatch):
     assert 'name="day"' in html
     assert 'value="2026-08-24"' in html
     assert 'max="2026-08-24"' in html
+    assert 'data-dashboard-day-submit' in html
+    assert ">Покажи</button>" in html
     assert "Избран ден" in html
     assert 'data-dashboard-window-reset' in html
 
@@ -284,7 +294,7 @@ def test_admin_dashboard_rejects_invalid_or_incomplete_day(connection, monkeypat
     assert response.headers["location"] == "/admin/dashboard"
 ```
 
-Extend the existing default-render test to assert an empty date value, `Последни 24 часа`, no reset link, and unchanged refresh button.
+Add a rolling-mode render test that asserts `Последни 24 часа`, a date value prefilled with `2026-08-24`, no reset link, and the unchanged refresh button. Add a focused control test that asserts a visible submit button with `data-dashboard-day-submit`, `type="submit"`, and `Покажи`, and asserts that the rendered script has no date-input `change` listener.
 
 - [ ] **Step 2: Run route/render tests and verify RED**
 
@@ -293,6 +303,8 @@ Run:
 ```bash
 .venv/bin/python -m pytest \
   tests/test_admin_machine_dashboard.py::test_admin_dashboard_renders_selected_day_control \
+  tests/test_admin_machine_dashboard.py::test_admin_dashboard_date_control_requires_explicit_submit \
+  tests/test_admin_machine_dashboard.py::test_admin_dashboard_prefills_latest_complete_day_in_rolling_mode \
   tests/test_admin_machine_dashboard.py::test_admin_dashboard_rejects_invalid_or_incomplete_day -q
 ```
 
@@ -327,7 +339,7 @@ Do not show an error banner for a manually altered URL; the canonical redirect i
 
 - [ ] **Step 4: Render the compact date form**
 
-Replace the right-hand refresh-only wrapper with a compact controls group. Keep a real GET form and an accessible label:
+Replace the right-hand refresh-only wrapper with a compact controls group. Keep a real GET form, an accessible label, and an explicit submit button:
 
 ```html
 <div class="dashboard-controls">
@@ -341,6 +353,7 @@ Replace the right-hand refresh-only wrapper with a compact controls group. Keep 
       value="{{ dashboard.window.selected_day }}"
       max="{{ dashboard.window.max_selectable_day }}"
     >
+    <button class="dashboard-day-submit" type="submit" data-dashboard-day-submit>Покажи</button>
   </form>
   {% if dashboard.window.mode == "calendar_day" %}
     <a class="dashboard-window-reset" href="/admin/dashboard" data-dashboard-window-reset>Последни 24 часа</a>
@@ -355,19 +368,11 @@ The subtitle is conditional and contains no explanatory copy:
 <p>{% if dashboard.window.mode == "calendar_day" %}Избран ден{% else %}Последни 24 часа{% endif %} · {{ dashboard.window.range_display }}</p>
 ```
 
-Add one JavaScript listener without changing tooltip behavior:
-
-```javascript
-const dayForm = document.querySelector("[data-dashboard-day-form]");
-const dayInput = document.getElementById("dashboard-day");
-dayInput.addEventListener("change", () => dayForm.requestSubmit());
-```
-
-Submitting an empty cleared value is valid and resolves back to rolling mode. The existing refresh listener continues to use `window.location.reload()`, which preserves the active `day` query.
+Do not add a date-input `change` listener or any other date-selection JavaScript: choosing a date only updates the form control. The user must activate `Покажи` to issue the GET request. The existing refresh listener continues to use `window.location.reload()`, which preserves the active `day` query. The canonical `Последни 24 часа` link is the deliberate way to leave selected-day mode.
 
 - [ ] **Step 5: Add scoped responsive and focus styling**
 
-Add `.dashboard-controls`, `.dashboard-day-form`, `.dashboard-day-input`, and `.dashboard-window-reset` beside the existing dashboard header styles. Match the current 40px refresh control height, use existing border/accent variables, and include both input and reset link in `:focus-visible`. At `max-width: 820px`, allow the controls to wrap without introducing document-level horizontal overflow. Do not change timeline segment sizing or productivity-table layout.
+Add `.dashboard-controls`, `.dashboard-day-form`, `.dashboard-day-input`, `.dashboard-day-submit`, and `.dashboard-window-reset` beside the existing dashboard header styles. Match the current 40px refresh control height, use existing border/accent variables, and include the input, submit button, and reset link in `:focus-visible`. At `max-width: 820px`, allow the controls to wrap without introducing document-level horizontal overflow. Do not change timeline segment sizing or productivity-table layout.
 
 - [ ] **Step 6: Run focused tests and review Task 2**
 
@@ -377,7 +382,7 @@ Run:
 .venv/bin/python -m pytest tests/test_admin_machine_dashboard.py tests/test_admin_routes.py -q
 ```
 
-Review template escaping, keyboard form submission, invalid-query canonicalization, absence of database writes, query preservation on refresh, and no new dashboard prose. Do not stage or commit.
+Review template escaping, explicit and keyboard submit behavior, absence of change-triggered navigation, invalid-query canonicalization, rolling-mode prefill without a reset link, absence of database writes, query preservation on refresh, and no new dashboard prose. Do not stage or commit.
 
 ---
 
@@ -427,11 +432,15 @@ Create `verify.mjs` using the installed `playwright` package. The script must:
 ```javascript
 await page.goto(`${baseURL}/admin/dashboard`, { waitUntil: "networkidle" });
 assert.match(await page.locator(".dashboard-title p").innerText(), /^Последни 24 часа/);
-assert.equal(await page.locator("#dashboard-day").inputValue(), "");
+const latestCompletedDay = await page.locator("#dashboard-day").getAttribute("max");
+assert.equal(await page.locator("#dashboard-day").inputValue(), latestCompletedDay);
+assert.equal(await page.locator("[data-dashboard-day-submit]").innerText(), "Покажи");
 assert.equal(await page.locator("[data-dashboard-window-reset]").count(), 0);
 
+const rollingURL = page.url();
 await page.locator("#dashboard-day").fill(selectedDay);
-await page.locator("#dashboard-day").dispatchEvent("change");
+assert.equal(page.url(), rollingURL);
+await page.locator("[data-dashboard-day-submit]").click();
 await page.waitForURL(`**/admin/dashboard?day=${selectedDay}`);
 assert.match(await page.locator(".dashboard-title p").innerText(), /^Избран ден/);
 assert.equal(await page.locator("#dashboard-day").inputValue(), selectedDay);
@@ -443,16 +452,16 @@ assert.ok(page.url().endsWith(`?day=${selectedDay}`));
 
 await page.locator("[data-dashboard-window-reset]").click();
 await page.waitForURL("**/admin/dashboard");
-assert.equal(await page.locator("#dashboard-day").inputValue(), "");
+assert.equal(await page.locator("#dashboard-day").inputValue(), latestCompletedDay);
 assert.equal(
   await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth),
   true,
 );
 ```
 
-Also collect console/page errors, verify the input’s `max` equals yesterday in Sofia, confirm selected-day order rows match only overlapping orders, and confirm each machine track’s child flex widths sum to the track width within browser rounding tolerance. Repeat the overflow assertion at 1440×1024, 1024×1024, and 820×1024.
+Also collect console/page errors, verify the input’s initial value and `max` both equal yesterday in Sofia, prove editing the date alone leaves the rolling URL and caption unchanged, confirm selected-day order rows match only overlapping orders, and confirm each machine track’s child flex widths sum to the track width within browser rounding tolerance. Repeat the overflow assertion at 1440×1024, 1024×1024, and 820×1024.
 
-Save `default-24-hours.png` and `selected-day.png` under the artifact directory. Run with:
+Save `default-24-hours.png` showing the rolling caption with the prefilled latest completed day and visible `Покажи` button, plus `selected-day.png` showing the selected-day caption and `Последни 24 часа` reset, under the artifact directory. Run with:
 
 ```bash
 BASE_URL=http://127.0.0.1:8016 \
@@ -481,6 +490,8 @@ Review only the scoped diff for:
 - a single consistent request timestamp;
 - no mixed productivity numerator/denominator cutoff;
 - safe invalid-query handling;
+- rolling-mode prefill without changing the rolling window, explicit `Покажи` submission, and absence of date-change navigation;
+- selected-day reset behavior and Refresh preservation of the current query;
 - no database mutation or schema change;
 - preservation of the approved dashboard design and existing timeline proportions;
 - accessibility and responsive layout of the new controls.

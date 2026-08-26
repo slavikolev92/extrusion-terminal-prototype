@@ -3,9 +3,10 @@
 This note records the repository-reconciliation decisions made on 2026-08-26.
 Retaining a specification or research record is not proof that its behavior is
 implemented or deployed. Task 20 is separately approved as the next pilot
-implementation, but its initial phase remains unimplemented. This note is
-durable status evidence, not deployment authorization. `README.md` remains the
-authoritative pilot specification.
+workstream, but its initial phase remains unimplemented and is not ready for
+code execution. Its first step is the bounded Item Master reconciliation
+recorded below. This note is durable status evidence, not deployment
+authorization. `README.md` remains the authoritative pilot specification.
 
 ## Resulting Source And Production Boundary
 
@@ -21,10 +22,14 @@ authoritative pilot specification.
   outcomes use its tokenized timing-aware Finish Review; later
   `awaiting_rewinding` finalization keeps a separate tokenless, timing-neutral
   confirmation and leaves the timing ledger and `finished_at` unchanged.
-- Task 20 is the next approved pilot feature, but its initial forward-looking
-  phase is unimplemented. Historical normalization, notifications,
-  inventory/material ownership, and successor-MES work remain later separate
-  work.
+- Task 20 is the next approved pilot workstream, but its initial forward-looking
+  phase is unimplemented. Before coding, reconcile its specification and plan
+  to SKU identity, the published Item Master snapshot or extrusion projection,
+  and historical snapshot safety. Item Master v1 must first confirm its
+  remaining allocation, field, naming, alias, lifecycle, and publication/version
+  decisions. This consolidation does not resolve that contract. Historical
+  normalization, notifications, inventory/material ownership, and successor-MES
+  work remain later separate work.
 
 No cleanup of the original checkout, refs, stash, or other worktrees occurred.
 The candidate did intentionally prune the source documents recorded in the
@@ -119,18 +124,20 @@ because they replace the launcher, restart Chromium, and require a reboot.
 
 These eight paths were retained as durable context. Their presence is not proof
 of implementation or deployment. Task 20 is the exception only in the narrow
-sense that its initial forward-looking phase is separately implementation-
-approved and next; it is still unimplemented and grants no deployment
-authority:
+sense that its initial forward-looking workstream is approved as next; it is
+still unimplemented, begins with design/plan reconciliation, and grants no code
+execution or deployment authority:
 
 - `v2-files/TASK-18-SALES-REPORTING-DASHBOARD.md` — paused discovery.
-- `v2-files/TASK-20-EDITABLE-EXECUTED-RECIPES.md` — next approved feature,
-  initial phase unimplemented.
+- `v2-files/TASK-20-EDITABLE-EXECUTED-RECIPES.md` — next approved workstream,
+  initial phase unimplemented; its stale seven-column/`FullMaterialName`
+  catalogue contract is superseded and execution-gated.
 - `v2-files/TASK-21-ORDER-FINISH-REVIEW.md` — residual contextual extension
   only; active running/paused outcomes reuse Task 22's tokenized review, while
   waiting-card finalization remains a separate tokenless, timing-neutral path.
-- `docs/superpowers/plans/2026-08-12-editable-executed-recipes.md` — Task 20
-  implementation plan.
+- `docs/superpowers/plans/2026-08-12-editable-executed-recipes.md` — retained
+  pre-reconciliation Task 20 implementation plan; do not execute it until both
+  Task 20 documents are revised and approved against Item Master v1.
 - `v2-files/TASK-69-MES-SOFTWARE.md` — successor-product research, not pilot
   scope.
 - `v2-files/inventory-and-materials/ITEM-MASTER-SKU-DESIGN.md`

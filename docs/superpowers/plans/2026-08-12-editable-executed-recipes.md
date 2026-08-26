@@ -1,17 +1,40 @@
 # Editable Executed Recipes And Material Catalogue Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **DO NOT EXECUTE — SUPERSEDED START GATE (2026-08-26):** This is the retained
+> pre-reconciliation Task 20 plan, not an executable implementation plan. Its
+> seven-column `RecipeCatalogExtrusion` source, `FullMaterialName` identity,
+> name-based matching, schema sketches, tests, session map, and estimate depend
+> on assumptions superseded by
+> `v2-files/inventory-and-materials/ITEM-MASTER-SKU-DESIGN.md`. Task 20 remains
+> the next approved pilot workstream and is unimplemented, but its first step is
+> bounded reconciliation of this plan and the Task 20 specification to SKU
+> identity, a published Item Master snapshot or extrusion-specific projection,
+> and historical snapshot safety. Catalogue-backed executed rows must retain
+> SKU and relevant readable snapshots without later refresh rewriting
+> production history; free-text exceptions receive no invented SKU. Item Master
+> v1 must first confirm its remaining SKU allocation, required-field/family,
+> Item Name, alias, lifecycle, and published snapshot schema/version decisions.
+> This consolidation does not resolve those decisions or expand the pilot.
+> Every implementation instruction below is historical planning context unless
+> it is explicitly reconciled and reapproved in both Task 20 documents.
 
-**Goal:** Build the forward-looking Task 20 workflow in which planned recipes remain import-owned, a complete executed recipe becomes the source of truth once saved or first-started, and workers/Admin edit that recipe through a CSV-managed material catalogue.
+**Retained workflow goal:** Preserve import-owned planned recipes, make a
+complete saved/first-started executed recipe authoritative, and let
+workers/Admin edit it through the future reconciled Item Master projection.
 
-**Architecture:** Add schema-only storage for the active material catalogue and immutable-per-save executed-recipe snapshots, while retaining `recipe_components` as the planned recipe and `recipe_actual_entries` as preserved legacy actual-material/batch storage. Put parsing and semantic recipe rules in focused pure-Python modules, keep transactional persistence in `app/db.py`, and make Terminal and Admin call the same backend validator/resolver and the same browser editor. The work is one feature plan because the subsystems share one consistency boundary, but it is divided into five resumable sessions with green-test checkpoints.
+**Architecture status:** The detailed architecture below predates the SKU and
+published-snapshot contract and must be reconciled before any schema or code
+choice is approved. The whole-snapshot, transactional, and legacy-preservation
+principles remain inputs to that bounded revision.
 
 **Tech Stack:** Python 3, FastAPI, direct `sqlite3`, Jinja2 server-rendered HTML, vanilla JavaScript ES modules, CSS, pytest, Node's built-in test runner, and repo-local Playwright.
 
 ## Global Constraints
 
 - `README.md` is authoritative; preserve the bounded FastAPI/SQLite extrusion-terminal pilot.
-- Follow `v2-files/TASK-20-EDITABLE-EXECUTED-RECIPES.md` as the complete approved behavior specification.
+- Do not use this plan or the current Task 20 specification to begin coding.
+  First reconcile both against the latest Item Master design and approve the
+  revised contract and implementation plan.
 - Follow `docs/implementation-notes/sqlite-migration-and-deployment-playbook.md` for every schema and stored-data-meaning change.
 - Derive the next migration version from `app/migrations.py` at implementation time; the current expected version is M007, but do not assume it if the registry has changed.
 - The initial migration is schema-only: do not synthesize executed recipes or reinterpret any historical `actual_material_used` text.
@@ -32,9 +55,12 @@
 
 ---
 
-## Session Map And Resume Contract
+## Superseded Session Map And Resume Contract
 
-These are logical execution sessions, not elapsed-day estimates and not separately deployed releases. Estimated total active agent work remains approximately **10–14 hours**. A session may continue into the next one when context and test results remain clear; otherwise stop only after its checkpoint is green.
+The table below is retained to expose the old plan's dependencies. It is not an
+active execution schedule, and its former **10–14 hour** estimate is withdrawn.
+Re-estimate only after Item Master v1 is confirmed and both Task 20 documents
+are reconciled and approved.
 
 | Session | Tasks | Active-agent estimate | Deliverable | Resume evidence |
 | --- | --- | ---: | --- | --- |
@@ -1240,9 +1266,16 @@ Document:
 - exact focused/full/browser verification commands and artifact paths; and
 - the still-unimplemented historical normalization, Shift Manager notification, and inventory communication follow-ups without redefining them.
 
-- [ ] **Step 2: Update the Task 20 and master-plan status accurately**
+- [ ] **Step 2: Update the Task 20 and master-plan status accurately after a revised plan is approved and implemented**
 
-Only after all verification is green, change Task 20's initial phase from `ready for implementation` to `implemented and verified in source on <actual date>; not deployed unless separately recorded`. Preserve all future-follow-up sections. Update `v2-files/PLAN.md` at workstream level with actual test totals and evidence path; do not claim production deployment or close future follow-ups.
+This retained step is not currently executable. After Item Master v1 is
+confirmed, both Task 20 documents are reconciled and approved, and the revised
+implementation passes all applicable verification, change Task 20's status
+from unimplemented/reconciliation-gated to `implemented and verified in source
+on <actual date>; not deployed unless separately recorded`. Preserve all
+future-follow-up sections. Update `v2-files/PLAN.md` at workstream level with
+actual test totals and evidence path; do not claim production deployment or
+close future follow-ups.
 
 - [ ] **Step 3: Run syntax/import and JavaScript verification**
 
@@ -1343,11 +1376,11 @@ Run this checklist when the plan is written and again if Task 20 changes before 
 - **Scope check:** Confirm the diff contains no notification tray, historical conversion, inventory/export, role/permission, workbook-writeback, or deployment implementation.
 - **Repository policy:** Confirm no step stages/commits without user authorization, all writes/tests use temporary data, and browser evidence is ignored.
 
-## Execution Choice
+## Start Gate
 
-After this plan is accepted, execute it in order. Two supported modes are:
-
-1. **Subagent-driven execution (recommended):** use `superpowers:subagent-driven-development`, dispatch one bounded task at a time, and perform the required specification/code review gates between tasks. Stop only at the five session checkpoints.
-2. **Inline execution:** use `superpowers:executing-plans`, work through the same checkbox order in batches, and stop only at the five session checkpoints.
-
-Neither mode adds a human code-review dependency. The user enters after Task 12 only to evaluate the visible UI/workflow.
+No implementation execution mode is active. The next Task 20 action is the
+bounded design/plan reconciliation described in the supersession notice. Only
+after the remaining Item Master v1 contract decisions are confirmed and both
+Task 20 documents are revised and approved may a new or explicitly reapproved
+implementation plan define its execution mode, estimates, schema, tests, and
+review checkpoints. Do not start any task above from this retained plan.

@@ -162,7 +162,7 @@ the binding repository scope remains `README.md` and `AGENTS.md`.
 **Interfaces:**
 - Consumes: verified consolidated candidate and complete audit reports.
 - Produces: one authoritative local and remote `main` and a clean handoff for
-  Task 20.
+  Task 20's required Item Master design/plan reconciliation.
 
 - [ ] Request an independent whole-branch review covering data integrity,
       lifecycle/timing correctness, dashboard read-only behavior, documentation

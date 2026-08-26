@@ -608,23 +608,26 @@ def _build_axis(
 ) -> list[dict[str, Any]]:
     if selected_day is None:
         ticks = [start_utc + index * AXIS_INTERVAL for index in range(9)]
+        display_labels = [_time_display(tick) for tick in ticks]
     else:
+        civil_hours = range(0, 25, 3)
         ticks = [
             datetime.combine(
                 selected_day + timedelta(days=hour // 24),
                 time(hour % 24),
                 tzinfo=SOFIA_ZONE,
             ).astimezone(timezone.utc)
-            for hour in range(0, 25, 3)
+            for hour in civil_hours
         ]
+        display_labels = [f"{hour:02d}:00" for hour in civil_hours]
     window_seconds = (end_utc - start_utc).total_seconds()
     axis = [
         {
             "position": (tick - start_utc).total_seconds() / window_seconds * 100,
             "utc": _utc_attribute(tick),
-            "display": _time_display(tick),
+            "display": display,
         }
-        for tick in ticks
+        for tick, display in zip(ticks, display_labels, strict=True)
     ]
     axis[0]["position"] = 0
     axis[-1]["position"] = 100

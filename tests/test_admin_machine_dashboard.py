@@ -164,9 +164,39 @@ def test_selected_sofia_day_has_local_midnight_bounds(connection):
         "range_display": "24 авг. 00:00 – 25 авг. 00:00",
     }
     assert dashboard["axis"][0]["display"] == "00:00"
-    assert dashboard["axis"][-1]["display"] == "00:00"
+    assert dashboard["axis"][-1]["display"] == "24:00"
     assert dashboard["axis"][0]["position"] == 0
     assert dashboard["axis"][-1]["position"] == 100
+
+
+@pytest.mark.parametrize(
+    "selected_day",
+    [
+        date(2026, 8, 24),
+        date(2026, 3, 29),
+        date(2026, 10, 25),
+    ],
+)
+def test_calendar_axis_uses_fixed_civil_labels_on_ordinary_and_dst_days(
+    connection,
+    selected_day,
+):
+    dashboard = build_machine_time_dashboard(
+        datetime(2026, 12, 1, 10, 0, tzinfo=timezone.utc),
+        selected_day=selected_day,
+    )
+
+    assert [tick["display"] for tick in dashboard["axis"]] == [
+        "00:00",
+        "03:00",
+        "06:00",
+        "09:00",
+        "12:00",
+        "15:00",
+        "18:00",
+        "21:00",
+        "24:00",
+    ]
 
 
 @pytest.mark.parametrize(

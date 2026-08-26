@@ -77,18 +77,23 @@ The terminal UI can present information in whatever way is practical. The printe
 
 ## Approved Next Pilot Slice — Task 20 (Not Yet Implemented)
 
-Task 20's initial forward-looking editable-executed-recipe and material-
-catalogue phase is approved as the next pilot implementation. It is not current
-application behavior and has not been deployed.
+Task 20 remains the next approved pilot workstream. It is not current
+application behavior, no implementation has started, and it has not been
+deployed. The first Task 20 step is a bounded reconciliation of its existing
+specification and implementation plan with the retained latest Item Master
+design—not application, schema, or test implementation.
 
 - The planned recipe remains owned by the Shift Manager import and remains a
   separate source record.
 - A saved executed recipe is one complete recipe snapshot; screens resolve to
   that complete snapshot when present and otherwise to the current planned
   recipe. Planned and executed rows are never mixed for one card.
-- The maintained material catalogue is the normal source for deliberate
-  material selection, with the bounded explicit free-text exception defined in
-  `v2-files/TASK-20-EDITABLE-EXECUTED-RECIPES.md`.
+- The revised catalogue contract must use SKU as the selected material
+  identity and the published Item Master snapshot, or an extrusion-specific
+  projection of it, as its source. Catalogue-backed executed rows must preserve
+  SKU plus the relevant human-readable snapshots; later catalogue refreshes
+  must not rewrite historical planned or executed production data. The bounded
+  explicit free-text exception remains and must not receive an invented SKU.
 - If no executed snapshot exists, the first successful production start copies
   the complete current planned recipe into executed-recipe storage atomically
   with the existing start transition.
@@ -99,6 +104,15 @@ application behavior and has not been deployed.
 - Legacy actual-material and batch/lot values, planned recipes, rolls, weights,
   timing, shifts, pallets, statuses, imports, versions, timestamps, and all
   other production data must remain unchanged by that migration.
+- Before implementation, Item Master v1 must confirm the remaining SKU
+  allocation, required-field and family/category contracts, Item Name rule,
+  alias representation, lifecycle semantics, and published snapshot schema and
+  version metadata. Then both
+  `v2-files/TASK-20-EDITABLE-EXECUTED-RECIPES.md` and
+  `docs/superpowers/plans/2026-08-12-editable-executed-recipes.md` must be
+  reconciled and approved. Their existing seven-column
+  `RecipeCatalogExtrusion` authority and `FullMaterialName` identity are
+  superseded and must not be implemented.
 - Historical normalization, Shift Manager recipe-difference notifications, and
   inventory integration or posting are later separate phases and remain out of
   scope for the initial Task 20 implementation.

@@ -498,15 +498,27 @@ deferred status. It is grouped by affected surface and rough complexity.
 20. **Editable executed recipes and material catalogue**
    - Surface: `/terminal`, `/admin`, `/admin/settings`, CSV catalogue import,
      and a future schema-only migration.
-   - Status: the next approved pilot feature; initial forward-looking phase
-     only, and unimplemented. Its scope and implementation-ready design are in
+   - Status: the next approved pilot workstream; initial forward-looking phase
+     only, and unimplemented. Its first step is bounded design/plan
+     reconciliation, not application, schema, or test implementation. The
+     existing Task 20 specification and plan retain the approved workflow
+     baseline but are not executable: their seven-column catalogue authority
+     and `FullMaterialName` identity are superseded by the latest Item Master
+     design.
+   - Start gate: Item Master v1 must first confirm its remaining SKU allocation,
+     required-field/family, Item Name, alias, lifecycle, and published snapshot
+     schema/version decisions. Then revise and approve both
      `v2-files/TASK-20-EDITABLE-EXECUTED-RECIPES.md` and
-     `docs/superpowers/plans/2026-08-12-editable-executed-recipes.md`.
-   - Boundary: add empty executed-recipe and catalogue storage, preserve the
-     Shift Manager planned recipe, snapshot the executed recipe for newly
-     started production, and support the approved catalogue/free-text editing
-     path. The migration version must be derived when work begins under the
-     active migration/deployment playbook.
+     `docs/superpowers/plans/2026-08-12-editable-executed-recipes.md` around SKU
+     identity, a published Item Master snapshot or extrusion projection, and
+     historical snapshot safety. Catalogue-backed executed rows retain SKU and
+     relevant readable snapshots; catalogue refresh must not rewrite production
+     history, and free-text exceptions receive no invented SKU.
+   - Boundary after that gate: preserve the Shift Manager planned recipe; add
+     empty forward-looking executed-recipe and local-catalogue storage; snapshot
+     the complete executed recipe for newly started production; and retain the
+     bounded catalogue/free-text editing path. Derive the migration version at
+     implementation time under the active migration/deployment playbook.
    - Deferred: historical actual-material normalization, notifications or
      acknowledgements, inventory posting/ownership, and broader material/item
      workflows remain later separate phases. The deleted Task 14 catalogue
@@ -565,10 +577,13 @@ deferred status. It is grouped by affected surface and rough complexity.
    chooses a maintenance window and explicitly authorizes the documented
    production procedure. Source publication is not deployment.
 2. The current approved pilot development step is Task 20's initial,
-   forward-looking executed-recipe and material-catalogue phase only. It is
-   still unimplemented; begin with its scoped design/implementation plan and
-   migration assessment under
-   `docs/implementation-notes/sqlite-migration-and-deployment-playbook.md`.
+   forward-looking executed-recipe and material-catalogue workstream only. It
+   is still unimplemented. Begin with bounded reconciliation of the Task 20
+   specification and implementation plan to the SKU-based published Item Master
+   snapshot/projection and historical-snapshot safety rules. Confirm the
+   remaining Item Master v1 contract decisions before approving a revised plan;
+   do not begin code, schema, migration, or test implementation from the current
+   documents.
 3. Do not pull later historical normalization, notifications/acknowledgements,
    inventory posting or ownership, material/item research, or successor-MES
    scope into Task 20's initial phase.
