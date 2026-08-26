@@ -9,13 +9,14 @@ When a workstream starts, explore it with the user and create a temporary task
 tracker only if needed. Delete that temporary tracker after the workstream is
 complete. Persist the completed status and any remaining work here.
 
-## Current Production Status — August 25, 2026
+## Current Production Status — August 26, 2026
 
 - The production VM remains on the last confirmed deployed revision,
   `95093c0`. No later production deployment is recorded or authorized by this
   tracker update.
 - Task 22, terminal production-time correction and the timing-aware Finish
-  Review, is complete, reviewed, and merged into `origin/main`. The feature
+  Review, is source-complete, reviewed, and merged into the current source.
+  The feature
   implementation is recorded through `4635a3d` and its completion record at
   `82114ed`. It requires no migration or new dependency. Final verification
   passed 1,161 Python tests, 21 JavaScript tests, and a 56-group live Chromium
@@ -26,7 +27,12 @@ complete. Persist the completed status and any remaining work here.
   migration/rollback rehearsal, final production migration, and deployment
   through that revision were completed. The app was confirmed running in
   production on July 28, 2026. The durable deployment evidence is recorded in
-  `v2-files/MIGRATION-REPORT-2026-07-28.md`.
+  `v2-files/archive/MIGRATION-REPORT-2026-07-28.md`.
+- The bounded admin machine-time dashboard is source-complete and not deployed.
+  It is read-only, defaults to a rolling latest 24 hours, and accepts a
+  selectable completed `Europe/Sofia` calendar day. Its approved admin
+  navigation order is Импорт → Планиране → Технологични карти → Табло →
+  Настройки; this supersedes older dashboard-first notes.
 - The current source release candidate contains three later verified
   follow-ups: fixed-height sparse pallet print tables (`1203d25`), unified
   UTC/`Europe/Sofia` time handling (`f77ac6c`), and 15-minute-yellow/
@@ -47,7 +53,7 @@ complete. Persist the completed status and any remaining work here.
 - The previously discussed fixed-height pallet rows on the bottom print
   summary are implemented and verified in the current source release. They are
   no longer an open task.
-- Tasks 4, 6, 7, 13, 14, 15, and 17 below are deferred or optional future work.
+- Tasks 4, 7, 13, 15, and 17 below are deferred or optional future work.
   They are not missing requirements for the current production release.
 
 The Shift Manager downstream application cleanup caused by the V14.04
@@ -56,7 +62,7 @@ the later production normalization/deployment work.
 
 Shift management is functionally implemented and its automated and browser
 workflow checks pass against the approved behavior in
-`v2-files/TASK-01-SHIFT-MANAGEMENT.md`. The approved replacement terminal
+`v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md`. The approved replacement terminal
 header and shift-interface design is implemented, visually accepted, and has
 passed the final adversarial correction gate. Task 01 is complete and deployed.
 The follow-up kiosk URL cleanup, compact shift overview, shift-date formatting,
@@ -70,7 +76,7 @@ The original production-tracking workstreams are:
 1. Shift management for extrusion production.
 2. Bounded per-roll pallet attribution and operational-card summary.
 
-For this V2 workstream, `v2-files/TASK-01-SHIFT-MANAGEMENT.md` is the approved
+For this V2 workstream, `v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md` is the approved
 shift-management functionality source. Do not reintroduce older shift details
 from the repository-root `README.md` or this tracker's historical notes.
 
@@ -165,10 +171,11 @@ cross-card packaging are deferred and outside this implemented workstream.
 - The completed migration preserved production rolls, weights, timing,
   assignments, queues, and imported-source history except for the explicitly
   approved deterministic M006 destination-field normalization.
-- Future schema or stored-meaning changes must still follow
-  `v2-files/AGENTS.md`: SQLite-safe backup, immutable clone rehearsal,
-  temporary-database automated tests, integrity/foreign-key checks,
-  idempotence, and rollback preparation before production deployment.
+- Future schema or stored-meaning changes must follow
+  `docs/implementation-notes/sqlite-migration-and-deployment-playbook.md`:
+  SQLite-safe backup, immutable clone rehearsal, temporary-database automated
+  tests, integrity/foreign-key checks, idempotence, and rollback preparation
+  before production deployment.
 - Unknown historical shift assignment remains better than guessed historical
   assignment. Any approximate backfill would require a separate explicit
   decision and clearly labelled workflow.
@@ -210,7 +217,7 @@ deferred status. It is grouped by affected surface and rough complexity.
      verification pass. The production migration and deployment gates have
      been completed.
    - Goal: create one active extrusion shift at a time, require/open shift context for new production roll entry, and attach every new roll to the shift that produced it.
-   - Approved behavior: `v2-files/TASK-01-SHIFT-MANAGEMENT.md`.
+   - Approved behavior: `v2-files/archive/TASK-01-SHIFT-MANAGEMENT.md`.
 
 2. **Fix technology-card quantity fields to match the new Shift Manager export**
    - Surface: CSV/export import, database fields, admin technology-card edit screen, terminal details.
@@ -277,15 +284,10 @@ deferred status. It is grouped by affected surface and rough complexity.
 
 ### Terminal / Workstation
 
-6. **Worker recipe edit functionality**
-   - Surface: `/terminal`, `/admin`, database, possible inventory import/reference data.
-   - Complexity: large.
-   - Status: deferred future functionality; it is not part of the current
-     production release and its absence is not a current application defect.
-   - Goal: allow workers to record the actual recipe/materials used when ad hoc material changes happen during production.
-   - Desired behavior: workers can choose materials from inventory-like dropdowns, edit non-calculated recipe fields such as material selection and percentages, and use a free-form material entry only when the material cannot be found.
-   - Admin visibility: changed recipe/materials must be clearly brought to Shift Manager attention. Free-form material names must be especially visible because they may not match costing/inventory items.
-   - Needs design: inventory source, dropdown grouping to mimic the inventory worksheet, which recipe fields are editable, whether new material categories can be added, audit/history behavior, and how the Shift Manager acknowledges reviewed changes without pretending to approve or reject already-used material.
+6. **Editable executed recipes and material catalogue — consolidated into Task 20**
+   - Status: superseded as a standalone tracker entry. Do not revive the older
+     broad worker-recipe description or deleted Task 14 catalogue prototype.
+     The approved, bounded next feature is Task 20 below.
 
 7. **Add calculator access from the workstation**
    - Surface: `/terminal`, workstation VM/browser environment.
@@ -354,7 +356,7 @@ deferred status. It is grouped by affected surface and rough complexity.
    - Moving the quick acknowledgement/reset action into the machine boxes was
      deliberately excluded from the threshold follow-up. It remains the
      separate deferred Task 17 below.
-   - Durable references: `v2-files/TASK-10-ROLL-CHANGE-COUNTDOWN.md`,
+   - Durable references: `v2-files/archive/TASK-10-ROLL-CHANGE-COUNTDOWN.md`,
      `docs/implementation-notes/roll-change-countdown.md`, and browser evidence
      under `artifacts/ui-checks/roll-change-countdown/`.
 
@@ -376,7 +378,7 @@ deferred status. It is grouped by affected surface and rough complexity.
      The informational `1..999` marker is editable but never count-matched;
      pallet remains optional; waiting is not printable, cancellable, deletable,
      archivable, startable, pausable, resumable, or resequencable.
-   - Durable references: `v2-files/TASK-11-REWINDING.md` and
+   - Durable references: `v2-files/archive/TASK-11-REWINDING.md` and
      `docs/implementation-notes/rewinding-return-workflow.md`.
 
 ### Packaging / Pallets
@@ -411,31 +413,6 @@ deferred status. It is grouped by affected surface and rough complexity.
    - Decided direction: target `0-10 minutes` maximum data loss, tolerate roughly `1-4 hours` recovery time with paper fallback during outage, use two backup destinations beyond the VM (`USB attached to the Proxmox server` plus `cloud storage chosen later`), and keep recovery portable enough that another LAN PC or Linux/Windows machine can temporarily run the app if the main server is unavailable.
    - Possible extension: a warm standby server over Tailscale may receive validated backup copies and remain ready for manager-approved failover. It should run the approved app release rather than emergency `git pull` from the latest branch.
    - Needs design: exact cloud provider/tool, USB mount and monitoring approach, retention policy, checksum/metadata format, backup-health visibility, operator/admin alerting, restore drills, standby activation rules, terminal URL/failover behavior, UPS behavior, and scenario-specific runbooks.
-
-### Deferred Prototype / Recipe Catalogue
-
-14. **CSV-managed extrusion recipe catalogue and filterable material entry**
-   - Surface: `/admin/settings`, `/terminal`, `/admin` card detail, database.
-   - Complexity: medium; the visible behavior is simple, but safe import,
-     persistence, search, concurrent-entry behavior, and verification require
-     care. Current estimate: 6-10 engineering hours after the task is resumed.
-   - Status: discussion concluded and deferred in
-     `v2-files/TASK-14-RECIPE-CATALOG-PROTOTYPE.md`; no implementation is
-     authorized. The production-data migration is complete; resume this task
-     only if the user explicitly reopens the prototype.
-   - Goal: atomically replace a SQLite-backed reference catalogue from the exact
-     seven-column CSV represented by the V14.07 `RecipeCatalogExtrusion`
-     worksheet, then offer category-filtered, searchable suggestions in the
-     existing actual-material text fields while retaining free-form entry.
-   - Safety boundary: the catalogue needs a schema-only migration, but existing
-     cards and historical actual-material text are not migrated or linked to
-     mutable catalogue entries. Invalid imports leave the current catalogue
-     active, and successful replacements affect future suggestions only.
-   - Prototype purpose: test catalogue ownership, update frequency, search and
-     naming quality, and operator exception behavior before considering one
-     recipe-prefilled editable material field or strict allowed-list enforcement.
-   - Relationship: this is a bounded first prototype slice of Task 6, not the
-     full worker recipe edit and inventory workflow.
 
 ### Terminal / Workstation UI Follow-Up
 
@@ -496,11 +473,70 @@ deferred status. It is grouped by affected surface and rough complexity.
      behavior, keyboard/focus handling, event propagation, and supported
      viewport geometry.
 
+18. **Read-only sales and logistics reporting discovery**
+   - Surface: proposed reporting/print views outside the current two-route
+     pilot.
+   - Status: paused discovery only. `v2-files/TASK-18-SALES-REPORTING-DASHBOARD.md`
+     preserves context and does not authorize a route, permissions, network
+     change, data mutation, implementation, or deployment.
+
+19. **Physical-workstation maintenance display**
+   - Surface: the separately copyable `workstation-maintenance/` bundle and
+     the physical kiosk only; no FastAPI, SQLite, or production-lifecycle
+     change.
+   - Status: source-complete and locally verified, not copied, installed,
+     rebooted, or live-accepted on the physical workstation. The August 26
+     source-integration safety follow-up passed 85 focused maintenance tests
+     after regular-file and browser-process
+     hardening. The launcher records its active PID, process start time, and
+     selected browser; before signalling, the controller verifies current
+     start time, kiosk ownership, command, and executable identity.
+   - Operational gate: copying, installation, Chromium restart, reboot, and
+     physical-screen acceptance require a separately authorized quiet window.
+     See `v2-files/TASK-19-WORKSTATION-MAINTENANCE-DISPLAY.md`.
+
+20. **Editable executed recipes and material catalogue**
+   - Surface: `/terminal`, `/admin`, `/admin/settings`, CSV catalogue import,
+     and a future schema-only migration.
+   - Status: the next approved pilot feature; initial forward-looking phase
+     only, and unimplemented. Its scope and implementation-ready design are in
+     `v2-files/TASK-20-EDITABLE-EXECUTED-RECIPES.md` and
+     `docs/superpowers/plans/2026-08-12-editable-executed-recipes.md`.
+   - Boundary: add empty executed-recipe and catalogue storage, preserve the
+     Shift Manager planned recipe, snapshot the executed recipe for newly
+     started production, and support the approved catalogue/free-text editing
+     path. The migration version must be derived when work begins under the
+     active migration/deployment playbook.
+   - Deferred: historical actual-material normalization, notifications or
+     acknowledgements, inventory posting/ownership, and broader material/item
+     workflows remain later separate phases. The deleted Task 14 catalogue
+     prototype and old Task 6 recipe entry are consolidated here and must not
+     be revived independently.
+
+21. **Order-finish contextual summary extension**
+   - Surface: the existing Task 22 active-card Finish Review and the existing
+     waiting-card finalization confirmation.
+   - Status: residual future scope, unimplemented. It adds customer/product/
+     dimension/material and target-versus-produced context, a clear
+     remaining/over-target delta, and outcome wording. Existing order/machine
+     and pallet roll/gross/net content must be reused, not recalculated.
+   - Boundary: running/paused completion or entry into waiting reuse Task 22's
+     tokenized, editable timing review. `awaiting_rewinding` finalization keeps
+     its separate tokenless, timing-neutral confirmation and must not change the
+     timing ledger or `finished_at`. See
+     `v2-files/TASK-21-ORDER-FINISH-REVIEW.md`.
+
+69. **Successor MES and material/item research**
+   - Status: durable, non-executable research for a possible successor product,
+     not pilot scope. `v2-files/TASK-69-MES-SOFTWARE.md` and
+     `v2-files/inventory-and-materials/` must not authorize changes to this
+     bounded extrusion pilot, production data, or deployment.
+
 22. **Terminal production-time correction and timing-aware Finish Review**
    - Surface: `/terminal`, production timing ledger, and the existing Finish
      flow.
    - Complexity: medium to large.
-   - Status: complete, reviewed, and merged into `origin/main`. The feature
+   - Status: source-complete, reviewed, and merged into the current source. The feature
      implementation is recorded through `4635a3d` and its completion record at
      `82114ed`. It has not yet been deployed. No schema migration or new
      dependency is required.
@@ -528,19 +564,17 @@ deferred status. It is grouped by affected surface and rough complexity.
 1. Keep production on the last confirmed deployed revision until the user
    chooses a maintenance window and explicitly authorizes the documented
    production procedure. Source publication is not deployment.
-2. Resolve the upstream Excel workbook/export problem. This is the only active
-   operational issue identified by the user and is outside the production app.
-   Relevant export-side design context is preserved in
+2. The current approved pilot development step is Task 20's initial,
+   forward-looking executed-recipe and material-catalogue phase only. It is
+   still unimplemented; begin with its scoped design/implementation plan and
+   migration assessment under
+   `docs/implementation-notes/sqlite-migration-and-deployment-playbook.md`.
+3. Do not pull later historical normalization, notifications/acknowledgements,
+   inventory posting or ownership, material/item research, or successor-MES
+   scope into Task 20's initial phase.
+4. Task 18 remains paused discovery; Task 21 remains a small residual
+   contextual extension after Task 22; Task 17 and the other documented
+   deferred work remain separate and require fresh authorization.
+5. The upstream Excel workbook/export issue remains operational context outside
+   this application change. Relevant export-side design context is preserved in
    `docs/implementation-notes/oi-003-step-8-export-validation-interim.md`.
-3. Treat Task 17's machine-box acknowledgement relocation as a separate future
-   interaction task; do not bundle it into the completed threshold release.
-4. Do not reopen application development merely because Tasks 4, 6, 7, 13, 14,
-   15, or 17 remain documented. They are optional/deferred work and require
-   fresh explicit user authorization.
-5. If future application functionality is approved, run a short design pass,
-   write a scoped implementation plan, assess migration impact under
-   `v2-files/AGENTS.md`, test against temporary databases, and deploy through a
-   new safe release process.
-6. Keep package/label/shipping lifecycle, worker recipe editing, calculator,
-   recipe catalogue, backup-resilience expansion, and Task 15 separate from the
-   completed production release unless the user explicitly reopens them.

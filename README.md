@@ -28,14 +28,18 @@ Confirmed workflow facts:
 - There is one terminal.
 - The extrusion area should be represented as four fixed machines in the app. One of the machines may not be operational, but it should still exist in the app.
 - In addition to simple machine assignment, sequencing, and navigation, the
-  shift-manager admin area includes a bounded read-only view of the previous
-  24 hours of machine production time. It derives running, paused, and idle
+  shift-manager admin area includes a bounded read-only dashboard. By default
+  it shows the rolling latest 24 hours; the manager may instead select a
+  completed `Europe/Sofia` calendar day. It derives running, paused, and idle
   intervals from the existing timing ledger and compares order productivity
   with earlier production-complete orders on the same machine having the exact
   same normalized width and thickness.
 - The dashboard is an operational review aid, not a general-purpose OEE system:
   it records no downtime reasons, makes no automatic worker-performance
   judgment, and does not change production data.
+- The approved admin navigation order is `Импорт` → `Планиране` →
+  `Технологични карти` → `Табло` → `Настройки`. This supersedes older
+  dashboard-first navigation notes.
 - The terminal receives and executes extrusion operational cards assigned to those machines.
 - The shift manager continues using the existing Excel workbook.
 - The shift manager assigns each released card to a machine and gives it a simple numeric queue position.
@@ -386,7 +390,8 @@ Admin page behavior:
   recording rolls sent away, waiting for their return, and entering their
   returned weights is included.
 - Confection workflow.
-- Detailed machine-level tracking beyond simple machine assignment, sequencing, and quick navigation.
+- Detailed machine-level tracking beyond the bounded read-only dashboard,
+  simple machine assignment, sequencing, and quick navigation.
 - Writing terminal-entered data back into the Excel workbook.
 - Public internet exposure of the app.
 - Persistent data or workflow features outside the confirmed app data model.
@@ -948,6 +953,18 @@ Production deployment:
 - The reusable command is `bash scripts/deploy_production.sh` from `/opt/extrusion-terminal/app`.
 - A successful deploy backs up SQLite, fetches the latest GitHub `main`, restarts `extrusion-terminal.service`, and verifies `/health` reports the deployed Git revision.
 - Before rollout, take the normal SQLite-safe backup, then compare one known completed card's admin detail and print output in Sofia time.
+- Source publication, merging, or a local release-candidate commit is not a
+  production deployment. The production VM remains on its separately recorded
+  deployed revision until a user-authorized maintenance window completes the
+  documented deployment procedure.
+
+For any schema or stored-data-meaning change, first follow
+`docs/implementation-notes/sqlite-migration-and-deployment-playbook.md`:
+derive the next version from `app/migrations.py`, use the target database's
+`schema_migrations` record as applied-state evidence, rehearse only on
+immutable SQLite-safe backup clones, and deploy consuming code with its
+migrations through the documented procedure. Do not maintain a second Markdown
+migration register.
 
 Shutdown and restart:
 

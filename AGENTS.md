@@ -21,9 +21,9 @@ Confirmed scope:
 - Terminal execution of released extrusion operational cards.
 - Roll gross-weight entry, order-level tare weight, calculated net totals.
 - Production timing with start, pause, resume, and finish segments.
-- Read-only shift-manager dashboard for the previous 24 hours of machine
-  production, pauses, idle gaps, and exact-dimension historical productivity
-  comparison.
+- Read-only shift-manager dashboard: rolling latest 24 hours by default, or a
+  selectable completed `Europe/Sofia` calendar day, with machine production,
+  pauses, idle gaps, and exact-dimension historical productivity comparison.
 - Bounded extrusion-card return tracking for rolls sent to rewinding: a marker,
   explicit waiting state after extrusion ends, returned-roll entry, and
   deliberate terminal finalization.
@@ -76,6 +76,12 @@ For each feature slice:
 Do not leave large uncommitted feature piles. Do not mix unrelated refactors into a feature slice.
 
 Use `docs/implementation-notes/` for durable implementation notes that future prototype or ERP work may need to understand why a feature was built a certain way. Current contents include `print-output-reference.md`, which preserves the accepted print-output requirements, field mapping, validation/formatting rules, and the note that the remaining two-sheet print issue is local workstation/printer setup rather than an app defect, and `rewinding-return-workflow.md`, which preserves the bounded waiting/return lifecycle and M004 safety record.
+
+For every future schema or stored-data-meaning change, follow
+`docs/implementation-notes/sqlite-migration-and-deployment-playbook.md`.
+Derive the next version from `app/migrations.py` at implementation time and use
+the target database's `schema_migrations` table as applied-state evidence; do
+not create or maintain a separate Markdown migration register.
 
 ## Validation Rules
 

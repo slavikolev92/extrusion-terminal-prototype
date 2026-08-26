@@ -16,8 +16,10 @@ training text, automatic verdicts, and status commentary.
 
 - Add one server-rendered admin page at `/admin/dashboard`.
 - Make `/admin` redirect to `/admin/dashboard`.
-- Add `Табло` as the first admin navigation item and make the admin logo link
-  to the dashboard.
+- Use the approved admin navigation order: `Импорт` → `Планиране` →
+  `Технологични карти` → `Табло` → `Настройки`. The older dashboard-first
+  navigation direction is superseded; the logo follows the implemented admin
+  navigation contract.
 - Read existing `machines`, `cards`, `production_time_segments`, and
   `roll_entries` data only.
 - Do not add a database migration, stored baseline, background service,
@@ -26,7 +28,10 @@ training text, automatic verdicts, and status commentary.
 
 ## Time Window And Presentation
 
-- The window is the rolling 24 hours ending when the request is rendered.
+- By default, the window is the rolling latest 24 hours ending when the request
+  is rendered. A shift manager may select any completed `Europe/Sofia` calendar
+  day, which runs from that local midnight to the next local midnight (and is
+  therefore 23, 24, or 25 elapsed hours across daylight-saving transitions).
 - Stored timestamps remain canonical UTC. All visible timestamps use
   `Europe/Sofia` civil time.
 - The top timeline always shows all four fixed machines.
