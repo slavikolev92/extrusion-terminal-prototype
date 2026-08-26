@@ -165,8 +165,9 @@ and Tab/Shift+Tab wrapping in the start/end confirmations, reload gate, and
 dismissible states. It also proves that dismissing History or a historical
 summary makes the next Shift-button opening return to the overview.
 
-Design QA in `design-qa.md` recorded `final result: passed`: no actionable
-P0, P1, or P2 visual mismatch remains.
+The now-deleted point-in-time `design-qa.md` record remains recoverable through
+Git history and recorded `final result: passed`: no actionable P0, P1, or P2
+visual mismatch remained at that review gate.
 
 The reusable browser workflow is `scripts/verify_shift_management_ui.mjs`. For
 the complete isolated run (including initialization and an isolated server on

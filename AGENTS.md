@@ -33,6 +33,15 @@ Confirmed scope:
 - HTML/CSS print output for completed and archived cards, matching the existing
   Excel front/back operational card as closely as possible.
 - SQLite-safe backups and documented recovery before pilot use.
+- Task 20's approved next pilot slice is explicitly unimplemented: preserve the
+  import-owned planned recipe as a separate record; add a complete executed-
+  recipe snapshot plus maintained material catalogue; atomically snapshot the
+  complete planned recipe at first successful production start when no
+  executed recipe exists; and use a schema-only migration whose new storage is
+  empty with no historical backfill. That migration must preserve legacy
+  actual-material/batch values and every existing production record. Historical
+  normalization, recipe-difference notifications, and inventory integration or
+  posting are later phases outside the initial implementation.
 
 Explicitly out of scope unless the user confirms otherwise:
 
@@ -46,6 +55,9 @@ Explicitly out of scope unless the user confirms otherwise:
 - Writing terminal-entered data back to Excel.
 - Public internet exposure.
 - Expanding this pilot into a permanent ERP replacement.
+- Task 20 historical normalization, recipe-difference notifications, and
+  inventory integration or posting; only its approved initial forward-looking
+  phase is in pilot scope.
 
 ## Engineering Principles
 
@@ -74,6 +86,11 @@ For each feature slice:
 7. Prepare the change for review. Stage or commit only when the user explicitly asks.
 
 Do not leave large uncommitted feature piles. Do not mix unrelated refactors into a feature slice.
+
+Until Task 20 is implemented, treat README's existing third-column
+`Използван материал` plus independent `Партида` behavior as the current
+application contract. Do not describe the approved executed-recipe/catalogue
+model as already implemented or deployed.
 
 Use `docs/implementation-notes/` for durable implementation notes that future prototype or ERP work may need to understand why a feature was built a certain way. Current contents include `print-output-reference.md`, which preserves the accepted print-output requirements, field mapping, validation/formatting rules, and the note that the remaining two-sheet print issue is local workstation/printer setup rather than an app defect, and `rewinding-return-workflow.md`, which preserves the bounded waiting/return lifecycle and M004 safety record.
 

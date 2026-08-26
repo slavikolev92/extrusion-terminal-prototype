@@ -2,10 +2,10 @@
 
 ## Purpose
 
-Add a read-only admin dashboard that lets a shift manager review the previous
-24 hours of machine execution, see pauses and periods without production, and
-compare each recent order's recorded productivity with earlier comparable
-orders.
+Add a read-only admin dashboard that lets a shift manager review machine
+execution in the resolved dashboard window, see pauses and periods without
+production, and compare each order overlapping that window with earlier
+comparable orders.
 
 The accepted visual reference is
 `ui-prototypes/admin-machine-time-dashboard.html`. Production implementation
@@ -44,12 +44,15 @@ training text, automatic verdicts, and status commentary.
   overlapping interval; orange pause time is shown only where no order is
   running.
 - Every remaining uncovered interval is gray `Без производство` time.
-- Intervals are clipped to the 24-hour window.
+- Intervals are clipped to the resolved window: either the rolling latest 24
+  hours or the selected completed Sofia calendar day.
 - The machine summary is `Активна <duration> (<percentage>%)`, where active
-  time is the sum of clipped running segments and the percentage uses the full
-  24-hour window.
-- The time axis uses nine labels at three-hour intervals, including both
-  boundaries.
+  time is the sum of clipped running segments and the percentage denominator
+  is the resolved window's real elapsed duration.
+- Rolling mode uses nine absolute three-hour ticks, including both boundaries.
+  Calendar mode uses nine Sofia civil-time labels from `00:00` through `24:00`;
+  their positions are proportional to the selected day's real elapsed 23, 24,
+  or 25 hours rather than equally spaced by label count.
 - Timeline order labels contain the order number without `#` or `№`, the
   order's current productivity in parentheses, and a one-line truncated
   customer name.
@@ -71,14 +74,14 @@ training text, automatic verdicts, and status commentary.
 - The lower section is titled `Производителност по поръчки`.
 - It contains one machine section for each of Machines 1 through 4.
 - Each machine section lists each distinct order with a running segment that
-  overlaps the 24-hour window. An order appears once even when it has multiple
+  overlaps the resolved window. An order appears once even when it has multiple
   segments.
 - Rows are ordered by the order's first overlapping segment within each
   machine.
 - The displayed produced amount is the order's total recorded net kilograms,
-  not only kilograms entered during the 24-hour window.
+  not only kilograms entered during the resolved window.
 - The displayed active time is the order's complete recorded active time up
-  to finish or request time, not only the clipped 24-hour portion.
+  to finish or request time, not only the clipped window portion.
 - Productivity is total recorded net kilograms divided by complete recorded
   active hours. Produced kilograms and kilograms per hour are displayed as
   rounded whole numbers; durations are displayed as hours and minutes.
@@ -113,8 +116,8 @@ training text, automatic verdicts, and status commentary.
 
 ## Empty And Partial Data
 
-- Machines with no activity still show a full gray 24-hour timeline and an
-  empty productivity table body.
+- Machines with no activity still show a gray timeline filling the complete
+  resolved window and an empty productivity table body.
 - A recent order with no net kilograms or no positive active duration can
   still appear on the timeline, but its productivity and comparison gauge are
   left blank.
@@ -128,6 +131,11 @@ training text, automatic verdicts, and status commentary.
   open segments, all four machines, exact dimension normalization, complete
   order productivity, zero/one/multiple comparisons, prior-only matching, and
   the seven-row tooltip cap.
+- Window-mode tests prove rolling absolute three-hour ticks and the nine Sofia
+  civil labels for ordinary, 23-hour, and 25-hour calendar days. They also
+  prove that interval clipping, active-percentage denominator, overlapping-
+  order membership, and the empty gray timeline all use the same resolved
+  bounds and real elapsed duration.
 - Route tests prove `/admin/dashboard` renders and `/admin` redirects there.
 - Browser verification uses the local FastAPI app and repo-local Playwright,
   checks hover and keyboard tooltips, Refresh, customer truncation, all four

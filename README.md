@@ -75,6 +75,40 @@ Confirmed workflow facts:
 
 The terminal UI can present information in whatever way is practical. The printed paper output has a stricter requirement: it must visually match the Excel front and back card layout as closely as possible.
 
+## Approved Next Pilot Slice — Task 20 (Not Yet Implemented)
+
+Task 20's initial forward-looking editable-executed-recipe and material-
+catalogue phase is approved as the next pilot implementation. It is not current
+application behavior and has not been deployed.
+
+- The planned recipe remains owned by the Shift Manager import and remains a
+  separate source record.
+- A saved executed recipe is one complete recipe snapshot; screens resolve to
+  that complete snapshot when present and otherwise to the current planned
+  recipe. Planned and executed rows are never mixed for one card.
+- The maintained material catalogue is the normal source for deliberate
+  material selection, with the bounded explicit free-text exception defined in
+  `v2-files/TASK-20-EDITABLE-EXECUTED-RECIPES.md`.
+- If no executed snapshot exists, the first successful production start copies
+  the complete current planned recipe into executed-recipe storage atomically
+  with the existing start transition.
+- Initial deployment requires a schema-only migration that creates empty
+  executed-recipe, catalogue, and catalogue-metadata storage. It performs no
+  historical backfill and does not infer executed materials from old operator
+  text.
+- Legacy actual-material and batch/lot values, planned recipes, rolls, weights,
+  timing, shifts, pallets, statuses, imports, versions, timestamps, and all
+  other production data must remain unchanged by that migration.
+- Historical normalization, Shift Manager recipe-difference notifications, and
+  inventory integration or posting are later separate phases and remain out of
+  scope for the initial Task 20 implementation.
+
+Until Task 20 is implemented, the existing planned-material, third-column
+`Използван материал`, and independent `Партида` workflow below remains the
+authoritative description of current application behavior. Task 20 replaces
+that material-entry presentation only when its complete initial phase is
+implemented, verified, and separately deployed.
+
 ## Order Lifecycle And Access Model
 
 Confirmed model:
@@ -324,6 +358,12 @@ Notes display:
 - Leave enough vertical spacing between `Забележки` and `Рецепта` so the two sections read as separate parts of the card.
 
 Recipe display:
+
+The rules in this subsection describe the current implemented recipe UI. Task
+20's approved but unimplemented initial phase will replace the separate
+third-column actual-material input with its complete effective-recipe snapshot
+workflow; until that implementation is complete, the current rules remain in
+force.
 
 - The recipe table represents a single-layer extrusion recipe.
 - The row order should mimic the existing Excel technology card structure because the app imports the data from that structure.
@@ -1037,7 +1077,10 @@ Conflict handling:
 
 - Keep the app focused on extrusion until the user expands scope.
 - Do not implement non-extrusion card workflows.
-- Do not implement detailed machine tracking beyond the confirmed simple machine assignment, sequencing, and quick navigation.
+- Do not implement detailed machine tracking beyond the confirmed bounded
+  read-only dashboard, simple machine assignment, sequencing, and quick
+  navigation. Broader machine tracking, downtime-reason capture, OEE, and
+  automatic performance verdicts remain out of scope.
 - Do not implement named-user authentication for the pilot.
 - Do not implement locked finished orders or reopen workflows.
 - Do not require cancellation reasons.

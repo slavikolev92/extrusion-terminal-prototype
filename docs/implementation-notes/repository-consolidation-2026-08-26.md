@@ -1,8 +1,11 @@
 # Repository Consolidation — 2026-08-26
 
 This note records the repository-reconciliation decisions made on 2026-08-26.
-It is durable status evidence, not deployment authorization. `README.md`
-remains the authoritative pilot specification.
+Retaining a specification or research record is not proof that its behavior is
+implemented or deployed. Task 20 is separately approved as the next pilot
+implementation, but its initial phase remains unimplemented. This note is
+durable status evidence, not deployment authorization. `README.md` remains the
+authoritative pilot specification.
 
 ## Resulting Source And Production Boundary
 
@@ -23,9 +26,10 @@ remains the authoritative pilot specification.
   inventory/material ownership, and successor-MES work remain later separate
   work.
 
-No source cleanup, worktree cleanup, production deployment, workstation copy,
-installation, reboot, or live acceptance occurred as part of this
-reconciliation.
+No cleanup of the original checkout, refs, stash, or other worktrees occurred.
+The candidate did intentionally prune the source documents recorded in the
+ledger below. No production deployment, workstation copy, installation, reboot,
+or live acceptance occurred as part of this reconciliation.
 
 ## Original Dirty-Path Ledger
 
@@ -111,9 +115,13 @@ verifies current start time, kiosk ownership, command, and executable identity.
 Its physical-workstation actions require a separately authorized quiet window
 because they replace the launcher, restart Chromium, and require a reboot.
 
-### Durable future records and non-pilot research
+### Retained specifications and non-pilot research
 
-These eight paths were retained as records, not executable authority:
+These eight paths were retained as durable context. Their presence is not proof
+of implementation or deployment. Task 20 is the exception only in the narrow
+sense that its initial forward-looking phase is separately implementation-
+approved and next; it is still unimplemented and grants no deployment
+authority:
 
 - `v2-files/TASK-18-SALES-REPORTING-DASHBOARD.md` — paused discovery.
 - `v2-files/TASK-20-EDITABLE-EXECUTED-RECIPES.md` — next approved feature,
