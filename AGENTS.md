@@ -189,7 +189,21 @@ Tests can use temporary SQLite database paths. Do not test by mutating the real 
 - Do not install npm packages globally.
 - Do not mutate the real runtime database during tests.
 - For UI changes, verify against the live FastAPI app with Playwright before claiming completion.
-- Save screenshots/videos/traces under `artifacts/ui-checks/`.
+- `artifacts/` is the canonical disposable output directory. Anything placed
+  under it must be safe to delete after its result has been reviewed.
+- Put task-created screenshots, videos, traces, generated PDFs, JSON summaries,
+  logs, and other verification output under `artifacts/<task-slug>/`. Use
+  `artifacts/ui-checks/<task-slug>/` for browser/UI evidence.
+- Never place source inputs, runtime databases, database backups, production
+  database copies, durable requirements, implementation notes, or test fixtures
+  required by the suite under `artifacts/`.
+- After a change is accepted and its durable result is recorded in tracked
+  source or documentation, delete its generated artifacts by default. Preserve
+  them only when the user explicitly requests retention.
+- Tool-managed `.test-runtime/`, `.superpowers/sdd/`, `test-results/`,
+  Playwright reports, and Python `__pycache__/` directories are also disposable
+  generated output even when the responsible tool cannot place them under
+  `artifacts/`.
 - `artifacts/`, `node_modules/`, Playwright reports, screenshots, videos, traces, and local databases must stay untracked.
 - Before saying UI work is complete, run focused tests and capture at least one relevant Playwright screenshot.
 - Do not stage or commit unless the user explicitly asks.
