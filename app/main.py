@@ -138,6 +138,11 @@ TERMINAL_TIMING_TIME_PATTERN = re.compile(r"^\d{2}:\d{2}$")
 INVALID_FINISH_REVIEW_MESSAGE = (
     "Прегледът за приключване е невалиден. Отворете го отново."
 )
+PALLET_SUMMARY_UNAVAILABLE_MESSAGE = (
+    "Обобщението по палети не може да бъде показано. "
+    "Проверете данните за ролките."
+)
+ACTIVE_FINISH_REVIEW_MODES = {"complete", "enter_rewinding"}
 FINISH_REVIEW_TOKEN_KEY = secrets.token_bytes(32)
 
 
@@ -178,6 +183,7 @@ def encode_finish_review_token(
     loaded_version: int,
     reviewed_at: str,
     *,
+    recovery_mode: str | None = None,
     key: bytes,
 ) -> str:
     if (
@@ -186,6 +192,13 @@ def encode_finish_review_token(
         or type(loaded_version) is not int
         or loaded_version < 0
         or not isinstance(reviewed_at, str)
+        or (
+            recovery_mode is not None
+            and (
+                not isinstance(recovery_mode, str)
+                or recovery_mode not in ACTIVE_FINISH_REVIEW_MODES
+            )
+        )
     ):
         raise _finish_review_token_error()
     try:
@@ -198,12 +211,15 @@ def encode_finish_review_token(
     if parsed_reviewed_at.strftime(TIMING_TIMESTAMP_FORMAT) != reviewed_at:
         raise _finish_review_token_error()
 
+    payload_values: dict[str, int | str] = {
+        "card_id": card_id,
+        "loaded_version": loaded_version,
+        "reviewed_at": reviewed_at,
+    }
+    if recovery_mode is not None:
+        payload_values["recovery_mode"] = recovery_mode
     payload = json.dumps(
-        {
-            "card_id": card_id,
-            "loaded_version": loaded_version,
-            "reviewed_at": reviewed_at,
-        },
+        payload_values,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
@@ -231,16 +247,17 @@ def decode_finish_review_token(
         decoded = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
         raise _finish_review_token_error() from None
-    if not isinstance(decoded, dict) or set(decoded) != {
-        "card_id",
-        "loaded_version",
-        "reviewed_at",
+    required_fields = {"card_id", "loaded_version", "reviewed_at"}
+    if not isinstance(decoded, dict) or frozenset(decoded) not in {
+        frozenset(required_fields),
+        frozenset(required_fields | {"recovery_mode"}),
     }:
         raise _finish_review_token_error()
     canonical_token = encode_finish_review_token(
         decoded["card_id"],
         decoded["loaded_version"],
         decoded["reviewed_at"],
+        recovery_mode=decoded.get("recovery_mode"),
         key=key,
     )
     if not hmac.compare_digest(token, canonical_token):
@@ -251,6 +268,9 @@ def decode_finish_review_token(
 CARD_NOT_FOUND_MESSAGE = "Картата не е намерена."
 INVALID_LOADED_VERSION_MESSAGE = "Версията на заредената карта е невалидна. Презаредете картата."
 TERMINAL_CARD_UNAVAILABLE_MESSAGE = "Картата не е налична на терминала."
+TERMINAL_GENERIC_FINISH_QUESTION = (
+    "Сигурни ли сте, че искате да приключите тази поръчка?"
+)
 DEFAULT_PLANNING_ANCHOR = "unreleased-queue"
 DRAFT_SORT_DEFAULT = "order_number"
 DRAFT_SORT_DIRECTIONS = {"asc", "desc"}
@@ -2765,15 +2785,33 @@ async def finish_terminal_card_review(
     if not outcome.result.ok:
         return terminal_timing_error_response(outcome.result, outcome.issues)
     assert outcome.preview is not None
+
+    reviewed_card = fetch_terminal_card_detail(card_id)
+    if (
+        reviewed_card is None
+        or int(reviewed_card["version"]) != parsed_version
+        or str(reviewed_card["status"])
+        not in {STATUS_RUNNING, STATUS_PAUSED}
+    ):
+        return terminal_timing_error_response(
+            RuleResult(False, (STALE_CARD_MESSAGE,))
+        )
+    recovery_mode = terminal_active_finish_recovery_mode(reviewed_card)
+    if recovery_mode is None:
+        return invalid_finish_review_response()
+    attach_terminal_pallet_summary(reviewed_card)
+    can_confirm = reviewed_card["pallet_summary"].get("state") != "error"
     review_token = encode_finish_review_token(
         card_id,
         parsed_version,
         outcome.preview.reviewed_at,
+        recovery_mode=recovery_mode,
         key=FINISH_REVIEW_TOKEN_KEY,
     )
     return terminal_timing_preview_response(
         outcome.preview,
         review_token=review_token,
+        can_confirm=can_confirm,
     )
 
 
@@ -2859,22 +2897,24 @@ def terminal_timing_preview_response(
     preview: Any,
     *,
     review_token: str | None = None,
+    can_confirm: bool | None = None,
 ) -> JSONResponse:
     display_payload = terminal_timing_preview_display_payload(preview)
-    return JSONResponse(
-        {
-            "ok": True,
-            "review_token": review_token,
-            "preview": {
-                "reviewed_at_utc": preview.reviewed_at,
-                "draft": [
-                    terminal_timing_draft_row_payload(row)
-                    for row in preview.draft_rows
-                ],
-                **display_payload,
-            },
-        }
-    )
+    payload = {
+        "ok": True,
+        "review_token": review_token,
+        "preview": {
+            "reviewed_at_utc": preview.reviewed_at,
+            "draft": [
+                terminal_timing_draft_row_payload(row)
+                for row in preview.draft_rows
+            ],
+            **display_payload,
+        },
+    }
+    if can_confirm is not None:
+        payload["can_confirm"] = can_confirm
+    return JSONResponse(payload)
 
 
 def terminal_timing_preview_display_payload(preview: Any) -> dict[str, Any]:
@@ -3001,33 +3041,112 @@ async def finish_terminal_card(
     draft_rows: list[TimingDraftRow] = []
     timing_issues: tuple[TimingValidationIssue, ...] = ()
     finish_review_active = False
+    waiting_finish_review = False
+    finish_review_recovery_mode = None
     finish_preview = None
     retained_finish_preview_display = None
     parsed_version, workflow_result = parse_loaded_version(loaded_version)
     if parsed_version is not None:
-        card = fetch_terminal_card_detail(card_id)
+        operation_card = fetch_terminal_card_detail(card_id)
+        operation_status = (
+            str(operation_card["status"])
+            if operation_card is not None
+            else None
+        )
+        operation_version_matches = bool(
+            operation_card is not None
+            and int(operation_card["version"]) == parsed_version
+        )
+        waiting_finish_review = operation_status == STATUS_AWAITING_REWINDING
+        preread_active_finish = operation_status in {
+            STATUS_RUNNING,
+            STATUS_PAUSED,
+        }
         token_payload = (
             verified_finish_review_token_payload(
                 review_token,
                 card_id=card_id,
                 loaded_version=parsed_version,
             )
-            if isinstance(review_token, str) and review_token.strip()
+            if not waiting_finish_review
+            and isinstance(review_token, str)
+            and review_token.strip()
             else None
         )
         finish_review_active = bool(
-            token_payload is not None
-            or (
-                card is not None
-                and str(card["status"]) in {STATUS_RUNNING, STATUS_PAUSED}
-            )
+            preread_active_finish or token_payload is not None
         )
-        if token_payload is not None:
+        if finish_review_active:
+            finish_review_recovery_mode = (
+                token_payload.get("recovery_mode")
+                if token_payload is not None
+                else None
+            ) or terminal_active_finish_recovery_mode(operation_card)
             retained_finish_preview_display = parse_finish_review_preview_display(
                 finish_review_preview
             )
-        if finish_review_active:
-            if token_payload is None:
+        if fetch_active_shift() is None:
+            workflow_result = RuleResult(False, (NO_ACTIVE_SHIFT_MESSAGE,))
+        elif waiting_finish_review:
+            finish_review_recovery_mode = "finalize_rewinding"
+            if not operation_version_matches:
+                workflow_result = RuleResult(False, (STALE_CARD_MESSAGE,))
+            else:
+                assert operation_card is not None
+                workflow_result = validate_terminal_pallet_summary(operation_card)
+            if operation_version_matches and workflow_result.ok:
+                workflow_result = finalize_awaiting_rewinding_card(
+                    card_id,
+                    parsed_version,
+                    require_active_shift=True,
+                )
+                if (
+                    not workflow_result.ok
+                    and fetch_terminal_card_detail(card_id) is None
+                ):
+                    workflow_result = RuleResult(
+                        False,
+                        (TERMINAL_CARD_UNAVAILABLE_MESSAGE,),
+                )
+        elif finish_review_active:
+            if token_payload is not None:
+                try:
+                    draft_rows = parse_terminal_timing_draft(timing_draft)
+                except TerminalTimingDraftParseError as error:
+                    draft_rows = list(error.retained_draft)
+                    if not operation_version_matches:
+                        workflow_result = RuleResult(
+                            False,
+                            (STALE_CARD_MESSAGE,),
+                        )
+                    else:
+                        workflow_result = RuleResult(False, (str(error),))
+                        timing_issues = (error.issue,)
+                else:
+                    if not operation_version_matches:
+                        workflow_result = RuleResult(
+                            False,
+                            (STALE_CARD_MESSAGE,),
+                        )
+                    else:
+                        assert operation_card is not None
+                        workflow_result = validate_terminal_pallet_summary(
+                            operation_card
+                        )
+                    if operation_version_matches and workflow_result.ok:
+                        outcome = finish_card_with_timing_ledger(
+                            card_id,
+                            parsed_version,
+                            draft_rows,
+                            str(token_payload["reviewed_at"]),
+                            require_active_shift=True,
+                        )
+                        workflow_result = outcome.result
+                        timing_issues = outcome.issues
+                        finish_preview = outcome.preview
+            elif not operation_version_matches:
+                workflow_result = RuleResult(False, (STALE_CARD_MESSAGE,))
+            else:
                 workflow_result = RuleResult(
                     False,
                     (INVALID_FINISH_REVIEW_MESSAGE,),
@@ -3039,39 +3158,16 @@ async def finish_terminal_card(
                         message=INVALID_FINISH_REVIEW_MESSAGE,
                     ),
                 )
-            else:
-                try:
-                    draft_rows = parse_terminal_timing_draft(timing_draft)
-                except TerminalTimingDraftParseError as error:
-                    draft_rows = list(error.retained_draft)
-                    workflow_result = RuleResult(False, (str(error),))
-                    timing_issues = (error.issue,)
-                else:
-                    current_card = fetch_admin_card_detail(card_id)
-                    if (
-                        current_card is not None
-                        and int(current_card["version"]) != parsed_version
-                    ):
-                        workflow_result = RuleResult(False, (STALE_CARD_MESSAGE,))
-                    else:
-                        outcome = finish_card_with_timing_ledger(
-                            card_id,
-                            parsed_version,
-                            draft_rows,
-                            str(token_payload["reviewed_at"]),
-                            require_active_shift=True,
-                        )
-                        workflow_result = outcome.result
-                        timing_issues = outcome.issues
-                        finish_preview = outcome.preview
         else:
-            workflow_result = validate_terminal_card_available_for_post(card_id)
-            if workflow_result.ok:
-                workflow_result = finalize_awaiting_rewinding_card(
-                    card_id,
-                    parsed_version,
-                    require_active_shift=True,
-                )
+            unavailable_message = (
+                TERMINAL_CARD_UNAVAILABLE_MESSAGE
+                if operation_card is None
+                else STALE_CARD_MESSAGE
+            )
+            workflow_result = RuleResult(
+                False,
+                (unavailable_message,),
+            )
 
         if workflow_result.ok:
             updated_card = fetch_terminal_card_detail(card_id)
@@ -3081,23 +3177,40 @@ async def finish_terminal_card(
             ):
                 notice_code = "card_awaiting_rewinding"
 
+    finish_response_extra: dict[str, Any] = {
+        "finish_review_open": bool(
+            (finish_review_active or waiting_finish_review)
+            and not workflow_result.ok
+            and NO_ACTIVE_SHIFT_MESSAGE not in workflow_result.messages
+        ),
+        "finish_review_stale": bool(
+            (finish_review_active or waiting_finish_review)
+            and not workflow_result.ok
+            and STALE_CARD_MESSAGE in workflow_result.messages
+        ),
+        "finish_review_recovery_mode": finish_review_recovery_mode,
+        "finish_review_active_operation": finish_review_active,
+    }
+    if finish_review_active:
+        finish_response_extra.update(
+            {
+                "finish_review_token": review_token,
+                "finish_review_draft": draft_rows,
+                "finish_review_draft_json": timing_draft,
+                "finish_review_loaded_version": loaded_version,
+                "finish_review_issues": timing_issues,
+                "finish_review_preview": finish_preview,
+                "finish_review_preview_display": retained_finish_preview_display,
+            }
+        )
+
     return terminal_post_response(
         request,
         card_id,
         "workflow_result",
         workflow_result,
         notice_code=notice_code,
-        finish_review_open=finish_review_active and not workflow_result.ok,
-        finish_review_token=review_token,
-        finish_review_draft=draft_rows,
-        finish_review_draft_json=timing_draft,
-        finish_review_loaded_version=loaded_version,
-        finish_review_issues=timing_issues,
-        finish_review_preview=finish_preview,
-        finish_review_preview_display=retained_finish_preview_display,
-        finish_review_stale=(
-            not workflow_result.ok and STALE_CARD_MESSAGE in workflow_result.messages
-        ),
+        **finish_response_extra,
     )
 
 
@@ -3337,6 +3450,13 @@ def attach_terminal_pallet_summary(card: dict[str, Any]) -> None:
         }
 
 
+def validate_terminal_pallet_summary(card: dict[str, Any]) -> RuleResult:
+    attach_terminal_pallet_summary(card)
+    if card["pallet_summary"].get("state") == "error":
+        return RuleResult(False, (PALLET_SUMMARY_UNAVAILABLE_MESSAGE,))
+    return RuleResult(True)
+
+
 def terminal_context(
     selected_card_id: int | None = None,
     selected_machine_id: int | None = None,
@@ -3359,11 +3479,17 @@ def terminal_context(
         ordinary_timing_retained
         and extra.get("terminal_timing_loaded_version") is not None
     )
-    finish_review_recovery = bool(extra.get("finish_review_stale")) and (
-        "finish_review_draft" in extra
-        and extra.get("finish_review_loaded_version") is not None
+    active_finish_review_operation = bool(
+        extra.get("finish_review_active_operation") is True
+        or (
+            extra.get("finish_review_recovery_mode")
+            in ACTIVE_FINISH_REVIEW_MODES
+            and "finish_review_draft" in extra
+            and extra.get("finish_review_loaded_version") is not None
+            and isinstance(extra.get("finish_review_token"), str)
+            and bool(extra.get("finish_review_token", "").strip())
+        )
     )
-    timing_recovery = ordinary_timing_recovery or finish_review_recovery
     machine_queues = fetch_machine_queues()
     machines = fetch_machines()
     valid_machine_ids = {int(machine["id"]) for machine in machines}
@@ -3392,8 +3518,37 @@ def terminal_context(
             )
 
     selected_card = fetch_terminal_card_detail(selected_card_id) if selected_card_id else None
-    if selected_card is None and selected_card_id and timing_recovery:
+    if selected_card is None and selected_card_id and (
+        ordinary_timing_recovery or active_finish_review_operation
+    ):
         selected_card = fetch_admin_card_detail(selected_card_id)
+    active_finish_review_snapshot_stale = False
+    if active_finish_review_operation:
+        try:
+            active_finish_review_loaded_version = int(
+                extra.get("finish_review_loaded_version")
+            )
+        except (TypeError, ValueError):
+            active_finish_review_loaded_version = None
+        active_finish_review_snapshot_stale = bool(
+            selected_card is None
+            or active_finish_review_loaded_version is None
+            or int(selected_card["version"])
+            != active_finish_review_loaded_version
+            or str(selected_card["status"])
+            not in {STATUS_RUNNING, STATUS_PAUSED}
+        )
+        if active_finish_review_snapshot_stale:
+            extra["finish_review_stale"] = True
+            extra["finish_review_issues"] = ()
+            extra["workflow_result"] = RuleResult(
+                False,
+                (STALE_CARD_MESSAGE,),
+            )
+    active_finish_review_recovery = bool(extra.get("finish_review_stale")) and (
+        active_finish_review_operation
+    )
+    timing_recovery = ordinary_timing_recovery or active_finish_review_recovery
     if selected_card:
         selected_card["total_production_duration"] = format_duration(
             selected_card["total_production_seconds"],
@@ -3474,17 +3629,33 @@ def terminal_context(
             extra.get("terminal_timing_draft")
             if ordinary_timing_retained
             else extra.get("finish_review_draft")
-            if finish_review_recovery
+            if active_finish_review_recovery
             else None
         ),
         retained_loaded_version=(
             extra.get("terminal_timing_loaded_version")
             if ordinary_timing_retained
             else extra.get("finish_review_loaded_version")
-            if finish_review_recovery
+            if active_finish_review_recovery
             else None
         ),
         stale=timing_recovery,
+    )
+    finish_review_result = extra.get("workflow_result")
+    finish_review_messages = (
+        finish_review_result.messages
+        if isinstance(finish_review_result, RuleResult)
+        and not finish_review_result.ok
+        else extra.get("finish_review_messages", ())
+    )
+    terminal_finish_review = build_terminal_finish_review_model(
+        selected_card,
+        server_now_utc=str(terminal_snapshot["server_now_utc"]),
+        open=bool(extra.get("finish_review_open")),
+        locked=bool(extra.get("finish_review_stale")),
+        reload_required=bool(extra.get("finish_review_stale")),
+        messages=finish_review_messages,
+        recovery_mode=extra.get("finish_review_recovery_mode"),
     )
 
     context: dict[str, Any] = {
@@ -3500,6 +3671,7 @@ def terminal_context(
         "selected_machine_id": selected_machine_id,
         "terminal_snapshot": terminal_snapshot,
         "terminal_timing": terminal_timing,
+        "terminal_finish_review": terminal_finish_review,
         "status_labels": STATUS_LABELS,
         "recipe_rows": build_terminal_recipe_rows(selected_card) if selected_card else [],
         **shift_context,
@@ -3619,6 +3791,154 @@ def terminal_timing_display_from_stored_card(
         "production_seconds": production_seconds,
         "paused_seconds": paused_seconds,
         "intervals": intervals,
+    }
+
+
+def terminal_finish_boundary_display(value: str | None) -> str:
+    match = re.fullmatch(
+        r"(\d{2})\.(\d{2})\.(\d{4}) (\d{2}:\d{2})",
+        str(value or ""),
+    )
+    if match is None:
+        return str(value or "—")
+    day, month, year, clock = match.groups()
+    return f"{day}/{month}/{year[-2:]} {clock}"
+
+
+def terminal_finish_duration_display(total_seconds: int) -> str:
+    hours, remainder = divmod(max(total_seconds, 0), 3600)
+    minutes = remainder // 60
+    return f"{hours} ч {minutes:02d} м" if hours else f"{minutes} м"
+
+
+def terminal_rewinding_count_label(value: Any) -> str:
+    count = int(value or 0)
+    if count <= 0:
+        return ""
+    return f"{count} {'ролка' if count == 1 else 'ролки'}"
+
+
+def terminal_finish_product_display(card: dict[str, Any]) -> str:
+    parts = [
+        str(card.get(name) or "").strip()
+        for name in ("product_type", "size_thickness")
+    ]
+    return " ".join(part for part in parts if part) or "—"
+
+
+def terminal_active_finish_recovery_mode(
+    card: dict[str, Any] | None,
+) -> str | None:
+    if card is None or str(card.get("status") or "") not in {
+        STATUS_RUNNING,
+        STATUS_PAUSED,
+    }:
+        return None
+    return (
+        "enter_rewinding"
+        if int(card.get("rewinding_roll_count") or 0) > 0
+        else "complete"
+    )
+
+
+def build_terminal_finish_review_model(
+    selected_card: dict[str, Any] | None,
+    *,
+    server_now_utc: str,
+    open: bool = False,
+    locked: bool = False,
+    reload_required: bool = False,
+    messages: Any = (),
+    recovery_mode: str | None = None,
+) -> dict[str, Any] | None:
+    if selected_card is None:
+        return None
+
+    status = str(selected_card.get("status") or "")
+    marker_is_positive = int(selected_card.get("rewinding_roll_count") or 0) > 0
+    if locked and recovery_mode == "finalize_rewinding":
+        if status != STATUS_AWAITING_REWINDING:
+            return None
+        mode = recovery_mode
+    elif locked and recovery_mode in ACTIVE_FINISH_REVIEW_MODES:
+        mode = recovery_mode
+    elif status in {STATUS_RUNNING, STATUS_PAUSED}:
+        mode = "enter_rewinding" if marker_is_positive else "complete"
+    elif status == STATUS_AWAITING_REWINDING:
+        mode = "finalize_rewinding"
+    else:
+        return None
+
+    time_editable = mode in {"complete", "enter_rewinding"}
+    count_label = terminal_rewinding_count_label(
+        selected_card.get("rewinding_roll_count")
+    )
+    if mode == "enter_rewinding":
+        outcome_message = (
+            "След потвърждение: Изчаква пренавиване"
+            f" · {count_label}"
+        )
+    elif mode == "finalize_rewinding":
+        outcome_message = "Изчаква пренавиване"
+        if count_label:
+            outcome_message += f" · {count_label}"
+    else:
+        outcome_message = ""
+
+    stored_timing = terminal_timing_display_from_stored_card(
+        selected_card,
+        server_now_utc=server_now_utc,
+    )
+    production_seconds = int(stored_timing["production_seconds"])
+    paused_seconds = int(stored_timing["paused_seconds"])
+    finish_question = str(
+        selected_card.get("finish_confirmation_message") or ""
+    )
+    pallet_summary = selected_card.get("pallet_summary") or {}
+    normalized_messages = [str(message) for message in (messages or ()) if message]
+
+    return {
+        "mode": mode,
+        "open": bool(open),
+        "time_editable": time_editable,
+        "requires_review_token": time_editable,
+        "confirm_label": (
+            "Потвърди край на екструдирането"
+            if mode == "enter_rewinding"
+            else "Потвърди приключване"
+        ),
+        "outcome_message": outcome_message,
+        "warning_message": (
+            finish_question
+            if finish_question and finish_question != TERMINAL_GENERIC_FINISH_QUESTION
+            else ""
+        ),
+        "locked": bool(locked),
+        "reload_required": bool(reload_required),
+        "can_confirm": (
+            not locked
+            and not normalized_messages
+            and pallet_summary.get("state") != "error"
+        ),
+        "messages": normalized_messages,
+        "product_display": terminal_finish_product_display(selected_card),
+        "rewinding_count_label": count_label,
+        "timing_display": {
+            "first_start_display": terminal_finish_boundary_display(
+                stored_timing["first_start_display"]
+            ),
+            "proposed_stop_display": terminal_finish_boundary_display(
+                stored_timing["proposed_stop_display"]
+            ),
+            "production_seconds": production_seconds,
+            "paused_seconds": paused_seconds,
+            "production_duration_display": terminal_finish_duration_display(
+                production_seconds
+            ),
+            "paused_duration_display": terminal_finish_duration_display(
+                paused_seconds
+            ),
+        },
     }
 
 
@@ -3864,6 +4184,14 @@ def build_terminal_feedback(results: dict[str, Any]) -> dict[str, Any]:
             feedback["open_roll_row_id"] = results.get("roll_delete_selected_roll_id")
 
         if is_terminal_card_state_error(messages):
+            if (
+                result_name == "workflow_result"
+                and results.get("finish_review_recovery_mode")
+                == "finalize_rewinding"
+                and TERMINAL_CARD_UNAVAILABLE_MESSAGE in messages
+            ):
+                feedback["errors"]["topbar"] = messages
+                continue
             feedback["refresh_required"] = True
             continue
 
@@ -3960,9 +4288,7 @@ def enrich_terminal_card_display(card: dict[str, Any]) -> dict[str, Any]:
             "Искате ли да приключите поръчката?"
         )
     else:
-        card["finish_confirmation_message"] = (
-            "Сигурни ли сте, че искате да приключите тази поръчка?"
-        )
+        card["finish_confirmation_message"] = TERMINAL_GENERIC_FINISH_QUESTION
     card["quantity_display"] = build_quantity_display(card)
     card["recipe_rows"] = build_terminal_recipe_rows(card)
     for roll in card["roll_entries"]:

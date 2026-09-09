@@ -287,11 +287,25 @@ def stored_finish_snapshot(card_id: int) -> dict[str, object]:
                 (card_id,),
             ).fetchall()
         ]
+        queue_rows = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT id, status, machine_sequence, version
+                FROM cards
+                WHERE machine_id = ?
+                  AND status IN ('pending', 'running', 'paused')
+                ORDER BY machine_sequence, id
+                """,
+                (card["machine_id"],),
+            ).fetchall()
+        ]
     return {
         "card": card,
         "timing_rows": timing_rows,
         "roll_rows": roll_rows,
         "recipe_rows": recipe_rows,
+        "queue_rows": queue_rows,
     }
 
 
@@ -1781,6 +1795,15 @@ def test_terminal_finish_status_transition_retained_authenticated_locked_review(
         )
     )
     review_payload = json.loads(review_response.body)
+    expected_recovery_mode = (
+        "enter_rewinding"
+        if target_status == STATUS_AWAITING_REWINDING
+        else "complete"
+    )
+    assert main.decode_finish_review_token(
+        review_payload["review_token"],
+        key=main.FINISH_REVIEW_TOKEN_KEY,
+    )["recovery_mode"] == expected_recovery_mode
     submitted_json = json.dumps(
         review_payload["preview"]["draft"],
         separators=(",", ":"),
@@ -1803,14 +1826,201 @@ def test_terminal_finish_status_transition_retained_authenticated_locked_review(
     assert response.context["workflow_result"].messages == (db.STALE_CARD_MESSAGE,)
     assert response.context["finish_review_open"] is True
     assert response.context["finish_review_stale"] is True
-    assert response.context["finish_review_token"] == review_payload["review_token"]
-    assert response.context["finish_review_draft"] == submitted_draft
-    assert response.context["finish_review_draft_json"] == submitted_json
-    assert response.context["terminal_timing"]["locked"] is True
-    assert response.context["terminal_timing"]["status"] == target_status
-    assert b"data-terminal-timing-model" in response.body
+    effective_recovery_mode = (
+        "finalize_rewinding"
+        if target_status == STATUS_AWAITING_REWINDING
+        else expected_recovery_mode
+    )
+    assert response.context["finish_review_recovery_mode"] == effective_recovery_mode
+    if target_status == STATUS_AWAITING_REWINDING:
+        assert response.context["finish_review_active_operation"] is False
+        assert "finish_review_token" not in response.context
+        assert "finish_review_draft" not in response.context
+        assert response.context["terminal_timing"] is None
+    else:
+        assert response.context["finish_review_token"] == review_payload["review_token"]
+        assert response.context["finish_review_draft"] == submitted_draft
+        assert response.context["finish_review_draft_json"] == submitted_json
+        assert response.context["terminal_timing"]["locked"] is True
+        assert response.context["terminal_timing"]["status"] == target_status
+    assert response.context["terminal_finish_review"]["mode"] == effective_recovery_mode
+    assert response.context["terminal_finish_review"]["time_editable"] is (
+        target_status != STATUS_AWAITING_REWINDING
+    )
+    assert response.context["terminal_finish_review"]["locked"] is True
+    assert response.context["terminal_finish_review"]["reload_required"] is True
+    assert response.context["terminal_finish_review"]["can_confirm"] is False
+    if target_status != STATUS_AWAITING_REWINDING:
+        rendered_model = terminal_timing_model_from_response(response)
+        assert rendered_model["finish_review"]["open"] is True
+        assert rendered_model["finish_review"]["locked"] is True
+        assert rendered_model["finish_review"]["can_confirm"] is False
+        assert b'data-timing-finish-review="true"' in response.body
+    else:
+        assert b"data-waiting-finish-review-model" in response.body
     assert b"data-finish-review-overlay" in response.body
+    if target_status != STATUS_AWAITING_REWINDING:
+        assert b"data-finish-review-edit" in response.body
+        assert b"data-timing-reload hidden" in response.body
     assert stored_finish_snapshot(card_id) == after_competing_write
+
+
+@pytest.mark.parametrize("signed_recovery_mode", ("complete", "enter_rewinding"))
+def test_terminal_finish_malformed_draft_after_transition_to_waiting_uses_waiting_recovery(
+    connection,
+    signed_recovery_mode,
+):
+    setup_target_status = (
+        STATUS_COMPLETED
+        if signed_recovery_mode == "complete"
+        else STATUS_AWAITING_REWINDING
+    )
+    card_id, _, loaded_version = prepare_status_transition_race(
+        f"27019-finish-malformed-waiting-race-{signed_recovery_mode}",
+        setup_target_status,
+    )
+    review_response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    assert main.decode_finish_review_token(
+        review_payload["review_token"],
+        key=main.FINISH_REVIEW_TOKEN_KEY,
+    )["recovery_mode"] == signed_recovery_mode
+
+    if signed_recovery_mode == "complete":
+        marker_result = db.update_rewinding_roll_count(card_id, loaded_version, 1)
+        assert marker_result.ok
+        competing_version = card_version(card_id)
+        commit_competing_status_transition(
+            card_id,
+            competing_version,
+            STATUS_AWAITING_REWINDING,
+        )
+    else:
+        commit_competing_status_transition(
+            card_id,
+            loaded_version,
+            STATUS_AWAITING_REWINDING,
+        )
+    after_competing_write = stored_finish_snapshot(card_id)
+
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft="{",
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (db.STALE_CARD_MESSAGE,)
+    assert response.context["finish_review_open"] is True
+    assert response.context["finish_review_stale"] is True
+    assert response.context["finish_review_recovery_mode"] == "finalize_rewinding"
+    assert response.context["finish_review_active_operation"] is False
+    assert "finish_review_token" not in response.context
+    assert "finish_review_draft" not in response.context
+    assert response.context["terminal_timing"] is None
+    assert response.context["terminal_finish_review"]["mode"] == "finalize_rewinding"
+    assert response.context["terminal_finish_review"]["time_editable"] is False
+    assert response.context["terminal_finish_review"]["locked"] is True
+    assert response.context["terminal_finish_review"]["reload_required"] is True
+    assert response.context["terminal_finish_review"]["can_confirm"] is False
+    assert b"data-waiting-finish-review-model" in response.body
+    assert stored_finish_snapshot(card_id) == after_competing_write
+
+
+@pytest.mark.parametrize("signed_recovery_mode", ("complete", "enter_rewinding"))
+def test_terminal_finish_render_snapshot_locks_signed_review_when_malformed_parse_interleaves_waiting_transition(
+    connection,
+    monkeypatch,
+    signed_recovery_mode,
+):
+    setup_target_status = (
+        STATUS_COMPLETED
+        if signed_recovery_mode == "complete"
+        else STATUS_AWAITING_REWINDING
+    )
+    card_id, _, loaded_version = prepare_status_transition_race(
+        f"27019-finish-render-snapshot-race-{signed_recovery_mode}",
+        setup_target_status,
+    )
+    review_response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    assert main.decode_finish_review_token(
+        review_payload["review_token"],
+        key=main.FINISH_REVIEW_TOKEN_KEY,
+    )["recovery_mode"] == signed_recovery_mode
+
+    real_parse = main.parse_terminal_timing_draft
+
+    def parse_while_competing_actor_finishes(raw_value):
+        try:
+            return real_parse(raw_value)
+        finally:
+            if signed_recovery_mode == "complete":
+                marker_result = db.update_rewinding_roll_count(
+                    card_id,
+                    loaded_version,
+                    1,
+                )
+                assert marker_result.ok
+            commit_competing_status_transition(
+                card_id,
+                card_version(card_id),
+                STATUS_AWAITING_REWINDING,
+            )
+
+    monkeypatch.setattr(
+        main,
+        "parse_terminal_timing_draft",
+        parse_while_competing_actor_finishes,
+    )
+
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft="{",
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (db.STALE_CARD_MESSAGE,)
+    assert response.context["finish_review_open"] is True
+    assert response.context["finish_review_stale"] is True
+    assert response.context["finish_review_recovery_mode"] == signed_recovery_mode
+    assert response.context["selected_card"]["status"] == STATUS_AWAITING_REWINDING
+    assert response.context["terminal_finish_review"]["mode"] == signed_recovery_mode
+    assert response.context["terminal_finish_review"]["time_editable"] is True
+    assert response.context["terminal_finish_review"]["locked"] is True
+    assert response.context["terminal_finish_review"]["reload_required"] is True
+    assert response.context["terminal_finish_review"]["can_confirm"] is False
+    rendered_model = terminal_timing_model_from_response(response)
+    assert rendered_model["finish_review"]["open"] is True
+    assert rendered_model["finish_review"]["locked"] is True
+    assert rendered_model["finish_review"]["can_confirm"] is False
+    assert b'data-timing-finish-review="true"' in response.body
+    assert b"data-waiting-finish-review-model" not in response.body
+    assert b'data-waiting-finish-review="true"' not in response.body
+    stored = stored_finish_snapshot(card_id)
+    assert stored["card"]["status"] == STATUS_AWAITING_REWINDING
+    assert stored["card"]["version"] > loaded_version
 
 
 @pytest.mark.parametrize(
@@ -2437,8 +2647,138 @@ def test_finish_review_freezes_time_and_writes_nothing(connection, monkeypatch):
     payload = json.loads(response.body)
     assert payload["ok"] is True
     assert payload["preview"]["reviewed_at_utc"] == "2026-01-15 12:34:56"
+    assert payload["preview"]["first_start_display"] == "15.01.2026 10:00"
     assert payload["preview"]["proposed_stop_display"] == "15.01.2026 14:34"
+    assert payload["preview"]["production_seconds"] == 16_459
+    assert payload["preview"]["paused_seconds"] == 0
     assert stored_finish_snapshot(card_id) == before
+
+
+def test_finish_review_response_exposes_authoritative_unavailable_summary(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("27024-summary-unavailable", 1)
+    start_card(card_id)
+    set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:37",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+
+    def fail_summary(_roll_entries):
+        raise ArithmeticError("controlled summary failure")
+
+    monkeypatch.setattr(main, "build_terminal_pallet_summary", fail_summary)
+    response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(card_version(card_id)),
+        )
+    )
+
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+    assert payload["ok"] is True
+    assert payload["can_confirm"] is False
+
+
+def test_finish_review_derives_signed_mode_from_snapshot_fetched_after_preview(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("27024-preview-snapshot-mode", 1)
+    start_card(card_id)
+    set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:00",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    loaded_version = card_version(card_id)
+    real_preview = main.preview_terminal_finish_review_data
+    real_fetch = main.fetch_terminal_card_detail
+    preview_completed = False
+    fetch_states: list[bool] = []
+
+    def tracked_preview(*args, **kwargs):
+        nonlocal preview_completed
+        outcome = real_preview(*args, **kwargs)
+        preview_completed = True
+        return outcome
+
+    def snapshot_after_preview(selected_card_id):
+        fetch_states.append(preview_completed)
+        card = real_fetch(selected_card_id)
+        if card is not None and preview_completed:
+            card["rewinding_roll_count"] = 3
+        return card
+
+    monkeypatch.setattr(main, "preview_terminal_finish_review_data", tracked_preview)
+    monkeypatch.setattr(main, "fetch_terminal_card_detail", snapshot_after_preview)
+
+    response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert fetch_states == [True]
+    assert main.decode_finish_review_token(
+        payload["review_token"],
+        key=main.FINISH_REVIEW_TOKEN_KEY,
+    )["recovery_mode"] == "enter_rewinding"
+
+
+def test_finish_review_rejects_version_change_after_transactional_preview(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("27024-preview-version-race", 1)
+    start_card(card_id)
+    set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:00",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    loaded_version = card_version(card_id)
+    real_preview = main.preview_terminal_finish_review_data
+    competing_snapshot: dict[str, object] = {}
+
+    def preview_then_competing_change(*args, **kwargs):
+        outcome = real_preview(*args, **kwargs)
+        assert outcome.result.ok
+        assert db.update_tare_weight(card_id, loaded_version, "1.00").ok
+        competing_snapshot.update(stored_finish_snapshot(card_id))
+        return outcome
+
+    monkeypatch.setattr(
+        main,
+        "preview_terminal_finish_review_data",
+        preview_then_competing_change,
+    )
+
+    response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+
+    assert response.status_code == 409
+    assert json.loads(response.body)["messages"] == [db.STALE_CARD_MESSAGE]
+    assert stored_finish_snapshot(card_id) == competing_snapshot
 
 
 def test_running_finish_initial_review_rejects_closed_only_stored_ledger_without_mutation(
@@ -2561,6 +2901,7 @@ def test_finish_review_token_rejects_tampering_substitution_and_new_process_key(
         "card_id": card_id,
         "loaded_version": loaded_version,
         "reviewed_at": review_payload["preview"]["reviewed_at_utc"],
+        "recovery_mode": "complete",
     }
     draft_json = json.dumps(review_payload["preview"]["draft"])
     before = stored_finish_snapshot(card_id)
@@ -2671,6 +3012,65 @@ def test_finish_review_token_rejects_malformed_and_noncanonical_signed_payloads(
             "2026-1-1 00:00:00",
             key=key,
         )
+
+
+def test_finish_review_token_recovery_mode_is_type_safe_and_round_trips():
+    key = b"typed-recovery-mode-key" * 2
+    reviewed_at = "2026-01-01 00:00:00"
+
+    def signed_token(recovery_mode) -> str:
+        payload = json.dumps(
+            {
+                "card_id": 1,
+                "loaded_version": 2,
+                "recovery_mode": recovery_mode,
+                "reviewed_at": reviewed_at,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        payload_text = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+        signature = hmac.new(key, payload, hashlib.sha256).digest()
+        signature_text = (
+            base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+        )
+        return f"{payload_text}.{signature_text}"
+
+    for recovery_mode in ([], {}, "archive"):
+        with pytest.raises(ValueError) as error:
+            main.decode_finish_review_token(
+                signed_token(recovery_mode),
+                key=key,
+            )
+        assert str(error.value) == (
+            "Прегледът за приключване е невалиден. Отворете го отново."
+        )
+
+    legacy_token = main.encode_finish_review_token(
+        1,
+        2,
+        reviewed_at,
+        key=key,
+    )
+    assert main.decode_finish_review_token(legacy_token, key=key) == {
+        "card_id": 1,
+        "loaded_version": 2,
+        "reviewed_at": reviewed_at,
+    }
+
+    current_token = main.encode_finish_review_token(
+        1,
+        2,
+        reviewed_at,
+        recovery_mode="complete",
+        key=key,
+    )
+    assert main.decode_finish_review_token(current_token, key=key) == {
+        "card_id": 1,
+        "loaded_version": 2,
+        "recovery_mode": "complete",
+        "reviewed_at": reviewed_at,
+    }
 
 
 def test_finish_preview_rejects_stale_or_missing_shift_and_retains_draft(
@@ -3062,7 +3462,107 @@ def test_failed_active_finish_confirmation_reopens_retained_review_draft(
     assert response.context["finish_review_draft_json"] == retained_json
     assert response.context["finish_review_loaded_version"] == str(loaded_version)
     assert response.context["finish_review_preview"] is not None
+    assert response.context["terminal_finish_review"]["can_confirm"] is False
+    assert b"data-finish-review-confirm disabled" in response.body
     assert stored_finish_snapshot(card_id) == before
+
+
+def test_active_finish_shift_loss_uses_shift_gate_without_open_review(
+    connection,
+):
+    card_id = release_ready_card("27031-shift-loss-gate", 1)
+    start_card(card_id)
+    set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:00",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "25.00").ok
+    loaded_version = card_version(card_id)
+    review_response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    end_active_test_shift()
+    before = stored_finish_snapshot(card_id)
+
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=review_payload["review_token"],
+            timing_draft=json.dumps(review_payload["preview"]["draft"]),
+            finish_review_preview=json.dumps(review_payload["preview"]),
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (
+        db.NO_ACTIVE_SHIFT_MESSAGE,
+    )
+    assert response.context["finish_review_open"] is False
+    assert response.context["terminal_finish_review"]["open"] is False
+    assert response.context["terminal_finish_review"]["can_confirm"] is False
+    assert response.context["terminal_timing"] is None
+    assert b'data-shift-blocking="true"' in response.body
+    assert db.NO_ACTIVE_SHIFT_MESSAGE.encode("utf-8") in response.body
+    assert stored_finish_snapshot(card_id) == before
+
+
+def test_waiting_finish_shift_loss_renders_only_accessible_shift_recovery(
+    connection,
+):
+    """Catches a server-opened dead waiting review covering the shift gate."""
+
+    card_id = release_ready_card("27031-waiting-shift-loss-gate", 1)
+    start_card(card_id)
+    assert db.update_rewinding_roll_count(
+        card_id,
+        card_version(card_id),
+        1,
+    ).ok
+    assert db.finish_card(
+        card_id,
+        card_version(card_id),
+        require_active_shift=True,
+    ).ok
+    loaded_version = card_version(card_id)
+    end_active_test_shift()
+    before = stored_finish_snapshot(card_id)
+
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (
+        db.NO_ACTIVE_SHIFT_MESSAGE,
+    )
+    assert response.context["finish_review_open"] is False
+    assert response.context["terminal_finish_review"]["open"] is False
+    assert stored_finish_snapshot(card_id) == before
+    assert b'data-shift-blocking="true"' in response.body
+    assert b'data-shift-confirm-open="start"' in response.body
+    assert db.NO_ACTIVE_SHIFT_MESSAGE.encode("utf-8") in response.body
+    finish_overlay = re.search(
+        rb'<div class="timing-modal-overlay" id="finish-review-overlay"([^>]*)>',
+        response.body,
+    )
+    assert finish_overlay is not None
+    assert b"hidden" in finish_overlay.group(1)
+    assert b'aria-hidden="true"' in finish_overlay.group(1)
 
 
 def test_finish_preview_rejects_authenticated_review_time_after_transaction_time(
@@ -3765,6 +4265,134 @@ def test_reviewed_finish_applies_multirow_add_delete_and_lifecycle_once(
     )
 
 
+@pytest.mark.parametrize(
+    ("failure_kind", "expected_message"),
+    (
+        ("shift_lost", db.NO_ACTIVE_SHIFT_MESSAGE),
+        (
+            "missing_roll",
+            "Поне едно бруто тегло на ролка е задължително преди приключване.",
+        ),
+        (
+            "invalid_tare",
+            main.PALLET_SUMMARY_UNAVAILABLE_MESSAGE,
+        ),
+        (
+            "invalid_net",
+            main.PALLET_SUMMARY_UNAVAILABLE_MESSAGE,
+        ),
+        (
+            "roll_gap",
+            "Празните редове между ролките трябва да бъдат коригирани преди приключване.",
+        ),
+    ),
+)
+def test_active_finish_route_validation_failures_preserve_every_persisted_surface(
+    connection,
+    failure_kind,
+    expected_message,
+):
+    """Catches the review wrapper committing timing before lifecycle validation."""
+
+    order_number = f"27039-route-failure-{failure_kind}"
+    card_id = release_ready_card(order_number, 1)
+    start_card(card_id)
+    next_card_id = release_ready_card(f"{order_number}-next", 1)
+    set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:17",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    with db.connect() as setup_connection:
+        if failure_kind == "shift_lost":
+            setup_connection.execute(
+                """
+                INSERT INTO roll_entries (
+                    card_id, order_number, roll_number,
+                    gross_weight, tare_weight, net_weight
+                )
+                VALUES (?, ?, 1, 25, 1, 24)
+                """,
+                (card_id, order_number),
+            )
+        elif failure_kind == "invalid_tare":
+            setup_connection.execute(
+                """
+                INSERT INTO roll_entries (
+                    card_id, order_number, roll_number,
+                    gross_weight, tare_weight, net_weight
+                )
+                VALUES (?, ?, 1, 25, NULL, NULL)
+                """,
+                (card_id, order_number),
+            )
+        elif failure_kind == "invalid_net":
+            setup_connection.execute(
+                """
+                INSERT INTO roll_entries (
+                    card_id, order_number, roll_number,
+                    gross_weight, tare_weight, net_weight
+                )
+                VALUES (?, ?, 1, 25, 1, 99)
+                """,
+                (card_id, order_number),
+            )
+        elif failure_kind == "roll_gap":
+            setup_connection.executemany(
+                """
+                INSERT INTO roll_entries (
+                    card_id, order_number, roll_number,
+                    gross_weight, tare_weight, net_weight
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (card_id, order_number, 1, None, None, None),
+                    (card_id, order_number, 2, 25, 1, 24),
+                ),
+            )
+
+    loaded_version = card_version(card_id)
+    review_response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    assert review_response.status_code == 200, review_payload
+    assert review_payload["ok"] is True
+    assert review_payload["review_token"]
+    if failure_kind == "shift_lost":
+        end_active_test_shift()
+    before = stored_finish_snapshot(card_id)
+    assert {row["id"] for row in before["queue_rows"]} == {
+        card_id,
+        next_card_id,
+    }
+
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=str(review_payload["review_token"]),
+            timing_draft=json.dumps(review_payload["preview"]["draft"]),
+            finish_review_preview=json.dumps(review_payload["preview"]),
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (expected_message,)
+    assert response.context["finish_review_open"] is (
+        failure_kind != "shift_lost"
+    )
+    assert stored_finish_snapshot(card_id) == before
+
+
 @pytest.mark.parametrize("token_kind", ("missing", "tampered", "restart"))
 def test_actual_finish_endpoint_rejects_invalid_review_tokens_without_any_write(
     connection,
@@ -3887,6 +4515,258 @@ def test_tokenless_finish_cannot_use_pending_preread_to_finish_newly_running_car
     assert len(after["timing_rows"]) == 1
     assert after["timing_rows"][0]["ended_at"] is None
     assert after["timing_rows"][0]["end_reason"] is None
+
+
+def test_tokenless_finish_cannot_use_pending_preread_to_finalize_new_waiting_version(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("27040-tokenless-pending-to-waiting", 1)
+    pending_version = card_version(card_id)
+    submitted_version = pending_version + 1
+    active_shift = db.fetch_active_shift()
+    assert active_shift is not None
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            INSERT INTO production_time_segments (
+                card_id, started_at, ended_at, end_reason
+            ) VALUES (?, '2026-01-15 08:00:00', '2026-01-15 09:00:00', 'finish')
+            """,
+            (card_id,),
+        )
+        setup_connection.execute(
+            """
+            INSERT INTO roll_entries (
+                card_id, order_number, roll_number,
+                gross_weight, tare_weight, net_weight
+            ) VALUES (?, ?, 1, 25, 1, 24)
+            """,
+            (card_id, "27040-tokenless-pending-to-waiting"),
+        )
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET first_started_at = '2026-01-15 08:00:00',
+                finished_at = '2026-01-15 09:00:00',
+                rewinding_roll_count = 1,
+                final_extrusion_shift_occurrence_id = ?
+            WHERE id = ?
+            """,
+            (int(active_shift["id"]), card_id),
+        )
+    real_fetch = main.fetch_terminal_card_detail
+    competing_snapshot: dict[str, object] = {}
+    pre_reads = 0
+
+    def pending_preread_then_wait(selected_card_id):
+        nonlocal pre_reads
+        card = real_fetch(selected_card_id)
+        pre_reads += 1
+        if pre_reads == 1:
+            assert card is not None
+            assert card["status"] == STATUS_PENDING
+            assert int(card["version"]) == pending_version
+            with db.connect() as competing_connection:
+                competing_connection.execute(
+                    """
+                    UPDATE cards
+                    SET status = ?, version = version + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (STATUS_AWAITING_REWINDING, card_id),
+                )
+            competing_snapshot.update(stored_finish_snapshot(card_id))
+        return card
+
+    monkeypatch.setattr(main, "fetch_terminal_card_detail", pending_preread_then_wait)
+
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(submitted_version),
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (db.STALE_CARD_MESSAGE,)
+    assert stored_finish_snapshot(card_id) == competing_snapshot
+    assert competing_snapshot["card"]["status"] == STATUS_AWAITING_REWINDING
+    assert competing_snapshot["card"]["version"] == submitted_version
+
+
+def test_tokenless_waiting_finish_requires_preread_version_not_later_version(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("27040-tokenless-waiting-version-race", 1)
+    start_card(card_id)
+    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 1).ok
+    assert db.finish_card(card_id, card_version(card_id), require_active_shift=True).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "25.00").ok
+    waiting_version = card_version(card_id)
+    submitted_version = waiting_version + 1
+    real_fetch = main.fetch_terminal_card_detail
+    competing_snapshot: dict[str, object] = {}
+    pre_reads = 0
+
+    def waiting_preread_then_version_change(selected_card_id):
+        nonlocal pre_reads
+        card = real_fetch(selected_card_id)
+        pre_reads += 1
+        if pre_reads == 1:
+            assert card is not None
+            assert card["status"] == STATUS_AWAITING_REWINDING
+            assert int(card["version"]) == waiting_version
+            assert db.update_rewinding_roll_count(
+                card_id,
+                waiting_version,
+                2,
+            ).ok
+            competing_snapshot.update(stored_finish_snapshot(card_id))
+        return card
+
+    monkeypatch.setattr(
+        main,
+        "fetch_terminal_card_detail",
+        waiting_preread_then_version_change,
+    )
+
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(submitted_version),
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (db.STALE_CARD_MESSAGE,)
+    assert stored_finish_snapshot(card_id) == competing_snapshot
+    assert competing_snapshot["card"]["status"] == STATUS_AWAITING_REWINDING
+    assert competing_snapshot["card"]["version"] == submitted_version
+
+
+def test_invalid_active_token_recovery_cannot_reclassify_concurrent_waiting_card(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card("27040-invalid-token-waiting-race", 1)
+    start_card(card_id)
+    loaded_version = card_version(card_id)
+    competing_snapshot: dict[str, object] = {}
+
+    def invalidate_token_after_competing_finish(*args, **kwargs):
+        assert db.update_rewinding_roll_count(card_id, loaded_version, 1).ok
+        assert db.finish_card(
+            card_id,
+            card_version(card_id),
+            require_active_shift=True,
+        ).ok
+        competing_snapshot.update(stored_finish_snapshot(card_id))
+        return None
+
+    monkeypatch.setattr(
+        main,
+        "verified_finish_review_token_payload",
+        invalidate_token_after_competing_finish,
+    )
+
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token="invalid-token",
+            timing_draft="[]",
+        )
+    )
+
+    review = response.context["terminal_finish_review"]
+    assert response.status_code == 200
+    assert response.context["finish_review_active_operation"] is True
+    assert response.context["finish_review_open"] is True
+    assert review["mode"] == "complete"
+    assert review["time_editable"] is True
+    assert review["locked"] is True
+    assert review["reload_required"] is True
+    assert review["can_confirm"] is False
+    assert b'data-waiting-finish-review="true"' not in response.body
+    assert b"data-waiting-finish-review-model" not in response.body
+    assert stored_finish_snapshot(card_id) == competing_snapshot
+
+
+@pytest.mark.parametrize("mode", ("complete", "enter_rewinding", "finalize_rewinding"))
+def test_direct_finish_revalidates_pallet_summary_before_any_write(
+    connection,
+    monkeypatch,
+    mode,
+):
+    card_id = release_ready_card(f"27040-summary-finalize-{mode}", 1)
+    start_card(card_id)
+    set_single_segment(
+        card_id,
+        started_at="2026-01-15 08:00:00",
+        ended_at=None,
+        end_reason=None,
+        status=STATUS_RUNNING,
+    )
+    if mode == "complete":
+        assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
+        assert db.add_roll_gross_weight(card_id, card_version(card_id), "25.00").ok
+    else:
+        assert db.update_rewinding_roll_count(card_id, card_version(card_id), 1).ok
+    if mode == "finalize_rewinding":
+        assert db.finish_card(
+            card_id,
+            card_version(card_id),
+            require_active_shift=True,
+        ).ok
+        assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
+        assert db.add_roll_gross_weight(card_id, card_version(card_id), "25.00").ok
+
+    loaded_version = card_version(card_id)
+    review_payload = None
+    if mode != "finalize_rewinding":
+        review_response = asyncio.run(
+            finish_review_endpoint()(
+                make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+                card_id,
+                loaded_version=str(loaded_version),
+            )
+        )
+        review_payload = json.loads(review_response.body)
+    before = stored_finish_snapshot(card_id)
+
+    def fail_summary(_roll_entries):
+        raise ArithmeticError("controlled finalization summary failure")
+
+    monkeypatch.setattr(main, "build_terminal_pallet_summary", fail_summary)
+    response = asyncio.run(
+        main.finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=(review_payload or {}).get("review_token", ""),
+            timing_draft=json.dumps((review_payload or {}).get("preview", {}).get("draft", [])),
+            finish_review_preview=json.dumps((review_payload or {}).get("preview", {})),
+        )
+    )
+
+    expected_message = (
+        "Обобщението по палети не може да бъде показано. "
+        "Проверете данните за ролките."
+    )
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (expected_message,)
+    assert response.context["finish_review_open"] is True
+    assert response.context["terminal_finish_review"]["mode"] == mode
+    assert response.context["terminal_finish_review"]["can_confirm"] is False
+    assert b"data-finish-review-confirm disabled" in response.body
+    assert stored_finish_snapshot(card_id) == before
 
 
 def test_tokenless_finish_route_still_finalizes_awaiting_rewinding_card(connection):

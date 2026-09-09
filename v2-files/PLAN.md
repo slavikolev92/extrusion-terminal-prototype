@@ -9,7 +9,7 @@ When a workstream starts, explore it with the user and create a temporary task
 tracker only if needed. Delete that temporary tracker after the workstream is
 complete. Persist the completed status and any remaining work here.
 
-## Current Production Status — August 26, 2026
+## Current Production Status — September 9, 2026
 
 - The production VM remains on the last confirmed deployed revision,
   `95093c0`. No later production deployment is recorded or authorized by this
@@ -23,6 +23,13 @@ complete. Persist the completed status and any remaining work here.
   workflow. It has not yet been deployed. See
   `v2-files/archive/TASK-22-TERMINAL-TIMING-CORRECTION.md` and
   `docs/implementation-notes/terminal-timing-correction.md`.
+- Task 21, the unified order-finish review, is source-complete, locally
+  verified, and archived; it has not been deployed. Every eligible operator
+  finish now uses the shared order/time/pallet summary, with timing editable
+  only during initial extrusion completion. Its physical pallet-weight values
+  remain an explicit display-only `0.0` seam for the next approved slice. See
+  `v2-files/archive/TASK-21-ORDER-FINISH-REVIEW.md` and
+  `docs/implementation-notes/order-finish-review.md`.
 - The production profile, deterministic M006 normalization, production-clone
   migration/rollback rehearsal, final production migration, and deployment
   through that revision were completed. The app was confirmed running in
@@ -39,10 +46,11 @@ complete. Persist the completed status and any remaining work here.
   5-minute-red roll-change indicators (`f1d276f`). These changes require no
   schema or production-data migration. Publishing this source does not deploy
   it; production deployment remains a separate user-scheduled action.
-- Fresh verification of the current source checkout on August 3 passed 975
-  Python tests and 20 JavaScript tests. The implementation sessions also
-  completed the applicable guarded Playwright and print/PDF checks, with
-  evidence retained under `artifacts/ui-checks/`.
+- Final Task 21 checkpoint verification on September 9 passed 1,342 Python
+  tests, 45 JavaScript tests, syntax/import checks, and the guarded 62-group
+  Chromium workflow at 1440×900, 1366×768, and 1093×614. The browser run used
+  only a temporary SQLite database; its generated evidence was inspected and
+  removed after acceptance.
 - There is no known application blocker. The only current operational problem
   is in the upstream Excel workbook/export process, not in this application.
   The inspected V14.07 workbook still embeds the obsolete 26-column exporter,
@@ -498,13 +506,13 @@ deferred status. It is grouped by affected surface and rough complexity.
 20. **Editable executed recipes and material catalogue**
    - Surface: `/terminal`, `/admin`, `/admin/settings`, CSV catalogue import,
      and a future schema-only migration.
-   - Status: the next approved pilot workstream; initial forward-looking phase
-     only, and unimplemented. Its first step is bounded design/plan
-     reconciliation, not application, schema, or test implementation. The
-     existing Task 20 specification and plan retain the approved workflow
-     baseline but are not executable: their seven-column catalogue authority
-     and `FullMaterialName` identity are superseded by the latest Item Master
-     design.
+   - Status: approved to follow the physical pallet-weight slice; initial
+     forward-looking phase only, and unimplemented. Its first step is bounded
+     design/plan reconciliation, not application, schema, or test
+     implementation. The existing Task 20 specification and plan retain the
+     approved workflow baseline but are not executable: their seven-column
+     catalogue authority and `FullMaterialName` identity are superseded by the
+     latest Item Master design.
    - Start gate: Item Master v1 must first confirm its remaining SKU allocation,
      required-field/family, Item Name, alias, lifecycle, and published snapshot
      schema/version decisions. Then revise and approve both
@@ -524,19 +532,6 @@ deferred status. It is grouped by affected surface and rough complexity.
      workflows remain later separate phases. The deleted Task 14 catalogue
      prototype and old Task 6 recipe entry are consolidated here and must not
      be revived independently.
-
-21. **Order-finish contextual summary extension**
-   - Surface: the existing Task 22 active-card Finish Review and the existing
-     waiting-card finalization confirmation.
-   - Status: residual future scope, unimplemented. It adds customer/product/
-     dimension/material and target-versus-produced context, a clear
-     remaining/over-target delta, and outcome wording. Existing order/machine
-     and pallet roll/gross/net content must be reused, not recalculated.
-   - Boundary: running/paused completion or entry into waiting reuse Task 22's
-     tokenized, editable timing review. `awaiting_rewinding` finalization keeps
-     its separate tokenless, timing-neutral confirmation and must not change the
-     timing ledger or `finished_at`. See
-     `v2-files/TASK-21-ORDER-FINISH-REVIEW.md`.
 
 69. **Successor MES and material/item research**
    - Status: durable, non-executable research for a possible successor product,
@@ -564,32 +559,51 @@ deferred status. It is grouped by affected surface and rough complexity.
    - Verification: 1,161 full-suite Python tests, 317 focused Python tests, 21
      JavaScript tests, syntax/import checks, and a fresh 56-group Chromium
      workflow passed without unexpected console, page, or request errors.
-   - Relationship: this completed timing-correction feature is independent of
-     any broader future order-finish review task; it does not close or silently
-     expand such a task.
+   - Relationship: this completed timing-correction feature remained
+     independent when delivered. The later Task 21 implementation deliberately
+     reuses its token, editor, and atomic finish operation without changing the
+     Task 22 timing contract.
    - Durable references:
      `v2-files/archive/TASK-22-TERMINAL-TIMING-CORRECTION.md` and
      `docs/implementation-notes/terminal-timing-correction.md`.
+
+23. **Physical pallet-weight entry**
+   - Surface: pallet assignment/roll entry, the unified completion review, and
+     any admin correction surface approved during design.
+   - Status: next approved pilot slice; unimplemented. Task 21 provides only a
+     presentation-only `0.0` view-model seam and stores no physical pallet
+     weight.
+   - Design gate: first agree where and when operators enter pallet weight,
+     what owns one value, how blank/unassigned pallets behave, validation and
+     precision, correction/history rules, optimistic conflicts, and whether
+     the value affects any calculated total. Do not treat roll-core tare as
+     pallet weight and do not create a migration before this contract is
+     approved.
+   - Required implementation process: after the design and plan are approved,
+     follow the SQLite migration/deployment playbook for every schema or
+     stored-meaning change and use only temporary databases for tests and live
+     browser verification.
 
 ## Current Next Step And Future Order
 
 1. Keep production on the last confirmed deployed revision until the user
    chooses a maintenance window and explicitly authorizes the documented
    production procedure. Source publication is not deployment.
-2. The current approved pilot development step is Task 20's initial,
-   forward-looking executed-recipe and material-catalogue workstream only. It
-   is still unimplemented. Begin with bounded reconciliation of the Task 20
-   specification and implementation plan to the SKU-based published Item Master
-   snapshot/projection and historical-snapshot safety rules. Confirm the
-   remaining Item Master v1 contract decisions before approving a revised plan;
-   do not begin code, schema, migration, or test implementation from the current
-   documents.
-3. Do not pull later historical normalization, notifications/acknowledgements,
+2. The current approved pilot development step is physical pallet-weight entry.
+   Begin with bounded brainstorming and approve its ownership, entry,
+   validation, persistence, history, correction, conflict, and calculation
+   rules before writing application code or a schema migration.
+3. After physical pallet weight is complete, proceed to Task 20's initial,
+   forward-looking executed-recipe and material-catalogue workstream. Begin by
+   reconciling its specification and implementation plan to the SKU-based
+   published Item Master snapshot/projection and historical-snapshot safety
+   rules. Confirm the remaining Item Master v1 contract decisions before
+   approving a revised plan; do not execute the current documents as code.
+4. Do not pull later historical normalization, notifications/acknowledgements,
    inventory posting or ownership, material/item research, or successor-MES
    scope into Task 20's initial phase.
-4. Task 18 remains paused discovery; Task 21 remains a small residual
-   contextual extension after Task 22; Task 17 and the other documented
-   deferred work remain separate and require fresh authorization.
-5. The upstream Excel workbook/export issue remains operational context outside
+5. Task 18 remains paused discovery. Task 17 and the other documented deferred
+   work remain separate and require fresh authorization.
+6. The upstream Excel workbook/export issue remains operational context outside
    this application change. Relevant export-side design context is preserved in
    `docs/implementation-notes/oi-003-step-8-export-validation-interim.md`.

@@ -1101,116 +1101,670 @@
       color: var(--primary-text);
     }
 
+    .timing-modal-overlay[data-finish-review-overlay] {
+      padding: 14px;
+      background: rgba(52, 65, 76, .4);
+    }
+
     .finish-review-dialog {
-      width: min(960px, calc(100vw - 40px));
+      width: min(1360px, 94vw);
+      height: min(840px, calc(100vh - 36px));
       min-width: 0;
-      max-height: min(760px, calc(100vh - 40px));
-      border: 1px solid #b8c4d1;
-      border-radius: 14px;
-      background: var(--surface);
-      box-shadow: var(--shadow);
-      overflow: hidden;
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr) auto;
-    }
-
-    .finish-review-body {
       min-height: 0;
-      padding: 20px 24px 8px;
-      overflow-y: auto;
-      display: grid;
-      gap: 18px;
-    }
-
-    .finish-review-warning {
-      margin: 0;
-      color: #4f5c69;
-      font-size: 15px;
-      line-height: 1.45;
-    }
-
-    .finish-review-warning {
-      border: 1px solid #d9b555;
-      border-radius: 9px;
-      background: var(--yellow-soft);
-      color: #795000;
-      padding: 11px 13px;
-      font-weight: 800;
-    }
-
-    .finish-review-timing-summary {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      background: var(--surface-soft);
       overflow: hidden;
-    }
-
-    .finish-review-timing-item {
-      min-width: 0;
-      padding: 12px 14px;
-    }
-
-    .finish-review-timing-item + .finish-review-timing-item {
-      border-left: 1px solid var(--line);
-    }
-
-    .finish-review-timing-item span {
-      display: block;
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 800;
-    }
-
-    .finish-review-timing-item strong {
-      display: block;
-      margin-top: 5px;
-      color: var(--primary-text);
-      font-size: 17px;
-      line-height: 1.15;
-      font-variant-numeric: tabular-nums;
-      white-space: nowrap;
-    }
-
-    .finish-production-summary {
-      min-width: 0;
       display: grid;
-      gap: 9px;
+      grid-template-rows: 50px minmax(0, 1fr) 82px;
+      border: 1px solid #aebdca;
+      border-radius: 11px;
+      background: var(--surface);
+      box-shadow: 0 12px 34px rgba(28, 42, 54, .22);
+      color: #1d2732;
+      font-family: "Segoe UI", "Noto Sans", Arial, sans-serif;
+      font-variant-numeric: tabular-nums;
     }
 
-    .finish-production-summary h3 {
-      margin: 0;
-      color: var(--primary-text);
-      font-size: 17px;
-      line-height: 1.2;
-      font-weight: 900;
+    .finish-review-dialog:focus {
+      outline: none;
     }
 
-    .finish-review-actions {
-      padding: 16px 24px 22px;
+    .finish-review-topbar {
+      padding: 5px 13px 0;
       display: flex;
-      align-items: center;
-      justify-content: space-between;
+      align-items: flex-start;
+      justify-content: flex-end;
+    }
+
+    .finish-review-close {
+      width: 36px;
+      height: 36px;
+      min-height: 36px;
+      padding: 6px;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .finish-review-close:hover {
+      border-color: #dbe4eb;
+      background: #f7f9fb;
+    }
+
+    .finish-review-close img {
+      width: 21px;
+      height: 21px;
+    }
+
+    .finish-review-cards {
+      min-width: 0;
+      min-height: 0;
+      padding: 0 18px 20px;
+      display: grid;
+      grid-template-columns: minmax(500px, 2fr) minmax(0, 3fr);
       gap: 16px;
     }
 
-    .finish-review-actions-right {
-      display: flex;
-      gap: 9px;
+    .finish-review-left-stack {
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: minmax(max-content, 47fr) minmax(281px, 53fr);
+      gap: 16px;
     }
 
-    @media (max-width: 820px) {
-      .finish-review-timing-summary {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+    .finish-review-card {
+      min-width: 0;
+      min-height: 0;
+      padding: 14px 16px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid #c4d2de;
+      border-radius: 8px;
+      background: var(--surface);
+    }
+
+    .finish-review-card-header {
+      flex: 0 0 auto;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 13px;
+    }
+
+    .finish-review-icon {
+      width: 46px;
+      height: 46px;
+      flex: 0 0 46px;
+      display: inline-grid;
+      place-items: center;
+      border-radius: 7px;
+      background: #eaf4fc;
+    }
+
+    .finish-review-icon img {
+      width: 25px;
+      height: 25px;
+    }
+
+    .finish-review-card-title {
+      margin: 0;
+      color: #1f2d3a;
+      font-size: 21px;
+      line-height: 1.2;
+      font-weight: 800;
+      letter-spacing: -.15px;
+    }
+
+    .finish-review-list {
+      min-height: 0;
+      margin: 8px 0 0;
+      display: flex;
+      flex: 1 1 auto;
+      flex-direction: column;
+    }
+
+    .finish-review-row {
+      min-height: 38px;
+      flex: 1 0 auto;
+      display: grid;
+      grid-template-columns: 161px minmax(0, 1fr);
+      column-gap: 10px;
+      align-items: stretch;
+      border-top: 1px solid #dbe4eb;
+    }
+
+    .finish-review-row:first-child {
+      border-top: 0;
+    }
+
+    .finish-review-row dt,
+    .finish-review-row dd {
+      min-width: 0;
+      margin: 0;
+      padding-top: 1px;
+      display: flex;
+      align-items: center;
+      color: #1d2732;
+      font-size: 17px;
+      line-height: 1.25;
+      font-weight: 750;
+    }
+
+    .finish-review-row dt {
+      color: #587083;
+      font-size: 15px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .finish-review-row dd {
+      overflow-wrap: anywhere;
+    }
+
+    .finish-review-time-actions {
+      flex: 0 0 auto;
+      padding-top: 9px;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .finish-review-edit-button {
+      min-width: 176px;
+      min-height: 46px;
+      padding: 0 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 1px solid #6e9abd;
+      border-radius: 6px;
+      background: var(--surface);
+      color: #1c5d91;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .finish-review-edit-button:hover {
+      background: #edf5fc;
+    }
+
+    .finish-review-edit-button img {
+      width: 18px;
+      height: 18px;
+    }
+
+    .finish-review-production-card {
+      height: 100%;
+    }
+
+    .finish-review-table-wrap {
+      min-height: 0;
+      margin-top: 9px;
+      overflow-y: scroll;
+      overflow-x: hidden;
+      flex: 1 1 auto;
+      border: 1px solid #c4d2de;
+      border-radius: 7px;
+      background: var(--surface);
+      scrollbar-gutter: stable;
+      scrollbar-color: #8a9bab #edf2f6;
+      scrollbar-width: auto;
+    }
+
+    .finish-review-table-wrap::-webkit-scrollbar {
+      width: 14px;
+    }
+
+    .finish-review-table-wrap::-webkit-scrollbar-track {
+      background: #edf2f6;
+    }
+
+    .finish-review-table-wrap::-webkit-scrollbar-thumb {
+      min-height: 50px;
+      border: 3px solid #edf2f6;
+      border-radius: 8px;
+      background: #8a9bab;
+    }
+
+    .finish-review-table {
+      width: 100%;
+      table-layout: fixed;
+      border-collapse: separate;
+      border-spacing: 0;
+      color: #1d2732;
+      font-size: 16px;
+    }
+
+    .finish-review-table col {
+      width: 20%;
+    }
+
+    .finish-review-table th,
+    .finish-review-table td {
+      height: 44px;
+      padding: 8px 10px;
+      border-bottom: 1px solid #dbe4eb;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .finish-review-table th:not(:last-child),
+    .finish-review-table td:not(:last-child) {
+      border-right: 1px solid #dbe4eb;
+    }
+
+    .finish-review-table thead {
+      position: sticky;
+      z-index: 3;
+      top: 0;
+    }
+
+    .finish-review-table thead th {
+      height: 46px;
+      padding-right: 4px;
+      padding-left: 4px;
+      background: #edf4f9;
+      color: #334b5e;
+      font-size: 16px;
+      font-weight: 800;
+      box-shadow: 0 1px 0 #c4d2de;
+    }
+
+    .finish-review-table tbody tr:nth-child(even) {
+      background: #f5f9fc;
+    }
+
+    .finish-review-table tbody tr:nth-child(odd) {
+      background: var(--surface);
+    }
+
+    .finish-review-table tbody th {
+      font-weight: 800;
+    }
+
+    .finish-review-table tfoot {
+      position: sticky;
+      z-index: 3;
+      bottom: 0;
+    }
+
+    .finish-review-table tfoot th,
+    .finish-review-table tfoot td {
+      height: 48px;
+      border-top: 1px solid #a9bed0;
+      border-bottom: 0;
+      background: #dcecf8;
+      color: #142b3f;
+      font-weight: 850;
+      box-shadow: 0 -1px 0 rgba(169, 190, 208, .3);
+    }
+
+    .finish-review-empty,
+    .finish-review-error {
+      height: 90px !important;
+      color: #587083;
+      font-size: 16px;
+      font-weight: 700;
+      white-space: normal !important;
+    }
+
+    .finish-review-error {
+      color: #a21520;
+    }
+
+    .finish-review-footer {
+      min-width: 0;
+      padding: 0 18px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      border-top: 1px solid #dbe4eb;
+      background: #f7f9fb;
+    }
+
+    .finish-review-footer-status {
+      min-width: 0;
+      margin-right: auto;
+      display: grid;
+      gap: 5px;
+      color: #587083;
+      font-size: 14px;
+      line-height: 1.3;
+      font-weight: 750;
+    }
+
+    .finish-review-footer-status p {
+      margin: 0;
+    }
+
+    .finish-review-alert {
+      color: #a21520;
+    }
+
+    .finish-review-warning {
+      color: #795000;
+    }
+
+    .finish-review-footer-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+
+    .finish-review-cancel,
+    .finish-review-confirm {
+      min-height: 48px;
+      padding: 0 20px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .finish-review-cancel {
+      min-width: 110px;
+      border-color: #a9bac8;
+      background: var(--surface);
+      color: #23435f;
+    }
+
+    .finish-review-cancel:hover {
+      background: #eef3f7;
+    }
+
+    .finish-review-confirm {
+      min-width: 260px;
+      border-color: #0b355f;
+      background: #0b355f;
+      color: #fff;
+    }
+
+    .finish-review-confirm:hover {
+      border-color: #082a4c;
+      background: #082a4c;
+    }
+
+    .finish-review-confirm:disabled {
+      cursor: not-allowed;
+      opacity: .62;
+    }
+
+    .finish-review-close:focus-visible,
+    .finish-review-edit-button:focus-visible,
+    .finish-review-cancel:focus-visible,
+    .finish-review-confirm:focus-visible,
+    .finish-review-table-wrap:focus-visible {
+      outline: 3px solid rgba(39, 132, 199, .38);
+      outline-offset: 2px;
+    }
+
+    @media (max-height: 820px) {
+      .finish-review-dialog {
+        grid-template-rows: 44px minmax(0, 1fr) 70px;
       }
 
-      .finish-review-timing-item:nth-child(3) {
-        border-left: 0;
+      .finish-review-topbar {
+        padding-top: 4px;
       }
 
-      .finish-review-timing-item:nth-child(n + 3) {
-        border-top: 1px solid var(--line);
+      .finish-review-cards {
+        padding-right: 16px;
+        padding-bottom: 16px;
+        padding-left: 16px;
+        gap: 15px;
+      }
+
+      .finish-review-left-stack {
+        grid-template-rows: minmax(max-content, 47fr) minmax(281px, 53fr);
+        gap: 15px;
+      }
+
+      .finish-review-card {
+        padding: 13px 16px;
+      }
+
+      .finish-review-icon {
+        width: 42px;
+        height: 42px;
+        flex-basis: 42px;
+      }
+
+      .finish-review-icon img {
+        width: 24px;
+        height: 24px;
+      }
+
+      .finish-review-card-title {
+        font-size: 20px;
+      }
+
+      .finish-review-list {
+        margin-top: 8px;
+      }
+
+      .finish-review-row {
+        min-height: 38px;
+      }
+
+      .finish-review-row dt {
+        font-size: 15px;
+      }
+
+      .finish-review-row dd {
+        font-size: 17px;
+      }
+
+      .finish-review-time-actions {
+        padding-top: 9px;
+      }
+
+      .finish-review-edit-button {
+        min-width: 170px;
+        min-height: 44px;
+        padding-right: 15px;
+        padding-left: 15px;
+        font-size: 16px;
+      }
+
+      .finish-review-table-wrap {
+        margin-top: 9px;
+      }
+
+      .finish-review-table {
+        font-size: 16px;
+      }
+
+      .finish-review-table th,
+      .finish-review-table td {
+        height: 43px;
+      }
+
+      .finish-review-table thead th {
+        height: 44px;
+      }
+
+      .finish-review-table tfoot th,
+      .finish-review-table tfoot td {
+        height: 46px;
+      }
+
+      .finish-review-empty,
+      .finish-review-error {
+        height: 90px !important;
+      }
+
+      .finish-review-cancel,
+      .finish-review-confirm {
+        min-height: 46px;
+        font-size: 16px;
+      }
+
+      .finish-review-cancel {
+        min-width: 104px;
+      }
+
+      .finish-review-confirm {
+        min-width: 236px;
+      }
+    }
+
+    @media (max-width: 1150px), (max-height: 700px) {
+      .timing-modal-overlay[data-finish-review-overlay] {
+        padding: 8px;
+      }
+
+      .finish-review-dialog {
+        width: calc(100vw - 16px);
+        height: calc(100vh - 16px);
+        grid-template-rows: 38px minmax(0, 1fr) 62px;
+      }
+
+      .finish-review-topbar {
+        padding: 3px 9px 0;
+      }
+
+      .finish-review-close {
+        width: 32px;
+        height: 32px;
+        min-height: 32px;
+        padding: 6px;
+      }
+
+      .finish-review-close img {
+        width: 19px;
+        height: 19px;
+      }
+
+      .finish-review-cards {
+        padding: 0 12px 12px;
+        grid-template-columns: minmax(390px, 2fr) minmax(0, 3fr);
+        gap: 12px;
+      }
+
+      .finish-review-left-stack {
+        grid-template-rows: minmax(0, 1fr) minmax(0, 1.12fr);
+        gap: 12px;
+      }
+
+      .finish-review-card {
+        padding: 9px 11px;
+        overflow-x: hidden;
+        overflow-y: auto;
+      }
+
+      .finish-review-card-header {
+        gap: 9px;
+      }
+
+      .finish-review-icon {
+        width: 34px;
+        height: 34px;
+        flex-basis: 34px;
+      }
+
+      .finish-review-icon img {
+        width: 20px;
+        height: 20px;
+      }
+
+      .finish-review-card-title {
+        font-size: 18px;
+      }
+
+      .finish-review-list {
+        margin-top: 5px;
+      }
+
+      .finish-review-row {
+        min-height: 28px;
+        grid-template-columns: 115px minmax(0, 1fr);
+        column-gap: 7px;
+      }
+
+      .finish-review-row dt {
+        font-size: 13px;
+      }
+
+      .finish-review-row dd {
+        font-size: 14px;
+      }
+
+      .finish-review-time-actions {
+        padding-top: 5px;
+      }
+
+      .finish-review-edit-button {
+        min-width: 142px;
+        min-height: 34px;
+        padding: 0 12px;
+        font-size: 14px;
+      }
+
+      .finish-review-table-wrap {
+        margin-top: 5px;
+      }
+
+      .finish-review-table {
+        font-size: 13px;
+      }
+
+      .finish-review-table th,
+      .finish-review-table td {
+        height: 34px;
+        padding: 4px 5px;
+      }
+
+      .finish-review-table thead th {
+        height: 38px;
+        font-size: 12px;
+      }
+
+      .finish-review-table tfoot th,
+      .finish-review-table tfoot td {
+        height: 40px;
+      }
+
+      .finish-review-empty,
+      .finish-review-error {
+        height: 70px !important;
+        font-size: 13px;
+      }
+
+      .finish-review-footer {
+        padding: 0 12px;
+        gap: 10px;
+      }
+
+      .finish-review-footer-status {
+        gap: 2px;
+        font-size: 12px;
+        line-height: 1.2;
+      }
+
+      .finish-review-footer-actions {
+        gap: 8px;
+      }
+
+      .finish-review-cancel,
+      .finish-review-confirm {
+        min-height: 40px;
+        padding: 0 12px;
+        font-size: 14px;
+      }
+
+      .finish-review-cancel {
+        min-width: 88px;
+      }
+
+      .finish-review-confirm {
+        min-width: 206px;
       }
     }
 
@@ -4720,6 +5274,7 @@
           </div>
           <div class="action-area">
             <div class="actions">
+              {% set locked_active_finish_recovery = terminal_finish_review and terminal_finish_review.open and terminal_finish_review.locked and terminal_finish_review.mode in ["complete", "enter_rewinding"] %}
               {% if selected_card and selected_card_is_machine_focus and selected_card.status in ["running", "paused"] %}
                 <div class="roll-change-controls"
                      data-roll-change-controls
@@ -4738,10 +5293,11 @@
                   </button>
                 </div>
               {% endif %}
-              {% if selected_card and selected_card.status == "awaiting_rewinding" %}
-                <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post" data-lifecycle-slot="finish" data-finish-confirm-form="true" data-finish-confirm-message="{{ selected_card.finish_confirmation_message }}">
+              {% if selected_card and selected_card.status == "awaiting_rewinding" and not locked_active_finish_recovery %}
+                <form action="/terminal/cards/{{ selected_card.id }}/finish" method="post" data-lifecycle-slot="finish" data-waiting-finish-review="true">
                   <input type="hidden" name="loaded_version" value="{{ selected_card.version }}">
-                  <button class="action-button action-primary" type="submit">{{ terminal_icon("end") }}<span>Приключи</span></button>
+                  <button class="action-button action-primary" type="button"
+                          data-waiting-finish-trigger disabled aria-disabled="true">{{ terminal_icon("end") }}<span>Приключи</span></button>
                 </form>
               {% elif selected_card and selected_card.status in ["pending", "running", "paused"] %}
               {% if selected_card.status == "pending" and not selected_machine_occupying_card %}
@@ -5393,6 +5949,7 @@
           ],
           "messages": {{ (workflow_result.messages if workflow_result is defined and workflow_result else ()) | tojson }},
           "locked": {{ (finish_review_stale | default(false)) | tojson }},
+          "can_confirm": {{ (terminal_finish_review.can_confirm if terminal_finish_review else false) | tojson }},
           "preview": {% if finish_review_preview_display is defined and finish_review_preview_display %}{
             "first_start_display": {{ finish_review_preview_display.first_start_display | tojson }},
             "proposed_stop_display": {{ finish_review_preview_display.proposed_stop_display | tojson }},
@@ -5465,98 +6022,197 @@
         </div>
       </div>
     </div>
-    <div class="timing-modal-overlay" data-finish-review-overlay hidden aria-hidden="true">
+  {% endif %}
+  {% if terminal_finish_review %}
+    <div class="timing-modal-overlay" id="finish-review-overlay" data-finish-review-overlay
+         {% if not terminal_finish_review.open %}hidden aria-hidden="true"{% else %}aria-hidden="false"{% endif %}>
       <section class="finish-review-dialog" role="dialog" aria-modal="true"
-               aria-labelledby="finish-review-title" aria-describedby="finish-review-context"
+               aria-label="Преглед преди приключване на производствена поръчка"
                tabindex="-1" data-finish-review-dialog>
-        <header class="timing-dialog-header">
-          <h2 id="finish-review-title">Преглед преди приключване</h2>
-          <p class="timing-dialog-context" id="finish-review-context">
-            Машина {{ selected_card.machine_id }} · Поръчка №{{ selected_card.order_number }}
-          </p>
-        </header>
-        <div class="finish-review-body">
-          <div class="timing-dialog-alert" role="alert" tabindex="-1" data-finish-review-alert hidden></div>
-          <p class="finish-review-warning" data-finish-review-warning hidden></p>
-          <div class="finish-review-timing-summary" data-finish-timing-summary>
-            <div class="finish-review-timing-item">
-              <span>Начало</span><strong data-finish-first-start>—</strong>
-            </div>
-            <div class="finish-review-timing-item">
-              <span>Край</span><strong data-finish-proposed-stop>—</strong>
-            </div>
-            <div class="finish-review-timing-item">
-              <span>Производствено време</span><strong data-finish-production-total>—</strong>
-            </div>
-            <div class="finish-review-timing-item">
-              <span>Общо паузирано време</span><strong data-finish-paused-total>—</strong>
-            </div>
+        <div class="finish-review-topbar">
+          <button class="finish-review-close" type="button" aria-label="Затвори прегледа"
+                  data-finish-review-close>
+            <img src="{{ url_for('static', path='/images/terminal-ui/finish-review-close.svg') }}"
+                 alt="" aria-hidden="true">
+          </button>
+        </div>
+
+        <div class="finish-review-cards">
+          <div class="finish-review-left-stack">
+            <section class="finish-review-card" aria-labelledby="finish-review-order-title">
+              <header class="finish-review-card-header">
+                <span class="finish-review-icon" aria-hidden="true">
+                  <img src="{{ url_for('static', path='/images/terminal-ui/finish-review-factory.svg') }}" alt="">
+                </span>
+                <h2 class="finish-review-card-title" id="finish-review-order-title">Детайли на поръчката</h2>
+              </header>
+              <dl class="finish-review-list">
+                <div class="finish-review-row">
+                  <dt>Машина</dt>
+                  <dd>Машина {{ selected_card.machine_id }}</dd>
+                </div>
+                <div class="finish-review-row">
+                  <dt>Поръчка №</dt>
+                  <dd>{{ selected_card.order_number }}</dd>
+                </div>
+                <div class="finish-review-row">
+                  <dt>Клиент</dt>
+                  <dd>{{ selected_card.customer or "—" }}</dd>
+                </div>
+                <div class="finish-review-row">
+                  <dt>Продукт</dt>
+                  <dd>{{ terminal_finish_review.product_display }}</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="finish-review-card" aria-labelledby="finish-review-time-title">
+              <header class="finish-review-card-header">
+                <span class="finish-review-icon" aria-hidden="true">
+                  <img src="{{ url_for('static', path='/images/terminal-ui/finish-review-clock.svg') }}" alt="">
+                </span>
+                <h2 class="finish-review-card-title" id="finish-review-time-title">Производствено време</h2>
+              </header>
+              <dl class="finish-review-list" data-finish-timing-summary>
+                <div class="finish-review-row">
+                  <dt>Начало</dt>
+                  <dd data-finish-first-start>{{ terminal_finish_review.timing_display.first_start_display }}</dd>
+                </div>
+                <div class="finish-review-row">
+                  <dt>Край</dt>
+                  <dd data-finish-proposed-stop>{{ terminal_finish_review.timing_display.proposed_stop_display }}</dd>
+                </div>
+                <div class="finish-review-row">
+                  <dt>Произв. време</dt>
+                  <dd data-finish-production-total>{{ terminal_finish_review.timing_display.production_duration_display }}</dd>
+                </div>
+                <div class="finish-review-row">
+                  <dt>Паузирано време</dt>
+                  <dd data-finish-paused-total>{{ terminal_finish_review.timing_display.paused_duration_display }}</dd>
+                </div>
+              </dl>
+              {% if terminal_finish_review.time_editable %}
+                <div class="finish-review-time-actions">
+                  <button class="finish-review-edit-button" type="button"
+                          data-finish-review-edit aria-label="Редактирай производственото време">
+                    <img src="{{ url_for('static', path='/images/terminal-ui/finish-review-pencil.svg') }}"
+                         alt="" aria-hidden="true">
+                    <span>Редактирай</span>
+                  </button>
+                </div>
+              {% endif %}
+            </section>
           </div>
-          <section class="finish-production-summary" aria-labelledby="finish-production-summary-title">
-            <h3 id="finish-production-summary-title">Произведена продукция</h3>
-            {% if selected_card.pallet_summary.state == "ready" %}
-              <div class="pallet-summary-table-wrap">
-                <table class="pallet-summary-table" data-finish-production-summary>
-                  <thead>
-                    <tr>
-                      <th scope="col">Палет №</th>
-                      <th scope="col" class="numeric">Брой ролки</th>
-                      <th scope="col" class="numeric">Бруто, кг</th>
-                      <th scope="col" class="numeric">Тегло на палета, кг</th>
-                      <th scope="col" class="numeric">Нето, кг</th>
-                    </tr>
-                  </thead>
+
+          <section class="finish-review-card finish-review-production-card"
+                   aria-labelledby="finish-review-production-title">
+            <header class="finish-review-card-header">
+              <span class="finish-review-icon" aria-hidden="true">
+                <img src="{{ url_for('static', path='/images/terminal-ui/finish-review-clipboard-list.svg') }}" alt="">
+              </span>
+              <h2 class="finish-review-card-title" id="finish-review-production-title">Произведена продукция</h2>
+            </header>
+            <div class="finish-review-table-wrap" tabindex="0"
+                 aria-label="Произведени палети; таблицата се превърта вертикално">
+              <table class="finish-review-table" data-finish-production-summary>
+                <colgroup>
+                  <col>
+                  <col>
+                  <col>
+                  <col>
+                  <col>
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th scope="col">Палет №</th>
+                    <th scope="col">Брой ролки</th>
+                    <th scope="col">Бруто, кг</th>
+                    <th scope="col">Тегло палет, кг</th>
+                    <th scope="col">Нето, кг</th>
+                  </tr>
+                </thead>
+                {% if selected_card.pallet_summary.state == "ready" %}
                   <tbody>
                     {% for row in selected_card.pallet_summary.rows %}
                       <tr>
                         <th scope="row">{{ row.pallet_label }}</th>
-                        <td class="numeric">{{ row.roll_count }}</td>
-                        <td class="numeric">{{ row.gross_display }}</td>
-                        <td class="numeric" data-finish-pallet-weight>—</td>
-                        <td class="numeric">{{ row.net_display }}</td>
+                        <td>{{ row.roll_count }}</td>
+                        <td>{{ row.gross_display }}</td>
+                        <td data-finish-pallet-weight>{{ row.pallet_weight_display }}</td>
+                        <td>{{ row.net_display }}</td>
                       </tr>
                     {% endfor %}
                   </tbody>
                   <tfoot>
-                    <tr class="pallet-summary-total">
+                    <tr>
                       <th scope="row">Общо</th>
-                      <td class="numeric">{{ selected_card.pallet_summary.total.roll_count }}</td>
-                      <td class="numeric">{{ selected_card.pallet_summary.total.gross_display }}</td>
-                      <td class="numeric" data-finish-pallet-weight-total>—</td>
-                      <td class="numeric">{{ selected_card.pallet_summary.total.net_display }}</td>
+                      <td>{{ selected_card.pallet_summary.total.roll_count }}</td>
+                      <td data-finish-gross-total>{{ selected_card.pallet_summary.total.gross_display }}</td>
+                      <td data-finish-pallet-weight-total>{{ selected_card.pallet_summary.total.pallet_weight_display }}</td>
+                      <td data-finish-net-total>{{ selected_card.pallet_summary.total.net_display }}</td>
                     </tr>
                   </tfoot>
-                </table>
-              </div>
-            {% elif selected_card.pallet_summary.state == "empty" %}
-              <p class="pallet-summary-message">Няма въведени ролки.</p>
-            {% else %}
-              <p class="pallet-summary-message" role="alert">
-                Обобщението по палети не може да бъде показано. Проверете данните за ролките.
-              </p>
-            {% endif %}
+                {% elif selected_card.pallet_summary.state == "empty" %}
+                  <tbody>
+                    <tr>
+                      <td class="finish-review-empty" colspan="5">Няма въведени ролки.</td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <th scope="row">Общо</th>
+                      <td>{{ selected_card.pallet_summary.total.roll_count }}</td>
+                      <td data-finish-gross-total>{{ selected_card.pallet_summary.total.gross_display }}</td>
+                      <td data-finish-pallet-weight-total>{{ selected_card.pallet_summary.total.pallet_weight_display }}</td>
+                      <td data-finish-net-total>{{ selected_card.pallet_summary.total.net_display }}</td>
+                    </tr>
+                  </tfoot>
+                {% else %}
+                  <tbody>
+                    <tr>
+                      <td class="finish-review-error" data-finish-production-error colspan="5">
+                        Обобщението по палети не може да бъде показано. Проверете данните за ролките.
+                      </td>
+                    </tr>
+                  </tbody>
+                {% endif %}
+              </table>
+            </div>
           </section>
         </div>
-        <footer class="finish-review-actions">
-          <button class="action-secondary" type="button" data-finish-review-edit>Редактирай времето</button>
-          <div class="finish-review-actions-right">
-            <button class="action-secondary" type="button" data-finish-review-cancel>Отказ</button>
-            <button class="finish-confirm-primary" type="button" data-finish-review-confirm>Потвърди приключване</button>
+
+        <footer class="finish-review-footer">
+          <div class="finish-review-footer-status">
+            <div class="finish-review-alert" role="alert" tabindex="-1" data-finish-review-alert{% if not terminal_finish_review.messages %} hidden{% endif %}>
+              {% for message in terminal_finish_review.messages %}<p>{{ message }}</p>{% endfor %}
+            </div>
+            <p class="finish-review-warning" data-finish-review-warning
+               {% if not terminal_finish_review.warning_message %}hidden{% endif %}>{{ terminal_finish_review.warning_message }}</p>
+            <p class="finish-review-outcome" data-finish-review-outcome
+               {% if not terminal_finish_review.outcome_message %}hidden{% endif %}>{{ terminal_finish_review.outcome_message }}</p>
+          </div>
+          <div class="finish-review-footer-actions">
+            {% if terminal_finish_review.mode == "finalize_rewinding" %}
+              <a class="refresh-link" href="/terminal/cards/{{ selected_card.id }}"
+                 data-finish-review-reload{% if not terminal_finish_review.reload_required %} hidden{% endif %}>Презареди</a>
+            {% endif %}
+            <button class="finish-review-cancel" type="button" data-finish-review-cancel>Отказ</button>
+            <button class="finish-review-confirm" type="button" data-finish-review-confirm{% if not terminal_finish_review.can_confirm %} disabled{% endif %}>{{ terminal_finish_review.confirm_label }}</button>
           </div>
         </footer>
       </section>
     </div>
+    {% if terminal_finish_review.mode == "finalize_rewinding" %}
+      <script type="application/json" data-waiting-finish-review-model>
+        {
+          "open": {{ terminal_finish_review.open | tojson }},
+          "locked": {{ terminal_finish_review.locked | tojson }},
+          "can_confirm": {{ terminal_finish_review.can_confirm | tojson }},
+          "reload_required": {{ terminal_finish_review.reload_required | tojson }}
+        }
+      </script>
+    {% endif %}
   {% endif %}
-  <div class="finish-confirm-modal" id="finish-confirm-modal" data-finish-confirm-modal hidden aria-hidden="true">
-    <div class="finish-confirm-panel" role="dialog" aria-modal="true" aria-labelledby="finish-confirm-title" aria-describedby="finish-confirm-body">
-      <h2 class="finish-confirm-title" id="finish-confirm-title">Приключване на поръчка</h2>
-      <p class="finish-confirm-body" id="finish-confirm-body">Сигурни ли сте, че искате да приключите тази поръчка?</p>
-      <div class="finish-confirm-actions">
-        <button class="finish-confirm-secondary" type="button" data-finish-confirm-cancel>Не</button>
-        <button class="finish-confirm-primary" type="button" data-finish-confirm-submit>Да</button>
-      </div>
-    </div>
-  </div>
   <script>
     (() => {
       const toast = document.querySelector(".terminal-toast");
@@ -5881,142 +6537,6 @@
         setUnderlyingTerminalHidden(true);
         focusFirstShiftAction();
       }
-    })();
-
-    (() => {
-      const finishConfirmModal = document.getElementById("finish-confirm-modal");
-      const finishConfirmForms = document.querySelectorAll('form[data-finish-confirm-form="true"]');
-      const finishConfirmBody = finishConfirmModal?.querySelector("#finish-confirm-body");
-      const finishConfirmBack = finishConfirmModal?.querySelector("[data-finish-confirm-cancel]");
-      const finishConfirmSubmit = finishConfirmModal?.querySelector("[data-finish-confirm-submit]");
-      const finishConfirmDialog = finishConfirmModal?.querySelector("[role='dialog']");
-      const finishBackgroundTargets = Array.from(
-        document.querySelectorAll(".app, .terminal-toast"),
-      );
-      let pendingFinishForm = null;
-      let finishConfirmReturnFocus = null;
-      let finishConfirmSubmitting = false;
-      let finishBackgroundState = null;
-
-      if (!finishConfirmModal || finishConfirmForms.length === 0) {
-        return;
-      }
-
-      const setFinishBackgroundIsolated = (isolated) => {
-        if (finishBackgroundTargets.length === 0) {
-          return;
-        }
-        if (isolated) {
-          if (!finishBackgroundState) {
-            finishBackgroundState = finishBackgroundTargets.map((element) => ({
-              element,
-              inert: element.hasAttribute("inert"),
-              ariaHidden: element.getAttribute("aria-hidden"),
-            }));
-          }
-          finishBackgroundTargets.forEach((element) => {
-            element.setAttribute("inert", "");
-            element.setAttribute("aria-hidden", "true");
-          });
-          return;
-        }
-        if (!finishBackgroundState) {
-          return;
-        }
-        finishBackgroundState.forEach(({ element, inert, ariaHidden }) => {
-          if (inert) {
-            element.setAttribute("inert", "");
-          } else {
-            element.removeAttribute("inert");
-          }
-          if (ariaHidden === null) {
-            element.removeAttribute("aria-hidden");
-          } else {
-            element.setAttribute("aria-hidden", ariaHidden);
-          }
-        });
-        finishBackgroundState = null;
-      };
-
-      const finishFocusableElements = () => Array.from(
-        finishConfirmDialog?.querySelectorAll(
-          'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
-        ) || [],
-      ).filter((element) => !element.hidden && !element.closest("[hidden]"));
-
-      const trapFinishFocus = (event) => {
-        const focusable = finishFocusableElements();
-        if (focusable.length === 0) {
-          event.preventDefault();
-          finishConfirmDialog?.focus();
-          return;
-        }
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        if (!finishConfirmDialog?.contains(document.activeElement)) {
-          event.preventDefault();
-          first.focus();
-        } else if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault();
-          last.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first.focus();
-        }
-      };
-
-      const openFinishConfirm = (form) => {
-        pendingFinishForm = form;
-        finishConfirmReturnFocus = document.activeElement;
-        finishConfirmBody.textContent = form.dataset.finishConfirmMessage;
-        finishConfirmSubmit.disabled = false;
-        finishConfirmModal.hidden = false;
-        finishConfirmModal.setAttribute("aria-hidden", "false");
-        setFinishBackgroundIsolated(true);
-        finishConfirmSubmit?.focus();
-      };
-
-      const closeFinishConfirm = () => {
-        finishConfirmModal.hidden = true;
-        finishConfirmModal.setAttribute("aria-hidden", "true");
-        finishConfirmSubmit.disabled = false;
-        pendingFinishForm = null;
-        finishConfirmSubmitting = false;
-        setFinishBackgroundIsolated(false);
-        finishConfirmReturnFocus?.focus({ preventScroll: true });
-        finishConfirmReturnFocus = null;
-      };
-
-      finishConfirmForms.forEach((form) => {
-        form.addEventListener("submit", (event) => {
-          if (finishConfirmSubmitting) {
-            return;
-          }
-          event.preventDefault();
-          openFinishConfirm(form);
-        });
-      });
-
-      finishConfirmBack?.addEventListener("click", closeFinishConfirm);
-      finishConfirmSubmit?.addEventListener("click", () => {
-        if (finishConfirmSubmitting || !pendingFinishForm) {
-          return;
-        }
-        finishConfirmSubmitting = true;
-        finishConfirmSubmit.disabled = true;
-        pendingFinishForm.requestSubmit();
-      });
-
-      document.addEventListener("keydown", (event) => {
-        if (finishConfirmModal.hidden) {
-          return;
-        }
-        if (event.key === "Tab") {
-          trapFinishFocus(event);
-        } else if (event.key === "Escape") {
-          closeFinishConfirm();
-        }
-      });
     })();
 
     (() => {
@@ -6926,5 +7446,6 @@
   </script>
   <script type="module" src="{{ url_for('static', path='/js/roll_change_countdown.mjs') }}"></script>
   <script type="module" src="{{ url_for('static', path='/js/timing_interval_editor.mjs') }}"></script>
+  <script type="module" src="{{ url_for('static', path='/js/waiting_finish_review.mjs') }}"></script>
 </body>
 </html>

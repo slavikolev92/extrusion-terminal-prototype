@@ -33,7 +33,13 @@ Confirmed scope:
 - HTML/CSS print output for completed and archived cards, matching the existing
   Excel front/back operational card as closely as possible.
 - SQLite-safe backups and documented recovery before pilot use.
-- Task 20 remains the next approved pilot workstream and is explicitly
+- Physical pallet-weight entry is the next approved pilot slice and is
+  explicitly unimplemented. The unified finish review exposes only a
+  presentation-only `0.0` seam. Begin with bounded brainstorming and approve
+  ownership, entry, validation, persistence, history, correction, and
+  calculation semantics before application, schema, migration, or test work.
+  Never reinterpret roll-core tare as physical pallet weight.
+- Task 20 follows the physical pallet-weight slice and is explicitly
   unimplemented. Its first step is a bounded reconciliation of its existing
   specification and implementation plan with the retained latest Item Master
   design; do not begin application, schema, or test implementation from the

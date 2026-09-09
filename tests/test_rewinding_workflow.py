@@ -21,7 +21,12 @@ from app.constants import (
     STATUS_RUNNING,
 )
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
-from app.main import app, finish_terminal_card, terminal_context
+from app.main import (
+    PALLET_SUMMARY_UNAVAILABLE_MESSAGE,
+    app,
+    finish_terminal_card,
+    terminal_context,
+)
 
 
 REWINDING_COUNT_ERROR = (
@@ -133,6 +138,39 @@ def stored_card(card_id: int) -> dict[str, object]:
         ).fetchone()
         assert row is not None
         return dict(row)
+
+
+def finish_atomicity_snapshot(card_id: int) -> dict[str, object]:
+    """Capture every persisted finish surface that must move atomically."""
+
+    card = stored_card(card_id)
+    with db.connect() as connection:
+        queue = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT id, status, machine_sequence, version
+                FROM cards
+                WHERE machine_id = ?
+                  AND status IN ('pending', 'running', 'paused')
+                ORDER BY machine_sequence, id
+                """,
+                (card["machine_id"],),
+            ).fetchall()
+        ]
+        rolls = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM roll_entries WHERE card_id = ? ORDER BY id",
+                (card_id,),
+            ).fetchall()
+        ]
+    return {
+        "card": card,
+        "queue": queue,
+        "timing_rows": timing_snapshot(card_id),
+        "rolls": rolls,
+    }
 
 
 def insert_roll(
@@ -588,6 +626,82 @@ def test_reviewed_finish_to_waiting_is_atomic_for_running_and_paused(
     assert db.fetch_terminal_card_detail(card_id)["roll_entries"] == []
 
 
+def test_paused_marked_zero_roll_route_review_enters_waiting_atomically(
+    connection,
+    active_test_shift,
+):
+    """Catches the common review requiring rolls or rewriting paused timing."""
+
+    card_id = release_ready_card("61804-route-paused-wait")
+    next_card_id = release_ready_card("61805-route-paused-next")
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.pause_production_timing(card_id, int(card["version"])).ok
+    set_rewinding_marker(card_id, 3)
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = '2026-01-15 08:00:37',
+                ended_at = '2026-01-15 09:15:29',
+                end_reason = 'pause'
+            WHERE card_id = ?
+            """,
+            (card_id,),
+        )
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET first_started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+
+    review_payload = finish_review_payload(card_id)
+    loaded_version = int(card_state(card_id)["version"])
+    before = finish_atomicity_snapshot(card_id)
+    response = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            str(loaded_version),
+            review_token=str(review_payload["review_token"]),
+            timing_draft=json.dumps(review_payload["preview"]["draft"]),
+            finish_review_preview=json.dumps(review_payload["preview"]),
+        )
+    )
+
+    after = finish_atomicity_snapshot(card_id)
+    assert review_payload["ok"] is True
+    assert review_payload["can_confirm"] is True
+    assert review_payload["review_token"]
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=card_awaiting_rewinding"
+    )
+    assert after["card"]["status"] == STATUS_AWAITING_REWINDING
+    assert after["card"]["version"] == loaded_version + 1
+    assert after["card"]["finished_at"] == "2026-01-15 09:15:29"
+    assert after["card"]["final_extrusion_shift_occurrence_id"] == (
+        active_test_shift["id"]
+    )
+    next_before = next(row for row in before["queue"] if row["id"] == next_card_id)
+    assert after["queue"] == [
+        {
+            "id": next_card_id,
+            "status": STATUS_PENDING,
+            "machine_sequence": 1,
+            "version": next_before["version"],
+        }
+    ]
+    assert after["timing_rows"] == before["timing_rows"]
+    assert after["rolls"] == before["rolls"] == []
+
+
 @pytest.mark.parametrize("clear_marker", [False, True])
 def test_waiting_card_completion_changes_only_lifecycle_metadata(
     connection,
@@ -662,6 +776,153 @@ def test_waiting_finalization_remains_timing_immutable_without_review_payload(
     assert timing_snapshot(card_id) == before_segments
 
 
+def test_waiting_returned_roll_route_review_finalizes_once_without_timing_write(
+    connection,
+    active_test_shift,
+):
+    """Catches waiting review creating a token or mutating extrusion history."""
+
+    card_id = release_ready_card("61902-route-finalize")
+    next_card_id = release_ready_card("61903-route-next")
+    enter_rewinding_wait(card_id)
+    insert_roll(card_id, "61902-route-finalize", 1, 25, 1, 24)
+    review = terminal_context(card_id)["terminal_finish_review"]
+    before = finish_atomicity_snapshot(card_id)
+    before_timing_bytes = json.dumps(
+        before["timing_rows"],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    response = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            str(before["card"]["version"]),
+        )
+    )
+    after_first = finish_atomicity_snapshot(card_id)
+    duplicate = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            str(before["card"]["version"]),
+        )
+    )
+    after_duplicate = finish_atomicity_snapshot(card_id)
+    after_timing_bytes = json.dumps(
+        after_first["timing_rows"],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    assert review is not None
+    assert review["mode"] == "finalize_rewinding"
+    assert review["time_editable"] is False
+    assert review["requires_review_token"] is False
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=card_finished"
+    )
+    assert after_first["card"]["status"] == STATUS_COMPLETED
+    assert after_first["card"]["version"] == before["card"]["version"] + 1
+    assert after_first["card"]["finished_at"] == before["card"]["finished_at"]
+    assert after_first["card"]["final_extrusion_shift_occurrence_id"] == (
+        before["card"]["final_extrusion_shift_occurrence_id"]
+        == active_test_shift["id"]
+    )
+    assert after_timing_bytes == before_timing_bytes
+    assert after_first["rolls"] == before["rolls"]
+    assert [row["id"] for row in before["queue"]] == [next_card_id]
+    assert after_first["queue"] == before["queue"]
+    assert duplicate.status_code == 200
+    assert duplicate.context["workflow_result"].messages == (db.STALE_CARD_MESSAGE,)
+    assert after_duplicate == after_first
+
+
+def test_waiting_finalization_failure_reopens_read_only_review_without_side_effects(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("61902-reviewed-failure")
+    enter_rewinding_wait(card_id)
+    before_card = stored_card(card_id)
+    before_segments = timing_snapshot(card_id)
+
+    response = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            str(before_card["version"]),
+            review_token="ignored-waiting-token",
+            timing_draft="{",
+            finish_review_preview="{",
+        )
+    )
+
+    message = "Поне едно бруто тегло на ролка е задължително преди приключване."
+    review = response.context["terminal_finish_review"]
+    html = response.body.decode("utf-8")
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (message,)
+    assert review is not None
+    assert review["mode"] == "finalize_rewinding"
+    assert review["open"] is True
+    assert review["time_editable"] is False
+    assert review["requires_review_token"] is False
+    assert review["locked"] is False
+    assert review["can_confirm"] is False
+    assert response.context["terminal_timing"] is None
+    assert 'data-finish-review-close' in html
+    assert 'data-finish-review-cancel>Отказ</button>' in html
+    assert 'data-finish-review-confirm disabled' in html
+    assert stored_card(card_id) == before_card
+    assert timing_snapshot(card_id) == before_segments
+
+
+def test_stale_waiting_finalization_reopens_locked_reload_review_without_timing(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("61902-reviewed-stale")
+    enter_rewinding_wait(card_id)
+    loaded_version = int(stored_card(card_id)["version"])
+    before_segments = timing_snapshot(card_id)
+    before_finished_at = stored_card(card_id)["finished_at"]
+    set_rewinding_marker(card_id, 2)
+
+    response = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            str(loaded_version),
+            review_token="ignored-waiting-token",
+            timing_draft="{",
+            finish_review_preview="{",
+        )
+    )
+
+    review = response.context["terminal_finish_review"]
+    html = response.body.decode("utf-8")
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (db.STALE_CARD_MESSAGE,)
+    assert response.context["selected_card"]["status"] == STATUS_AWAITING_REWINDING
+    assert response.context["terminal_timing"] is None
+    assert review is not None
+    assert review["mode"] == "finalize_rewinding"
+    assert review["open"] is True
+    assert review["locked"] is True
+    assert review["reload_required"] is True
+    assert review["can_confirm"] is False
+    assert 'data-finish-review-reload' in html
+    assert 'data-finish-review-confirm disabled' in html
+    assert stored_card(card_id)["status"] == STATUS_AWAITING_REWINDING
+    assert stored_card(card_id)["finished_at"] == before_finished_at
+    assert timing_snapshot(card_id) == before_segments
+
+
 @pytest.mark.parametrize(
     ("rolls", "expected_message"),
     [
@@ -671,11 +932,15 @@ def test_waiting_finalization_remains_timing_immutable_without_review_payload(
         ),
         (
             ((1, 25, None, None),),
-            "Всяка ролка с бруто тегло трябва да има шпула преди приключване.",
+            PALLET_SUMMARY_UNAVAILABLE_MESSAGE,
         ),
         (
             ((1, 25, 1, None),),
-            "Всяка ролка с бруто тегло трябва да има шпула преди приключване.",
+            PALLET_SUMMARY_UNAVAILABLE_MESSAGE,
+        ),
+        (
+            ((1, 25, 1, 99),),
+            PALLET_SUMMARY_UNAVAILABLE_MESSAGE,
         ),
         (
             ((1, None, None, None), (2, 25, 1, 24)),
@@ -692,6 +957,7 @@ def test_waiting_card_completion_rejects_incomplete_roll_ledger_without_side_eff
     order_number = f"6200{len(rolls)}{sum(1 for row in rolls if row[1] is None)}"
     card_id = release_ready_card(order_number)
     enter_rewinding_wait(card_id)
+    next_card_id = release_ready_card(f"{order_number}-next")
     for roll_number, gross_weight, tare_weight, net_weight in rolls:
         insert_roll(
             card_id,
@@ -701,15 +967,24 @@ def test_waiting_card_completion_rejects_incomplete_roll_ledger_without_side_eff
             tare_weight,
             net_weight,
         )
-    before_card = stored_card(card_id)
-    before_segments = timing_snapshot(card_id)
+    before = finish_atomicity_snapshot(card_id)
+    assert [row["id"] for row in before["queue"]] == [next_card_id]
 
-    result = db.finish_card(card_id, int(before_card["version"]))
+    response = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            str(before["card"]["version"]),
+        )
+    )
 
-    assert not result.ok
-    assert result.messages == (expected_message,)
-    assert stored_card(card_id) == before_card
-    assert timing_snapshot(card_id) == before_segments
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (expected_message,)
+    assert response.context["terminal_finish_review"]["open"] is True
+    assert response.context["terminal_finish_review"]["mode"] == (
+        "finalize_rewinding"
+    )
+    assert finish_atomicity_snapshot(card_id) == before
 
 
 @pytest.mark.parametrize(
@@ -1375,3 +1650,61 @@ def test_terminal_finish_waiting_card_keeps_selection_in_produced_orders(
         "messages": ("Картата е приключена.",)
     }
     assert context["terminal_feedback"]["open_rewinding_dialog"] is False
+
+
+def test_waiting_finish_review_uses_only_closed_stored_timing(
+    connection,
+    active_test_shift,
+):
+    card_id = release_ready_card("63112")
+    enter_rewinding_wait(card_id)
+    with db.connect() as setup_connection:
+        first_segment_id = int(
+            setup_connection.execute(
+                """
+                SELECT id
+                FROM production_time_segments
+                WHERE card_id = ?
+                """,
+                (card_id,),
+            ).fetchone()["id"]
+        )
+        setup_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = '2026-01-15 08:00:37',
+                ended_at = '2026-01-15 09:15:37'
+            WHERE id = ?
+            """,
+            (first_segment_id,),
+        )
+        setup_connection.execute(
+            """
+            INSERT INTO production_time_segments (
+                card_id, started_at, ended_at, end_reason
+            )
+            VALUES (
+                ?, '2026-01-15 09:30:37', '2026-01-15 10:18:37', 'correction'
+            )
+            """,
+            (card_id,),
+        )
+
+    context = terminal_context(card_id)
+    model = context["terminal_finish_review"]
+
+    assert context["terminal_timing"] is None
+    assert model is not None
+    assert model["mode"] == "finalize_rewinding"
+    assert model["time_editable"] is False
+    assert model["requires_review_token"] is False
+    assert model["timing_display"]["first_start_display"] == "15/01/26 10:00"
+    assert model["timing_display"]["proposed_stop_display"] == "15/01/26 12:18"
+    assert model["timing_display"]["production_seconds"] == 7_380
+    assert model["timing_display"]["paused_seconds"] == 900
+    assert isinstance(model["timing_display"]["production_seconds"], int)
+    assert isinstance(model["timing_display"]["paused_seconds"], int)
+    assert model["timing_display"]["production_duration_display"] == "2 ч 03 м"
+    assert model["timing_display"]["paused_duration_display"] == "15 м"
+    assert ":37" not in model["timing_display"]["first_start_display"]
+    assert ":37" not in model["timing_display"]["proposed_stop_display"]

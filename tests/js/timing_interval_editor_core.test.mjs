@@ -61,6 +61,72 @@ test("finish review boundaries use the compact approved display format", () => {
   assert.equal(timingCore.formatFinishBoundary?.(""), "—");
 });
 
+test("finish review durations use minute-only approved display values", () => {
+  assert.equal(timingCore.formatFinishDuration?.(undefined), "—");
+  assert.equal(timingCore.formatFinishDuration?.(-1), "—");
+  assert.equal(timingCore.formatFinishDuration?.(0), "0 м");
+  assert.equal(timingCore.formatFinishDuration?.(15 * 60), "15 м");
+  assert.equal(
+    timingCore.formatFinishDuration?.((2 * 60 + 3) * 60),
+    "2 ч 03 м",
+  );
+  assert.equal(timingCore.formatFinishDuration?.(15 * 60 + 59), "15 м");
+});
+
+test("active review opening preserves authoritative unavailable confirmation", async () => {
+  globalThis.document = {
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  const controllerUrl = new URL(
+    "../../app/static/js/timing_interval_editor.mjs?availability-test",
+    import.meta.url,
+  );
+  const controller = await import(controllerUrl);
+  delete globalThis.document;
+
+  assert.equal(
+    typeof controller.applyFinishReviewOpeningAvailability,
+    "function",
+  );
+  const confirmButton = { disabled: false };
+  const editButton = { disabled: true };
+  const observed = controller.applyFinishReviewOpeningAvailability(
+    {
+      locked: false,
+      canConfirm: false,
+      lockMessages: [],
+    },
+    { confirmButton, editButton },
+  );
+
+  assert.deepEqual(observed, {
+    confirmDisabled: true,
+    editDisabled: false,
+  });
+  assert.equal(confirmButton.disabled, true);
+  assert.equal(editButton.disabled, false);
+
+  const validationConfirmButton = { disabled: false };
+  const validationEditButton = { disabled: false };
+  assert.deepEqual(
+    controller.applyFinishReviewOpeningAvailability(
+      {
+        locked: false,
+        canConfirm: true,
+        lockMessages: ["Коригирайте поръчката."],
+      },
+      {
+        confirmButton: validationConfirmButton,
+        editButton: validationEditButton,
+      },
+    ),
+    { confirmDisabled: true, editDisabled: true },
+  );
+  assert.equal(validationConfirmButton.disabled, true);
+  assert.equal(validationEditButton.disabled, true);
+});
+
 test("server ISO dates reopen as deterministic Bulgarian date inputs", () => {
   assert.deepEqual(normalizeDraftDateInputs([{
     segment_id: 41,

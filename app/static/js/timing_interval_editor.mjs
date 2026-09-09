@@ -4,6 +4,7 @@ import {
   dateSegmentsFromValue,
   dateValueFromSegments,
   formatFinishBoundary,
+  formatFinishDuration,
   incompleteDraftFields,
   mapServerPreview,
   markIntervalDeleted,
@@ -91,8 +92,27 @@ export function initialFinishReviewHydration(
     draft: finishReview.draft.length > 0 ? finishReview.draft : timingDraft,
     preview: finishReview.preview || timingDisplay,
     locked: Boolean(finishReview.locked),
+    canConfirm: finishReview.can_confirm === true,
     lockedMessages: retainedFinishReviewMessages(finishReview),
   };
+}
+
+export function applyFinishReviewOpeningAvailability(
+  finishReview,
+  { confirmButton, editButton },
+) {
+  const locked = Boolean(finishReview?.locked);
+  const hasBlockingMessages = Array.isArray(finishReview?.lockMessages)
+    && finishReview.lockMessages.some(Boolean);
+  const state = {
+    confirmDisabled: (
+      locked || finishReview?.canConfirm !== true || hasBlockingMessages
+    ),
+    editDisabled: locked || hasBlockingMessages,
+  };
+  confirmButton.disabled = state.confirmDisabled;
+  editButton.disabled = state.editDisabled;
+  return state;
 }
 
 const modelElement = document.querySelector("[data-terminal-timing-model]");
@@ -128,6 +148,7 @@ const finishProposedStop = finishOverlay?.querySelector("[data-finish-proposed-s
 const finishProductionTotal = finishOverlay?.querySelector("[data-finish-production-total]");
 const finishPausedTotal = finishOverlay?.querySelector("[data-finish-paused-total]");
 const finishEditButton = finishOverlay?.querySelector("[data-finish-review-edit]");
+const finishCloseButton = finishOverlay?.querySelector("[data-finish-review-close]");
 const finishCancelButton = finishOverlay?.querySelector("[data-finish-review-cancel]");
 const finishConfirmButton = finishOverlay?.querySelector("[data-finish-review-confirm]");
 const backgroundTargets = Array.from(
@@ -149,7 +170,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     && activeFinishForm && finishOverlay && finishDialog && finishAlert
     && finishWarning && finishFirstStart && finishProposedStop
     && finishProductionTotal && finishPausedTotal && finishEditButton
-    && finishCancelButton && finishConfirmButton) {
+    && finishCloseButton && finishCancelButton && finishConfirmButton) {
   const timing = model.timing;
   let state = createInitialState();
   let modalReturnFocus = null;
@@ -1008,15 +1029,15 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
   function renderFinishPreview(preview) {
     finishFirstStart.textContent = formatFinishBoundary(preview.first_start_display);
     finishProposedStop.textContent = formatFinishBoundary(preview.proposed_stop_display);
-    finishProductionTotal.textContent = formatDuration(preview.production_seconds);
-    finishPausedTotal.textContent = formatDuration(preview.paused_seconds);
+    finishProductionTotal.textContent = formatFinishDuration(preview.production_seconds);
+    finishPausedTotal.textContent = formatFinishDuration(preview.paused_seconds);
     const message = activeFinishForm.dataset.finishConfirmMessage || "";
     const genericMessage = "Сигурни ли сте, че искате да приключите тази поръчка?";
     finishWarning.textContent = message;
     finishWarning.hidden = !message || message === genericMessage;
   }
 
-  function openFinishSummary({ opener = activeFinishForm, focusTarget = finishEditButton } = {}) {
+  function openFinishSummary({ opener = activeFinishForm, focusTarget = finishCancelButton } = {}) {
     if (shiftSuspended) {
       return;
     }
@@ -1025,8 +1046,11 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     showFinishAlert(locked ? finishReview.lockMessages || [] : []);
     renderFinishPreview(finishReview.preview);
     finishDialog.setAttribute("aria-busy", "false");
-    finishConfirmButton.disabled = locked;
-    finishEditButton.disabled = locked;
+    applyFinishReviewOpeningAvailability(finishReview, {
+      confirmButton: finishConfirmButton,
+      editButton: finishEditButton,
+    });
+    finishCloseButton.disabled = false;
     finishCancelButton.disabled = false;
     finishOverlay.hidden = false;
     finishOverlay.setAttribute("aria-hidden", "false");
@@ -1043,6 +1067,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     finishOverlay.setAttribute("aria-hidden", "true");
     finishConfirmButton.disabled = false;
     finishEditButton.disabled = false;
+    finishCloseButton.disabled = false;
     finishCancelButton.disabled = false;
     finishDialog.setAttribute("aria-busy", "false");
     if (!preserveBackground) {
@@ -1183,6 +1208,8 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
             reviewToken: "",
             draft: cloneRows(timing.draft),
             preview: timing.display,
+            canConfirm: false,
+            lockMessages: responsePayload.messages || [],
           };
           finishReturnFocus = trigger;
           openEditor({
@@ -1219,6 +1246,8 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
           reviewToken: "",
           draft: cloneRows(timing.draft),
           preview: timing.display,
+          canConfirm: false,
+          lockMessages: responsePayload.messages || [],
         };
         finishReturnFocus = trigger;
         openFinishSummary({ opener: trigger, focusTarget: finishCancelButton });
@@ -1232,6 +1261,8 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         reviewToken: responsePayload.review_token,
         draft: cloneRows(responsePayload.preview.draft),
         preview: responsePayload.preview,
+        canConfirm: responsePayload.can_confirm === true,
+        lockMessages: [],
       };
       finishReturnFocus = trigger;
       openFinishSummary({ opener: trigger });
@@ -1240,6 +1271,8 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         reviewToken: "",
         draft: cloneRows(timing.draft),
         preview: timing.display,
+        canConfirm: false,
+        lockMessages: ["Действието не беше изпълнено. Опитайте отново."],
       };
       finishReturnFocus = trigger;
       openFinishSummary({ opener: trigger, focusTarget: finishCancelButton });
@@ -1340,6 +1373,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     finishConfirmButton.disabled = true;
     finishCancelButton.disabled = true;
     finishEditButton.disabled = true;
+    finishCloseButton.disabled = true;
     finishDialog.setAttribute("aria-busy", "true");
     const tokenInput = hiddenFinishField("review_token");
     tokenInput.name = "review_token";
@@ -1457,6 +1491,7 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
       preview: finishReview.preview,
     });
   });
+  finishCloseButton.addEventListener("click", cancelFinishSummary);
   finishCancelButton.addEventListener("click", cancelFinishSummary);
   finishConfirmButton.addEventListener("click", confirmFinishReview);
 
@@ -1567,6 +1602,8 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
       reviewToken: model.finish_review.review_token,
       draft: cloneRows(retainedDraft),
       preview: retainedFinishPreview(model.finish_review, retainedDraft),
+      canConfirm: finishHydration.canConfirm,
+      lockMessages: retainedMessages,
     };
     const loadedVersionInput = activeFinishForm.querySelector(
       "input[name='loaded_version']",
@@ -1594,8 +1631,6 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         focusTarget: finishCancelButton,
       });
       showFinishAlert(retainedMessages);
-      finishEditButton.disabled = retainedMessages.length > 0;
-      finishConfirmButton.disabled = retainedMessages.length > 0;
       if (retainedMessages.length > 0) {
         focusFinishAlert();
       }

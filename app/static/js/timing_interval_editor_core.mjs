@@ -19,6 +19,17 @@ export function formatFinishBoundary(rawValue) {
   return `${match[1]}/${match[2]}/${match[3].slice(-2)} ${match[4]}`;
 }
 
+export function formatFinishDuration(totalSeconds) {
+  if (!Number.isSafeInteger(totalSeconds) || totalSeconds < 0) {
+    return "—";
+  }
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  return hours > 0
+    ? `${hours} ч ${String(minutes).padStart(2, "0")} м`
+    : `${minutes} м`;
+}
+
 export function maskDateInput(rawValue) {
   const digits = String(rawValue ?? "").replace(/\D/g, "").slice(0, 8);
   if (digits.length < 2) {

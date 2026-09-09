@@ -5,6 +5,7 @@ from typing import Any
 
 ExactDecimal = tuple[int, int]
 ZERO: ExactDecimal = (0, 0)
+PALLET_WEIGHT_PLACEHOLDER: ExactDecimal = ZERO
 
 
 class PalletSummaryDataError(ValueError):
@@ -111,17 +112,21 @@ def _summary_row(
     roll_count: int,
     gross_weight: ExactDecimal,
     net_weight: ExactDecimal,
+    pallet_weight: ExactDecimal = PALLET_WEIGHT_PLACEHOLDER,
     pallet_number: int | None = None,
     include_pallet: bool = False,
 ) -> dict[str, Any]:
     gross_decimal = _parts_to_decimal(gross_weight)
     net_decimal = _parts_to_decimal(net_weight)
+    pallet_decimal = _parts_to_decimal(pallet_weight)
     row = {
         "roll_count": roll_count,
         "gross_weight": gross_decimal,
         "net_weight": net_decimal,
+        "pallet_weight": pallet_decimal,
         "gross_display": _weight_display(gross_weight),
         "net_display": _weight_display(net_weight),
+        "pallet_weight_display": _weight_display(pallet_weight),
     }
     if include_pallet:
         row.update({
@@ -182,7 +187,15 @@ def build_terminal_pallet_summary(
         total_net = _exact_add(total_net, net_exact)
 
     if total_count == 0:
-        return {"state": "empty", "rows": [], "total": None}
+        return {
+            "state": "empty",
+            "rows": [],
+            "total": _summary_row(
+                roll_count=0,
+                gross_weight=ZERO,
+                net_weight=ZERO,
+            ),
+        }
 
     numbered = sorted(key for key in buckets if key is not None)
     ordered_keys: list[int | None] = [*numbered]

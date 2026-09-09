@@ -132,9 +132,10 @@ execution or deployment authority:
 - `v2-files/TASK-20-EDITABLE-EXECUTED-RECIPES.md` — next approved workstream,
   initial phase unimplemented; its stale seven-column/`FullMaterialName`
   catalogue contract is superseded and execution-gated.
-- `v2-files/TASK-21-ORDER-FINISH-REVIEW.md` — residual contextual extension
-  only; active running/paused outcomes reuse Task 22's tokenized review, while
-  waiting-card finalization remains a separate tokenless, timing-neutral path.
+- `v2-files/archive/TASK-21-ORDER-FINISH-REVIEW.md` — residual contextual
+  extension at the time of this consolidation; it was later completed and
+  archived with active running/paused outcomes reusing Task 22's tokenized
+  review and waiting finalization remaining tokenless and timing-neutral.
 - `docs/superpowers/plans/2026-08-12-editable-executed-recipes.md` — retained
   pre-reconciliation Task 20 implementation plan; do not execute it until both
   Task 20 documents are revised and approved against Item Master v1.

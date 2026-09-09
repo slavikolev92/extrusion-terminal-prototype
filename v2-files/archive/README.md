@@ -21,6 +21,9 @@ active reusable migration and deployment procedure.
   behavior specification.
 - `TASK-22-TERMINAL-TIMING-CORRECTION.md` — source-complete, reviewed, and
   merged terminal production-time correction; it has not yet been deployed.
+- `TASK-21-ORDER-FINISH-REVIEW.md` — source-complete and locally verified
+  unified completion review; it has not yet been deployed. Physical pallet
+  weight remains a separate follow-up rather than part of this archived task.
 - `TASK-02-ADMIN-DESIGN.md` — accepted design record for the completed Admin
   planning cleanup.
 - `TASK-02-ADMIN-PLAN.md` — historical implementation plan for that cleanup.

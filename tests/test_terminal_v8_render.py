@@ -14,6 +14,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.datastructures import FormData
 from starlette.requests import Request
 
+import app.main as main_module
 from app import db
 from app.db import STALE_CARD_MESSAGE
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
@@ -205,18 +206,27 @@ def accepted_lifecycle_form_snapshot(
     label: str,
     button_class: str,
     finish_message: str | None = None,
+    waiting_finish_review: bool = False,
 ) -> str:
-    finish_hook = (
-        ' data-finish-confirm-form="true"'
-        f' data-finish-confirm-message="{finish_message}"'
-        if finish_message is not None
-        else ""
+    if waiting_finish_review:
+        finish_hook = ' data-waiting-finish-review="true"'
+    elif finish_message is not None:
+        finish_hook = (
+            ' data-timing-finish-review="true"'
+            f' data-finish-confirm-message="{finish_message}"'
+        )
+    else:
+        finish_hook = ""
+    button_contract = (
+        'type="button" data-waiting-finish-trigger disabled aria-disabled="true"'
+        if waiting_finish_review
+        else 'type="submit"'
     )
     return normalized_markup(
         f"""
         <form action="{action}" method="post" data-lifecycle-slot="{slot}"{finish_hook}>
           <input type="hidden" name="loaded_version" value="{version}">
-          <button class="{button_class}" type="submit"><span class="button-icon button-icon-asset"
+          <button class="{button_class}" {button_contract}><span class="button-icon button-icon-asset"
                 data-icon-asset="{icon}"
                 style="--button-icon-source: url('/static/images/terminal-ui/{icon}.svg')"
                 aria-hidden="true"></span><span>{label}</span></button>
@@ -1574,7 +1584,7 @@ def test_terminal_v8_renders_rewinding_and_roll_change_hosts_in_separate_action_
     editor = html_between_ids(
         running_html,
         "roll-change-overlay",
-        "finish-confirm-modal",
+        "finish-review-overlay",
     )
     assert 'role="dialog"' in editor
     assert 'aria-modal="true"' in editor
@@ -1693,7 +1703,7 @@ def test_terminal_v8_rewinding_dialog_posts_version_and_reopens_only_for_errors(
         rewinding_dialog_open=True,
     )
 
-    dialog = html_between_ids(html, "rewinding-overlay", "finish-confirm-modal")
+    dialog = html_between_ids(html, "rewinding-overlay", "finish-review-overlay")
     assert 'role="dialog"' in dialog
     assert 'aria-modal="true"' in dialog
     assert 'aria-labelledby="rewinding-title"' in dialog
@@ -1745,7 +1755,7 @@ def test_terminal_v8_waiting_and_rewinding_scripts_coordinate_modal_lifecycle(co
     trap_script = html[trap_start:trap_end]
     assert "!dialog?.contains(document.activeElement)" in trap_script
     shift_start = html.index("const shiftWindow")
-    shift_end = html.index("const finishConfirmModal", shift_start)
+    shift_end = html.index("const focusNewRollInput", shift_start)
     assert "!dialog?.contains(document.activeElement)" not in html[shift_start:shift_end]
     assert 'if (overlay.classList.contains("open")) {' in html
     assert 'if (historyOverlay.classList.contains("open")) {' in html
@@ -1762,8 +1772,8 @@ def test_terminal_queue_produced_and_finish_overlays_render_modal_semantics(conn
 
     html = render_terminal(card_id)
     queue = html_between_ids(html, "queue-overlay", "waiting-overlay")
-    produced = html_between_ids(html, "history-overlay", "finish-confirm-modal")
-    finish_start = html.find('id="finish-confirm-modal"')
+    produced = html_between_ids(html, "history-overlay", "finish-review-overlay")
+    finish_start = html.find('id="finish-review-overlay"')
     finish_end = html.find("<script>", finish_start)
     assert finish_start != -1 and finish_end != -1
     finish = html[finish_start:finish_end]
@@ -2176,6 +2186,215 @@ def test_terminal_timing_context_models_running_and_paused_ledgers(connection):
     assert paused_model["draft"][0]["stop_time"]
 
 
+@pytest.mark.parametrize(
+    (
+        "status",
+        "rewinding_roll_count",
+        "expected_mode",
+        "expected_time_editable",
+        "expected_requires_review_token",
+        "expected_confirm_label",
+    ),
+    (
+        (
+            "running",
+            None,
+            "complete",
+            True,
+            True,
+            "Потвърди приключване",
+        ),
+        (
+            "running",
+            0,
+            "complete",
+            True,
+            True,
+            "Потвърди приключване",
+        ),
+        (
+            "paused",
+            4,
+            "enter_rewinding",
+            True,
+            True,
+            "Потвърди край на екструдирането",
+        ),
+        (
+            "awaiting_rewinding",
+            4,
+            "finalize_rewinding",
+            False,
+            False,
+            "Потвърди приключване",
+        ),
+        (
+            "awaiting_rewinding",
+            0,
+            "finalize_rewinding",
+            False,
+            False,
+            "Потвърди приключване",
+        ),
+    ),
+)
+def test_terminal_finish_review_model_selects_variant_from_status_and_saved_marker(
+    status,
+    rewinding_roll_count,
+    expected_mode,
+    expected_time_editable,
+    expected_requires_review_token,
+    expected_confirm_label,
+):
+    card = {
+        "status": status,
+        "rewinding_roll_count": rewinding_roll_count,
+        "rewinding_slitting_sequence": "Внесен маршрут",
+        "product_type": "Термо фолио",
+        "size_thickness": "420 × 0.060 мм",
+        "finish_confirmation_message": (
+            "Сигурни ли сте, че искате да приключите тази поръчка?"
+        ),
+        "pallet_summary": {"state": "empty", "rows": [], "total": {}},
+        "timing_segments": [
+            {
+                "id": 1,
+                "started_at": "2026-01-15 08:00:00",
+                "ended_at": (
+                    None if status == "running" else "2026-01-15 09:00:00"
+                ),
+            }
+        ],
+    }
+
+    model = main_module.build_terminal_finish_review_model(
+        card,
+        server_now_utc="2026-01-15 10:00:00",
+    )
+
+    assert model is not None
+    assert model["mode"] == expected_mode
+    assert model["time_editable"] is expected_time_editable
+    assert model["requires_review_token"] is expected_requires_review_token
+    assert model["confirm_label"] == expected_confirm_label
+    assert model["product_display"] == "Термо фолио 420 × 0.060 мм"
+    if expected_mode == "enter_rewinding":
+        assert model["outcome_message"] == (
+            "След потвърждение: Изчаква пренавиване · 4 ролки"
+        )
+    elif expected_mode == "finalize_rewinding":
+        expected_outcome = "Изчаква пренавиване"
+        if rewinding_roll_count:
+            expected_outcome += " · 4 ролки"
+        assert model["outcome_message"] == expected_outcome
+    else:
+        assert model["outcome_message"] == ""
+
+
+def test_terminal_finish_review_formatters_preserve_counts_and_product_text():
+    assert main_module.terminal_rewinding_count_label(1) == "1 ролка"
+    assert main_module.terminal_rewinding_count_label(2) == "2 ролки"
+    assert main_module.terminal_rewinding_count_label(0) == ""
+    assert main_module.terminal_finish_product_display(
+        {"product_type": "  Термо фолио ", "size_thickness": "420 × 0.060 мм"}
+    ) == "Термо фолио 420 × 0.060 мм"
+    assert main_module.terminal_finish_product_display(
+        {"product_type": "", "size_thickness": " 420 × 0.060 мм "}
+    ) == "420 × 0.060 мм"
+    assert main_module.terminal_finish_product_display(
+        {"product_type": None, "size_thickness": ""}
+    ) == "—"
+
+
+def test_terminal_finish_review_model_requires_locked_mode_for_recovery():
+    completed_card = {
+        "status": "completed",
+        "rewinding_roll_count": 0,
+        "product_type": "PE",
+        "size_thickness": "",
+        "finish_confirmation_message": "",
+        "pallet_summary": {"state": "ready", "rows": [], "total": {}},
+        "timing_segments": [],
+    }
+
+    assert main_module.build_terminal_finish_review_model(
+        completed_card,
+        server_now_utc="2026-01-15 10:00:00",
+    ) is None
+    recovery = main_module.build_terminal_finish_review_model(
+        completed_card,
+        server_now_utc="2026-01-15 10:00:00",
+        recovery_mode="complete",
+        locked=True,
+        reload_required=True,
+        messages=("Картата е променена.",),
+        open=True,
+    )
+    assert recovery is not None
+    assert recovery["mode"] == "complete"
+    assert recovery["open"] is True
+    assert recovery["locked"] is True
+    assert recovery["reload_required"] is True
+    assert recovery["can_confirm"] is False
+    assert recovery["messages"] == ["Картата е променена."]
+
+
+def test_terminal_finish_review_model_ignores_imported_rewinding_route_text():
+    card = {
+        "status": "paused",
+        "rewinding_roll_count": 0,
+        "rewinding_slitting_sequence": "1",
+        "product_type": "PE",
+        "size_thickness": "",
+        "finish_confirmation_message": "",
+        "pallet_summary": {"state": "empty", "rows": [], "total": {}},
+        "timing_segments": [],
+    }
+
+    model = main_module.build_terminal_finish_review_model(
+        card,
+        server_now_utc="2026-01-15 10:00:00",
+    )
+
+    assert model is not None
+    assert model["mode"] == "complete"
+
+
+def test_terminal_finish_review_model_uses_existing_warning_and_summary_state():
+    card = {
+        "status": "running",
+        "rewinding_roll_count": 4,
+        "product_type": "PE",
+        "size_thickness": "",
+        "finish_confirmation_message": (
+            "В поръчката има 1 ролка без палет. "
+            "Искате ли да приключите поръчката?"
+        ),
+        "pallet_summary": {"state": "error", "rows": [], "total": None},
+        "timing_segments": [],
+    }
+
+    error_model = main_module.build_terminal_finish_review_model(
+        card,
+        server_now_utc="2026-01-15 10:00:00",
+    )
+    assert error_model is not None
+    assert error_model["warning_message"] == card["finish_confirmation_message"]
+    assert error_model["can_confirm"] is False
+
+    card["pallet_summary"] = {"state": "empty", "rows": [], "total": {}}
+    card["finish_confirmation_message"] = (
+        "Сигурни ли сте, че искате да приключите тази поръчка?"
+    )
+    empty_model = main_module.build_terminal_finish_review_model(
+        card,
+        server_now_utc="2026-01-15 10:00:00",
+    )
+    assert empty_model is not None
+    assert empty_model["warning_message"] == ""
+    assert empty_model["can_confirm"] is True
+
+
 def test_terminal_timing_context_blocks_missing_shift_and_other_statuses(connection):
     pending_id = release_ready_card("26182-timing-pending", machine_id=1, sequence=1)
     assert terminal_context(pending_id)["terminal_timing"] is None
@@ -2293,13 +2512,8 @@ def test_terminal_timing_menu_visibility_icon_and_lifecycle_markup(connection):
         button_class="action-button action-secondary",
     )
     assert 'data-timing-finish-review="true"' in running_finish
-    assert 'data-finish-confirm-form="true"' not in running_finish
-    accepted_running_finish = running_finish.replace(
-        'data-timing-finish-review="true"',
-        'data-finish-confirm-form="true"',
-    )
     assert normalized_markup(
-        accepted_running_finish
+        running_finish
     ) == accepted_lifecycle_form_snapshot(
         action=f"/terminal/cards/{card_id}/finish",
         slot="finish",
@@ -2348,12 +2562,8 @@ def test_terminal_timing_menu_visibility_icon_and_lifecycle_markup(connection):
         label="Продължи",
         button_class="action-button action-primary",
     )
-    accepted_paused_finish = paused_finish.replace(
-        'data-timing-finish-review="true"',
-        'data-finish-confirm-form="true"',
-    )
     assert normalized_markup(
-        accepted_paused_finish
+        paused_finish
     ) == accepted_lifecycle_form_snapshot(
         action=f"/terminal/cards/{card_id}/finish",
         slot="finish",
@@ -2368,7 +2578,6 @@ def test_terminal_timing_menu_visibility_icon_and_lifecycle_markup(connection):
     assert db.update_rewinding_roll_count(card_id, paused_version, 2).ok
     assert db.finish_card(card_id, card_version(card_id)).ok
     waiting_version = card_version(card_id)
-    waiting_card = terminal_context(card_id)["selected_card"]
     waiting_html = render_terminal(card_id)
     waiting_finish = form_block(
         waiting_html,
@@ -2381,7 +2590,7 @@ def test_terminal_timing_menu_visibility_icon_and_lifecycle_markup(connection):
         icon="end",
         label="Приключи",
         button_class="action-button action-primary",
-        finish_message=waiting_card["finish_confirmation_message"],
+        waiting_finish_review=True,
     )
     assert '<div class="timing-menu" data-timing-menu>' not in waiting_html
 
@@ -2599,53 +2808,121 @@ def test_terminal_timing_errors_use_stable_summary_and_boundary_highlights(conne
     assert "showAlert(formMessages" in controller
 
 
-def test_terminal_v8_finish_form_uses_app_native_confirmation_modal(connection):
+def test_terminal_finish_review_css_matches_approved_layout_contract(connection):
     card_id = release_ready_card("26183", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
 
-    running_html = render_terminal(card_id)
-    pause_form = form_block(running_html, f"/terminal/cards/{card_id}/timing/pause")
-    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 1).ok
-    assert db.finish_card(card_id, card_version(card_id)).ok
     html = render_terminal(card_id)
-    finish_form = form_block(html, f"/terminal/cards/{card_id}/finish")
 
-    assert "confirm(" not in html
-    assert "onsubmit=" not in finish_form
-    assert 'data-finish-confirm-form="true"' in finish_form
-    assert 'name="loaded_version"' in finish_form
-    assert "Приключи" in finish_form
-    assert 'data-finish-confirm-form="true"' not in pause_form
+    dialog_rules = css_rules(html, r"(?m)^    \.finish-review-dialog")
+    assert "width: min(1360px, 94vw);" in dialog_rules
+    assert "height: min(840px, calc(100vh - 36px));" in dialog_rules
+    assert "grid-template-rows: 50px minmax(0, 1fr) 82px;" in dialog_rules
+    assert "font-family: \"Segoe UI\"" in dialog_rules
+    cards_rules = css_rules(html, r"(?m)^    \.finish-review-cards")
+    assert "grid-template-columns: minmax(500px, 2fr) minmax(0, 3fr);" in cards_rules
+    assert "gap: 16px;" in cards_rules
+    title_rules = css_rules(html, r"(?m)^    \.finish-review-card-title")
+    assert "font-size: 21px;" in title_rules
+    shared_value_rules = css_rules(
+        html,
+        r"(?m)^    \.finish-review-row dt,\n    \.finish-review-row dd",
+    )
+    assert "font-size: 17px;" in shared_value_rules
+    label_rules = css_rules(html, r"(?m)^    \.finish-review-row dt")
+    assert "font-size: 15px;" in label_rules
+    table_wrap_rules = css_rules(html, r"(?m)^    \.finish-review-table-wrap")
+    assert "overflow-y: scroll;" in table_wrap_rules
+    assert "scrollbar-gutter: stable;" in table_wrap_rules
+    table_rules = css_rules(html, r"(?m)^    \.finish-review-table(?![-\w])")
+    assert "table-layout: fixed;" in table_rules
+    assert "font-size: 16px;" in table_rules
+    column_rules = css_rules(html, r"(?m)^    \.finish-review-table col")
+    assert "width: 20%;" in column_rules
+    header_rules = css_rules(html, r"(?m)^    \.finish-review-table thead")
+    total_rules = css_rules(html, r"(?m)^    \.finish-review-table tfoot")
+    assert "position: sticky;" in header_rules
+    assert "top: 0;" in header_rules
+    assert "position: sticky;" in total_rules
+    assert "bottom: 0;" in total_rules
+    footer_button_rules = css_rules(
+        html,
+        r"(?m)^    \.finish-review-cancel,\n    \.finish-review-confirm",
+    )
+    assert "min-height: 48px;" in footer_button_rules
+    assert "font-size: 16px;" in footer_button_rules
+    confirm_rules = next(
+        rules
+        for rules in css_rules_all(
+            html,
+            r"(?m)^    \.finish-review-confirm(?=\s*\{)",
+        )
+        if "border-color:" in rules
+    )
+    assert "border-color: #0b355f;" in confirm_rules
+    assert "background: #0b355f;" in confirm_rules
+    assert "var(--red)" not in confirm_rules
+    confirm_hover_rules = css_rules(
+        html,
+        r"(?m)^    \.finish-review-confirm:hover",
+    )
+    assert "border-color: #082a4c;" in confirm_hover_rules
+    assert "background: #082a4c;" in confirm_hover_rules
+    assert "min-width: 1120px;" not in dialog_rules
+    assert "min-height: 690px;" not in dialog_rules
+    assert "@media (max-width: 1150px), (max-height: 700px)" in html
+    assert "grid-template-columns: minmax(390px, 2fr) minmax(0, 3fr);" in html
+    dialog_rule_variants = css_rules_all(html, r"(?m)^      \.finish-review-dialog")
+    assert any(
+        "width: calc(100vw - 16px);" in rules
+        and "height: calc(100vh - 16px);" in rules
+        for rules in dialog_rule_variants
+    )
 
-    assert 'id="finish-confirm-modal"' in html
-    assert 'data-finish-confirm-modal' in html
-    assert "Приключване на поръчка" in html
-    assert "Сигурни ли сте, че искате да приключите тази поръчка?" in html
-    assert 'data-finish-confirm-submit' in html
-    assert ">Да</button>" in html
-    assert 'data-finish-confirm-cancel' in html
-    assert ">Не</button>" in html
 
-
-def test_terminal_v8_finish_confirmation_script_handles_modal_lifecycle(connection):
+def test_waiting_finish_review_controller_handles_modal_lifecycle(connection):
     card_id = release_ready_card("26184", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 2).ok
+    assert db.finish_card(card_id, card_version(card_id)).ok
 
     html = render_terminal(card_id)
+    controller_path = Path("app/static/js/waiting_finish_review.mjs")
+    controller = controller_path.read_text(encoding="utf-8")
 
-    assert 'form[data-finish-confirm-form="true"]' in html
-    assert 'event.preventDefault();' in html
-    assert 'finishConfirmModal.hidden = false;' in html
-    assert 'finishConfirmModal.hidden = true;' in html
-    assert 'data-finish-confirm-cancel' in html
-    assert 'data-finish-confirm-submit' in html
-    assert 'event.key === "Escape"' in html
-    assert "finishConfirmSubmitting || !pendingFinishForm" in html
-    assert "finishConfirmSubmit.disabled = true;" in html
-    assert "pendingFinishForm.requestSubmit();" in html
+    assert '/static/js/waiting_finish_review.mjs' in html
+    assert 'form[data-waiting-finish-review="true"]' in controller
+    finish_form = form_block(html, f"/terminal/cards/{card_id}/finish")
+    assert re.search(
+        r'<button[^>]+type="button"[^>]+data-waiting-finish-trigger[^>]+disabled',
+        finish_form,
+    )
+    assert 'aria-disabled="true"' in finish_form
+    assert 'waiting_finish_review_core.mjs' in controller
+    assert "isValidWaitingFinishReviewModel(model)" in controller
+    assert "canEnableWaitingFinishTrigger(" in controller
+    assert "let controllerReady = false;" in controller
+    assert "controllerReady = true;" in controller
+    assert "nativeSubmit && controllerReady" in controller
+    assert 'trigger.addEventListener("click"' in controller
+    assert "fetch(" not in controller
+    assert "timing_interval_editor" not in controller
+    assert 'event.preventDefault();' in controller
+    assert 'overlay.hidden = false;' in controller
+    assert 'overlay.hidden = true;' in controller
+    assert 'closeButton.addEventListener("click", closeReview);' in controller
+    assert 'cancelButton.addEventListener("click", closeReview);' in controller
+    assert 'event.key === "Escape"' in controller
+    assert 'event.key === "Tab"' in controller
+    assert 'background.setAttribute("inert", "")' in controller
+    assert 'dialog.setAttribute("aria-busy", "true")' in controller
+    assert "waitingForm.requestSubmit();" in controller
+    assert 'window.addEventListener("terminal:card-stale"' in controller
+    assert 'window.addEventListener("terminal:shift-stale"' in controller
+    assert 'overlay.addEventListener("click"' not in controller
 
 
-def test_active_finish_uses_review_while_waiting_finish_keeps_simple_confirmation(
+def test_active_and_waiting_finish_render_the_approved_common_review_shell(
     connection,
 ):
     active_id = release_ready_card(
@@ -2682,48 +2959,83 @@ def test_active_finish_uses_review_while_waiting_finish_keeps_simple_confirmatio
         active_html,
         f"/terminal/cards/{active_id}/finish",
     )
-    finish_review_start = active_html.index("data-finish-review-overlay")
-    finish_review_end = active_html.index(
-        'class="finish-confirm-modal"',
-        finish_review_start,
+    finish_review_start = active_html.index(
+        '<div class="timing-modal-overlay" id="finish-review-overlay" '
+        "data-finish-review-overlay"
     )
-    finish_review_markup = active_html[finish_review_start:finish_review_end]
+    finish_review_markup = active_html[finish_review_start:]
     controller_source = Path(
         "app/static/js/timing_interval_editor.mjs"
     ).read_text(encoding="utf-8")
 
     assert 'data-timing-finish-review="true"' in active_finish_markup
-    assert 'data-finish-confirm-form="true"' not in active_finish_markup
-    assert active_html.count("data-finish-review-overlay") == 1
-    assert 'aria-labelledby="finish-review-title"' in active_html
+    assert len(re.findall(r"<div[^>]+data-finish-review-overlay", active_html)) == 1
+    assert (
+        'aria-label="Преглед преди приключване на производствена поръчка"'
+        in finish_review_markup
+    )
+    assert 'aria-labelledby="finish-review-title"' not in finish_review_markup
     assert 'role="alert" tabindex="-1" data-finish-review-alert hidden' in active_html
-    assert '<h2 id="finish-review-title">Преглед преди приключване</h2>' in active_html
+    assert "Преглед преди приключване</h2>" not in finish_review_markup
+    assert 'aria-label="Затвори прегледа"' in finish_review_markup
+    assert "/static/images/terminal-ui/finish-review-close.svg" in finish_review_markup
     assert "Проверете производствените интервали" not in finish_review_markup
     assert "Първо начало" not in finish_review_markup
     assert "Предложен край" not in finish_review_markup
-    assert "Начало" in finish_review_markup
-    assert "Край" in finish_review_markup
+    section_headings = (
+        "Детайли на поръчката",
+        "Производствено време",
+        "Произведена продукция",
+    )
+    assert all(heading in finish_review_markup for heading in section_headings)
+    assert finish_review_markup.index(section_headings[0]) < finish_review_markup.index(
+        section_headings[1]
+    ) < finish_review_markup.index(section_headings[2])
+    order_labels = ("Машина", "Поръчка №", "Клиент", "Продукт")
+    order_positions = [
+        finish_review_markup.index(f"<dt>{label}</dt>") for label in order_labels
+    ]
+    assert order_positions == sorted(order_positions)
+    assert "Машина 1" in finish_review_markup
+    assert "26184-reviewed-active" in finish_review_markup
+    assert "V8 Customer 26184-reviewed-active" in finish_review_markup
+    assert "ТСФ 890/0.082 890 / 0.082" in finish_review_markup
+    time_labels = ("Начало", "Край", "Произв. време", "Паузирано време")
+    time_positions = [
+        finish_review_markup.index(f"<dt>{label}</dt>", order_positions[-1])
+        for label in time_labels
+    ]
+    assert time_positions == sorted(time_positions)
     assert 'data-finish-timing-summary' in finish_review_markup
     assert 'data-finish-production-summary' in finish_review_markup
+    assert finish_review_markup.count("<col>") == 5
     for heading in (
         "Палет №",
         "Брой ролки",
         "Бруто, кг",
-        "Тегло на палета, кг",
+        "Тегло палет, кг",
         "Нето, кг",
     ):
         assert heading in finish_review_markup
-    assert 'data-finish-pallet-weight>—</td>' in finish_review_markup
-    assert 'data-finish-pallet-weight-total>—</td>' in finish_review_markup
+    assert 'data-finish-pallet-weight>0.0</td>' in finish_review_markup
+    assert 'data-finish-pallet-weight-total>0.0</td>' in finish_review_markup
     assert "Без палет" in finish_review_markup
     assert "25.0" in finish_review_markup
     assert "24.0" in finish_review_markup
-    assert 'data-finish-review-edit>Редактирай времето</button>' in active_html
-    assert 'data-finish-review-cancel>Отказ</button>' in active_html
     assert (
-        'class="finish-confirm-primary" type="button" '
+        'data-finish-review-edit aria-label="Редактирай производственото време"'
+        in finish_review_markup
+    )
+    assert "/static/images/terminal-ui/finish-review-pencil.svg" in finish_review_markup
+    assert "<span>Редактирай</span>" in finish_review_markup
+    assert (
+        '<div class="finish-review-footer-actions"> '
+        '<button class="finish-review-cancel" type="button" '
+        'data-finish-review-cancel>Отказ</button> '
+        '<button class="finish-review-confirm" type="button" '
         'data-finish-review-confirm>Потвърди приключване</button>'
-    ) in active_html
+    ) in normalized_markup(finish_review_markup)
+    assert 'id="finish-confirm-modal"' not in active_html
     assert 'form[data-timing-finish-review="true"]' in controller_source
     assert "`${activeFinishForm.action}-review`" in controller_source
     assert "`${activeFinishForm.action}-review/preview`" in controller_source
@@ -2743,6 +3055,7 @@ def test_active_finish_uses_review_while_waiting_finish_keeps_simple_confirmatio
     )
     assert "finishNativeSubmit = true;" in controller_source
     assert "activeFinishForm.requestSubmit();\n    } finally {\n      finishNativeSubmit = false;" in controller_source
+
 
     missing_review = asyncio.run(
         finish_terminal_card(
@@ -2804,8 +3117,27 @@ def test_active_finish_uses_review_while_waiting_finish_keeps_simple_confirmatio
         waiting_html,
         f"/terminal/cards/{waiting_id}/finish",
     )
-    assert 'data-finish-confirm-form="true"' in waiting_finish_markup
+    assert 'data-waiting-finish-review="true"' in waiting_finish_markup
     assert 'data-timing-finish-review="true"' not in waiting_finish_markup
+    assert re.findall(r'<input[^>]+name="([^"]+)"', waiting_finish_markup) == [
+        "loaded_version"
+    ]
+    assert 'name="review_token"' not in waiting_finish_markup
+    assert 'name="timing_draft"' not in waiting_finish_markup
+    assert 'name="finish_review_preview"' not in waiting_finish_markup
+    assert len(re.findall(r"<div[^>]+data-finish-review-overlay", waiting_html)) == 1
+    assert (
+        'aria-label="Преглед преди приключване на производствена поръчка"'
+        in waiting_html
+    )
+    assert "Детайли на поръчката" in waiting_html
+    assert "Производствено време" in waiting_html
+    assert "Произведена продукция" in waiting_html
+    assert 'data-finish-review-edit' not in waiting_html
+    assert "Редактирай производственото време" not in waiting_html
+    assert 'data-finish-review-confirm>Потвърди приключване</button>' in waiting_html
+    assert "Изчаква пренавиване · 2 ролки" in waiting_html
+    assert 'id="finish-confirm-modal"' not in waiting_html
     waiting_finish = asyncio.run(
         finish_terminal_card(
             make_test_request(f"/terminal/cards/{waiting_id}/finish"),
@@ -2821,6 +3153,291 @@ def test_active_finish_uses_review_while_waiting_finish_keeps_simple_confirmatio
     assert waiting_after["status"] == "completed"
     assert waiting_after["finished_at"] == waiting_before["finished_at"]
     assert waiting_after["timing_segments"] == timing_before
+
+
+@pytest.mark.parametrize(
+    ("marker", "expected_outcome", "unexpected_outcome"),
+    [
+        (3, "Изчаква пренавиване · 3 ролки", None),
+        (None, "Изчаква пренавиване", "Изчаква пренавиване ·"),
+    ],
+)
+def test_waiting_finish_form_is_loaded_version_only_for_positive_and_cleared_marker(
+    connection,
+    marker,
+    expected_outcome,
+    unexpected_outcome,
+):
+    card_id = release_ready_card(
+        f"26184-waiting-form-{marker}",
+        machine_id=1,
+        sequence=1,
+    )
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 3).ok
+    assert db.finish_card(card_id, card_version(card_id)).ok
+    if marker is None:
+        assert db.update_rewinding_roll_count(
+            card_id,
+            card_version(card_id),
+            None,
+        ).ok
+
+    html = render_terminal(card_id)
+    finish_form = form_block(html, f"/terminal/cards/{card_id}/finish")
+
+    assert 'data-waiting-finish-review="true"' in finish_form
+    assert 'data-waiting-finish-trigger' in finish_form
+    assert 'type="button"' in finish_form
+    assert 'type="submit"' not in finish_form
+    assert re.search(r'data-waiting-finish-trigger[^>]+disabled', finish_form)
+    assert 'aria-disabled="true"' in finish_form
+    assert re.findall(r'<input[^>]+name="([^"]+)"', finish_form) == [
+        "loaded_version"
+    ]
+    assert 'data-timing-finish-review="true"' not in finish_form
+    assert 'name="review_token"' not in html
+    assert 'name="timing_draft"' not in html
+    assert 'name="finish_review_preview"' not in html
+    assert len(re.findall(r"<div[^>]+data-finish-review-overlay", html)) == 1
+    assert 'data-finish-review-edit' not in html
+    assert expected_outcome in html
+    if unexpected_outcome is not None:
+        assert unexpected_outcome not in html
+    assert 'data-waiting-finish-review-model' in html
+    assert '/static/js/waiting_finish_review.mjs' in html
+
+
+def test_disappeared_waiting_card_shows_unavailable_without_finish_confirmation(
+    connection,
+    monkeypatch,
+):
+    card_id = release_ready_card(
+        "26184-waiting-disappeared",
+        machine_id=1,
+        sequence=1,
+    )
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 1).ok
+    assert db.finish_card(card_id, card_version(card_id)).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "25.00").ok
+    loaded_version = card_version(card_id)
+    before = db.fetch_terminal_card_detail(card_id)
+    assert before is not None
+    before_finished_at = before["finished_at"]
+    before_timing = [dict(segment) for segment in before["timing_segments"]]
+    real_finalize = main_module.finalize_awaiting_rewinding_card
+
+    def complete_and_archive_before_stale_finalize(
+        checked_card_id,
+        checked_version,
+        *,
+        require_active_shift,
+    ):
+        assert real_finalize(
+            checked_card_id,
+            checked_version,
+            require_active_shift=require_active_shift,
+        ).ok
+        completed = db.fetch_admin_card_detail(card_id)
+        assert completed is not None
+        assert db.archive_completed_card(
+            card_id,
+            int(completed["version"]),
+        ).ok
+        return real_finalize(
+            checked_card_id,
+            checked_version,
+            require_active_shift=require_active_shift,
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "finalize_awaiting_rewinding_card",
+        complete_and_archive_before_stale_finalize,
+    )
+
+    response = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            str(loaded_version),
+        )
+    )
+    html = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert response.context["workflow_result"].messages == (
+        TERMINAL_CARD_UNAVAILABLE_MESSAGE,
+    )
+    assert TERMINAL_CARD_UNAVAILABLE_MESSAGE in html
+    assert response.context["terminal_finish_review"] is None
+    assert 'data-waiting-finish-review="true"' not in html
+    assert 'data-finish-review-confirm' not in html
+    archived = db.fetch_admin_card_detail(card_id)
+    assert archived is not None
+    assert archived["status"] == "archived"
+    assert archived["finished_at"] == before_finished_at
+    assert [dict(segment) for segment in archived["timing_segments"]] == before_timing
+
+
+def test_active_finish_review_controller_uses_the_common_shell_safely(connection):
+    """Catches the common shell bypassing or weakening active Finish review."""
+
+    card_id = release_ready_card(
+        "26184-reviewed-controller",
+        machine_id=1,
+        sequence=1,
+    )
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+
+    html = render_terminal(card_id)
+    controller = Path(
+        "app/static/js/timing_interval_editor.mjs"
+    ).read_text(encoding="utf-8")
+
+    assert 'data-finish-review-close' in html
+    assert 'data-finish-review-warning' in html
+    assert 'data-finish-review-outcome' in html
+    assert 'data-finish-first-start' in html
+    assert 'data-finish-proposed-stop' in html
+    assert 'data-finish-production-total' in html
+    assert 'data-finish-paused-total' in html
+
+    assert "formatFinishDuration," in controller
+    assert (
+        'const finishCloseButton = finishOverlay?.querySelector('
+        '"[data-finish-review-close]");'
+    ) in controller
+    assert "&& finishCloseButton && finishCancelButton" in controller
+
+    render_start = controller.index("function renderFinishPreview(preview)")
+    render_end = controller.index("function openFinishSummary", render_start)
+    render_preview = controller[render_start:render_end]
+    assert render_preview.count("formatFinishBoundary(") == 2
+    assert render_preview.count("formatFinishDuration(") == 2
+    assert "finishWarning.textContent = message;" in render_preview
+    assert "finishWarning.hidden = !message || message === genericMessage;" in render_preview
+
+    open_start = controller.index("function openFinishSummary")
+    open_end = controller.index("function closeFinishSummary", open_start)
+    open_summary = controller[open_start:open_end]
+    assert "focusTarget = finishCancelButton" in open_summary
+    assert "focusTarget = finishConfirmButton" not in open_summary
+
+    edit_start = controller.index('finishEditButton.addEventListener("click"')
+    edit_end = controller.index(
+        'finishCancelButton.addEventListener("click"', edit_start
+    )
+    edit_handler = controller[edit_start:edit_end]
+    assert 'mode: "finish"' in edit_handler
+    assert "finishReview.draft" in edit_handler
+    assert "finishReview.preview" in edit_handler
+
+    assert 'finishCloseButton.addEventListener("click", cancelFinishSummary);' in controller
+    assert 'finishCancelButton.addEventListener("click", cancelFinishSummary);' in controller
+    assert 'finishOverlay.addEventListener("click"' not in controller
+    assert 'event.key === "Escape"' in controller
+    assert "finishReturnFocus?.focus({ preventScroll: true });" in controller
+
+    confirm_start = controller.index("function confirmFinishReview()")
+    confirm_end = controller.index('menuButton.addEventListener("click"', confirm_start)
+    confirm = controller[confirm_start:confirm_end]
+    assert "if (finishSubmitting || !finishReview)" in confirm
+    for control in (
+        "finishCloseButton",
+        "finishCancelButton",
+        "finishEditButton",
+        "finishConfirmButton",
+    ):
+        assert f"{control}.disabled = true;" in confirm
+    assert 'finishDialog.setAttribute("aria-busy", "true")' in confirm
+    assert 'hiddenFinishField("review_token")' in confirm
+    assert 'hiddenFinishField("timing_draft")' in confirm
+    assert 'hiddenFinishField("finish_review_preview")' in confirm
+    assert "finishNativeSubmit = true;" in confirm
+    assert "activeFinishForm.requestSubmit();" in confirm
+
+
+def test_marked_active_review_warning_is_non_blocking_footer_copy(connection):
+    card_id = release_ready_card(
+        "26184-reviewed-marked-warning",
+        machine_id=1,
+        sequence=1,
+    )
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 2).ok
+    assert db.update_tare_weight(card_id, card_version(card_id), "1.00").ok
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "25.00").ok
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            "UPDATE roll_entries SET pallet_number = 1 WHERE card_id = ?",
+            (card_id,),
+        )
+    assert db.add_roll_gross_weight(card_id, card_version(card_id), "20.00").ok
+
+    html = render_terminal(card_id)
+    footer_start = html.index('<footer class="finish-review-footer">')
+    footer_end = html.index("</footer>", footer_start)
+    footer = html[footer_start:footer_end]
+
+    assert (
+        "В поръчката има 1 ролка без палет. "
+        "Искате ли да приключите поръчката?"
+    ) in footer
+    assert "След потвърждение: Изчаква пренавиване · 2 ролки" in footer
+    assert "Потвърди край на екструдирането" in footer
+    assert not re.search(r"data-finish-review-confirm[^>]*disabled", footer)
+
+
+def test_finish_review_renders_empty_zero_total_and_locks_summary_errors(connection):
+    card_id = release_ready_card(
+        "26184-reviewed-empty",
+        machine_id=1,
+        sequence=1,
+        product_type="Термо фолио",
+        size_thickness="420 × 0.060 мм",
+    )
+    assert db.start_production_timing(card_id, card_version(card_id)).ok
+    assert db.update_rewinding_roll_count(card_id, card_version(card_id), 1).ok
+
+    empty_html = render_terminal(card_id)
+    assert "Няма въведени ролки." in empty_html
+    assert re.search(
+        r"<tbody>\s*<tr[^>]*>\s*<td[^>]+colspan=\"5\"[^>]*>"
+        r"\s*Няма въведени ролки\.\s*</td>",
+        empty_html,
+    )
+    assert 'data-finish-pallet-weight-total>0.0</td>' in empty_html
+    assert 'data-finish-gross-total>0.0</td>' in empty_html
+    assert 'data-finish-net-total>0.0</td>' in empty_html
+    assert "Термо фолио 420 × 0.060 мм" in empty_html
+    assert "Термо фолио 420 × 0.1 мм" not in empty_html
+    assert "След потвърждение: Изчаква пренавиване · 1 ролка" in empty_html
+    assert (
+        'data-finish-review-confirm>Потвърди край на екструдирането</button>'
+        in empty_html
+    )
+
+    context = terminal_context(card_id)
+    selected_card = dict(context["selected_card"])
+    selected_card["pallet_summary"] = {
+        "state": "error",
+        "rows": [],
+        "total": None,
+    }
+    finish_review = dict(context["terminal_finish_review"])
+    finish_review["can_confirm"] = False
+    error_html = render_terminal(
+        card_id,
+        selected_card=selected_card,
+        terminal_finish_review=finish_review,
+    )
+    assert "Обобщението по палети не може да бъде показано." in error_html
+    assert 'data-finish-production-error colspan="5"' in error_html
+    assert 'data-finish-pallet-weight-total' not in error_html
+    assert re.search(r"data-finish-review-confirm[^>]*disabled", error_html)
 
 
 def test_terminal_timing_errors_reopen_or_lock_the_submitted_draft(connection):
@@ -2902,6 +3519,7 @@ def test_terminal_timing_errors_reopen_or_lock_the_submitted_draft(connection):
         "issues": ordinary_model["issues"],
         "messages": [hostile_message],
         "locked": True,
+        "can_confirm": False,
         "preview": {
             "first_start_display": "15.01.2026 10:00",
             "proposed_stop_display": "15.01.2026 11:00",
@@ -2945,8 +3563,6 @@ def test_terminal_timing_errors_reopen_or_lock_the_submitted_draft(connection):
     assert "finishEditButton.disabled = true" in begin_review
     assert begin_review.count("focusFinishAlert();") == 2
     assert "showFinishAlert(retainedMessages);" in controller_source
-    assert "finishEditButton.disabled = retainedMessages.length > 0" in controller_source
-    assert "finishConfirmButton.disabled = retainedMessages.length > 0" in controller_source
 
 
 def test_terminal_finish_no_roll_failure_retains_message_in_review_model(connection):
@@ -3007,8 +3623,6 @@ def test_terminal_finish_no_roll_failure_retains_message_in_review_model(connect
         "app/static/js/timing_interval_editor.mjs"
     ).read_text(encoding="utf-8")
     assert "retainedFinishReviewMessages(finishReview)" in controller_source
-    assert "finishEditButton.disabled = retainedMessages.length > 0" in controller_source
-    assert "finishConfirmButton.disabled = retainedMessages.length > 0" in controller_source
     assert "focusFinishAlert();" in controller_source
 
 
@@ -3488,30 +4102,20 @@ def test_terminal_finish_confirmation_is_generic_for_no_all_blank_or_all_assigne
     assert (no_rolls, all_blank, all_assigned) == (expected, expected, expected)
 
 
-def test_terminal_finish_pallet_confirmation_script_uses_selected_message_and_simple_actions(
+def test_terminal_finish_review_omits_legacy_yes_no_confirmation(
     connection,
 ):
     card_id = release_ready_card("FINISH-PALLET-SCRIPT", machine_id=1, sequence=1)
     assert db.start_production_timing(card_id, card_version(card_id)).ok
 
     html = render_terminal(card_id)
-    script_start = html.find('const finishConfirmModal =')
-    script_end = html.find("    })();", script_start)
-    assert script_start != -1
-    assert script_end != -1
-    script = html[script_start:script_end]
-
-    assert ">Не</button>" in html
-    assert ">Да</button>" in html
+    assert 'id="finish-confirm-modal"' not in html
+    assert ">Не</button>" not in html
+    assert ">Да</button>" not in html
     assert "Не, назад" not in html
     assert "Да, приключи" not in html
-    assert 'finishConfirmModal?.querySelector("#finish-confirm-body")' in script
-    assert "finishConfirmBody.textContent = form.dataset.finishConfirmMessage;" in script
-    assert "finishConfirmBack?.addEventListener(\"click\", closeFinishConfirm);" in script
-    assert "finishConfirmSubmitting = true;" in script
-    assert "pendingFinishForm.requestSubmit();" in script
-    assert "openRollCorrection" not in script
-    assert "fetch(" not in script
+    assert 'data-finish-review-cancel>Отказ</button>' in html
+    assert 'data-finish-review-confirm>Потвърди приключване</button>' in html
 
 
 def test_terminal_v8_success_result_renders_one_dismissible_toast(connection):
@@ -3734,13 +4338,17 @@ def test_terminal_roll_entry_controls_follow_roll_table_weight_and_pallet_order(
     add_rules = css_rules_all(html, r"(?m)^    \.roll-entry > \.roll-add-button")
     assert any("width: 100%;" in rules and "height: 40px;" in rules for rules in add_rules)
     assert ">Добави</span>" in entry_html
-    compact_roll_match = re.search(
+    compact_roll_matches = re.findall(
         r"@media \(max-height: 820px\) \{(?P<rules>.*?)\n    \}",
         html,
         re.S,
     )
-    assert compact_roll_match is not None
-    assert "grid-template-columns: minmax(118px, 1.25fr) repeat(2, minmax(84px, .7fr)) 126px;" in compact_roll_match.group("rules")
+    assert compact_roll_matches
+    assert any(
+        "grid-template-columns: minmax(118px, 1.25fr) repeat(2, minmax(84px, .7fr)) 126px;"
+        in rules
+        for rules in compact_roll_matches
+    )
     assert 'data-dirty-autosave="true"' in pallet_form
     assert 'data-dirty-autosave-group="roll-entry"' in pallet_form
     current_pallet_match = re.search(
@@ -3849,7 +4457,9 @@ def test_terminal_active_lifecycle_slots_are_equal_and_waiting_has_only_finish(c
     assert "Пауза" not in waiting_body
     assert f'action="/terminal/cards/{card_id}/finish"' in waiting_body
     assert "Приключи" in waiting_body
-    assert "disabled" not in waiting_body
+    assert 'type="button"' in waiting_body
+    assert "data-waiting-finish-trigger" in waiting_body
+    assert "disabled" in waiting_body
     assert 'class="menu"' not in waiting_html
 
 

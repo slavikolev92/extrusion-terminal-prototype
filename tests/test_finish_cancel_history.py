@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
+import json
 
 import pytest
+from starlette.requests import Request
 
 from app import db
 from app.constants import (
@@ -16,6 +19,7 @@ from app.constants import (
     STATUS_RUNNING,
 )
 from app.importer import IMPORT_FIELDS, import_cards_from_csv
+from app.main import app, finish_terminal_card, terminal_context
 
 
 def csv_bytes(*rows: dict[str, str]) -> bytes:
@@ -98,6 +102,85 @@ def prepare_running_finishable_card(order_number: str, **release_kwargs: int) ->
     add_tare(card_id)
     add_roll(card_id)
     return card_id
+
+
+def make_test_request(path: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": path,
+            "headers": [],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 50000),
+            "app": app,
+        }
+    )
+
+
+def finish_review_endpoint():
+    route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None)
+        == "/terminal/cards/{card_id}/finish-review"
+    )
+    return route.endpoint
+
+
+def finish_route_snapshot(card_id: int) -> dict[str, object]:
+    with db.connect() as connection:
+        card = dict(
+            connection.execute(
+                """
+                SELECT status, machine_id, machine_sequence, version,
+                       finished_at, final_extrusion_shift_occurrence_id
+                FROM cards
+                WHERE id = ?
+                """,
+                (card_id,),
+            ).fetchone()
+        )
+        queue = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT id, status, machine_sequence, version
+                FROM cards
+                WHERE machine_id = ?
+                  AND status IN ('pending', 'running', 'paused')
+                ORDER BY machine_sequence, id
+                """,
+                (card["machine_id"],),
+            ).fetchall()
+        ]
+        timing_rows = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT *
+                FROM production_time_segments
+                WHERE card_id = ?
+                ORDER BY id
+                """,
+                (card_id,),
+            ).fetchall()
+        ]
+        rolls = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM roll_entries WHERE card_id = ? ORDER BY id",
+                (card_id,),
+            ).fetchall()
+        ]
+    return {
+        "card": card,
+        "queue": queue,
+        "timing_rows": timing_rows,
+        "rolls": rolls,
+    }
 
 
 def test_finish_blocks_roll_added_without_row_tare(connection, active_test_shift):
@@ -278,6 +361,109 @@ def test_finish_from_running_closes_active_segment_and_archives_card(
     assert segment["end_reason"] == "finish"
     assert card_id not in active_ids
     assert card_id in archive_ids
+
+
+def test_running_zero_marker_route_review_completes_with_mixed_pallet_rolls(
+    connection,
+    active_test_shift,
+):
+    """Catches the shared review bypassing tokenized normal completion."""
+
+    card_id = prepare_running_finishable_card(
+        "25604-route-review",
+        machine_id=1,
+        machine_sequence=1,
+    )
+    next_card_id = import_and_release_card(
+        "25604-route-review-next",
+        machine_id=1,
+        machine_sequence=2,
+    )
+    add_roll(card_id, "10.00")
+    with db.connect() as setup_connection:
+        setup_connection.execute(
+            """
+            UPDATE roll_entries
+            SET pallet_number = 1
+            WHERE card_id = ? AND roll_number = 1
+            """,
+            (card_id,),
+        )
+        setup_connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = '2026-01-15 08:00:37'
+            WHERE card_id = ?
+            """,
+            (card_id,),
+        )
+        setup_connection.execute(
+            """
+            UPDATE cards
+            SET first_started_at = '2026-01-15 08:00:37'
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+
+    loaded_version = int(db.fetch_terminal_card_detail(card_id)["version"])
+    review_response = asyncio.run(
+        finish_review_endpoint()(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
+    review_payload = json.loads(review_response.body)
+    assert review_response.status_code == 200, review_payload
+    assert review_payload["ok"] is True, review_payload
+    assert review_payload["can_confirm"] is True
+    assert review_payload["review_token"]
+    before = finish_route_snapshot(card_id)
+    review_model = terminal_context(card_id)["terminal_finish_review"]
+
+    response = asyncio.run(
+        finish_terminal_card(
+            make_test_request(f"/terminal/cards/{card_id}/finish"),
+            card_id,
+            loaded_version=str(loaded_version),
+            review_token=str(review_payload["review_token"]),
+            timing_draft=json.dumps(review_payload["preview"]["draft"]),
+            finish_review_preview=json.dumps(review_payload["preview"]),
+        )
+    )
+
+    after = finish_route_snapshot(card_id)
+    assert review_model["mode"] == "complete"
+    assert review_model["warning_message"] == (
+        "В поръчката има 1 ролка без палет. "
+        "Искате ли да приключите поръчката?"
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        f"/terminal/cards/{card_id}?notice=card_finished"
+    )
+    assert after["card"] == {
+        "status": STATUS_COMPLETED,
+        "machine_id": 1,
+        "machine_sequence": 1,
+        "version": loaded_version + 1,
+        "finished_at": review_payload["preview"]["reviewed_at_utc"],
+        "final_extrusion_shift_occurrence_id": active_test_shift["id"],
+    }
+    next_before = next(row for row in before["queue"] if row["id"] == next_card_id)
+    assert after["queue"] == [
+        {
+            "id": next_card_id,
+            "status": STATUS_PENDING,
+            "machine_sequence": 1,
+            "version": next_before["version"] + 1,
+        }
+    ]
+    assert after["rolls"] == before["rolls"]
+    assert len(after["timing_rows"]) == 1
+    assert after["timing_rows"][0]["ended_at"] == after["card"]["finished_at"]
+    assert after["timing_rows"][0]["end_reason"] == "finish"
 
 
 @pytest.mark.parametrize(

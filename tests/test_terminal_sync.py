@@ -461,6 +461,9 @@ def test_terminal_card_stale_locks_timing_without_topbar_focus_takeover():
     controller = Path(
         "app/static/js/timing_interval_editor.mjs"
     ).read_text(encoding="utf-8")
+    waiting_controller = Path(
+        "app/static/js/waiting_finish_review.mjs"
+    ).read_text(encoding="utf-8")
 
     assert (
         'new CustomEvent("terminal:card-stale", { cancelable: true })'
@@ -496,6 +499,22 @@ def test_terminal_card_stale_locks_timing_without_topbar_focus_takeover():
     assert "state.rows = createInitialState" not in stale_handler
     assert 'terminal:card-stale", (event) =>' not in template[generic_end:]
 
+    waiting_stale_start = waiting_controller.index(
+        'window.addEventListener("terminal:card-stale", (event) => {'
+    )
+    waiting_stale_end = waiting_controller.index(
+        "}, { capture: true });", waiting_stale_start
+    )
+    waiting_stale_handler = waiting_controller[
+        waiting_stale_start:waiting_stale_end
+    ]
+    assert "suspended = true;" in waiting_stale_handler
+    assert "if (overlay.hidden)" in waiting_stale_handler
+    assert "event.preventDefault();" in waiting_stale_handler
+    assert "lockReview(" in waiting_stale_handler
+    assert "reloadLink.hidden = false;" in waiting_controller
+    assert "confirmButton.disabled = true;" in waiting_controller
+
 
 def test_terminal_shift_stale_leaves_only_shift_reload_modal_active():
     template = Path("app/templates/terminal.html").read_text(encoding="utf-8")
@@ -504,6 +523,9 @@ def test_terminal_shift_stale_leaves_only_shift_reload_modal_active():
     )
     controller = Path(
         "app/static/js/timing_interval_editor.mjs"
+    ).read_text(encoding="utf-8")
+    waiting_controller = Path(
+        "app/static/js/waiting_finish_review.mjs"
     ).read_text(encoding="utf-8")
 
     shift_listener = 'window.addEventListener("terminal:shift-stale", () => {'
@@ -520,6 +542,32 @@ def test_terminal_shift_stale_leaves_only_shift_reload_modal_active():
     assert 'finishDialog.setAttribute("aria-modal", "false")' in shift_handler
     assert "setBackgroundIsolated(false);" in shift_handler
     assert ".focus(" not in shift_handler
+
+    waiting_shift_listener = (
+        'window.addEventListener("terminal:shift-stale", () => {'
+    )
+    assert waiting_shift_listener in waiting_controller
+    waiting_shift_start = waiting_controller.index(waiting_shift_listener)
+    waiting_shift_end = waiting_controller.index(
+        "}, { capture: true });", waiting_shift_start
+    )
+    waiting_shift_handler = waiting_controller[
+        waiting_shift_start:waiting_shift_end
+    ]
+    assert "suspended = true;" in waiting_shift_handler
+    assert "overlay.hidden = true;" in waiting_shift_handler
+    assert 'overlay.setAttribute("aria-hidden", "true")' in waiting_shift_handler
+    assert 'dialog.setAttribute("aria-modal", "false")' in waiting_shift_handler
+    assert "setBackgroundIsolated(false);" in waiting_shift_handler
+    assert ".focus(" not in waiting_shift_handler
+
+    waiting_initial_state = waiting_controller[
+        waiting_controller.index("if (model.open === true") - 220:
+    ]
+    assert "if (suspended) {" in waiting_initial_state
+    assert "overlay.hidden = true;" in waiting_initial_state
+    assert 'overlay.setAttribute("aria-hidden", "true")' in waiting_initial_state
+    assert 'dialog.setAttribute("aria-modal", "false")' in waiting_initial_state
 
     existing_start = template.index(
         'document.addEventListener("terminal:shift-stale", () => {'

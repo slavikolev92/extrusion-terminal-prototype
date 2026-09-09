@@ -198,15 +198,19 @@ def test_terminal_context_attaches_ready_pallet_summary_from_fetched_rolls(
             "roll_count": 1,
             "gross_weight": Decimal("10.5"),
             "net_weight": Decimal("10.2"),
+            "pallet_weight": Decimal("0"),
             "gross_display": "10.5",
             "net_display": "10.2",
+            "pallet_weight_display": "0.0",
         }],
         "total": {
             "roll_count": 1,
             "gross_weight": Decimal("10.5"),
             "net_weight": Decimal("10.2"),
+            "pallet_weight": Decimal("0"),
             "gross_display": "10.5",
             "net_display": "10.2",
+            "pallet_weight_display": "0.0",
         },
     }
 
@@ -225,7 +229,15 @@ def test_terminal_context_attaches_empty_pallet_summary_for_no_rolls(
     assert context["selected_card"]["pallet_summary"] == {
         "state": "empty",
         "rows": [],
-        "total": None,
+        "total": {
+            "roll_count": 0,
+            "gross_weight": Decimal("0"),
+            "net_weight": Decimal("0"),
+            "pallet_weight": Decimal("0"),
+            "gross_display": "0.0",
+            "net_display": "0.0",
+            "pallet_weight_display": "0.0",
+        },
     }
 
 
@@ -530,9 +542,18 @@ def test_terminal_render_pallet_summary_coordinator_owns_one_hook_set_and_keyboa
     assert len(re.findall(r"<button[^>]+data-pallet-summary-open", html)) == 1
     assert len(re.findall(r"<div[^>]+data-pallet-summary-overlay", html)) == 1
     assert html.count('const palletSummaryOverlay = document.querySelector(') == 1
-    assert html.count('document.addEventListener("keydown",') == 3
     assert "setDrawerBackgroundIsolated(true, \"pallet-summary\");" in html
     assert "trapModalFocus(event, palletSummaryDialog);" in html
+
+    waiting_controller = Path(
+        "app/static/js/waiting_finish_review.mjs"
+    ).read_text(encoding="utf-8")
+    assert '/static/js/waiting_finish_review.mjs' in html
+    assert 'document.addEventListener("keydown", (event) => {' in waiting_controller
+    assert 'if (event.key === "Escape")' in waiting_controller
+    assert 'if (event.key === "Tab")' in waiting_controller
+    assert "trapFocus(event);" in waiting_controller
+    assert "cancelButton.focus();" in waiting_controller
 
 
 def test_terminal_render_pallet_summary_coordinator_makes_surfaces_mutually_exclusive(
@@ -706,7 +727,19 @@ def roll(
 def test_pallet_summary_is_empty_when_no_gross_roll_is_entered():
     summary = build_terminal_pallet_summary([roll(None), roll(None)])
 
-    assert summary == {"state": "empty", "rows": [], "total": None}
+    assert summary == {
+        "state": "empty",
+        "rows": [],
+        "total": {
+            "roll_count": 0,
+            "gross_weight": Decimal("0"),
+            "net_weight": Decimal("0"),
+            "pallet_weight": Decimal("0"),
+            "gross_display": "0.0",
+            "net_display": "0.0",
+            "pallet_weight_display": "0.0",
+        },
+    }
 
 
 def test_pallet_summary_groups_one_numbered_pallet_and_builds_total():
@@ -723,17 +756,28 @@ def test_pallet_summary_groups_one_numbered_pallet_and_builds_total():
             "roll_count": 2,
             "gross_weight": Decimal("21.70"),
             "net_weight": Decimal("21.10"),
+            "pallet_weight": Decimal("0"),
             "gross_display": "21.7",
             "net_display": "21.1",
+            "pallet_weight_display": "0.0",
         }],
         "total": {
             "roll_count": 2,
             "gross_weight": Decimal("21.70"),
             "net_weight": Decimal("21.10"),
+            "pallet_weight": Decimal("0"),
             "gross_display": "21.7",
             "net_display": "21.1",
+            "pallet_weight_display": "0.0",
         },
     }
+
+
+def test_pallet_weight_placeholder_does_not_change_existing_net_calculation():
+    summary = build_terminal_pallet_summary([roll("10.00", "0.30", pallet=1)])
+
+    assert summary["rows"][0]["net_weight"] == Decimal("9.70")
+    assert summary["rows"][0]["pallet_weight"] == Decimal("0")
 
 
 def test_pallet_summary_sorts_numbered_pallets_numerically_with_gaps():
@@ -761,8 +805,10 @@ def test_pallet_summary_keeps_all_unassigned_rolls_under_without_pallet():
         "roll_count": 2,
         "gross_weight": Decimal("12.00"),
         "net_weight": Decimal("11.40"),
+        "pallet_weight": Decimal("0"),
         "gross_display": "12.0",
         "net_display": "11.4",
+        "pallet_weight_display": "0.0",
     }]
     assert summary["total"]["roll_count"] == 2
 
@@ -790,6 +836,43 @@ def test_pallet_summary_places_mixed_unassigned_rolls_last():
         Decimal("5.40"),
     ]
     assert summary["total"]["roll_count"] == 4
+
+
+def test_pallet_placeholder_and_totals_cover_every_numbered_and_unassigned_row():
+    """Catches a viewport-limited total or pallet tare leaking into the placeholder."""
+
+    entries = [
+        roll("1.00", "0.10", pallet=pallet_number)
+        for pallet_number in range(1, 13)
+    ]
+    entries.append(roll("2.00", "0.20", pallet=None))
+
+    summary = build_terminal_pallet_summary(entries)
+
+    assert summary["state"] == "ready"
+    assert [row["pallet_label"] for row in summary["rows"]] == [
+        "1", "2", "3", "4", "5", "6", "7",
+        "8", "9", "10", "11", "12", "Без палет",
+    ]
+    assert len(summary["rows"]) == 13
+    assert all(
+        row["pallet_weight"] == Decimal("0")
+        and row["pallet_weight_display"] == "0.0"
+        for row in summary["rows"]
+    )
+    assert summary["total"] == {
+        "roll_count": 13,
+        "gross_weight": Decimal("14.00"),
+        "net_weight": Decimal("12.60"),
+        "pallet_weight": Decimal("0"),
+        "gross_display": "14.0",
+        "net_display": "12.6",
+        "pallet_weight_display": "0.0",
+    }
+    assert summary["rows"][0]["gross_weight"] == Decimal("1.00")
+    assert summary["rows"][0]["net_weight"] == Decimal("0.90")
+    assert summary["rows"][-1]["gross_weight"] == Decimal("2.00")
+    assert summary["rows"][-1]["net_weight"] == Decimal("1.80")
 
 
 def test_pallet_summary_uses_saved_rolls_not_a_current_pallet_default():

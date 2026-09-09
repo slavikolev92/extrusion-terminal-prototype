@@ -68,6 +68,18 @@ Confirmed workflow facts:
   without the marker follows the normal produced path. A waiting card is
   completed only by a later deliberate `Приключи` after returned rolls are
   entered.
+- Every eligible `Приключи` first opens the implemented common production
+  review with order details, authoritative production time, and the saved
+  pallet-production summary. A running or paused card may open the existing
+  timing editor from that review and returns to the recalculated summary before
+  confirmation. An `awaiting_rewinding` card shows the same review with stored
+  extrusion timing read-only and no timing-edit control; its finalization stays
+  tokenless and timing-neutral.
+- The review's `Тегло палет, кг` column currently shows an explicit `0.0` for
+  every pallet row and total. This is a presentation-only placeholder for the
+  physical pallet, not the roll-core tare weight. Physical pallet-weight input,
+  persistence, history, and calculation behavior are not implemented and
+  remain a separately specified future task.
 - After production is finished, shift-manager/admin reviews and prints/reprints from the admin operational card detail.
 - Printing should print the whole front and back.
 - Completed-card print output derives pallet roll counts plus gross and net totals from current saved rolls, in numeric pallet order, with a final `Без палет` group only when numbered and blank assignments are mixed.
@@ -75,13 +87,26 @@ Confirmed workflow facts:
 
 The terminal UI can present information in whatever way is practical. The printed paper output has a stricter requirement: it must visually match the Excel front and back card layout as closely as possible.
 
-## Approved Next Pilot Slice — Task 20 (Not Yet Implemented)
+## Approved Next Pilot Slice — Physical Pallet Weight (Not Yet Implemented)
 
-Task 20 remains the next approved pilot workstream. It is not current
-application behavior, no implementation has started, and it has not been
-deployed. The first Task 20 step is a bounded reconciliation of its existing
-specification and implementation plan with the retained latest Item Master
-design—not application, schema, or test implementation.
+The next approved development step is the physical pallet-weight entry that
+will replace the completion review's explicit `0.0` placeholder. Its ownership,
+entry location, validation, persistence, correction, history, and calculation
+semantics have not yet been designed. Begin with a bounded brainstorming and
+specification pass; do not infer pallet weight from roll-core tare or write a
+schema migration before those rules are approved.
+
+The completed unified order-finish review and its current placeholder contract
+are recorded in `v2-files/archive/TASK-21-ORDER-FINISH-REVIEW.md` and
+`docs/implementation-notes/order-finish-review.md`.
+
+## Following Approved Pilot Slice — Task 20 (Not Yet Implemented)
+
+Task 20 follows the physical pallet-weight slice. It is not current application
+behavior, no implementation has started, and it has not been deployed. Its
+first step remains a bounded reconciliation of its existing specification and
+implementation plan with the retained latest Item Master design—not
+application, schema, or test implementation.
 
 - The planned recipe remains owned by the Shift Manager import and remains a
   separate source record.
@@ -711,11 +736,14 @@ Confirmed production timing behavior:
   are Sofia local and minute-precision: unchanged timestamps preserve stored
   seconds, while changed timestamps save with seconds `00`.
 - Clicking Finish for a running or paused card first freezes and displays the
-  proposed stop, productive time, and paused time. The operator may edit the
-  same interval draft, then Confirm Finish saves the ledger and lifecycle
-  transition atomically. Cancelling the review writes nothing, and a server
-  process restart invalidates an already-open review. The existing
-  awaiting-rewinding finalization flow remains timing-neutral.
+  proposed stop, productive time, paused time, order identity, and saved pallet
+  production in the common finish review. The operator may edit the same
+  interval draft, then confirmation saves the ledger and lifecycle transition
+  atomically. Cancelling the review writes nothing, and a server process
+  restart invalidates an already-open review. An `awaiting_rewinding` card uses
+  the same visual summary without an edit action; it displays the already
+  stored extrusion timing and its tokenless finalization does not mutate the
+  timing ledger or `finished_at`.
 - If an operator tries to input a roll while no timer is active for that card, the app should warn them.
 - Printing/reprinting is an admin/shift-manager action after the card is produced or archived.
 
