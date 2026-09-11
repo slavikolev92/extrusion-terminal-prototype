@@ -19,6 +19,12 @@ FIXTURE_SCRIPT = REPO_ROOT / "scripts" / "create_order_finish_review_fixture.py"
 VERIFIER_SCRIPT = REPO_ROOT / "scripts" / "verify_order_finish_review_ui.mjs"
 VERIFIER_CONTRACT = REPO_ROOT / "scripts" / "order_finish_review_ui_contract.mjs"
 OUTPUT_GUARD = REPO_ROOT / "scripts" / "order_finish_review_output_guard.mjs"
+WAITING_FINISH_REVIEW_CORE = (
+    REPO_ROOT / "app" / "static" / "js" / "waiting_finish_review_core.mjs"
+)
+WAITING_FINISH_REVIEW_CONTROLLER = (
+    REPO_ROOT / "app" / "static" / "js" / "waiting_finish_review.mjs"
+)
 SCENARIOS = {
     "active_normal",
     "active_marked_empty",
@@ -73,6 +79,46 @@ def run_contract_probe(expression: str) -> subprocess.CompletedProcess[str]:
     )
     return subprocess.run(
         ["node", "--input-type=module", "--eval", program],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+
+def run_waiting_core_probe(expression: str) -> subprocess.CompletedProcess[str]:
+    core_url = WAITING_FINISH_REVIEW_CORE.resolve().as_uri()
+    program = (
+        "import { canOpenWaitingFinishReviewPayload } from "
+        f"{json.dumps(core_url)}; "
+        f"console.log(JSON.stringify({expression}));"
+    )
+    return subprocess.run(
+        ["node", "--input-type=module", "--eval", program],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+
+def run_waiting_controller_probe(program: str) -> subprocess.CompletedProcess[str]:
+    controller_url = WAITING_FINISH_REVIEW_CONTROLLER.resolve().as_uri()
+    source = f"""
+globalThis.document = {{
+  querySelector: () => null,
+  querySelectorAll: () => [],
+}};
+globalThis.window = {{}};
+const {{ resolveWaitingFinishReviewRequest }} = await import(
+  {json.dumps(controller_url)}
+);
+{program}
+"""
+    return subprocess.run(
+        ["node", "--input-type=module", "--eval", source],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -621,6 +667,136 @@ def test_verifier_contract_preserves_exact_required_evidence_set():
         "waiting-read-only-1440x900.png",
         "waiting-scrolled-1366x768.png",
         "waiting-validation-error-1366x768.png",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        (
+            'canOpenWaitingFinishReviewPayload('
+            '{mode:"finalize_rewinding",card_version:8}, "8")',
+            True,
+        ),
+        (
+            'canOpenWaitingFinishReviewPayload('
+            '{mode:"complete",card_version:8}, "8")',
+            False,
+        ),
+        (
+            'canOpenWaitingFinishReviewPayload('
+            '{mode:"finalize_rewinding",card_version:9}, "8")',
+            False,
+        ),
+        (
+            'canOpenWaitingFinishReviewPayload('
+            '{mode:"finalize_rewinding",card_version:8,review_token:null}, "8")',
+            False,
+        ),
+    ],
+)
+def test_waiting_review_open_boundary_requires_exact_tokenless_fresh_payload(
+    expression,
+    expected,
+):
+    result = run_waiting_core_probe(expression)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) is expected
+
+
+def test_waiting_type_button_click_enters_fresh_review_flow():
+    source = WAITING_FINISH_REVIEW_CONTROLLER.read_text(encoding="utf-8")
+
+    assert (
+        'trigger.addEventListener("click", () => {\n'
+        "    void beginReview(trigger);\n"
+        "  });"
+    ) in source
+
+
+def test_waiting_review_request_failures_are_classified_for_visible_recovery():
+    result = run_waiting_controller_probe(
+        """
+const response = (status, payload, jsonError = false) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => {
+    if (jsonError) throw new Error("malformed JSON");
+    return payload;
+  },
+});
+const structuralFailure = (message) => ({
+  ok: false,
+  messages: [message],
+  field_errors: [{ source_index: null, field: "form", message }],
+});
+const cases = [
+  await resolveWaitingFinishReviewRequest({
+    request: async () => response(422, structuralFailure("Добавете тегло за палет №5.")),
+    loadedVersion: "8",
+  }),
+  await resolveWaitingFinishReviewRequest({
+    request: async () => response(409, structuralFailure("Презаредете картата.")),
+    loadedVersion: "8",
+  }),
+  await resolveWaitingFinishReviewRequest({
+    request: async () => response(200, null, true),
+    loadedVersion: "8",
+  }),
+  await resolveWaitingFinishReviewRequest({
+    request: async () => response(200, {
+      ok: true,
+      finish_review: { mode: "finalize_rewinding", card_version: 8 },
+    }),
+    loadedVersion: "8",
+  }),
+  await resolveWaitingFinishReviewRequest({
+    request: async () => { throw new Error("network down"); },
+    loadedVersion: "8",
+  }),
+];
+console.log(JSON.stringify(cases));
+"""
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [
+        {
+            "kind": "validation",
+            "messages": ["Добавете тегло за палет №5."],
+            "reload_required": False,
+        },
+        {
+            "kind": "fatal",
+            "reason": "stale",
+            "messages": ["Презаредете картата."],
+            "reload_required": True,
+        },
+        {
+            "kind": "fatal",
+            "reason": "malformed-response",
+            "messages": [
+                "Отговорът на сървъра е невалиден. Презаредете страницата."
+            ],
+            "reload_required": True,
+        },
+        {
+            "kind": "fatal",
+            "reason": "malformed-response",
+            "messages": [
+                "Отговорът на сървъра е невалиден. Презаредете страницата."
+            ],
+            "reload_required": True,
+        },
+        {
+            "kind": "fatal",
+            "reason": "network",
+            "messages": [
+                "Връзката със сървъра прекъсна. Презаредете страницата."
+            ],
+            "reload_required": True,
+        },
     ]
 
 

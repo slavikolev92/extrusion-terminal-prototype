@@ -16,6 +16,10 @@ import {
   serializeTimingDraft,
   visibleTimingRows,
 } from "./timing_interval_editor_core.mjs";
+import {
+  applyFinishReviewPalletState,
+  validateFinishReviewPalletState,
+} from "./finish_review_pallet_state.mjs";
 
 export function createPreviewCoordinator({ apply = () => {} } = {}) {
   let currentGeneration = 0;
@@ -1031,10 +1035,6 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     finishProposedStop.textContent = formatFinishBoundary(preview.proposed_stop_display);
     finishProductionTotal.textContent = formatFinishDuration(preview.production_seconds);
     finishPausedTotal.textContent = formatFinishDuration(preview.paused_seconds);
-    const message = activeFinishForm.dataset.finishConfirmMessage || "";
-    const genericMessage = "Сигурни ли сте, че искате да приключите тази поръчка?";
-    finishWarning.textContent = message;
-    finishWarning.hidden = !message || message === genericMessage;
   }
 
   function openFinishSummary({ opener = activeFinishForm, focusTarget = finishCancelButton } = {}) {
@@ -1043,7 +1043,10 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
     }
     finishReturnFocus ||= opener.querySelector?.("button") || opener;
     const locked = Boolean(finishReview?.locked);
-    showFinishAlert(locked ? finishReview.lockMessages || [] : []);
+    showFinishAlert([
+      ...(finishReview.lockMessages || []),
+      ...(finishReview.reviewMessages || []),
+    ]);
     renderFinishPreview(finishReview.preview);
     finishDialog.setAttribute("aria-busy", "false");
     applyFinishReviewOpeningAvailability(finishReview, {
@@ -1242,47 +1245,108 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
           ], { focus: true });
           return;
         }
-        finishReview = {
-          reviewToken: "",
-          draft: cloneRows(timing.draft),
+        finishReview = null;
+        finishReturnFocus = null;
+        openEditor({
+          opener: trigger,
+          mode: "ordinary",
+          rows: timing.draft,
           preview: timing.display,
-          canConfirm: false,
-          lockMessages: responsePayload.messages || [],
-        };
-        finishReturnFocus = trigger;
-        openFinishSummary({ opener: trigger, focusTarget: finishCancelButton });
-        showFinishAlert(responsePayload.messages || ["Действието не беше изпълнено."]);
-        focusFinishAlert();
-        finishConfirmButton.disabled = true;
-        finishEditButton.disabled = true;
+          previewOnOpen: false,
+        });
+        showAlert(responsePayload.messages || ["Действието не беше изпълнено."]);
         return;
       }
+      const authoritativeReview = validateFinishReviewPalletState(
+        responsePayload.finish_review,
+      );
+      if (
+        !authoritativeReview
+        || !["complete", "enter_rewinding"].includes(authoritativeReview.mode)
+        || String(authoritativeReview.card_version) !== String(loadedVersion)
+        || !applyFinishReviewPalletState(finishDialog, authoritativeReview)
+      ) {
+        throw new Error("Invalid authoritative finish review payload");
+      }
       finishReview = {
-        reviewToken: responsePayload.review_token,
+        reviewToken: authoritativeReview.review_token,
         draft: cloneRows(responsePayload.preview.draft),
         preview: responsePayload.preview,
-        canConfirm: responsePayload.can_confirm === true,
+        canConfirm: authoritativeReview.can_confirm === true,
         lockMessages: [],
+        reviewMessages: authoritativeReview.messages,
       };
       finishReturnFocus = trigger;
       openFinishSummary({ opener: trigger });
     } catch {
-      finishReview = {
-        reviewToken: "",
-        draft: cloneRows(timing.draft),
+      finishReview = null;
+      finishReturnFocus = null;
+      openEditor({
+        opener: trigger,
+        mode: "ordinary",
+        rows: timing.draft,
         preview: timing.display,
-        canConfirm: false,
-        lockMessages: ["Действието не беше изпълнено. Опитайте отново."],
-      };
-      finishReturnFocus = trigger;
-      openFinishSummary({ opener: trigger, focusTarget: finishCancelButton });
-      showFinishAlert(["Действието не беше изпълнено. Опитайте отново."]);
-      focusFinishAlert();
-      finishConfirmButton.disabled = true;
-      finishEditButton.disabled = true;
+        previewOnOpen: false,
+      });
+      showAlert(["Действието не беше изпълнено. Опитайте отново."]);
     } finally {
       finishSubmitting = false;
       trigger.disabled = false;
+    }
+  }
+
+  async function refreshRetainedFinishReview(opener) {
+    const loadedVersion = activeFinishForm.querySelector(
+      "input[name='loaded_version']",
+    ).value;
+    finishSubmitting = true;
+    opener.disabled = true;
+    try {
+      const { response, responsePayload } = await postTimingRequest(
+        `${activeFinishForm.action}-review/preview`,
+        {
+          loaded_version: loadedVersion,
+          review_token: finishReview.reviewToken,
+          timing_draft: JSON.stringify(serializeTimingDraft(finishReview.draft)),
+        },
+      );
+      const review = validateFinishReviewPalletState(
+        responsePayload.finish_review,
+      );
+      if (
+        !response.ok
+        || responsePayload.ok !== true
+        || !review
+        || !["complete", "enter_rewinding"].includes(review.mode)
+        || String(review.card_version) !== String(loadedVersion)
+        || !applyFinishReviewPalletState(finishDialog, review)
+      ) {
+        throw new Error("Retained finish review could not be refreshed");
+      }
+      finishReview.reviewToken = review.review_token;
+      finishReview.draft = cloneRows(responsePayload.preview.draft);
+      finishReview.preview = responsePayload.preview;
+      finishReview.canConfirm = review.can_confirm === true;
+      finishReview.lockMessages = [];
+      finishReview.reviewMessages = review.messages;
+      openFinishSummary({ opener, focusTarget: finishCancelButton });
+    } catch {
+      finishReview.locked = true;
+      finishReview.canConfirm = false;
+      finishReview.lockMessages = [
+        "Прегледът не можа да бъде обновен. Презаредете и опитайте отново.",
+      ];
+      openEditor({
+        opener,
+        mode: "finish",
+        rows: finishReview.draft,
+        preview: finishReview.preview,
+        locked: true,
+        lockedMessages: finishReview.lockMessages,
+      });
+    } finally {
+      finishSubmitting = false;
+      opener.disabled = false;
     }
   }
 
@@ -1330,10 +1394,23 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         });
         return;
       }
+      const authoritativeReview = validateFinishReviewPalletState(
+        responsePayload.finish_review,
+      );
+      if (
+        !authoritativeReview
+        || authoritativeReview.mode !== finishDialog.dataset.finishReviewMode
+        || String(authoritativeReview.card_version) !== String(loadedVersion)
+        || !applyFinishReviewPalletState(finishDialog, authoritativeReview)
+      ) {
+        throw new Error("Invalid authoritative finish review payload");
+      }
       const mapped = applyEditorPreview(responsePayload.preview);
       if (returnToSummary) {
         finishReview.draft = cloneRows(state.rows);
         finishReview.preview = mapped.normalized_preview;
+        finishReview.canConfirm = authoritativeReview.can_confirm === true;
+        finishReview.reviewMessages = authoritativeReview.messages;
         setEditorSubmitting(false);
         closeEditor({ restoreFocus: false, preserveBackground: true });
         openFinishSummary({ opener: finishEditButton, focusTarget: finishEditButton });
@@ -1626,14 +1703,9 @@ if (model?.timing && menu && menuButton && menuPanel && menuAction && overlay
         preserveAlert: model.finish_review.locked,
       });
     } else {
-      openFinishSummary({
-        opener: activeFinishForm.querySelector("button[type='submit']"),
-        focusTarget: finishCancelButton,
-      });
-      showFinishAlert(retainedMessages);
-      if (retainedMessages.length > 0) {
-        focusFinishAlert();
-      }
+      void refreshRetainedFinishReview(
+        activeFinishForm.querySelector("button[type='submit']"),
+      );
     }
   }
 }

@@ -106,6 +106,13 @@ def create_roll_pallet_fixture(database_path: Path, fixture_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_roll_pallet_verifier_uses_measured_47_row_overflow_capacity():
+    source = VERIFIER_SCRIPT.read_text(encoding="utf-8")
+
+    assert "[47, 47, 1]" in source
+    assert "[48, 48, 1]" not in source
+
+
 @contextmanager
 def request_counting_server():
     requests: list[str] = []
@@ -585,11 +592,28 @@ def test_roll_pallet_verifier_completes_current_pencil_editor_workflow(tmp_path)
                 for interaction in summary["interactions"]
             )
             fixed_geometry = summary["print"]["fixedTableGeometry"]
-            assert fixed_geometry["onePallet"]["bodyRowCount"] == 1
-            assert fixed_geometry["twoPallets"]["bodyRowCount"] == 2
+            assert summary["print"]["approvedHeaderOrder"] == [
+                "Палет №",
+                "Брой ролки",
+                "Бруто без палет, кг",
+                "Тегло палет, кг",
+                "Бруто с палет, кг",
+                "Нето, кг",
+            ]
+            assert summary["print"]["sixColumnHeadersExact"] is True
+            assert summary["print"]["totalsUniqueAndAttached"] is True
+            assert fixed_geometry["onePallet"]["dataRowCount"] == 1
+            assert fixed_geometry["onePallet"]["bodyRowCount"] == 2
+            assert fixed_geometry["onePallet"]["totalCount"] == 1
+            assert fixed_geometry["twoPallets"]["dataRowCount"] == 2
+            assert fixed_geometry["twoPallets"]["bodyRowCount"] == 3
+            assert fixed_geometry["twoPallets"]["totalCount"] == 1
             assert fixed_geometry["onePallet"]["pdfPages"] == 2
             assert fixed_geometry["twoPallets"]["pdfPages"] == 2
-            assert fixed_geometry["overflow"]["lastPageBodyRowCount"] == 1
+            assert fixed_geometry["overflow"]["lastPageBodyRowCount"] == 2
+            assert fixed_geometry["overflow"]["lastPageDataRowCount"] == 1
+            assert fixed_geometry["overflow"]["totalCount"] == 1
+            assert fixed_geometry["overflow"]["totalPlacement"] == "overflow:3"
             assert fixed_geometry["overflow"]["pdfPages"] == 5
             assert fixed_geometry["widthsStable"] is True
             assert fixed_geometry["pageTwoRowsStable"] is True

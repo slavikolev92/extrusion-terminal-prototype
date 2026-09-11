@@ -2,6 +2,10 @@
 
 {% block title %}Поръчка № {{ card.order_number }} - Терминал Екструдиране{% endblock %}
 
+{% block head %}
+  <link rel="stylesheet" href="{{ url_for('static', path='/css/pallet_summary.css') }}">
+{% endblock %}
+
 {% block body %}
 <main class="page admin-page admin-review-page">
   {% include "_admin_nav.html" %}
@@ -301,7 +305,17 @@
     <div class="admin-ledger-form">
       <div class="section-head">
         <h2>Ролки</h2>
+        {% if pallet_modal %}
+          <button class="admin-action-button" type="button"
+                  data-pallet-summary-open aria-controls="pallet-summary-overlay"
+                  aria-expanded="false">Палети</button>
+        {% endif %}
       </div>
+      {% if pallet_modal %}
+        <p class="notice error" role="alert" data-pallet-summary-open-error hidden>
+          Запазете промените във формата или презаредете страницата, за да ги отхвърлите.
+        </p>
+      {% endif %}
 
       <div class="admin-roll-toolbar">
         <label>
@@ -462,6 +476,10 @@
   </section>
 </main>
 
+{% if pallet_modal %}
+  {% include "_pallet_summary_modal.html" %}
+{% endif %}
+
 <script>
   (() => {
     const globalForm = document.getElementById("admin-card-save-form");
@@ -470,8 +488,19 @@
     }
 
     const discardMessage = "Има незапазени промени. Да бъдат ли отхвърлени?";
+    const palletSummaryOpen = document.querySelector("[data-pallet-summary-open]");
+    const palletSummaryOpenError = document.querySelector("[data-pallet-summary-open-error]");
+    const palletSummaryOverlay = document.querySelector("[data-pallet-summary-overlay]");
+    const palletSummaryDialog = palletSummaryOverlay?.querySelector("[data-pallet-summary-dialog]");
+    const palletSummaryCloseControls = Array.from(
+      palletSummaryOverlay?.querySelectorAll("[data-pallet-summary-close]") || [],
+    );
+    const main = document.querySelector("main");
     let globalFormDirty = false;
     let discardApproved = false;
+    let palletSummaryReturnFocus = null;
+    let mainAriaHidden = null;
+    let backdropPressStarted = false;
 
     const markGlobalFormDirty = () => {
       globalFormDirty = true;
@@ -496,6 +525,101 @@
       }
       return "";
     };
+
+    const focusableModalElements = () => Array.from(
+      palletSummaryDialog?.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+      ) || [],
+    ).filter((element) => !element.hidden && !element.closest("[hidden]"));
+
+    const closePalletSummary = (restoreFocus = true) => {
+      if (!palletSummaryOverlay || palletSummaryOverlay.hidden) return;
+      palletSummaryOverlay.hidden = true;
+      palletSummaryOverlay.setAttribute("aria-hidden", "true");
+      palletSummaryOpen?.setAttribute("aria-expanded", "false");
+      main?.removeAttribute("inert");
+      if (main) {
+        if (mainAriaHidden === null) main.removeAttribute("aria-hidden");
+        else main.setAttribute("aria-hidden", mainAriaHidden);
+      }
+      if (restoreFocus) palletSummaryReturnFocus?.focus();
+      palletSummaryReturnFocus = null;
+    };
+
+    const preparePalletSummaryDismiss = async (restoreFocus = true) => {
+      if (!palletSummaryOverlay || palletSummaryOverlay.hidden) return;
+      const detail = { decision: null };
+      palletSummaryOverlay.dispatchEvent(new CustomEvent(
+        "pallet-summary:prepare-dismiss",
+        { detail },
+      ));
+      if (!(detail.decision instanceof Promise)) return;
+      if (await detail.decision) closePalletSummary(restoreFocus);
+    };
+
+    const openPalletSummary = () => {
+      if (!palletSummaryOpen || !palletSummaryOverlay) return;
+      const beforeOpen = new CustomEvent("pallet-summary:before-open", { cancelable: true });
+      if (!palletSummaryOpen.dispatchEvent(beforeOpen)) return;
+      palletSummaryReturnFocus = palletSummaryOpen;
+      mainAriaHidden = main?.getAttribute("aria-hidden") ?? null;
+      main?.setAttribute("inert", "");
+      main?.setAttribute("aria-hidden", "true");
+      palletSummaryOverlay.hidden = false;
+      palletSummaryOverlay.setAttribute("aria-hidden", "false");
+      palletSummaryOpen.setAttribute("aria-expanded", "true");
+      window.requestAnimationFrame(() => (
+        palletSummaryCloseControls[0] || palletSummaryDialog
+      )?.focus());
+    };
+
+    palletSummaryOpen?.addEventListener("pallet-summary:before-open", (event) => {
+      if (!globalFormDirty) {
+        if (palletSummaryOpenError) palletSummaryOpenError.hidden = true;
+        return;
+      }
+      event.preventDefault();
+      if (palletSummaryOpenError) palletSummaryOpenError.hidden = false;
+    });
+    palletSummaryOpen?.addEventListener("click", openPalletSummary);
+    palletSummaryCloseControls.forEach((control) => {
+      control.addEventListener("click", () => { void preparePalletSummaryDismiss(); });
+    });
+    palletSummaryOverlay?.addEventListener("pointerdown", (event) => {
+      backdropPressStarted = event.target === palletSummaryOverlay;
+    });
+    palletSummaryOverlay?.addEventListener("pointercancel", () => {
+      backdropPressStarted = false;
+    });
+    palletSummaryOverlay?.addEventListener("click", (event) => {
+      const dismiss = backdropPressStarted && event.target === palletSummaryOverlay;
+      backdropPressStarted = false;
+      if (dismiss) void preparePalletSummaryDismiss();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (!palletSummaryOverlay || palletSummaryOverlay.hidden) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        void preparePalletSummaryDismiss();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = focusableModalElements();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        palletSummaryDialog?.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
 
     globalForm.addEventListener("input", markGlobalFormDirty);
     globalForm.addEventListener("change", markGlobalFormDirty);
@@ -553,4 +677,7 @@
     });
   })();
 </script>
+{% if pallet_modal %}
+  <script type="module" src="{{ url_for('static', path='/js/pallet_weight_autosave.mjs') }}"></script>
+{% endif %}
 {% endblock %}

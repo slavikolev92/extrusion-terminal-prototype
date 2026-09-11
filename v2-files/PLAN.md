@@ -570,30 +570,22 @@ deferred status. It is grouped by affected surface and rough complexity.
 23. **Physical pallet-weight entry**
    - Surface: pallet assignment/roll entry, the unified completion review, and
      any admin correction surface approved during design.
-   - Status: next approved pilot slice; unimplemented. Task 21 provides only a
-     presentation-only `0.0` view-model seam and stores no physical pallet
-     weight.
-   - Design gate: first agree where and when operators enter pallet weight,
-     what owns one value, how blank/unassigned pallets behave, validation and
-     precision, correction/history rules, optimistic conflicts, and whether
-     the value affects any calculated total. Do not treat roll-core tare as
-     pallet weight and do not create a migration before this contract is
-     approved.
-   - Required implementation process: after the design and plan are approved,
-     follow the SQLite migration/deployment playbook for every schema or
-     stored-meaning change and use only temporary databases for tests and live
-     browser verification.
+   - Status: source-complete, verified, and accepted on 2026-09-11; not yet
+     deployed. The durable completion record is
+     `v2-files/archive/TASK-23-PHYSICAL-PALLET-WEIGHT.md`.
+   - Implemented behavior: optional immediate entry per numbered pallet,
+     two-decimal exact storage, all-or-none completion enforcement once any
+     weight exists, terminal and admin correction, completion-review and print
+     integration, and deterministic SQLite migration handling.
 
 ## Current Next Step And Future Order
 
 1. Keep production on the last confirmed deployed revision until the user
    chooses a maintenance window and explicitly authorizes the documented
    production procedure. Source publication is not deployment.
-2. The current approved pilot development step is physical pallet-weight entry.
-   Begin with bounded brainstorming and approve its ownership, entry,
-   validation, persistence, history, correction, conflict, and calculation
-   rules before writing application code or a schema migration.
-3. After physical pallet weight is complete, proceed to Task 20's initial,
+2. Physical pallet-weight entry is source-complete and accepted. Its production
+   deployment remains a separate explicitly authorized maintenance operation.
+3. The next development workstream is Task 20's initial,
    forward-looking executed-recipe and material-catalogue workstream. Begin by
    reconciling its specification and implementation plan to the SKU-based
    published Item Master snapshot/projection and historical-snapshot safety

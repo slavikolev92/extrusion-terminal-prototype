@@ -2668,10 +2668,10 @@ def test_finish_review_response_exposes_authoritative_unavailable_summary(
         status=STATUS_RUNNING,
     )
 
-    def fail_summary(_roll_entries):
-        raise ArithmeticError("controlled summary failure")
+    def fail_summary(_connection, _card_id):
+        raise db.PalletSummaryDataError("controlled summary failure")
 
-    monkeypatch.setattr(main, "build_terminal_pallet_summary", fail_summary)
+    monkeypatch.setattr(db, "load_card_pallet_summary", fail_summary)
     response = asyncio.run(
         finish_review_endpoint()(
             make_test_request(f"/terminal/cards/{card_id}/finish-review"),
@@ -2680,13 +2680,13 @@ def test_finish_review_response_exposes_authoritative_unavailable_summary(
         )
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 422
     payload = json.loads(response.body)
-    assert payload["ok"] is True
-    assert payload["can_confirm"] is False
+    assert payload["ok"] is False
+    assert payload["messages"] == [db.PALLET_SUMMARY_REPAIR_MESSAGE]
 
 
-def test_finish_review_derives_signed_mode_from_snapshot_fetched_after_preview(
+def test_finish_review_derives_signed_mode_without_a_post_snapshot_refetch(
     connection,
     monkeypatch,
 ):
@@ -2731,14 +2731,14 @@ def test_finish_review_derives_signed_mode_from_snapshot_fetched_after_preview(
 
     payload = json.loads(response.body)
     assert response.status_code == 200
-    assert fetch_states == [True]
+    assert fetch_states == []
     assert main.decode_finish_review_token(
         payload["review_token"],
         key=main.FINISH_REVIEW_TOKEN_KEY,
-    )["recovery_mode"] == "enter_rewinding"
+    )["recovery_mode"] == "complete"
 
 
-def test_finish_review_rejects_version_change_after_transactional_preview(
+def test_finish_review_returns_one_consistent_snapshot_before_a_later_write(
     connection,
     monkeypatch,
 ):
@@ -2776,8 +2776,10 @@ def test_finish_review_rejects_version_change_after_transactional_preview(
         )
     )
 
-    assert response.status_code == 409
-    assert json.loads(response.body)["messages"] == [db.STALE_CARD_MESSAGE]
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+    assert payload["finish_review"]["card_version"] == loaded_version
+    assert payload["finish_review"]["mode"] == "complete"
     assert stored_finish_snapshot(card_id) == competing_snapshot
 
 
@@ -3106,13 +3108,13 @@ def test_finish_preview_rejects_stale_or_missing_shift_and_retains_draft(
     submitted_json = timing_draft_json(submitted)
     before = stored_finish_snapshot(card_id)
     captured_drafts: list[list[db.TimingDraftRow]] = []
-    real_preview = main.preview_terminal_timing_ledger_data
+    real_preview = main.preview_terminal_finish_review_data
 
     def capture_preview(*args, **kwargs):
-        captured_drafts.append(list(args[2]))
+        captured_drafts.append(list(kwargs["timing_draft"]))
         return real_preview(*args, **kwargs)
 
-    monkeypatch.setattr(main, "preview_terminal_timing_ledger_data", capture_preview)
+    monkeypatch.setattr(main, "preview_terminal_finish_review_data", capture_preview)
     stale_version = loaded_version - 1
     stale_token = main.encode_finish_review_token(
         card_id,
@@ -4275,11 +4277,11 @@ def test_reviewed_finish_applies_multirow_add_delete_and_lifecycle_once(
         ),
         (
             "invalid_tare",
-            main.PALLET_SUMMARY_UNAVAILABLE_MESSAGE,
+            db.PALLET_SUMMARY_REPAIR_MESSAGE,
         ),
         (
             "invalid_net",
-            main.PALLET_SUMMARY_UNAVAILABLE_MESSAGE,
+            db.PALLET_SUMMARY_REPAIR_MESSAGE,
         ),
         (
             "roll_gap",
@@ -4355,6 +4357,11 @@ def test_active_finish_route_validation_failures_preserve_every_persisted_surfac
             )
 
     loaded_version = card_version(card_id)
+    before = stored_finish_snapshot(card_id)
+    assert {row["id"] for row in before["queue_rows"]} == {
+        card_id,
+        next_card_id,
+    }
     review_response = asyncio.run(
         finish_review_endpoint()(
             make_test_request(f"/terminal/cards/{card_id}/finish-review"),
@@ -4363,17 +4370,16 @@ def test_active_finish_route_validation_failures_preserve_every_persisted_surfac
         )
     )
     review_payload = json.loads(review_response.body)
+    if failure_kind in {"invalid_tare", "invalid_net"}:
+        assert review_response.status_code == 422
+        assert review_payload["messages"] == [expected_message]
+        assert stored_finish_snapshot(card_id) == before
+        return
     assert review_response.status_code == 200, review_payload
     assert review_payload["ok"] is True
     assert review_payload["review_token"]
     if failure_kind == "shift_lost":
         end_active_test_shift()
-    before = stored_finish_snapshot(card_id)
-    assert {row["id"] for row in before["queue_rows"]} == {
-        card_id,
-        next_card_id,
-    }
-
     response = asyncio.run(
         main.finish_terminal_card(
             make_test_request(f"/terminal/cards/{card_id}/finish"),
@@ -4741,10 +4747,10 @@ def test_direct_finish_revalidates_pallet_summary_before_any_write(
         review_payload = json.loads(review_response.body)
     before = stored_finish_snapshot(card_id)
 
-    def fail_summary(_roll_entries):
+    def fail_summary(_roll_entries, _pallet_weights):
         raise ArithmeticError("controlled finalization summary failure")
 
-    monkeypatch.setattr(main, "build_terminal_pallet_summary", fail_summary)
+    monkeypatch.setattr(main, "build_pallet_summary", fail_summary)
     response = asyncio.run(
         main.finish_terminal_card(
             make_test_request(f"/terminal/cards/{card_id}/finish"),

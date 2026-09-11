@@ -1,5 +1,6 @@
 import {
   STORAGE_KEY_PREFIX,
+  adoptLocalCardVersion,
   advanceSchedule,
   buildSchedule,
   calculateNextExpected,
@@ -59,7 +60,7 @@ export function bootstrapRollChangeCountdown({
   const controls = documentObject.querySelector("[data-roll-change-controls]");
   const selectedMachineId = Number(controls?.dataset.machineId);
   const selectedCardId = Number(controls?.dataset.cardId);
-  const selectedCardVersion = Number(controls?.dataset.cardVersion);
+  let selectedCardVersion = Number(controls?.dataset.cardVersion);
   const selectedStatus = controls?.dataset.cardStatus || "";
   const openControl = controls?.querySelector("[data-roll-change-open]") ?? null;
   const controlValue = controls?.querySelector("[data-roll-change-control-value]") ?? null;
@@ -570,6 +571,45 @@ export function bootstrapRollChangeCountdown({
     renderAll();
   }
 
+  function handleLocalCardVersion(event) {
+    const detail = event.detail;
+    let adoptedAny = false;
+    for (const [machineId, context] of contexts) {
+      if (context.cardId !== detail?.cardId) continue;
+      const adopted = adoptLocalCardVersion(context, detail);
+      if (!adopted) {
+        if (detail?.cardId === selectedCardId) requireLifecycleReload(context.status);
+        return;
+      }
+      contexts.set(machineId, adopted);
+      context.host.dataset.cardVersion = String(adopted.cardVersion);
+      const lifecycle = decodeLifecycleRecord(
+        storage.getItem(lifecycleStorageKey(machineId)),
+        machineId,
+      );
+      if (
+        lifecycle
+        && lifecycle.cardId === detail.cardId
+        && lifecycle.cardVersion === detail.oldVersion
+        && lifecycle.status === adopted.status
+      ) {
+        storage.setItem(
+          lifecycleStorageKey(machineId),
+          JSON.stringify(lifecycleRecord(machineId, adopted)),
+        );
+      }
+      adoptedAny = true;
+    }
+    if (detail?.cardId === selectedCardId) {
+      if (!adoptedAny || selectedCardVersion !== detail.oldVersion) {
+        requireLifecycleReload(null);
+        return;
+      }
+      selectedCardVersion = detail.newVersion;
+      if (controls) controls.dataset.cardVersion = String(detail.newVersion);
+    }
+  }
+
   listen(openControl, "click", openEditor);
   listen(previousDateInput, "input", recalculateDraft);
   for (const [input, maximum, callback] of [
@@ -602,6 +642,7 @@ export function bootstrapRollChangeCountdown({
   listen(overlay, "click", handleOverlayClick);
   listen(documentObject, "keydown", handleDialogKeydown);
   listen(windowObject, "storage", handleStorage);
+  listen(documentObject, "pallet-summary:card-version-updated", handleLocalCardVersion);
 
   function reconcileVerifiedContext(machineId, context, currentMs) {
     const key = `${STORAGE_KEY_PREFIX}${machineId}`;

@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import secrets
 import traceback
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -23,8 +23,10 @@ from fastapi.templating import Jinja2Templates
 from .constants import (
     ACTIVE_TERMINAL_STATUSES,
     CARD_STATUSES,
+    STATUS_ARCHIVED,
     STATUS_LABELS,
     STATUS_AWAITING_REWINDING,
+    STATUS_COMPLETED,
     STATUS_IMPORTED,
     STATUS_PAUSED,
     STATUS_PENDING,
@@ -37,6 +39,9 @@ from .db import (
     MAX_SHIFT_COUNT,
     NO_ACTIVE_SHIFT_MESSAGE,
     PALLET_NUMBER_ERROR,
+    PALLET_WEIGHT_PARTIAL_REWINDING_WARNING,
+    PalletWeightIssue,
+    PalletWeightSaveOutcome,
     STALE_CARD_MESSAGE,
     STALE_CONFIGURATION_MESSAGE,
     STALE_SHIFT_MESSAGE,
@@ -74,7 +79,8 @@ from .db import (
     init_db,
     pause_production_timing,
     parse_rewinding_roll_count,
-    preview_terminal_finish_review as preview_terminal_finish_review_data,
+    pallet_weight_completion_messages,
+    preview_terminal_finish_review_snapshot as preview_terminal_finish_review_data,
     preview_terminal_timing_ledger as preview_terminal_timing_ledger_data,
     release_card,
     resume_production_timing,
@@ -85,6 +91,7 @@ from .db import (
     update_timing_segment,
     update_admin_imported_fields,
     update_admin_material_ledger,
+    update_admin_pallet_weight,
     update_admin_roll_ledger,
     update_admin_timing_ledger,
     update_card_planning,
@@ -95,6 +102,7 @@ from .db import (
     update_roll_weight,
     update_tare_weight,
     update_terminal_recipe_actual_entries,
+    update_terminal_pallet_weight,
     update_terminal_roll_corrections,
     update_terminal_timing_ledger,
     update_shift_count,
@@ -103,7 +111,10 @@ from .db import (
 )
 from .deployment import deployment_metadata
 from .importer import IMPORT_FIELDS, csv_template, import_cards_from_csv
-from .pallet_summary import build_terminal_pallet_summary
+from .pallet_summary import (
+    PalletSummaryDataError,
+    build_pallet_summary,
+)
 from .printing import build_print_readiness
 from .presentation import next_operation_display
 from .production_dashboard import build_machine_time_dashboard, parse_dashboard_day
@@ -137,6 +148,10 @@ TERMINAL_TIMING_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 TERMINAL_TIMING_TIME_PATTERN = re.compile(r"^\d{2}:\d{2}$")
 INVALID_FINISH_REVIEW_MESSAGE = (
     "Прегледът за приключване е невалиден. Отворете го отново."
+)
+INVALID_PALLET_WEIGHT_FORM_MESSAGE = "Формата за тегло на палет е невалидна."
+PALLET_WEIGHT_FIELD_COUNT_MESSAGE = (
+    "Изпратете точно една стойност за теглото на палета."
 )
 PALLET_SUMMARY_UNAVAILABLE_MESSAGE = (
     "Обобщението по палети не може да бъде показано. "
@@ -485,6 +500,12 @@ def admin_card_detail_context(card_id: int, **extra: Any) -> dict[str, Any] | No
         card["total_production_seconds"],
     )
     recipe_rows = build_recipe_rows(card)
+    pallet_modal = None
+    if card["status"] in {STATUS_COMPLETED, STATUS_ARCHIVED}:
+        pallet_modal = build_pallet_modal_model(
+            card,
+            action_url=f"/admin/cards/{card_id}/pallet-weights",
+        )
     context: dict[str, Any] = {
         "admin_section": "cards",
         "card": card,
@@ -494,9 +515,60 @@ def admin_card_detail_context(card_id: int, **extra: Any) -> dict[str, Any] | No
         "timing_reason_labels": TIMING_REASON_LABELS,
         "quantity_lines": build_ordered_amount_lines(card),
         "recipe_rows": recipe_rows,
+        "pallet_modal": pallet_modal,
     }
     context.update(extra)
     return context
+
+
+def build_pallet_modal_model(
+    card: Mapping[str, Any],
+    *,
+    action_url: str,
+) -> dict[str, Any]:
+    base = {
+        "card_id": int(card["id"]),
+        "loaded_version": int(card["version"]),
+        "customer": str(card.get("customer") or "-"),
+        "order_number": str(card.get("order_number") or "-"),
+        "action_url": action_url,
+    }
+    try:
+        summary = build_pallet_summary(
+            card.get("roll_entries", ()),
+            card.get("pallet_weights", {}),
+        )
+    except Exception as error:
+        logger.error(
+            "Pallet modal summary failed for card_id=%s exception_type=%s\n%s",
+            card.get("id"),
+            type(error).__name__,
+            "".join(traceback.format_tb(error.__traceback__)),
+        )
+        return {
+            **base,
+            "state": "error",
+            "weight_state": "error",
+            "rows": [],
+            "total": None,
+            "unassigned_roll_count": 0,
+        }
+
+    display = pallet_summary_display_payload(summary)
+    rows = []
+    for source, row in zip(summary["rows"], display["rows"], strict=True):
+        rows.append({
+            **row,
+            "pallet_weight_input": str(source.get("pallet_weight_input") or ""),
+        })
+    return {
+        **base,
+        "state": str(summary["state"]),
+        "weight_state": str(summary["weight_state"]),
+        "rows": rows,
+        "total": display["total"],
+        "unassigned_roll_count": int(summary["unassigned_roll_count"]),
+    }
 
 
 def admin_card_post_response(
@@ -1582,7 +1654,7 @@ def save_all_admin_card_changes(
         except ValueError:
             connection.rollback()
             return RuleResult(False, ("Формата съдържа невалидна ролка.",))
-        result = update_admin_roll_ledger(
+        roll_result = update_admin_roll_ledger(
             card_id=card_id,
             loaded_version=current_version,
             tare_weight=tare_weight,
@@ -1592,9 +1664,14 @@ def save_all_admin_card_changes(
             new_gross_weights=new_gross_weights,
             connection=connection,
         )
-        if not result.ok:
+        if not roll_result.ok:
             connection.rollback()
-            return result
+            return roll_result
+        roll_messages = tuple(
+            message
+            for message in roll_result.messages
+            if message != "Ролките са записани."
+        )
 
         current_version, _, result = current_card_version_and_status(card_id, connection)
         if not result.ok:
@@ -1614,7 +1691,7 @@ def save_all_admin_card_changes(
             connection.rollback()
             return result
 
-    return RuleResult(True, ("Промените са записани.",))
+    return RuleResult(True, ("Промените са записани.", *roll_messages))
 
 
 @app.post("/admin/cards/{card_id}/delete")
@@ -1983,6 +2060,20 @@ async def delete_admin_roll_weight(
         "roll_result",
         roll_result,
         anchor="rolls",
+    )
+
+
+@app.post("/admin/cards/{card_id}/pallet-weights/{pallet_number}")
+async def save_admin_pallet_weight(
+    request: Request,
+    card_id: int,
+    pallet_number: int,
+):
+    return await save_pallet_weight_route(
+        request,
+        card_id=card_id,
+        pallet_number=pallet_number,
+        update_weight=update_admin_pallet_weight,
     )
 
 
@@ -2416,6 +2507,20 @@ async def save_current_pallet_number(
     )
 
 
+@app.post("/terminal/cards/{card_id}/pallet-weights/{pallet_number}")
+async def save_terminal_pallet_weight(
+    request: Request,
+    card_id: int,
+    pallet_number: int,
+):
+    return await save_pallet_weight_route(
+        request,
+        card_id=card_id,
+        pallet_number=pallet_number,
+        update_weight=update_terminal_pallet_weight,
+    )
+
+
 @app.post("/terminal/cards/{card_id}/rewinding-count")
 async def save_rewinding_roll_count(
     request: Request,
@@ -2784,34 +2889,21 @@ async def finish_terminal_card_review(
     )
     if not outcome.result.ok:
         return terminal_timing_error_response(outcome.result, outcome.issues)
-    assert outcome.preview is not None
-
-    reviewed_card = fetch_terminal_card_detail(card_id)
-    if (
-        reviewed_card is None
-        or int(reviewed_card["version"]) != parsed_version
-        or str(reviewed_card["status"])
-        not in {STATUS_RUNNING, STATUS_PAUSED}
-    ):
-        return terminal_timing_error_response(
-            RuleResult(False, (STALE_CARD_MESSAGE,))
+    assert outcome.snapshot is not None
+    snapshot = outcome.snapshot
+    review_token = None
+    if snapshot.mode in ACTIVE_FINISH_REVIEW_MODES:
+        review_token = encode_finish_review_token(
+            card_id,
+            parsed_version,
+            snapshot.reviewed_at,
+            recovery_mode=snapshot.mode,
+            key=FINISH_REVIEW_TOKEN_KEY,
         )
-    recovery_mode = terminal_active_finish_recovery_mode(reviewed_card)
-    if recovery_mode is None:
-        return invalid_finish_review_response()
-    attach_terminal_pallet_summary(reviewed_card)
-    can_confirm = reviewed_card["pallet_summary"].get("state") != "error"
-    review_token = encode_finish_review_token(
-        card_id,
-        parsed_version,
-        outcome.preview.reviewed_at,
-        recovery_mode=recovery_mode,
-        key=FINISH_REVIEW_TOKEN_KEY,
-    )
-    return terminal_timing_preview_response(
-        outcome.preview,
+    return terminal_finish_review_json_response(
+        snapshot,
         review_token=review_token,
-        can_confirm=can_confirm,
+        base_messages=outcome.result.messages,
     )
 
 
@@ -2842,20 +2934,22 @@ async def preview_terminal_finish_review(
             (error.issue,),
         )
 
-    outcome = preview_terminal_timing_ledger_data(
+    outcome = preview_terminal_finish_review_data(
         card_id,
         parsed_version,
-        draft_rows,
-        preview_at=str(token_payload["reviewed_at"]),
-        finish_mode=True,
+        timing_draft=draft_rows,
+        reviewed_at=str(token_payload["reviewed_at"]),
         require_active_shift=True,
     )
     if not outcome.result.ok:
         return terminal_timing_error_response(outcome.result, outcome.issues)
-    assert outcome.preview is not None
-    return terminal_timing_preview_response(
-        outcome.preview,
+    assert outcome.snapshot is not None
+    if outcome.snapshot.mode != token_payload.get("recovery_mode"):
+        return invalid_finish_review_response()
+    return terminal_finish_review_json_response(
+        outcome.snapshot,
         review_token=review_token,
+        base_messages=outcome.result.messages,
     )
 
 
@@ -2917,6 +3011,96 @@ def terminal_timing_preview_response(
     return JSONResponse(payload)
 
 
+def terminal_finish_review_json_response(
+    snapshot: Any,
+    *,
+    review_token: str | None,
+    base_messages: tuple[str, ...] = (),
+) -> JSONResponse:
+    summary = snapshot.pallet_summary
+    completion_messages = pallet_weight_completion_messages(summary)
+    blocking_messages = tuple(base_messages)
+    warning_message = ""
+    if summary["weight_state"] == "partial":
+        if snapshot.mode == "enter_rewinding":
+            warning_message = " ".join((
+                *completion_messages,
+                PALLET_WEIGHT_PARTIAL_REWINDING_WARNING,
+            ))
+        else:
+            blocking_messages = tuple(dict.fromkeys(
+                (*blocking_messages, *completion_messages)
+            ))
+    elif (
+        summary["weight_state"] == "none"
+        and summary["used_pallet_numbers"]
+        and int(summary["unassigned_roll_count"]) > 0
+    ):
+        missing_count = int(summary["unassigned_roll_count"])
+        roll_label = "ролка" if missing_count == 1 else "ролки"
+        warning_message = (
+            f"В поръчката има {missing_count} {roll_label} без палет. "
+            "Искате ли да приключите поръчката?"
+        )
+
+    if snapshot.timing_preview is not None:
+        preview = snapshot.timing_preview
+        timing_display = terminal_timing_preview_display_payload(preview)
+        timing_display["reviewed_at_utc"] = preview.reviewed_at
+        timing_display["production_duration_display"] = (
+            terminal_finish_duration_display(preview.production_seconds)
+        )
+        timing_display["paused_duration_display"] = (
+            terminal_finish_duration_display(preview.paused_seconds)
+        )
+        preview_payload = {
+            "reviewed_at_utc": preview.reviewed_at,
+            "draft": [
+                terminal_timing_draft_row_payload(row)
+                for row in preview.draft_rows
+            ],
+            **terminal_timing_preview_display_payload(preview),
+        }
+    else:
+        timing_display = terminal_timing_display_from_stored_card(
+            snapshot.card,
+            server_now_utc=snapshot.reviewed_at,
+        )
+        timing_display["production_duration_display"] = (
+            terminal_finish_duration_display(timing_display["production_seconds"])
+        )
+        timing_display["paused_duration_display"] = (
+            terminal_finish_duration_display(timing_display["paused_seconds"])
+        )
+        preview_payload = None
+
+    display_summary = pallet_summary_display_payload(summary)
+    review = {
+        "mode": snapshot.mode,
+        "card_version": int(snapshot.card["version"]),
+        "pallet_summary": {
+            "state": str(summary["state"]),
+            "weight_state": str(summary["weight_state"]),
+            **display_summary,
+        },
+        "messages": list(blocking_messages),
+        "warning_message": warning_message,
+        "can_confirm": not blocking_messages,
+        "timing_display": timing_display,
+    }
+    payload: dict[str, Any] = {
+        "ok": True,
+        "finish_review": review,
+        "can_confirm": review["can_confirm"],
+    }
+    if review_token is not None:
+        review["review_token"] = review_token
+        payload["review_token"] = review_token
+    if preview_payload is not None:
+        payload["preview"] = preview_payload
+    return JSONResponse(payload)
+
+
 def terminal_timing_preview_display_payload(preview: Any) -> dict[str, Any]:
     return {
         "first_start_display": terminal_timing_minute_display(
@@ -2959,6 +3143,172 @@ def terminal_timing_error_response(
             "field_errors": field_errors,
         },
         status_code=(409 if STALE_CARD_MESSAGE in result.messages else 422),
+    )
+
+
+def pallet_summary_display_payload(
+    summary: Mapping[str, Any],
+) -> dict[str, Any]:
+    def display_row(row: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "pallet_number": row["pallet_number"],
+            "pallet_label": str(row["pallet_label"]),
+            "roll_count": int(row["roll_count"]),
+            "gross_without_pallet_display": str(
+                row["gross_without_pallet_display"]
+            ),
+            "pallet_weight_display": str(row["pallet_weight_display"]),
+            "gross_with_pallet_display": str(
+                row["gross_with_pallet_display"]
+            ),
+            "net_display": str(row["net_display"]),
+        }
+
+    total = summary["total"]
+    return {
+        "rows": [display_row(row) for row in summary["rows"]],
+        "total": {
+            "roll_count": int(total["roll_count"]),
+            "gross_without_pallet_display": str(
+                total["gross_without_pallet_display"]
+            ),
+            "pallet_weight_display": str(total["pallet_weight_display"]),
+            "gross_with_pallet_display": str(
+                total["gross_with_pallet_display"]
+            ),
+            "net_display": str(total["net_display"]),
+        },
+    }
+
+
+def pallet_weight_json_response(
+    outcome: PalletWeightSaveOutcome,
+    *,
+    pallet_number: int,
+    submitted_weight: str,
+) -> JSONResponse:
+    if outcome.result.ok:
+        assert outcome.card_version is not None
+        assert outcome.summary is not None
+        display = pallet_summary_display_payload(outcome.summary)
+        row = next(
+            row
+            for row in display["rows"]
+            if row["pallet_number"] == pallet_number
+        )
+        saved_weight = outcome.saved_weight_hundredths
+        return JSONResponse({
+            "ok": True,
+            "card_version": outcome.card_version,
+            "pallet_number": pallet_number,
+            "normalized_weight": (
+                ""
+                if saved_weight is None
+                else f"{saved_weight // 100}.{saved_weight % 100:02d}"
+            ),
+            "row": row,
+            "total": display["total"],
+            "weight_state": outcome.summary["weight_state"],
+            "messages": list(outcome.result.messages),
+            "reload_required": False,
+        })
+
+    issues = outcome.issues or tuple(
+        PalletWeightIssue(None, "form", message)
+        for message in outcome.result.messages
+    )
+    reload_required = STALE_CARD_MESSAGE in outcome.result.messages
+    return JSONResponse(
+        {
+            "ok": False,
+            "submitted_weight": submitted_weight,
+            "messages": list(outcome.result.messages),
+            "field_errors": [
+                {
+                    "pallet_number": issue.pallet_number,
+                    "field": issue.field,
+                    "message": issue.message,
+                }
+                for issue in issues
+            ],
+            "reload_required": reload_required,
+        },
+        status_code=409 if reload_required else 422,
+    )
+
+
+def pallet_weight_form_failure(
+    message: str,
+    *,
+    pallet_number: int | None,
+    field: str,
+) -> PalletWeightSaveOutcome:
+    return PalletWeightSaveOutcome(
+        result=RuleResult(False, (message,)),
+        issues=(PalletWeightIssue(pallet_number, field, message),),
+    )
+
+
+async def save_pallet_weight_route(
+    request: Request,
+    *,
+    card_id: int,
+    pallet_number: int,
+    update_weight: Any,
+) -> JSONResponse:
+    form = await request.form()
+    items = [(str(key), str(value)) for key, value in form.multi_items()]
+    loaded_versions = [value for key, value in items if key == "loaded_version"]
+    submitted_weights = [value for key, value in items if key == "pallet_weight"]
+    submitted_weight = submitted_weights[0] if submitted_weights else ""
+
+    unexpected_fields = [
+        key
+        for key, _ in items
+        if key not in {"loaded_version", "pallet_weight"}
+    ]
+    if unexpected_fields:
+        outcome = pallet_weight_form_failure(
+            INVALID_PALLET_WEIGHT_FORM_MESSAGE,
+            pallet_number=None,
+            field="form",
+        )
+    elif len(submitted_weights) != 1:
+        outcome = pallet_weight_form_failure(
+            PALLET_WEIGHT_FIELD_COUNT_MESSAGE,
+            pallet_number=pallet_number,
+            field="pallet_weight",
+        )
+    elif len(loaded_versions) != 1:
+        outcome = pallet_weight_form_failure(
+            INVALID_LOADED_VERSION_MESSAGE,
+            pallet_number=None,
+            field="form",
+        )
+    else:
+        parsed_version, version_result = parse_loaded_version(loaded_versions[0])
+        if parsed_version is None or parsed_version < 1:
+            outcome = pallet_weight_form_failure(
+                (
+                    version_result.messages[0]
+                    if not version_result.ok
+                    else INVALID_LOADED_VERSION_MESSAGE
+                ),
+                pallet_number=None,
+                field="form",
+            )
+        else:
+            outcome = update_weight(
+                card_id,
+                pallet_number,
+                parsed_version,
+                submitted_weight,
+            )
+
+    return pallet_weight_json_response(
+        outcome,
+        pallet_number=pallet_number,
+        submitted_weight=submitted_weight,
     )
 
 
@@ -3432,8 +3782,9 @@ def terminal_notice_result(notice_code: str | None) -> RuleResult | None:
 
 def attach_terminal_pallet_summary(card: dict[str, Any]) -> None:
     try:
-        card["pallet_summary"] = build_terminal_pallet_summary(
-            card.get("roll_entries", [])
+        card["pallet_summary"] = build_pallet_summary(
+            card.get("roll_entries", []),
+            card.get("pallet_weights", {}),
         )
     except Exception as error:
         logger.error(
@@ -3445,8 +3796,12 @@ def attach_terminal_pallet_summary(card: dict[str, Any]) -> None:
         )
         card["pallet_summary"] = {
             "state": "error",
+            "weight_state": "error",
             "rows": [],
             "total": None,
+            "used_pallet_numbers": (),
+            "missing_weight_pallet_numbers": (),
+            "unassigned_roll_count": 0,
         }
 
 
@@ -3657,6 +4012,16 @@ def terminal_context(
         messages=finish_review_messages,
         recovery_mode=extra.get("finish_review_recovery_mode"),
     )
+    pallet_modal = (
+        build_pallet_modal_model(
+            selected_card,
+            action_url=(
+                f"/terminal/cards/{int(selected_card['id'])}/pallet-weights"
+            ),
+        )
+        if selected_card is not None
+        else None
+    )
 
     context: dict[str, Any] = {
         "machines": fetch_machines(),
@@ -3672,6 +4037,7 @@ def terminal_context(
         "terminal_snapshot": terminal_snapshot,
         "terminal_timing": terminal_timing,
         "terminal_finish_review": terminal_finish_review,
+        "pallet_modal": pallet_modal,
         "status_labels": STATUS_LABELS,
         "recipe_rows": build_terminal_recipe_rows(selected_card) if selected_card else [],
         **shift_context,
@@ -3894,8 +4260,51 @@ def build_terminal_finish_review_model(
     finish_question = str(
         selected_card.get("finish_confirmation_message") or ""
     )
-    pallet_summary = selected_card.get("pallet_summary") or {}
     normalized_messages = [str(message) for message in (messages or ()) if message]
+    try:
+        existing_summary = selected_card.get("pallet_summary")
+        if (
+            isinstance(existing_summary, dict)
+            and existing_summary.get("state") == "error"
+        ):
+            raise PalletSummaryDataError(
+                "The selected card already carries an unreadable pallet summary."
+            )
+        shared_summary = build_pallet_summary(
+            selected_card.get("roll_entries", ()),
+            selected_card.get("pallet_weights", {}),
+        )
+        review_pallet_summary = {
+            "state": str(shared_summary["state"]),
+            "weight_state": str(shared_summary["weight_state"]),
+            **pallet_summary_display_payload(shared_summary),
+        }
+        completion_messages = pallet_weight_completion_messages(shared_summary)
+        if shared_summary["weight_state"] == "partial":
+            if mode == "enter_rewinding":
+                finish_question = " ".join((
+                    *completion_messages,
+                    PALLET_WEIGHT_PARTIAL_REWINDING_WARNING,
+                ))
+            else:
+                normalized_messages.extend(completion_messages)
+                finish_question = ""
+    except Exception as error:
+        logger.error(
+            "Finish review pallet summary failed for card_id=%s "
+            "exception_type=%s\n%s",
+            selected_card.get("id"),
+            type(error).__name__,
+            "".join(traceback.format_tb(error.__traceback__)),
+        )
+        review_pallet_summary = {
+            "state": "error",
+            "weight_state": "error",
+            "rows": [],
+            "total": None,
+        }
+        if PALLET_SUMMARY_UNAVAILABLE_MESSAGE not in normalized_messages:
+            normalized_messages.append(PALLET_SUMMARY_UNAVAILABLE_MESSAGE)
 
     return {
         "mode": mode,
@@ -3918,9 +4327,10 @@ def build_terminal_finish_review_model(
         "can_confirm": (
             not locked
             and not normalized_messages
-            and pallet_summary.get("state") != "error"
+            and review_pallet_summary.get("state") != "error"
         ),
         "messages": normalized_messages,
+        "pallet_summary": review_pallet_summary,
         "product_display": terminal_finish_product_display(selected_card),
         "rewinding_count_label": count_label,
         "timing_display": {

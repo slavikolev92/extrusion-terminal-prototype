@@ -51,6 +51,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Терминал - Екструдиране</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/css/pallet_summary.css') }}">
   <style>
 
     :root {
@@ -1113,7 +1114,7 @@
       min-height: 0;
       overflow: hidden;
       display: grid;
-      grid-template-rows: 50px minmax(0, 1fr) 82px;
+      grid-template-rows: 50px minmax(0, 1fr) minmax(82px, auto);
       border: 1px solid #aebdca;
       border-radius: 11px;
       background: var(--surface);
@@ -1339,8 +1340,12 @@
       font-size: 16px;
     }
 
-    .finish-review-table col {
-      width: 20%;
+    .finish-review-table .finish-review-col-pallet {
+      width: 14%;
+    }
+
+    .finish-review-table .finish-review-col-value {
+      width: 17.2%;
     }
 
     .finish-review-table th,
@@ -1370,7 +1375,10 @@
       background: #edf4f9;
       color: #334b5e;
       font-size: 16px;
+      line-height: 1.15;
       font-weight: 800;
+      white-space: normal;
+      overflow-wrap: anywhere;
       box-shadow: 0 1px 0 #c4d2de;
     }
 
@@ -1418,7 +1426,7 @@
 
     .finish-review-footer {
       min-width: 0;
-      padding: 0 18px;
+      padding: 8px 18px;
       display: flex;
       align-items: center;
       justify-content: flex-end;
@@ -1429,6 +1437,7 @@
 
     .finish-review-footer-status {
       min-width: 0;
+      flex: 1 1 auto;
       margin-right: auto;
       display: grid;
       gap: 5px;
@@ -1507,7 +1516,7 @@
 
     @media (max-height: 820px) {
       .finish-review-dialog {
-        grid-template-rows: 44px minmax(0, 1fr) 70px;
+        grid-template-rows: 44px minmax(0, 1fr) minmax(70px, auto);
       }
 
       .finish-review-topbar {
@@ -1623,7 +1632,7 @@
       .finish-review-dialog {
         width: calc(100vw - 16px);
         height: calc(100vh - 16px);
-        grid-template-rows: 38px minmax(0, 1fr) 62px;
+        grid-template-rows: 38px minmax(0, 1fr) minmax(62px, auto);
       }
 
       .finish-review-topbar {
@@ -1684,7 +1693,7 @@
 
       .finish-review-row {
         min-height: 28px;
-        grid-template-columns: 115px minmax(0, 1fr);
+        grid-template-columns: 128px minmax(0, 1fr);
         column-gap: 7px;
       }
 
@@ -1703,7 +1712,7 @@
       .finish-review-edit-button {
         min-width: 142px;
         min-height: 34px;
-        padding: 0 12px;
+        padding: 6px 12px;
         font-size: 14px;
       }
 
@@ -3012,135 +3021,9 @@
       min-width: 44px;
     }
 
-    .pallet-summary-overlay {
-      position: fixed;
-      z-index: 86;
-      inset: 0;
-      padding: 1rem;
-      display: grid;
-      place-items: center;
-      background: rgba(31, 41, 51, .44);
-    }
-
-    .pallet-summary-overlay[hidden] {
-      display: none;
-    }
-
-    .pallet-summary-dialog {
-      width: min(42rem, calc(100vw - 2rem));
-      max-height: calc(100vh - 2rem);
-      min-height: 0;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: var(--surface);
-      box-shadow: var(--shadow);
-      padding: 18px;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-    }
-
-    .pallet-summary-heading {
-      display: grid;
-      gap: 4px;
-    }
-
-    .pallet-summary-title {
-      margin: 0;
-      color: var(--primary-text);
-      font-size: 22px;
-      line-height: 1.15;
-      font-weight: 900;
-    }
-
-    .pallet-summary-context,
-    .pallet-summary-message {
-      margin: 0;
-      color: var(--secondary-text);
-      font-size: 14px;
-      line-height: 1.4;
-      font-weight: 700;
-    }
-
-    .pallet-summary-table-wrap {
-      min-width: 0;
-      min-height: 0;
-      overflow: auto;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-    }
-
-    .pallet-summary-table {
-      width: 100%;
-      min-width: 34rem;
-      border-collapse: collapse;
-      color: var(--primary-text);
-    }
-
-    .pallet-summary-table th,
-    .pallet-summary-table td {
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--line);
-      text-align: left;
-      white-space: nowrap;
-    }
-
-    .pallet-summary-table thead th {
-      background: #f6f9fc;
-      color: var(--secondary-text);
-      font-size: 13px;
-      font-weight: 800;
-    }
-
-    .pallet-summary-table tbody th,
-    .pallet-summary-table tfoot th {
-      font-weight: 800;
-    }
-
-    .pallet-summary-table .numeric {
-      text-align: right;
-      font-variant-numeric: tabular-nums;
-    }
-
-    .pallet-summary-table tbody tr:last-child th,
-    .pallet-summary-table tbody tr:last-child td {
-      border-bottom: 0;
-    }
-
-    .pallet-summary-table tfoot {
-      border-top: 2px solid #b8c4d1;
-    }
-
-    .pallet-summary-table .pallet-summary-total th,
-    .pallet-summary-table .pallet-summary-total td {
-      border-bottom: 0;
-      background: var(--blue-soft);
-      font-weight: 900;
-    }
-
-    .pallet-summary-actions {
-      display: flex;
-      justify-content: flex-end;
-    }
-
-    .pallet-summary-close {
-      min-width: 88px;
-      min-height: 44px;
-      border-color: #b8c4d1;
-      background: #fff;
-      color: #0b355f;
-      font-weight: 800;
-    }
-
-    @media (max-width: 560px) {
-      .pallet-summary-dialog {
-        padding: 14px;
-      }
-
-      .pallet-summary-table th,
-      .pallet-summary-table td {
-        padding: 9px 10px;
-      }
+    .roll-secondary-button[data-pallet-summary-open] .button-icon {
+      width: 20px;
+      height: 20px;
     }
 
     .roll-secondary-button.is-marked {
@@ -3250,6 +3133,24 @@
 
       .history-filters {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 1150px) {
+      .terminal-header {
+        --terminal-header-action-width: 212px;
+        --terminal-side-action-width: 168px;
+        padding-inline: 18px;
+        gap: 12px;
+      }
+
+      .terminal-global-nav {
+        gap: 8px;
+      }
+
+      .terminal-header-action {
+        padding-inline: 8px;
+        font-size: 12px;
       }
     }
 
@@ -5507,6 +5408,7 @@
                   <button class="roll-secondary-button" type="button"
                           data-pallet-summary-open
                           aria-controls="pallet-summary-overlay" aria-expanded="false">
+                    {{ terminal_icon("pallet") }}
                     Палети
                   </button>
                 </div>
@@ -5735,60 +5637,8 @@
     </div>
   </main>
   {% include "_terminal_shift_window.html" %}
-  {% if selected_card %}
-    <div class="pallet-summary-overlay" id="pallet-summary-overlay"
-         data-pallet-summary-overlay hidden aria-hidden="true">
-      <section class="pallet-summary-dialog" role="dialog" aria-modal="true"
-               aria-labelledby="pallet-summary-title"
-               aria-describedby="pallet-summary-context" tabindex="-1"
-               data-pallet-summary-dialog>
-        <header class="pallet-summary-heading">
-          <h2 class="pallet-summary-title" id="pallet-summary-title">Обобщение по палети</h2>
-          <p class="pallet-summary-context" id="pallet-summary-context">Поръчка №{{ selected_card.order_number }}</p>
-        </header>
-        {% if selected_card.pallet_summary.state == "ready" %}
-          <div class="pallet-summary-table-wrap" data-pallet-summary-scroll>
-            <table class="pallet-summary-table">
-              <thead>
-                <tr>
-                  <th scope="col">Палет</th>
-                  <th scope="col" class="numeric">Брой ролки</th>
-                  <th scope="col" class="numeric">Бруто, кг</th>
-                  <th scope="col" class="numeric">Нето, кг</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for row in selected_card.pallet_summary.rows %}
-                  <tr>
-                    <th scope="row">{{ row.pallet_label }}</th>
-                    <td class="numeric">{{ row.roll_count }}</td>
-                    <td class="numeric">{{ row.gross_display }}</td>
-                    <td class="numeric">{{ row.net_display }}</td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-              <tfoot>
-                <tr class="pallet-summary-total" data-pallet-summary-total>
-                  <th scope="row">Общо</th>
-                  <td class="numeric">{{ selected_card.pallet_summary.total.roll_count }}</td>
-                  <td class="numeric">{{ selected_card.pallet_summary.total.gross_display }}</td>
-                  <td class="numeric">{{ selected_card.pallet_summary.total.net_display }}</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        {% elif selected_card.pallet_summary.state == "empty" %}
-          <p class="pallet-summary-message" data-pallet-summary-empty>Няма въведени ролки.</p>
-        {% else %}
-          <p class="pallet-summary-message" role="alert" data-pallet-summary-error>
-            Обобщението по палети не може да бъде показано. Проверете данните за ролките.
-          </p>
-        {% endif %}
-        <div class="pallet-summary-actions">
-          <button class="pallet-summary-close" type="button" data-pallet-summary-close>Затвори</button>
-        </div>
-      </section>
-    </div>
+  {% if pallet_modal %}
+    {% include "_pallet_summary_modal.html" %}
   {% endif %}
   {% if selected_card and selected_card.status in ["running", "paused", "awaiting_rewinding"] %}
     <div class="rewinding-overlay" id="rewinding-overlay" data-rewinding-overlay
@@ -6116,61 +5966,66 @@
                  aria-label="Произведени палети; таблицата се превърта вертикално">
               <table class="finish-review-table" data-finish-production-summary>
                 <colgroup>
-                  <col>
-                  <col>
-                  <col>
-                  <col>
-                  <col>
+                  <col class="finish-review-col-pallet">
+                  <col class="finish-review-col-value">
+                  <col class="finish-review-col-value">
+                  <col class="finish-review-col-value">
+                  <col class="finish-review-col-value">
+                  <col class="finish-review-col-value">
                 </colgroup>
-                <thead>
+                <thead data-finish-production-head>
                   <tr>
                     <th scope="col">Палет №</th>
                     <th scope="col">Брой ролки</th>
-                    <th scope="col">Бруто, кг</th>
+                    <th scope="col">Бруто без палет, кг</th>
                     <th scope="col">Тегло палет, кг</th>
+                    <th scope="col">Бруто с палет, кг</th>
                     <th scope="col">Нето, кг</th>
                   </tr>
                 </thead>
-                {% if selected_card.pallet_summary.state == "ready" %}
-                  <tbody>
-                    {% for row in selected_card.pallet_summary.rows %}
+                {% if terminal_finish_review.pallet_summary.state == "ready" %}
+                  <tbody data-finish-production-rows>
+                    {% for row in terminal_finish_review.pallet_summary.rows %}
                       <tr>
                         <th scope="row">{{ row.pallet_label }}</th>
                         <td>{{ row.roll_count }}</td>
-                        <td>{{ row.gross_display }}</td>
+                        <td>{{ row.gross_without_pallet_display }}</td>
                         <td data-finish-pallet-weight>{{ row.pallet_weight_display }}</td>
+                        <td data-finish-gross-with>{{ row.gross_with_pallet_display }}</td>
                         <td>{{ row.net_display }}</td>
                       </tr>
                     {% endfor %}
                   </tbody>
                   <tfoot>
-                    <tr>
+                    <tr data-finish-production-total-row>
                       <th scope="row">Общо</th>
-                      <td>{{ selected_card.pallet_summary.total.roll_count }}</td>
-                      <td data-finish-gross-total>{{ selected_card.pallet_summary.total.gross_display }}</td>
-                      <td data-finish-pallet-weight-total>{{ selected_card.pallet_summary.total.pallet_weight_display }}</td>
-                      <td data-finish-net-total>{{ selected_card.pallet_summary.total.net_display }}</td>
+                      <td data-finish-roll-count-total>{{ terminal_finish_review.pallet_summary.total.roll_count }}</td>
+                      <td data-finish-gross-total>{{ terminal_finish_review.pallet_summary.total.gross_without_pallet_display }}</td>
+                      <td data-finish-pallet-weight-total>{{ terminal_finish_review.pallet_summary.total.pallet_weight_display }}</td>
+                      <td data-finish-gross-with-total>{{ terminal_finish_review.pallet_summary.total.gross_with_pallet_display }}</td>
+                      <td data-finish-net-total>{{ terminal_finish_review.pallet_summary.total.net_display }}</td>
                     </tr>
                   </tfoot>
-                {% elif selected_card.pallet_summary.state == "empty" %}
-                  <tbody>
+                {% elif terminal_finish_review.pallet_summary.state == "empty" %}
+                  <tbody data-finish-production-rows>
                     <tr>
-                      <td class="finish-review-empty" colspan="5">Няма въведени ролки.</td>
+                      <td class="finish-review-empty" colspan="6">Няма въведени ролки.</td>
                     </tr>
                   </tbody>
                   <tfoot>
-                    <tr>
+                    <tr data-finish-production-total-row>
                       <th scope="row">Общо</th>
-                      <td>{{ selected_card.pallet_summary.total.roll_count }}</td>
-                      <td data-finish-gross-total>{{ selected_card.pallet_summary.total.gross_display }}</td>
-                      <td data-finish-pallet-weight-total>{{ selected_card.pallet_summary.total.pallet_weight_display }}</td>
-                      <td data-finish-net-total>{{ selected_card.pallet_summary.total.net_display }}</td>
+                      <td data-finish-roll-count-total>{{ terminal_finish_review.pallet_summary.total.roll_count }}</td>
+                      <td data-finish-gross-total>{{ terminal_finish_review.pallet_summary.total.gross_without_pallet_display }}</td>
+                      <td data-finish-pallet-weight-total>{{ terminal_finish_review.pallet_summary.total.pallet_weight_display }}</td>
+                      <td data-finish-gross-with-total>{{ terminal_finish_review.pallet_summary.total.gross_with_pallet_display }}</td>
+                      <td data-finish-net-total>{{ terminal_finish_review.pallet_summary.total.net_display }}</td>
                     </tr>
                   </tfoot>
                 {% else %}
-                  <tbody>
+                  <tbody data-finish-production-rows>
                     <tr>
-                      <td class="finish-review-error" data-finish-production-error colspan="5">
+                      <td class="finish-review-error" data-finish-production-error colspan="6">
                         Обобщението по палети не може да бъде показано. Проверете данните за ролките.
                       </td>
                     </tr>
@@ -6183,10 +6038,10 @@
 
         <footer class="finish-review-footer">
           <div class="finish-review-footer-status">
-            <div class="finish-review-alert" role="alert" tabindex="-1" data-finish-review-alert{% if not terminal_finish_review.messages %} hidden{% endif %}>
+            <div class="semantic-status-banner finish-review-alert" data-kind="error" role="alert" tabindex="-1" data-finish-review-alert{% if not terminal_finish_review.messages %} hidden{% endif %}>
               {% for message in terminal_finish_review.messages %}<p>{{ message }}</p>{% endfor %}
             </div>
-            <p class="finish-review-warning" data-finish-review-warning
+            <p class="semantic-status-banner finish-review-warning" data-kind="warning" data-finish-review-warning
                {% if not terminal_finish_review.warning_message %}hidden{% endif %}>{{ terminal_finish_review.warning_message }}</p>
             <p class="finish-review-outcome" data-finish-review-outcome
                {% if not terminal_finish_review.outcome_message %}hidden{% endif %}>{{ terminal_finish_review.outcome_message }}</p>
@@ -6522,7 +6377,8 @@
         }
       });
 
-      document.addEventListener("terminal:shift-stale", () => {
+      document.addEventListener("terminal:shift-stale", (event) => {
+        if (event.defaultPrevented) return;
         document.dispatchEvent(new CustomEvent("terminal:autosave-suspend"));
         shiftWindow.dataset.shiftBlocking = "true";
         shiftWindow.dataset.shiftState = "reload";
@@ -6752,6 +6608,9 @@
       let refreshAlert = document.getElementById("terminal-refresh-alert");
       let currentSignature = initialSnapshot.signature;
       let currentShiftSignature = initialSnapshot.shift_signature;
+      let currentSnapshot = initialSnapshot;
+      let palletAutosaveActive = false;
+      let palletAutosaveEpoch = 0;
       let formSubmitting = false;
 
       const bindRefreshAlert = () => {
@@ -6781,6 +6640,12 @@
         }
       };
 
+      const dispatchCardStale = () => {
+        document.dispatchEvent(
+          new CustomEvent("terminal:card-stale", { cancelable: true }),
+        );
+      };
+
       const snapshotUrl = () => {
         const url = new URL("/terminal/snapshot", window.location.origin);
         if (selectedCardId !== null) {
@@ -6798,10 +6663,34 @@
 
       bindRefreshAlert();
 
-      const pollSnapshot = async () => {
-        if (formSubmitting) {
+      document.addEventListener("pallet-summary:autosave-started", (event) => {
+        if (palletAutosaveActive || !event.detail || event.detail.baseline !== null) return;
+        palletAutosaveActive = true;
+        palletAutosaveEpoch += 1;
+        event.detail.baseline = structuredClone(currentSnapshot);
+      });
+
+      document.addEventListener("pallet-summary:queue-idle", (event) => {
+        palletAutosaveActive = false;
+        const reconciliation = event.detail?.reconciliation;
+        const snapshot = event.detail?.after;
+        if (reconciliation?.kind === "accept-local" && snapshot) {
+          currentSnapshot = snapshot;
+          currentSignature = snapshot.signature;
+          currentShiftSignature = snapshot.shift_signature;
           return;
         }
+        if (reconciliation?.kind === "stale") {
+          showRefreshAlert();
+          dispatchCardStale();
+        }
+      });
+
+      const pollSnapshot = async () => {
+        if (formSubmitting || palletAutosaveActive) {
+          return;
+        }
+        const pollEpoch = palletAutosaveEpoch;
 
         try {
           const response = await fetch(snapshotUrl(), {
@@ -6812,25 +6701,30 @@
             return;
           }
           const snapshot = await response.json();
+          if (pollEpoch !== palletAutosaveEpoch || palletAutosaveActive) {
+            return;
+          }
           document.dispatchEvent(new CustomEvent("terminal:server-time", {
             detail: { serverNowUtc: snapshot.server_now_utc },
           }));
           if (snapshot.signature === currentSignature) {
+            currentSnapshot = snapshot;
             return;
           }
 
           if (snapshot.shift_signature !== currentShiftSignature) {
             currentShiftSignature = snapshot.shift_signature;
             currentSignature = snapshot.signature;
-            document.dispatchEvent(new CustomEvent("terminal:shift-stale"));
+            currentSnapshot = snapshot;
+            document.dispatchEvent(
+              new CustomEvent("terminal:shift-stale", { cancelable: true }),
+            );
             return;
           }
 
           currentSignature = snapshot.signature;
           showRefreshAlert();
-          document.dispatchEvent(
-            new CustomEvent("terminal:card-stale", { cancelable: true }),
-          );
+          dispatchCardStale();
         } catch {
           // Manual refresh and server-side version checks still protect the workflow.
         }
@@ -6866,7 +6760,10 @@
       const palletSummaryOpen = document.querySelector("[data-pallet-summary-open]");
       const palletSummaryOverlay = document.querySelector("[data-pallet-summary-overlay]");
       const palletSummaryDialog = palletSummaryOverlay?.querySelector("[data-pallet-summary-dialog]");
-      const palletSummaryClose = palletSummaryOverlay?.querySelector("[data-pallet-summary-close]");
+      const palletSummaryClose = palletSummaryOverlay?.querySelector('[data-pallet-summary-close="icon"]');
+      const palletSummaryCloseControls = Array.from(
+        palletSummaryOverlay?.querySelectorAll("[data-pallet-summary-close]") || [],
+      );
       const rollRows = Array.from(document.querySelectorAll(".roll-row[data-roll-id]"));
       const rollEditButtons = Array.from(document.querySelectorAll("button[data-roll-edit-open]"));
       const rollActionPanels = Array.from(document.querySelectorAll("[data-roll-actions-for]"));
@@ -7213,6 +7110,17 @@
         palletSummaryReturnFocus = null;
       };
 
+      const preparePalletSummaryDismiss = async (restoreFocus = true) => {
+        if (!palletSummaryOverlay || palletSummaryOverlay.hidden) return;
+        const detail = { decision: null };
+        palletSummaryOverlay.dispatchEvent(new CustomEvent(
+          "pallet-summary:prepare-dismiss",
+          { detail },
+        ));
+        if (!(detail.decision instanceof Promise)) return;
+        if (await detail.decision) closePalletSummary(restoreFocus);
+      };
+
       const filterHistory = () => {
         let visibleCount = 0;
         historyRows.forEach((row) => {
@@ -7265,9 +7173,9 @@
           openPalletSummary(event.currentTarget);
         });
       }
-      if (palletSummaryClose) {
-        palletSummaryClose.addEventListener("click", () => closePalletSummary());
-      }
+      palletSummaryCloseControls.forEach((control) => {
+        control.addEventListener("click", () => { void preparePalletSummaryDismiss(); });
+      });
       rollEditButtons.forEach((button) => {
         button.addEventListener("click", () => openRowEdit(button.closest(".roll-row")));
       });
@@ -7333,7 +7241,7 @@
       });
       palletSummaryOverlay?.addEventListener("click", (event) => {
         if (event.target === palletSummaryOverlay) {
-          closePalletSummary();
+          void preparePalletSummaryDismiss();
         }
       });
       document.addEventListener("click", (event) => {
@@ -7368,6 +7276,7 @@
       historyFilters.forEach((filter) => filter.addEventListener("input", filterHistory));
       historyRows.forEach((row) => row.addEventListener("click", () => closeHistory(false)));
       document.addEventListener("terminal:card-stale", (event) => {
+        if (event.defaultPrevented) return;
         closePalletSummary(false);
         requestAnimationFrame(() => {
           if (event.defaultPrevented) {
@@ -7376,14 +7285,15 @@
           document.getElementById("terminal-refresh-alert-button")?.focus();
         });
       });
-      document.addEventListener("terminal:shift-stale", () => {
+      document.addEventListener("terminal:shift-stale", (event) => {
+        if (event.defaultPrevented) return;
         closePalletSummary(false);
       }, { capture: true });
       document.addEventListener("keydown", (event) => {
         if (palletSummaryOverlay && !palletSummaryOverlay.hidden) {
           if (event.key === "Escape") {
             event.preventDefault();
-            closePalletSummary(true);
+            void preparePalletSummaryDismiss(true);
             return;
           }
           if (event.key === "Tab") {
@@ -7445,6 +7355,7 @@
     })();
   </script>
   <script type="module" src="{{ url_for('static', path='/js/roll_change_countdown.mjs') }}"></script>
+  <script type="module" src="{{ url_for('static', path='/js/pallet_weight_autosave.mjs') }}"></script>
   <script type="module" src="{{ url_for('static', path='/js/timing_interval_editor.mjs') }}"></script>
   <script type="module" src="{{ url_for('static', path='/js/waiting_finish_review.mjs') }}"></script>
 </body>

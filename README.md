@@ -75,11 +75,11 @@ Confirmed workflow facts:
   confirmation. An `awaiting_rewinding` card shows the same review with stored
   extrusion timing read-only and no timing-edit control; its finalization stays
   tokenless and timing-neutral.
-- The review's `Тегло палет, кг` column currently shows an explicit `0.0` for
-  every pallet row and total. This is a presentation-only placeholder for the
-  physical pallet, not the roll-core tare weight. Physical pallet-weight input,
-  persistence, history, and calculation behavior are not implemented and
-  remain a separately specified future task.
+- The pallet summary and completion review show saved physical transport-pallet
+  weight separately from roll gross and core tare. Pallet weight is optional,
+  is saved independently per numbered pallet, and supports two decimal places.
+  Once one pallet weight is entered, completion requires every numbered pallet
+  to have a weight and every roll to have a pallet assignment.
 - After production is finished, shift-manager/admin reviews and prints/reprints from the admin operational card detail.
 - Printing should print the whole front and back.
 - Completed-card print output derives pallet roll counts plus gross and net totals from current saved rolls, in numeric pallet order, with a final `Без палет` group only when numbered and blank assignments are mixed.
@@ -87,14 +87,13 @@ Confirmed workflow facts:
 
 The terminal UI can present information in whatever way is practical. The printed paper output has a stricter requirement: it must visually match the Excel front and back card layout as closely as possible.
 
-## Approved Next Pilot Slice — Physical Pallet Weight (Not Yet Implemented)
+## Completed Source Slice — Physical Pallet Weight (Not Yet Deployed)
 
-The next approved development step is the physical pallet-weight entry that
-will replace the completion review's explicit `0.0` placeholder. Its ownership,
-entry location, validation, persistence, correction, history, and calculation
-semantics have not yet been designed. Begin with a bounded brainstorming and
-specification pass; do not infer pallet weight from roll-core tare or write a
-schema migration before those rules are approved.
+The physical-pallet-weight entry is implemented, verified, and accepted in
+source under
+`docs/superpowers/specs/2026-09-09-physical-pallet-weight-design.md`. It remains
+undeployed until the separate production backup and migration procedure is
+explicitly authorized. Do not infer pallet weight from roll-core tare.
 
 The completed unified order-finish review and its current placeholder contract
 are recorded in `v2-files/archive/TASK-21-ORDER-FINISH-REVIEW.md` and

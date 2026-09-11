@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from .constants import CARD_STATUSES, STATUS_AWAITING_REWINDING
 from .schema import (
     CARD_INDEX_SQL,
+    CARD_PALLET_WEIGHTS_TABLE_SQL,
     _quote_identifier,
     cards_table_sql,
     extend_cards_rebuild_target,
@@ -1190,6 +1191,127 @@ def apply_m006_legacy_import_normalization(
                 )
 
 
+def validate_card_pallet_weights_schema(connection: sqlite3.Connection) -> None:
+    _validate_exact_table_contract(
+        connection,
+        "card_pallet_weights",
+        (CARD_PALLET_WEIGHTS_TABLE_SQL,),
+    )
+    columns = tuple(
+        (str(row[1]), str(row[2]).upper(), int(row[3]), row[4], int(row[5]))
+        for row in connection.execute(
+            "PRAGMA table_info(card_pallet_weights)"
+        ).fetchall()
+    )
+    expected_columns = (
+        ("card_id", "INTEGER", 1, None, 1),
+        ("pallet_number", "INTEGER", 1, None, 2),
+        ("weight_hundredths", "INTEGER", 1, None, 0),
+        ("created_at", "TEXT", 1, "CURRENT_TIMESTAMP", 0),
+        ("updated_at", "TEXT", 1, "CURRENT_TIMESTAMP", 0),
+    )
+    if columns != expected_columns:
+        raise RuntimeError(
+            "card_pallet_weights does not match the required column contract"
+        )
+
+    foreign_keys = connection.execute(
+        "PRAGMA foreign_key_list(card_pallet_weights)"
+    ).fetchall()
+    if len(foreign_keys) != 1 or tuple(foreign_keys[0][2:7]) != (
+        "cards",
+        "card_id",
+        "id",
+        "NO ACTION",
+        "CASCADE",
+    ):
+        raise RuntimeError(
+            "card_pallet_weights.card_id must cascade on delete from cards(id)"
+        )
+
+
+def apply_m007_physical_pallet_weights(
+    connection: sqlite3.Connection,
+) -> None:
+    connection.execute(CARD_PALLET_WEIGHTS_TABLE_SQL)
+    validate_card_pallet_weights_schema(connection)
+
+
+M007_CARD_PALLET_WEIGHTS_TENTHS_SQL = """
+CREATE TABLE IF NOT EXISTS card_pallet_weights (
+    card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    pallet_number INTEGER NOT NULL CHECK (
+        typeof(pallet_number) = 'integer'
+        AND pallet_number BETWEEN 1 AND 999
+    ),
+    weight_tenths INTEGER NOT NULL CHECK (
+        typeof(weight_tenths) = 'integer'
+        AND weight_tenths BETWEEN 1 AND 1000
+    ),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (card_id, pallet_number)
+);
+"""
+
+
+def apply_m008_physical_pallet_weight_hundredths(
+    connection: sqlite3.Connection,
+) -> None:
+    actual_sql = _schema_object_sql(connection, "table", "card_pallet_weights")
+    if actual_sql is None:
+        raise RuntimeError("card_pallet_weights is missing")
+
+    normalized_actual = _normalized_contract_sql(actual_sql)
+    if normalized_actual == _normalized_contract_sql(CARD_PALLET_WEIGHTS_TABLE_SQL):
+        validate_card_pallet_weights_schema(connection)
+        return
+    if normalized_actual != _normalized_contract_sql(
+        M007_CARD_PALLET_WEIGHTS_TENTHS_SQL
+    ):
+        raise RuntimeError(
+            "card_pallet_weights does not match the M007 or final schema contract"
+        )
+
+    invalid_row = connection.execute(
+        """
+        SELECT card_id, pallet_number, weight_tenths
+        FROM card_pallet_weights
+        WHERE typeof(card_id) != 'integer'
+           OR typeof(pallet_number) != 'integer'
+           OR pallet_number NOT BETWEEN 1 AND 999
+           OR typeof(weight_tenths) != 'integer'
+           OR weight_tenths NOT BETWEEN 1 AND 1000
+           OR typeof(created_at) != 'text'
+           OR created_at = ''
+           OR typeof(updated_at) != 'text'
+           OR updated_at = ''
+        LIMIT 1
+        """
+    ).fetchone()
+    if invalid_row is not None:
+        raise RuntimeError("card_pallet_weights contains invalid M007 values")
+
+    source_table = "card_pallet_weights_m008_source"
+    if _schema_object_sql(connection, "table", source_table) is not None:
+        raise RuntimeError(f"{source_table} already exists")
+    connection.execute(
+        f"ALTER TABLE card_pallet_weights RENAME TO {_quote_identifier(source_table)}"
+    )
+    connection.execute(CARD_PALLET_WEIGHTS_TABLE_SQL)
+    connection.execute(
+        f"""
+        INSERT INTO card_pallet_weights (
+            card_id, pallet_number, weight_hundredths, created_at, updated_at
+        )
+        SELECT card_id, pallet_number, weight_tenths * 10, created_at, updated_at
+        FROM {_quote_identifier(source_table)}
+        """
+    )
+    connection.execute(f"DROP TABLE {_quote_identifier(source_table)}")
+    validate_card_pallet_weights_schema(connection)
+
+
 MIGRATIONS = (
     Migration(1, "shift_manager_import_fields", _apply_shift_manager_import_fields),
     Migration(2, "shift_management", _apply_shift_management),
@@ -1197,6 +1319,12 @@ MIGRATIONS = (
     Migration(4, "rewinding_return_workflow", apply_m004_rewinding_return_workflow),
     Migration(5, "shift_schema_contract", apply_m005_shift_schema_contract),
     Migration(6, "legacy_import_normalization", apply_m006_legacy_import_normalization),
+    Migration(7, "physical_pallet_weights", apply_m007_physical_pallet_weights),
+    Migration(
+        8,
+        "physical_pallet_weight_hundredths",
+        apply_m008_physical_pallet_weight_hundredths,
+    ),
 )
 
 
@@ -1295,6 +1423,7 @@ def apply_startup_migrations(
         validate_shift_management_schema(connection)
         validate_roll_pallet_schema(connection)
         validate_rewinding_schema(connection)
+        validate_card_pallet_weights_schema(connection)
         ensure_foreign_keys_valid(
             connection,
             "migration foreign key check failed",

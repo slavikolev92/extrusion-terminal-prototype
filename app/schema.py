@@ -118,6 +118,24 @@ CARD_INDEX_SQL = (
 )
 
 
+CARD_PALLET_WEIGHTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS card_pallet_weights (
+    card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    pallet_number INTEGER NOT NULL CHECK (
+        typeof(pallet_number) = 'integer'
+        AND pallet_number BETWEEN 1 AND 999
+    ),
+    weight_hundredths INTEGER NOT NULL CHECK (
+        typeof(weight_hundredths) = 'integer'
+        AND weight_hundredths BETWEEN 1 AND 10000
+    ),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (card_id, pallet_number)
+);
+"""
+
+
 def extend_cards_rebuild_target(
     connection: sqlite3.Connection,
     source_table: str,

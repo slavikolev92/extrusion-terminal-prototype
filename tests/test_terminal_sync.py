@@ -516,7 +516,7 @@ def test_terminal_card_stale_locks_timing_without_topbar_focus_takeover():
     assert "confirmButton.disabled = true;" in waiting_controller
 
 
-def test_terminal_shift_stale_leaves_only_shift_reload_modal_active():
+def test_terminal_shift_stale_leaves_only_shift_reload_modal_active_when_not_prevented():
     template = Path("app/templates/terminal.html").read_text(encoding="utf-8")
     shift_partial = Path("app/templates/_terminal_shift_window.html").read_text(
         encoding="utf-8"
@@ -570,10 +570,11 @@ def test_terminal_shift_stale_leaves_only_shift_reload_modal_active():
     assert 'dialog.setAttribute("aria-modal", "false")' in waiting_initial_state
 
     existing_start = template.index(
-        'document.addEventListener("terminal:shift-stale", () => {'
+        'document.addEventListener("terminal:shift-stale", (event) => {'
     )
     existing_end = template.index("});", existing_start)
     existing_handler = template[existing_start:existing_end]
+    assert "if (event.defaultPrevented) return;" in existing_handler
     assert 'shiftWindow.dataset.shiftState = "reload";' in existing_handler
     assert "shiftWindow.hidden = false;" in existing_handler
     assert 'shiftWindow.setAttribute("aria-hidden", "false")' in existing_handler

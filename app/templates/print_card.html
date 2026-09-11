@@ -252,8 +252,52 @@
         </div>
       </section>
 
+      {% macro pallet_table(table, location, extra_class="") %}
+        <table class="print-pallet-summary {{ extra_class }}" data-pallet-summary-table="{{ location }}">
+          <colgroup>
+            <col class="print-pallet-number-col">
+            <col class="print-pallet-roll-count-col">
+            <col class="print-pallet-weight-col">
+            <col class="print-pallet-weight-col">
+            <col class="print-pallet-weight-col">
+            <col class="print-pallet-weight-col">
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Палет №</th>
+              <th>Брой ролки</th>
+              <th>Бруто без палет, кг</th>
+              <th>Тегло палет, кг</th>
+              <th>Бруто с палет, кг</th>
+              <th>Нето, кг</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in table.rows %}
+              <tr data-pallet-summary-row="{{ row.pallet_label }}">
+                <td>{{ row.pallet_label }}</td>
+                <td>{{ row.roll_count }}</td>
+                <td>{{ row.gross_without_pallet_display }}</td>
+                <td>{{ row.pallet_weight_display }}</td>
+                <td>{{ row.gross_with_pallet_display }}</td>
+                <td>{{ row.net_display }}</td>
+              </tr>
+            {% endfor %}
+            {% if table.total %}
+              <tr class="print-pallet-summary-total" data-pallet-summary-total="{{ location }}">
+                <th>{{ table.total.pallet_label }}</th>
+                <td>{{ table.total.roll_count }}</td>
+                <td>{{ table.total.gross_without_pallet_display }}</td>
+                <td>{{ table.total.pallet_weight_display }}</td>
+                <td>{{ table.total.gross_with_pallet_display }}</td>
+                <td>{{ table.total.net_display }}</td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      {% endmacro %}
       {% set pallet_summary_layout = print_data.get("pallet_summary_layout") %}
-      {% set has_pallet_overflow = pallet_summary_layout and pallet_summary_layout.overflow_pages %}
+      {% set has_pallet_overflow = pallet_summary_layout and pallet_summary_layout.overflow_tables %}
       <section class="print-page print-page-back{% if has_pallet_overflow %} print-page-back-has-overflow{% endif %}" aria-label="Задна страница">
         <table class="print-back-header" aria-label="Данни за поръчка" data-print-back-header="order">
           <colgroup>
@@ -332,54 +376,13 @@
               </tr>
             </tbody>
           </table>
-          {% if pallet_summary_layout and pallet_summary_layout.middle_rows %}
-            <table class="print-pallet-summary print-pallet-summary-middle" data-pallet-summary-table="middle">
-              <thead>
-                <tr>
-                  <th>Палет</th>
-                  <th>Ролки</th>
-                  <th>Бруто, кг</th>
-                  <th>Нето, кг</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for row in pallet_summary_layout.middle_rows %}
-                  <tr data-pallet-summary-row="{{ row.pallet_label }}">
-                    <td>{{ row.pallet_label }}</td>
-                    <td>{{ row.roll_count }}</td>
-                    <td>{{ row.gross_display }}</td>
-                    <td>{{ row.net_display }}</td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          {% endif %}
-          {% if pallet_summary_layout and pallet_summary_layout.right_rows %}
-            <table class="print-pallet-summary print-pallet-summary-right" data-pallet-summary-table="right">
-              <thead>
-                <tr>
-                  <th>Палет</th>
-                  <th>Ролки</th>
-                  <th>Бруто, кг</th>
-                  <th>Нето, кг</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for row in pallet_summary_layout.right_rows %}
-                  <tr data-pallet-summary-row="{{ row.pallet_label }}">
-                    <td>{{ row.pallet_label }}</td>
-                    <td>{{ row.roll_count }}</td>
-                    <td>{{ row.gross_display }}</td>
-                    <td>{{ row.net_display }}</td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
+          {% if pallet_summary_layout and pallet_summary_layout.page2_table %}
+            {{ pallet_table(pallet_summary_layout.page2_table, "page2", "print-pallet-summary-page2") }}
           {% endif %}
         </div>
       </section>
       {% if has_pallet_overflow %}
-        {% for overflow_rows in pallet_summary_layout.overflow_pages %}
+        {% for overflow_table in pallet_summary_layout.overflow_tables %}
           <section class="print-page print-page-pallet-overflow{% if loop.last %} print-page-last{% endif %}" data-pallet-overflow-page="{{ loop.index }}" aria-label="Палети – продължение {{ loop.index }}">
             <table class="print-back-header print-pallet-overflow-header" aria-label="Данни за поръчка" data-print-overflow-header="order">
               <colgroup>
@@ -400,26 +403,7 @@
                 </tr>
               </tbody>
             </table>
-            <table class="print-pallet-summary print-pallet-overflow-table" data-pallet-summary-table="overflow">
-              <thead>
-                <tr>
-                  <th>Палет</th>
-                  <th>Ролки</th>
-                  <th>Бруто, кг</th>
-                  <th>Нето, кг</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for row in overflow_rows %}
-                  <tr data-pallet-summary-row="{{ row.pallet_label }}">
-                    <td>{{ row.pallet_label }}</td>
-                    <td>{{ row.roll_count }}</td>
-                    <td>{{ row.gross_display }}</td>
-                    <td>{{ row.net_display }}</td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
+            {{ pallet_table(overflow_table, "overflow", "print-pallet-overflow-table") }}
           </section>
         {% endfor %}
       {% endif %}

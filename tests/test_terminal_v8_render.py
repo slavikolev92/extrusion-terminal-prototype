@@ -2817,7 +2817,7 @@ def test_terminal_finish_review_css_matches_approved_layout_contract(connection)
     dialog_rules = css_rules(html, r"(?m)^    \.finish-review-dialog")
     assert "width: min(1360px, 94vw);" in dialog_rules
     assert "height: min(840px, calc(100vh - 36px));" in dialog_rules
-    assert "grid-template-rows: 50px minmax(0, 1fr) 82px;" in dialog_rules
+    assert "grid-template-rows: 50px minmax(0, 1fr) minmax(82px, auto);" in dialog_rules
     assert "font-family: \"Segoe UI\"" in dialog_rules
     cards_rules = css_rules(html, r"(?m)^    \.finish-review-cards")
     assert "grid-template-columns: minmax(500px, 2fr) minmax(0, 3fr);" in cards_rules
@@ -2837,14 +2837,36 @@ def test_terminal_finish_review_css_matches_approved_layout_contract(connection)
     table_rules = css_rules(html, r"(?m)^    \.finish-review-table(?![-\w])")
     assert "table-layout: fixed;" in table_rules
     assert "font-size: 16px;" in table_rules
-    column_rules = css_rules(html, r"(?m)^    \.finish-review-table col")
-    assert "width: 20%;" in column_rules
+    pallet_column_rules = css_rules(
+        html,
+        r"(?m)^    \.finish-review-table \.finish-review-col-pallet",
+    )
+    value_column_rules = css_rules(
+        html,
+        r"(?m)^    \.finish-review-table \.finish-review-col-value",
+    )
+    assert "width: 14%;" in pallet_column_rules
+    assert "width: 17.2%;" in value_column_rules
     header_rules = css_rules(html, r"(?m)^    \.finish-review-table thead")
+    header_cell_rules = css_rules(
+        html,
+        r"(?m)^    \.finish-review-table thead th",
+    )
     total_rules = css_rules(html, r"(?m)^    \.finish-review-table tfoot")
     assert "position: sticky;" in header_rules
     assert "top: 0;" in header_rules
+    assert "white-space: normal;" in header_cell_rules
+    assert "line-height: 1.15;" in header_cell_rules
+    assert "overflow-wrap: anywhere;" in header_cell_rules
     assert "position: sticky;" in total_rules
     assert "bottom: 0;" in total_rules
+    footer_rules = css_rules(html, r"(?m)^    \.finish-review-footer")
+    assert "padding: 8px 18px;" in footer_rules
+    footer_status_rules = css_rules(
+        html,
+        r"(?m)^    \.finish-review-footer-status",
+    )
+    assert "flex: 1 1 auto;" in footer_status_rules
     footer_button_rules = css_rules(
         html,
         r"(?m)^    \.finish-review-cancel,\n    \.finish-review-confirm",
@@ -2904,8 +2926,12 @@ def test_waiting_finish_review_controller_handles_modal_lifecycle(connection):
     assert "let controllerReady = false;" in controller
     assert "controllerReady = true;" in controller
     assert "nativeSubmit && controllerReady" in controller
-    assert 'trigger.addEventListener("click"' in controller
-    assert "fetch(" not in controller
+    assert 'waitingForm.addEventListener("submit"' in controller
+    assert "resolveWaitingFinishReviewRequest({" in controller
+    assert "request: () => fetch(`${waitingForm.action}-review`, {" in controller
+    assert "loadedVersion: loadedVersionInput.value" in controller
+    assert "validateFinishReviewPalletState(payload?.finish_review)" in controller
+    assert "applyFinishReviewPalletState(dialog, review)" in controller
     assert "timing_interval_editor" not in controller
     assert 'event.preventDefault();' in controller
     assert 'overlay.hidden = false;' in controller
@@ -3008,17 +3034,20 @@ def test_active_and_waiting_finish_render_the_approved_common_review_shell(
     assert time_positions == sorted(time_positions)
     assert 'data-finish-timing-summary' in finish_review_markup
     assert 'data-finish-production-summary' in finish_review_markup
-    assert finish_review_markup.count("<col>") == 5
+    assert finish_review_markup.count('class="finish-review-col-pallet"') == 1
+    assert finish_review_markup.count('class="finish-review-col-value"') == 5
     for heading in (
         "Палет №",
         "Брой ролки",
-        "Бруто, кг",
+        "Бруто без палет, кг",
         "Тегло палет, кг",
+        "Бруто с палет, кг",
         "Нето, кг",
     ):
         assert heading in finish_review_markup
-    assert 'data-finish-pallet-weight>0.0</td>' in finish_review_markup
-    assert 'data-finish-pallet-weight-total>0.0</td>' in finish_review_markup
+    assert 'data-finish-pallet-weight>-</td>' in finish_review_markup
+    assert 'data-finish-pallet-weight-total>-</td>' in finish_review_markup
+    assert 'data-finish-gross-with-total>-</td>' in finish_review_markup
     assert "Без палет" in finish_review_markup
     assert "25.0" in finish_review_markup
     assert "24.0" in finish_review_markup
@@ -3317,8 +3346,14 @@ def test_active_finish_review_controller_uses_the_common_shell_safely(connection
     render_preview = controller[render_start:render_end]
     assert render_preview.count("formatFinishBoundary(") == 2
     assert render_preview.count("formatFinishDuration(") == 2
-    assert "finishWarning.textContent = message;" in render_preview
-    assert "finishWarning.hidden = !message || message === genericMessage;" in render_preview
+    begin_start = controller.index("async function beginFinishReview()")
+    begin_end = controller.index("async function applyFinishDraft()", begin_start)
+    begin_review = controller[begin_start:begin_end]
+    apply_position = begin_review.index(
+        "applyFinishReviewPalletState(finishDialog, authoritativeReview)",
+    )
+    open_position = begin_review.index("openFinishSummary", apply_position)
+    assert apply_position < open_position
 
     open_start = controller.index("function openFinishSummary")
     open_end = controller.index("function closeFinishSummary", open_start)
@@ -3405,11 +3440,12 @@ def test_finish_review_renders_empty_zero_total_and_locks_summary_errors(connect
     empty_html = render_terminal(card_id)
     assert "Няма въведени ролки." in empty_html
     assert re.search(
-        r"<tbody>\s*<tr[^>]*>\s*<td[^>]+colspan=\"5\"[^>]*>"
+        r"<tbody[^>]*>\s*<tr[^>]*>\s*<td[^>]+colspan=\"6\"[^>]*>"
         r"\s*Няма въведени ролки\.\s*</td>",
         empty_html,
     )
-    assert 'data-finish-pallet-weight-total>0.0</td>' in empty_html
+    assert 'data-finish-pallet-weight-total>-</td>' in empty_html
+    assert 'data-finish-gross-with-total>-</td>' in empty_html
     assert 'data-finish-gross-total>0.0</td>' in empty_html
     assert 'data-finish-net-total>0.0</td>' in empty_html
     assert "Термо фолио 420 × 0.060 мм" in empty_html
@@ -3429,13 +3465,14 @@ def test_finish_review_renders_empty_zero_total_and_locks_summary_errors(connect
     }
     finish_review = dict(context["terminal_finish_review"])
     finish_review["can_confirm"] = False
+    finish_review["pallet_summary"] = selected_card["pallet_summary"]
     error_html = render_terminal(
         card_id,
         selected_card=selected_card,
         terminal_finish_review=finish_review,
     )
     assert "Обобщението по палети не може да бъде показано." in error_html
-    assert 'data-finish-production-error colspan="5"' in error_html
+    assert 'data-finish-production-error colspan="6"' in error_html
     assert 'data-finish-pallet-weight-total' not in error_html
     assert re.search(r"data-finish-review-confirm[^>]*disabled", error_html)
 
@@ -3559,10 +3596,16 @@ def test_terminal_timing_errors_reopen_or_lock_the_submitted_draft(connection):
     assert 'mode: "ordinary"' in row_error_recovery
     assert "запишете промените" in row_error_recovery
     assert "renderServerErrors" in row_error_recovery
-    assert "finishConfirmButton.disabled = true" in begin_review
-    assert "finishEditButton.disabled = true" in begin_review
-    assert begin_review.count("focusFinishAlert();") == 2
-    assert "showFinishAlert(retainedMessages);" in controller_source
+    assert begin_review.count("finishReview = null;") >= 2
+    authoritative_apply = begin_review.index(
+        "applyFinishReviewPalletState(finishDialog, authoritativeReview)",
+    )
+    assert authoritative_apply < begin_review.index(
+        "openFinishSummary",
+        authoritative_apply,
+    )
+    assert "lockedMessages: retainedMessages" in controller_source
+    assert "void refreshRetainedFinishReview(" in controller_source
 
 
 def test_terminal_finish_no_roll_failure_retains_message_in_review_model(connection):
@@ -3623,7 +3666,18 @@ def test_terminal_finish_no_roll_failure_retains_message_in_review_model(connect
         "app/static/js/timing_interval_editor.mjs"
     ).read_text(encoding="utf-8")
     assert "retainedFinishReviewMessages(finishReview)" in controller_source
-    assert "focusFinishAlert();" in controller_source
+    refresh_start = controller_source.index(
+        "async function refreshRetainedFinishReview(opener)",
+    )
+    refresh_end = controller_source.index(
+        "async function requestFinishEditorPreview",
+        refresh_start,
+    )
+    refresh_review = controller_source[refresh_start:refresh_end]
+    apply_position = refresh_review.index(
+        "applyFinishReviewPalletState(finishDialog, review)",
+    )
+    assert apply_position < refresh_review.index("openFinishSummary", apply_position)
 
 
 def test_terminal_initial_stale_finish_hydration_preserves_exact_locked_draft(
@@ -6182,6 +6236,45 @@ def test_terminal_header_has_centered_global_actions_and_shift_identity(connecti
     )
 
 
+def test_terminal_header_narrow_breakpoint_keeps_all_actions_inside_1093px(
+    connection,
+):
+    html = render_terminal()
+    narrow = re.search(
+        r"@media \(max-width: 1150px\) \{(?P<rules>.*?)"
+        r"@media \(max-height: 820px\)",
+        html,
+        re.S,
+    )
+
+    assert narrow is not None
+    rules = narrow.group("rules")
+    action_width = int(
+        re.search(r"--terminal-header-action-width:\s*(\d+)px", rules).group(1)
+    )
+    side_width = int(
+        re.search(r"--terminal-side-action-width:\s*(\d+)px", rules).group(1)
+    )
+    header_gap = int(
+        re.search(r"\.terminal-header\s*\{.*?gap:\s*(\d+)px", rules, re.S).group(1)
+    )
+    header_padding = int(
+        re.search(r"\.terminal-header\s*\{.*?padding-inline:\s*(\d+)px", rules, re.S).group(1)
+    )
+    nav_gap = int(
+        re.search(r"\.terminal-global-nav\s*\{.*?gap:\s*(\d+)px", rules, re.S).group(1)
+    )
+    reserved_width = (
+        (2 * side_width)
+        + (3 * action_width)
+        + (2 * header_gap)
+        + (2 * nav_gap)
+        + (2 * header_padding)
+    )
+
+    assert reserved_width <= 1093
+
+
 def test_terminal_header_shows_nonwrapping_no_active_shift_label(connection):
     end_active_test_shift()
 
@@ -6559,7 +6652,10 @@ def test_shift_snapshot_change_renders_blocking_reload_state_without_discarding_
     assert "Смяната е променена" in html
     assert "let currentShiftSignature = initialSnapshot.shift_signature;" in html
     assert "snapshot.shift_signature !== currentShiftSignature" in html
-    assert 'new CustomEvent("terminal:shift-stale")' in html
+    assert (
+        'new CustomEvent("terminal:shift-stale", { cancelable: true })'
+        in html
+    )
     assert 'shiftApp.setAttribute("inert", "")' in html
     assert 'shiftApp.setAttribute("aria-hidden", "true")' in html
     assert 'form[data-recipe-autosave="true"], form[data-dirty-autosave="true"]' in html

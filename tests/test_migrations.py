@@ -21,6 +21,105 @@ FINAL_IMPORT_COLUMNS = (
 )
 
 
+def insert_card(connection: sqlite3.Connection, *, order_number: str) -> int:
+    cursor = connection.execute(
+        "INSERT INTO cards (order_number) VALUES (?)",
+        (order_number,),
+    )
+    return int(cursor.lastrowid)
+
+
+def test_fresh_schema_has_exact_card_pallet_weights_contract(connection):
+    sql = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'card_pallet_weights'"
+    ).fetchone()[0]
+    assert "PRIMARY KEY (card_id, pallet_number)" in sql
+    assert "weight_hundredths BETWEEN 1 AND 10000" in sql
+    assert connection.execute(
+        "PRAGMA foreign_key_list(card_pallet_weights)"
+    ).fetchone()[2:7] == ("cards", "card_id", "id", "NO ACTION", "CASCADE")
+
+
+@pytest.mark.parametrize("weight_hundredths", (0, 10001, 1.5, "not-an-integer"))
+def test_card_pallet_weight_rejects_invalid_storage(connection, weight_hundredths):
+    card_id = insert_card(connection, order_number=f"PW-{weight_hundredths}")
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "INSERT INTO card_pallet_weights (card_id, pallet_number, weight_hundredths) VALUES (?, 1, ?)",
+            (card_id, weight_hundredths),
+        )
+
+
+@pytest.mark.parametrize("pallet_number", (0, 1000, 1.5, "not-an-integer"))
+def test_card_pallet_weight_rejects_invalid_pallet_number(
+    connection,
+    pallet_number,
+):
+    card_id = insert_card(connection, order_number=f"PW-PALLET-{pallet_number}")
+
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            """
+            INSERT INTO card_pallet_weights (
+                card_id, pallet_number, weight_hundredths
+            ) VALUES (?, ?, 1250)
+            """,
+            (card_id, pallet_number),
+        )
+
+
+def test_card_pallet_weight_rejects_duplicate_card_and_pallet(connection):
+    card_id = insert_card(connection, order_number="PW-DUPLICATE-PALLET")
+    connection.execute(
+        """
+        INSERT INTO card_pallet_weights (card_id, pallet_number, weight_hundredths)
+        VALUES (?, 7, 1250)
+        """,
+        (card_id,),
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            """
+            INSERT INTO card_pallet_weights (
+                card_id, pallet_number, weight_hundredths
+            ) VALUES (?, 7, 2000)
+            """,
+            (card_id,),
+        )
+
+
+def test_card_pallet_weight_rejects_nonexistent_card(connection):
+    nonexistent_card_id = connection.execute(
+        "SELECT COALESCE(MAX(id), 0) + 1 FROM cards"
+    ).fetchone()[0]
+
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            """
+            INSERT INTO card_pallet_weights (
+                card_id, pallet_number, weight_hundredths
+            ) VALUES (?, 1, 1250)
+            """,
+            (nonexistent_card_id,),
+        )
+
+
+def test_card_pallet_weight_normalizes_numeric_text_to_integer_storage(connection):
+    card_id = insert_card(connection, order_number="PW-NUMERIC-TEXT")
+
+    connection.execute(
+        "INSERT INTO card_pallet_weights (card_id, pallet_number, weight_hundredths) VALUES (?, 1, ?)",
+        (card_id, "10"),
+    )
+
+    stored = connection.execute(
+        "SELECT weight_hundredths, typeof(weight_hundredths) FROM card_pallet_weights WHERE card_id = ?",
+        (card_id,),
+    ).fetchone()
+    assert tuple(stored) == (10, "integer")
+
+
 LEGACY_TERMINAL_CONFIGURATION_SQL = """
 CREATE TABLE terminal_configuration (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -567,6 +666,17 @@ def configure_database(
     monkeypatch.setattr(db, "DB_PATH", database_path)
 
 
+def create_recorded_m006_database(
+    database_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_database(monkeypatch, database_path)
+    db.init_db()
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("DROP TABLE card_pallet_weights")
+        connection.execute("DELETE FROM schema_migrations WHERE version >= 7")
+
+
 def read_row(
     connection: sqlite3.Connection,
     table_name: str,
@@ -806,6 +916,8 @@ def test_m002_adds_shift_schema_without_attributing_legacy_rolls(
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
         (6, "legacy_import_normalization"),
+        (7, "physical_pallet_weights"),
+        (8, "physical_pallet_weight_hundredths"),
     ]
     assert configuration == {"id": 1, "shift_count": 4, "version": 1}
     assert roll["shift_occurrence_id"] is None
@@ -990,6 +1102,8 @@ def test_m002_preserves_existing_attribution_in_partially_upgraded_schema(
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
         (6, "legacy_import_normalization"),
+        (7, "physical_pallet_weights"),
+        (8, "physical_pallet_weight_hundredths"),
     ]
     assert integrity == "ok"
     assert foreign_key_violations == []
@@ -1118,15 +1232,17 @@ def test_m003_adds_nullable_pallet_columns_without_backfilling_legacy_data(
     second_migration_rows = second_snapshot.pop("schema_migrations")
     assert first_snapshot == before_snapshot
     assert second_snapshot == first_snapshot
-    assert first_migration_rows[:-4] == prior_migration_rows
+    assert first_migration_rows[:-6] == prior_migration_rows
     assert second_migration_rows == first_migration_rows
     assert legacy_card["current_pallet_number"] is None
     assert legacy_roll["pallet_number"] is None
-    assert migration_rows[-4:] == [
+    assert migration_rows[-6:] == [
         {"version": 3, "name": "roll_pallet_assignment"},
         {"version": 4, "name": "rewinding_return_workflow"},
         {"version": 5, "name": "shift_schema_contract"},
         {"version": 6, "name": "legacy_import_normalization"},
+        {"version": 7, "name": "physical_pallet_weights"},
+        {"version": 8, "name": "physical_pallet_weight_hundredths"},
     ]
     assert integrity == "ok"
     assert foreign_key_violations == []
@@ -1182,6 +1298,8 @@ def test_m003_accepts_a_valid_partially_upgraded_schema_and_preserves_values(
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
         (6, "legacy_import_normalization"),
+        (7, "physical_pallet_weights"),
+        (8, "physical_pallet_weight_hundredths"),
     ]
     assert second_rows == first_rows
     assert second_snapshot == first_snapshot
@@ -1352,6 +1470,8 @@ def test_m003_accepts_equivalent_nullable_pallet_constraints_and_preserves_value
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
         (6, "legacy_import_normalization"),
+        (7, "physical_pallet_weights"),
+        (8, "physical_pallet_weight_hundredths"),
     ]
 
 
@@ -1533,6 +1653,8 @@ def test_fresh_database_records_migrations_once_with_schema_parity(
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
         (6, "legacy_import_normalization"),
+        (7, "physical_pallet_weights"),
+        (8, "physical_pallet_weight_hundredths"),
     ]
     assert [(row["version"], row["name"]) for row in second_rows] == [
         (1, "shift_manager_import_fields"),
@@ -1541,6 +1663,8 @@ def test_fresh_database_records_migrations_once_with_schema_parity(
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
         (6, "legacy_import_normalization"),
+        (7, "physical_pallet_weights"),
+        (8, "physical_pallet_weight_hundredths"),
     ]
     assert configuration == {"id": 1, "shift_count": 4, "version": 1}
     assert set(FINAL_IMPORT_COLUMNS).issubset(card_columns)
@@ -1691,10 +1815,12 @@ def test_m004_upgrades_recorded_m003_without_inference_and_preserves_all_data(
 
     migration_rows = after.pop("schema_migrations")
     assert after == before
-    assert migration_rows[:-3] == prior_migrations
-    assert migration_rows[-3][:2] == (4, "rewinding_return_workflow")
-    assert migration_rows[-2][:2] == (5, "shift_schema_contract")
-    assert migration_rows[-1][:2] == (6, "legacy_import_normalization")
+    assert migration_rows[:-5] == prior_migrations
+    assert migration_rows[-5][:2] == (4, "rewinding_return_workflow")
+    assert migration_rows[-4][:2] == (5, "shift_schema_contract")
+    assert migration_rows[-3][:2] == (6, "legacy_import_normalization")
+    assert migration_rows[-2][:2] == (7, "physical_pallet_weights")
+    assert migration_rows[-1][:2] == (8, "physical_pallet_weight_hundredths")
     assert card["rewinding_roll_count"] is None
     assert card["final_extrusion_shift_occurrence_id"] is None
     assert card["current_pallet_number"] == 17
@@ -1746,10 +1872,12 @@ def test_m004_upgrades_sparse_legacy_cards_before_creating_card_indexes(
         "idx_cards_active_machine_sequence",
         "idx_cards_status_machine_sequence",
     }.issubset(card_indexes)
-    assert [tuple(row) for row in migration_rows[-3:]] == [
+    assert [tuple(row) for row in migration_rows[-5:]] == [
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
         (6, "legacy_import_normalization"),
+        (7, "physical_pallet_weights"),
+        (8, "physical_pallet_weight_hundredths"),
     ]
 
 
@@ -1777,10 +1905,12 @@ def test_m004_preserves_valid_partially_deployed_values(
 
     assert card["rewinding_roll_count"] == 12
     assert card["final_extrusion_shift_occurrence_id"] == 1
-    assert [tuple(row) for row in migration_rows[-3:]] == [
+    assert [tuple(row) for row in migration_rows[-5:]] == [
         (4, "rewinding_return_workflow"),
         (5, "shift_schema_contract"),
         (6, "legacy_import_normalization"),
+        (7, "physical_pallet_weights"),
+        (8, "physical_pallet_weight_hundredths"),
     ]
 
 
@@ -2850,8 +2980,10 @@ def test_m006_normalizes_only_proven_legacy_amounts_and_routes(
     )
     assert tuple(tuple(row[:13]) for row in card_rows) == expected_values
     assert tuple(tuple(row[:13]) for row in source_rows) == expected_values
-    assert tuple(migration_rows[-1]) == (6, "legacy_import_normalization")
+    assert tuple(migration_rows[-1]) == (8, "physical_pallet_weight_hundredths")
     assert sum(row[0] == 6 for row in migration_rows) == 1
+    assert sum(row[0] == 7 for row in migration_rows) == 1
+    assert sum(row[0] == 8 for row in migration_rows) == 1
     assert tuple(card_rows[0][13:]) == (
         "running", 1, 1, 7,
         "2026-07-20 06:10:00", "2026-07-20 08:00:00",
@@ -2933,6 +3065,244 @@ def test_m006_rejects_an_unknown_corroborated_route_atomically(
     assert "ordered_gross_kg" not in card_columns
     assert migration_table is None
     assert legacy_row == ("500", "Rewinding")
+
+
+def test_card_pallet_weight_m007_upgrades_version_6_without_backfill_and_is_idempotent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m007-version-6.sqlite3"
+    create_recorded_m006_database(database_path, monkeypatch)
+    with db.connect() as connection:
+        card_id = insert_card(connection, order_number="PW-M007-UPGRADE")
+        connection.execute(
+            """
+            UPDATE cards
+            SET customer = 'Preserved customer',
+                current_pallet_number = 3,
+                version = 8,
+                updated_at = '2026-09-09 12:34:56'
+            WHERE id = ?
+            """,
+            (card_id,),
+        )
+        connection.execute(
+            """
+            INSERT INTO roll_entries (
+                card_id, order_number, roll_number, gross_weight,
+                tare_weight, net_weight, pallet_number,
+                created_at, updated_at
+            ) VALUES (?, 'PW-M007-UPGRADE', 1, 25.5, 1.5, 24.0, 3,
+                      '2026-09-09 12:35:00', '2026-09-09 12:35:00')
+            """,
+            (card_id,),
+        )
+        before_card_rows = [
+            tuple(row) for row in connection.execute("SELECT * FROM cards ORDER BY id")
+        ]
+        before_roll_rows = [
+            tuple(row)
+            for row in connection.execute("SELECT * FROM roll_entries ORDER BY id")
+        ]
+
+    with db.connect() as connection:
+        applied_versions = migrations.apply_startup_migrations(connection)
+        after_card_rows = [
+            tuple(row) for row in connection.execute("SELECT * FROM cards ORDER BY id")
+        ]
+        after_roll_rows = [
+            tuple(row)
+            for row in connection.execute("SELECT * FROM roll_entries ORDER BY id")
+        ]
+        weight_count = connection.execute(
+            "SELECT COUNT(*) FROM card_pallet_weights"
+        ).fetchone()[0]
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+
+    with db.connect() as connection:
+        second_applied_versions = migrations.apply_startup_migrations(connection)
+
+    assert before_roll_rows == after_roll_rows
+    assert before_card_rows == after_card_rows
+    assert weight_count == 0
+    assert applied_versions == (7, 8)
+    assert second_applied_versions == ()
+    assert integrity == "ok"
+    assert foreign_keys == []
+
+
+def test_m008_converts_exact_m007_tenths_to_hundredths_and_preserves_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m008-from-tenths.sqlite3"
+    create_recorded_m006_database(database_path, monkeypatch)
+    legacy_sql = """
+    CREATE TABLE card_pallet_weights (
+        card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+        pallet_number INTEGER NOT NULL CHECK (
+            typeof(pallet_number) = 'integer'
+            AND pallet_number BETWEEN 1 AND 999
+        ),
+        weight_tenths INTEGER NOT NULL CHECK (
+            typeof(weight_tenths) = 'integer'
+            AND weight_tenths BETWEEN 1 AND 1000
+        ),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (card_id, pallet_number)
+    )
+    """
+    with sqlite3.connect(database_path) as connection:
+        card_id = connection.execute(
+            "INSERT INTO cards (order_number) VALUES ('PW-M008')"
+        ).lastrowid
+        connection.execute(legacy_sql)
+        connection.execute(
+            """
+            INSERT INTO card_pallet_weights (
+                card_id, pallet_number, weight_tenths, created_at, updated_at
+            ) VALUES (?, 4, 125, '2026-09-10 09:15:00', '2026-09-10 09:20:00')
+            """,
+            (card_id,),
+        )
+        connection.execute(
+            "INSERT INTO schema_migrations (version, name) VALUES (7, 'physical_pallet_weights')"
+        )
+
+    db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        columns = tuple(
+            row[1] for row in connection.execute("PRAGMA table_info(card_pallet_weights)")
+        )
+        row = connection.execute(
+            """
+            SELECT pallet_number, weight_hundredths, created_at, updated_at
+            FROM card_pallet_weights
+            WHERE card_id = ?
+            """,
+            (card_id,),
+        ).fetchone()
+        migrations_applied = connection.execute(
+            "SELECT version, name FROM schema_migrations WHERE version >= 7 ORDER BY version"
+        ).fetchall()
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+
+    assert "weight_tenths" not in columns
+    assert "weight_hundredths" in columns
+    assert row == (4, 1250, "2026-09-10 09:15:00", "2026-09-10 09:20:00")
+    assert migrations_applied == [
+        (7, "physical_pallet_weights"),
+        (8, "physical_pallet_weight_hundredths"),
+    ]
+    assert integrity == "ok"
+    assert foreign_keys == []
+
+
+def test_card_pallet_weight_foreign_key_cascades_on_card_delete(connection):
+    card_id = insert_card(connection, order_number="PW-CASCADE")
+    connection.execute(
+        "INSERT INTO card_pallet_weights (card_id, pallet_number, weight_hundredths) VALUES (?, 4, 1250)",
+        (card_id,),
+    )
+
+    connection.execute("DELETE FROM cards WHERE id = ?", (card_id,))
+
+    assert connection.execute(
+        "SELECT COUNT(*) FROM card_pallet_weights WHERE card_id = ?",
+        (card_id,),
+    ).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    "contract_break",
+    ("columns", "constraints", "primary-key", "foreign-key-action"),
+)
+def test_m007_rejects_malformed_card_pallet_weights_without_recording(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    contract_break: str,
+) -> None:
+    database_path = tmp_path / f"m007-malformed-{contract_break}.sqlite3"
+    create_recorded_m006_database(database_path, monkeypatch)
+    malformed_sql = migrations.CARD_PALLET_WEIGHTS_TABLE_SQL.replace(
+        "IF NOT EXISTS ",
+        "",
+    )
+    replacements = {
+        "columns": ("weight_hundredths", "weight_grams"),
+        "constraints": (
+            "weight_hundredths BETWEEN 1 AND 10000",
+            "weight_hundredths BETWEEN 0 AND 10000",
+        ),
+        "primary-key": (
+            "PRIMARY KEY (card_id, pallet_number)",
+            "PRIMARY KEY (card_id)",
+        ),
+        "foreign-key-action": ("ON DELETE CASCADE", "ON DELETE RESTRICT"),
+    }
+    source, replacement = replacements[contract_break]
+    malformed_sql = malformed_sql.replace(source, replacement)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(malformed_sql)
+        retained_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'card_pallet_weights'"
+        ).fetchone()[0]
+
+    with pytest.raises(RuntimeError, match="required schema contract"):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        after_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'card_pallet_weights'"
+        ).fetchone()[0]
+        migration_count = connection.execute(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 7"
+        ).fetchone()[0]
+
+    assert after_sql == retained_sql
+    assert migration_count == 0
+
+
+def test_card_pallet_weight_m007_failure_rolls_back_table_and_migration_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "m007-injected-rollback.sqlite3"
+    create_recorded_m006_database(database_path, monkeypatch)
+    with sqlite3.connect(database_path) as connection:
+        before_migrations = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+
+    def fail_after_table_creation(connection: sqlite3.Connection) -> None:
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'card_pallet_weights'"
+        ).fetchone() is not None
+        raise RuntimeError("injected M007 validation failure")
+
+    monkeypatch.setattr(
+        migrations,
+        "validate_card_pallet_weights_schema",
+        fail_after_table_creation,
+    )
+
+    with pytest.raises(RuntimeError, match="injected M007 validation failure"):
+        db.init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'card_pallet_weights'"
+        ).fetchone()
+        after_migrations = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+
+    assert table is None
+    assert after_migrations == before_migrations
 
 
 @pytest.mark.parametrize(

@@ -23,3 +23,16 @@ export function canEnableWaitingFinishTrigger(model, { suspended = false } = {})
     && suspended !== true
     && model.locked !== true;
 }
+
+
+export function canOpenWaitingFinishReviewPayload(review, loadedVersion) {
+  return Boolean(
+    review
+    && typeof review === "object"
+    && !Array.isArray(review)
+    && review.mode === "finalize_rewinding"
+    && Number.isSafeInteger(review.card_version)
+    && String(review.card_version) === String(loadedVersion)
+    && !Object.hasOwn(review, "review_token")
+  );
+}

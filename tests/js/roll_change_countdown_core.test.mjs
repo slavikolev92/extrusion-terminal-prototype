@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   STORAGE_KEY_PREFIX,
+  adoptLocalCardVersion,
   advanceSchedule,
   buildSchedule,
   calculateNextExpected,
@@ -45,6 +46,33 @@ const runningSchedule = () => buildSchedule({
   nextExpectedAtMs: localAt(2026, 7, 27, 14, 0),
   status: "running",
   nowMs: localAt(2026, 7, 27, 12, 0),
+});
+
+test("an exact same-card local save adopts only the card version", () => {
+  const context = {
+    cardId: 22,
+    cardVersion: 7,
+    status: "running",
+    host: { identity: "unchanged" },
+  };
+
+  assert.deepEqual(
+    adoptLocalCardVersion(context, { cardId: 22, oldVersion: 7, newVersion: 8 }),
+    { ...context, cardVersion: 8 },
+  );
+  assert.equal(context.cardVersion, 7);
+});
+
+test("local card-version adoption fails closed for a mismatched transition", () => {
+  const context = { cardId: 22, cardVersion: 7, status: "paused" };
+  for (const detail of [
+    { cardId: 99, oldVersion: 7, newVersion: 8 },
+    { cardId: 22, oldVersion: 6, newVersion: 8 },
+    { cardId: 22, oldVersion: 7, newVersion: 7 },
+    { cardId: 22, oldVersion: 7, newVersion: 7.5 },
+  ]) {
+    assert.equal(adoptLocalCardVersion(context, detail), null);
+  }
 });
 
 test("initial schedule calculation uses the entered two-hour interval", () => {

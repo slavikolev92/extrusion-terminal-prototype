@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import io
 import json
 import os
@@ -18,11 +19,26 @@ from app.importer import IMPORT_FIELDS, import_cards_from_csv
 
 
 SCENARIO_ORDER = (
-    "pending_empty",
-    "running_mixed",
-    "paused_all_unassigned",
-    "awaiting_many_pallets",
-    "completed_numbered",
+    "empty",
+    "all_unassigned",
+    "no_weights",
+    "partial_weights",
+    "complete_weights",
+    "mixed_unassigned",
+    "awaiting_partial",
+    "completed_complete",
+    "archived_complete",
+    "many_pallets",
+)
+
+AUDITED_TABLES = (
+    "cards",
+    "roll_entries",
+    "production_time_segments",
+    "recipe_actual_entries",
+    "recipe_components",
+    "shift_occurrences",
+    "terminal_configuration",
 )
 
 
@@ -147,7 +163,9 @@ def import_scenarios() -> dict[str, int]:
             "SELECT id, order_number FROM cards ORDER BY order_number"
         ).fetchall()
     if len(rows) != len(SCENARIO_ORDER):
-        raise RuntimeError("Fixture import did not create exactly five cards.")
+        raise RuntimeError(
+            f"Fixture import did not create exactly {len(SCENARIO_ORDER)} cards."
+        )
     return {
         scenario: int(row["id"])
         for scenario, row in zip(SCENARIO_ORDER, rows, strict=True)
@@ -222,11 +240,129 @@ def finish(card_id: int) -> None:
     )
 
 
+def save_weight(card_id: int, pallet_number: int, weight: str) -> None:
+    require_ok(
+        db.update_terminal_pallet_weight(
+            card_id,
+            pallet_number,
+            card_version(card_id),
+            weight,
+        ).result,
+        f"save pallet {pallet_number} weight for card {card_id}",
+    )
+
+
 def expected_many_rows() -> list[list[str]]:
     return [
-        [str(pallet), "1", f"{10 + pallet}.0", f"{9 + pallet}.0"]
+        [
+            str(pallet),
+            "1",
+            f"{10 + pallet}.0",
+            f"{pallet}.00",
+            f"{10 + (2 * pallet)}.00",
+            f"{9 + pallet}.0",
+        ]
         for pallet in range(1, 25)
     ]
+
+
+def stabilize_fixture_times() -> None:
+    with db.connect() as connection:
+        connection.execute(
+            "UPDATE cards SET created_at = '2026-09-10 06:00:00', "
+            "updated_at = '2026-09-10 06:30:00', "
+            "first_started_at = CASE WHEN first_started_at IS NULL THEN NULL "
+            "ELSE '2026-09-10 06:05:00' END, "
+            "finished_at = CASE WHEN finished_at IS NULL THEN NULL "
+            "ELSE '2026-09-10 06:25:00' END"
+        )
+        connection.execute(
+            "UPDATE roll_entries SET created_at = '2026-09-10 06:10:00', "
+            "updated_at = '2026-09-10 06:10:00'"
+        )
+        connection.execute(
+            "UPDATE production_time_segments "
+            "SET started_at = '2026-09-10 06:05:00', "
+            "ended_at = CASE WHEN ended_at IS NULL THEN NULL "
+            "ELSE '2026-09-10 06:25:00' END, "
+            "created_at = '2026-09-10 06:05:00', "
+            "updated_at = '2026-09-10 06:25:00'"
+        )
+        connection.execute(
+            "UPDATE shift_occurrences SET started_at = '2026-09-10 06:00:00', "
+            "created_at = '2026-09-10 06:00:00', "
+            "updated_at = '2026-09-10 06:00:00'"
+        )
+        connection.execute(
+            "UPDATE terminal_configuration SET updated_at = '2026-09-10 06:00:00'"
+        )
+        connection.execute(
+            "UPDATE recipe_actual_entries SET created_at = '2026-09-10 06:00:00', "
+            "updated_at = '2026-09-10 06:00:00'"
+        )
+        connection.execute(
+            "UPDATE recipe_components SET created_at = '2026-09-10 06:00:00', "
+            "updated_at = '2026-09-10 06:00:00'"
+        )
+        connection.execute(
+            "UPDATE card_pallet_weights SET created_at = '2026-09-10 06:15:00', "
+            "updated_at = '2026-09-10 06:15:00'"
+        )
+
+
+def audited_table_snapshot() -> dict[str, object]:
+    tables: dict[str, object] = {}
+    with db.connect() as connection:
+        for table in AUDITED_TABLES:
+            info = connection.execute(f'PRAGMA table_info("{table}")').fetchall()
+            columns = [str(row["name"]) for row in info]
+            primary = [
+                (int(row["pk"]), str(row["name"]))
+                for row in info
+                if int(row["pk"]) > 0
+            ]
+            order_columns = [name for _, name in sorted(primary)] or columns
+            order_sql = ", ".join(f'"{name}"' for name in order_columns)
+            rows = [
+                [row[column] for column in columns]
+                for row in connection.execute(
+                    f'SELECT * FROM "{table}" ORDER BY {order_sql}'
+                ).fetchall()
+            ]
+            row_json = [
+                json.dumps(row, ensure_ascii=False, separators=(",", ":"))
+                for row in rows
+            ]
+            tables[table] = {
+                "columns": columns,
+                "rows": rows,
+                "row_hashes": [
+                    hashlib.sha256(value.encode("utf-8")).hexdigest()
+                    for value in row_json
+                ],
+                "table_hash": hashlib.sha256(
+                    "\n".join(row_json).encode("utf-8")
+                ).hexdigest(),
+            }
+        pallet_rows = [
+            list(row)
+            for row in connection.execute(
+                "SELECT card_id, pallet_number, weight_hundredths, created_at, updated_at "
+                "FROM card_pallet_weights ORDER BY card_id, pallet_number"
+            ).fetchall()
+        ]
+    return {
+        "algorithm": "sha256",
+        "tables": tables,
+        "pallet_weight_columns": [
+            "card_id",
+            "pallet_number",
+            "weight_hundredths",
+            "created_at",
+            "updated_at",
+        ],
+        "pallet_weight_rows": pallet_rows,
+    }
 
 
 def production_snapshot(cards: dict[str, int]) -> dict[str, object]:
@@ -277,103 +413,298 @@ def create_fixture(database_path: Path) -> dict[str, object]:
     )
     cards = import_scenarios()
 
-    release(cards["pending_empty"], 1, 1)
-    release(cards["running_mixed"], 1, 1)
-    release(cards["paused_all_unassigned"], 2, 1)
-    release(cards["awaiting_many_pallets"], 3, 1)
-    release(cards["completed_numbered"], 4, 1)
-
-    running_id = cards["running_mixed"]
-    start(running_id)
-    set_tare(running_id)
-    for gross, pallet in (
-        ("120.0", "10"),
-        ("80.0", ""),
-        ("100.0", "2"),
-        ("100.1", "2"),
-    ):
-        add_roll(running_id, gross, pallet)
-    mark_rewinding(running_id, 1)
-
-    paused_id = cards["paused_all_unassigned"]
-    start(paused_id)
-    set_tare(paused_id)
-    add_roll(paused_id, "50.0", "")
-    add_roll(paused_id, "75.5", "")
-    mark_rewinding(paused_id, 1)
-    pause(paused_id)
-
-    waiting_id = cards["awaiting_many_pallets"]
-    start(waiting_id)
-    set_tare(waiting_id)
-    mark_rewinding(waiting_id, 24)
-    finish(waiting_id)
-    for pallet in range(1, 25):
-        add_roll(waiting_id, f"{10 + pallet}.0", str(pallet))
-
-    completed_id = cards["completed_numbered"]
+    # Build completed/waiting cards first so their machines are reusable by the
+    # active scenarios in the final canonical state.
+    completed_id = cards["completed_complete"]
+    release(completed_id, 2, 1)
     start(completed_id)
     set_tare(completed_id)
     add_roll(completed_id, "60.0", "3")
     add_roll(completed_id, "40.5", "12")
+    save_weight(completed_id, 3, "12.0")
+    save_weight(completed_id, 12, "15.0")
     finish(completed_id)
+
+    archived_id = cards["archived_complete"]
+    release(archived_id, 3, 1)
+    start(archived_id)
+    set_tare(archived_id)
+    add_roll(archived_id, "45.0", "6")
+    add_roll(archived_id, "55.5", "9")
+    save_weight(archived_id, 6, "11.5")
+    save_weight(archived_id, 9, "16.0")
+    finish(archived_id)
+    require_ok(
+        db.archive_completed_card(archived_id, card_version(archived_id)),
+        f"archive card {archived_id}",
+    )
+
+    waiting_id = cards["awaiting_partial"]
+    release(waiting_id, 1, 1)
+    start(waiting_id)
+    set_tare(waiting_id)
+    add_roll(waiting_id, "70.0", "4")
+    add_roll(waiting_id, "30.5", "5")
+    save_weight(waiting_id, 4, "15.5")
+    mark_rewinding(waiting_id, 1)
+    finish(waiting_id)
+
+    many_id = cards["many_pallets"]
+    release(many_id, 4, 1)
+    start(many_id)
+    set_tare(many_id)
+    mark_rewinding(many_id, 24)
+    finish(many_id)
+    for pallet in range(1, 25):
+        add_roll(many_id, f"{10 + pallet}.0", str(pallet))
+        save_weight(many_id, pallet, f"{pallet}.0")
+
+    empty_id = cards["empty"]
+    release(empty_id, 1, 1)
+
+    unassigned_id = cards["all_unassigned"]
+    release(unassigned_id, 1, 2)
+    start(unassigned_id)
+    set_tare(unassigned_id)
+    add_roll(unassigned_id, "50.0", "")
+    add_roll(unassigned_id, "75.5", "")
+    finish(unassigned_id)
+
+    no_weights_id = cards["no_weights"]
+    release(no_weights_id, 1, 3)
+    start(no_weights_id)
+    set_tare(no_weights_id)
+    for gross, pallet in (
+        ("120.0", "10"),
+        ("100.0", "2"),
+        ("100.1", "2"),
+    ):
+        add_roll(no_weights_id, gross, pallet)
+
+    partial_id = cards["partial_weights"]
+    release(partial_id, 2, 1)
+    start(partial_id)
+    set_tare(partial_id)
+    add_roll(partial_id, "60.0", "2")
+    add_roll(partial_id, "40.5", "7")
+    save_weight(partial_id, 2, "10.35")
+
+    complete_id = cards["complete_weights"]
+    release(complete_id, 3, 1)
+    start(complete_id)
+    set_tare(complete_id)
+    add_roll(complete_id, "60.0", "2")
+    add_roll(complete_id, "40.5", "7")
+    save_weight(complete_id, 2, "12.5")
+    save_weight(complete_id, 7, "10.0")
+    pause(complete_id)
+
+    mixed_id = cards["mixed_unassigned"]
+    release(mixed_id, 4, 1)
+    start(mixed_id)
+    set_tare(mixed_id)
+    add_roll(mixed_id, "60.0", "3")
+    add_roll(mixed_id, "40.5", "")
+    save_weight(mixed_id, 3, "10.0")
+    mark_rewinding(mixed_id, 1)
+
+    stabilize_fixture_times()
 
     active_shift = db.fetch_active_shift()
     if active_shift is None:
         raise RuntimeError("Fixture active shift is missing.")
 
     scenario_payload = {
-        "pending_empty": {
-            "card_id": cards["pending_empty"],
+        "empty": {
+            "card_id": empty_id,
             "machine_id": 1,
             "order_number": "PALLET-UI-01",
             "status": "pending",
             "summary_state": "empty",
+            "weight_state": "none",
             "expected_rows": [],
             "expected_total": None,
+            "expected_inputs": {},
+            "editable": {"terminal": True, "admin": False},
+            "finish_eligibility": {
+                "normal": None,
+                "waiting_entry": None,
+                "waiting_final": None,
+            },
         },
-        "running_mixed": {
-            "card_id": running_id,
+        "all_unassigned": {
+            "card_id": unassigned_id,
             "machine_id": 1,
             "order_number": "PALLET-UI-02",
-            "status": "running",
-            "summary_state": "ready",
-            "expected_rows": [
-                ["2", "2", "200.1", "198.1"],
-                ["10", "1", "120.0", "119.0"],
-                ["Без палет", "1", "80.0", "79.0"],
-            ],
-            "expected_total": ["Общо", "4", "400.1", "396.1"],
-        },
-        "paused_all_unassigned": {
-            "card_id": paused_id,
-            "machine_id": 2,
-            "order_number": "PALLET-UI-03",
-            "status": "paused",
-            "summary_state": "ready",
-            "expected_rows": [["Без палет", "2", "125.5", "123.5"]],
-            "expected_total": ["Общо", "2", "125.5", "123.5"],
-        },
-        "awaiting_many_pallets": {
-            "card_id": waiting_id,
-            "machine_id": 3,
-            "order_number": "PALLET-UI-04",
-            "status": "awaiting_rewinding",
-            "summary_state": "ready",
-            "expected_rows": expected_many_rows(),
-            "expected_total": ["Общо", "24", "540.0", "516.0"],
-        },
-        "completed_numbered": {
-            "card_id": completed_id,
-            "machine_id": 4,
-            "order_number": "PALLET-UI-05",
             "status": "completed",
             "summary_state": "ready",
+            "weight_state": "none",
+            "expected_rows": [["Без палет", "2", "125.5", "-", "-", "123.5"]],
+            "expected_total": ["Общо", "2", "125.5", "-", "-", "123.5"],
+            "expected_inputs": {},
+            "editable": {"terminal": True, "admin": True},
+            "finish_eligibility": {
+                "normal": None,
+                "waiting_entry": None,
+                "waiting_final": None,
+            },
+        },
+        "no_weights": {
+            "card_id": no_weights_id,
+            "machine_id": 1,
+            "order_number": "PALLET-UI-03",
+            "status": "running",
+            "summary_state": "ready",
+            "weight_state": "none",
             "expected_rows": [
-                ["3", "1", "60.0", "59.0"],
-                ["12", "1", "40.5", "39.5"],
+                ["2", "2", "200.1", "", "-", "198.1"],
+                ["10", "1", "120.0", "", "-", "119.0"],
             ],
-            "expected_total": ["Общо", "2", "100.5", "98.5"],
+            "expected_total": ["Общо", "3", "320.1", "-", "-", "317.1"],
+            "expected_inputs": {"2": "", "10": ""},
+            "editable": {"terminal": True, "admin": False},
+            "finish_eligibility": {
+                "normal": True,
+                "waiting_entry": None,
+                "waiting_final": None,
+            },
+        },
+        "partial_weights": {
+            "card_id": partial_id,
+            "machine_id": 2,
+            "order_number": "PALLET-UI-04",
+            "status": "running",
+            "summary_state": "ready",
+            "weight_state": "partial",
+            "expected_rows": [
+                ["2", "1", "60.0", "10.35", "70.35", "59.0"],
+                ["7", "1", "40.5", "", "-", "39.5"],
+            ],
+            "expected_total": ["Общо", "2", "100.5", "-", "-", "98.5"],
+            "expected_inputs": {"2": "10.35", "7": ""},
+            "editable": {"terminal": True, "admin": False},
+            "finish_eligibility": {
+                "normal": False,
+                "waiting_entry": None,
+                "waiting_final": None,
+            },
+        },
+        "complete_weights": {
+            "card_id": complete_id,
+            "machine_id": 3,
+            "order_number": "PALLET-UI-05",
+            "status": "paused",
+            "summary_state": "ready",
+            "weight_state": "complete",
+            "expected_rows": [
+                ["2", "1", "60.0", "12.50", "72.50", "59.0"],
+                ["7", "1", "40.5", "10.00", "50.50", "39.5"],
+            ],
+            "expected_total": ["Общо", "2", "100.5", "22.50", "123.00", "98.5"],
+            "expected_inputs": {"2": "12.50", "7": "10.00"},
+            "editable": {"terminal": True, "admin": False},
+            "finish_eligibility": {
+                "normal": True,
+                "waiting_entry": None,
+                "waiting_final": None,
+            },
+        },
+        "mixed_unassigned": {
+            "card_id": mixed_id,
+            "machine_id": 4,
+            "order_number": "PALLET-UI-06",
+            "status": "running",
+            "summary_state": "ready",
+            "weight_state": "partial",
+            "expected_rows": [
+                ["3", "1", "60.0", "10.00", "70.00", "59.0"],
+                ["Без палет", "1", "40.5", "-", "-", "39.5"],
+            ],
+            "expected_total": ["Общо", "2", "100.5", "-", "-", "98.5"],
+            "expected_inputs": {"3": "10.00"},
+            "editable": {"terminal": True, "admin": False},
+            "finish_eligibility": {
+                "normal": None,
+                "waiting_entry": True,
+                "waiting_final": None,
+            },
+        },
+        "awaiting_partial": {
+            "card_id": waiting_id,
+            "machine_id": 1,
+            "order_number": "PALLET-UI-07",
+            "status": "awaiting_rewinding",
+            "summary_state": "ready",
+            "weight_state": "partial",
+            "expected_rows": [
+                ["4", "1", "70.0", "15.50", "85.50", "69.0"],
+                ["5", "1", "30.5", "", "-", "29.5"],
+            ],
+            "expected_total": ["Общо", "2", "100.5", "-", "-", "98.5"],
+            "expected_inputs": {"4": "15.50", "5": ""},
+            "editable": {"terminal": True, "admin": False},
+            "finish_eligibility": {
+                "normal": None,
+                "waiting_entry": None,
+                "waiting_final": False,
+            },
+        },
+        "completed_complete": {
+            "card_id": completed_id,
+            "machine_id": 2,
+            "order_number": "PALLET-UI-08",
+            "status": "completed",
+            "summary_state": "ready",
+            "weight_state": "complete",
+            "expected_rows": [
+                ["3", "1", "60.0", "12.00", "72.00", "59.0"],
+                ["12", "1", "40.5", "15.00", "55.50", "39.5"],
+            ],
+            "expected_total": ["Общо", "2", "100.5", "27.00", "127.50", "98.5"],
+            "expected_inputs": {"3": "12.00", "12": "15.00"},
+            "editable": {"terminal": True, "admin": True},
+            "finish_eligibility": {
+                "normal": None,
+                "waiting_entry": None,
+                "waiting_final": None,
+            },
+        },
+        "archived_complete": {
+            "card_id": archived_id,
+            "machine_id": 3,
+            "order_number": "PALLET-UI-09",
+            "status": "archived",
+            "summary_state": "ready",
+            "weight_state": "complete",
+            "expected_rows": [
+                ["6", "1", "45.0", "11.50", "56.50", "44.0"],
+                ["9", "1", "55.5", "16.00", "71.50", "54.5"],
+            ],
+            "expected_total": ["Общо", "2", "100.5", "27.50", "128.00", "98.5"],
+            "expected_inputs": {"6": "11.50", "9": "16.00"},
+            "editable": {"terminal": False, "admin": True},
+            "finish_eligibility": {
+                "normal": None,
+                "waiting_entry": None,
+                "waiting_final": None,
+            },
+        },
+        "many_pallets": {
+            "card_id": many_id,
+            "machine_id": 4,
+            "order_number": "PALLET-UI-10",
+            "status": "awaiting_rewinding",
+            "summary_state": "ready",
+            "weight_state": "complete",
+            "expected_rows": expected_many_rows(),
+            "expected_total": ["Общо", "24", "540.0", "300.00", "840.00", "516.0"],
+            "expected_inputs": {str(pallet): f"{pallet}.00" for pallet in range(1, 25)},
+            "editable": {"terminal": True, "admin": False},
+            "finish_eligibility": {
+                "normal": None,
+                "waiting_entry": None,
+                "waiting_final": True,
+            },
         },
     }
     return {
@@ -387,6 +718,7 @@ def create_fixture(database_path: Path) -> dict[str, object]:
         "scenario_order": list(SCENARIO_ORDER),
         "scenarios": scenario_payload,
         "production_snapshot": production_snapshot(cards),
+        "audit_baseline": audited_table_snapshot(),
     }
 
 

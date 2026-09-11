@@ -130,6 +130,18 @@ def timing_snapshot(card_id: int) -> list[dict[str, object]]:
         ]
 
 
+def set_open_timing_start(card_id: int, started_at: str = "2026-01-15 08:00:00") -> None:
+    with db.connect() as connection:
+        connection.execute(
+            """
+            UPDATE production_time_segments
+            SET started_at = ?
+            WHERE card_id = ? AND ended_at IS NULL
+            """,
+            (started_at, card_id),
+        )
+
+
 def stored_card(card_id: int) -> dict[str, object]:
     with db.connect() as connection:
         row = connection.execute(
@@ -165,11 +177,24 @@ def finish_atomicity_snapshot(card_id: int) -> dict[str, object]:
                 (card_id,),
             ).fetchall()
         ]
+        pallet_weights = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT *
+                FROM card_pallet_weights
+                WHERE card_id = ?
+                ORDER BY pallet_number
+                """,
+                (card_id,),
+            ).fetchall()
+        ]
     return {
         "card": card,
         "queue": queue,
         "timing_rows": timing_snapshot(card_id),
         "rolls": rolls,
+        "pallet_weights": pallet_weights,
     }
 
 
@@ -180,15 +205,16 @@ def insert_roll(
     gross_weight: object,
     tare_weight: object,
     net_weight: object,
+    pallet_number: int | None = None,
 ) -> None:
     with db.connect() as connection:
         connection.execute(
             """
             INSERT INTO roll_entries (
                 card_id, order_number, roll_number,
-                gross_weight, tare_weight, net_weight
+                gross_weight, tare_weight, net_weight, pallet_number
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card_id,
@@ -197,7 +223,24 @@ def insert_roll(
                 gross_weight,
                 tare_weight,
                 net_weight,
+                pallet_number,
             ),
+        )
+
+
+def insert_pallet_weight(
+    card_id: int,
+    pallet_number: int,
+    weight_hundredths: int,
+) -> None:
+    with db.connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO card_pallet_weights (
+                card_id, pallet_number, weight_hundredths
+            ) VALUES (?, ?, ?)
+            """,
+            (card_id, pallet_number, weight_hundredths),
         )
 
 
@@ -262,6 +305,25 @@ def finish_review_payload(card_id: int) -> dict[str, object]:
     )
     assert response.status_code == 200
     return json.loads(response.body)
+
+
+def finish_review_payload_for_version(
+    card_id: int,
+    loaded_version: int,
+):
+    route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None)
+        == "/terminal/cards/{card_id}/finish-review"
+    )
+    return asyncio.run(
+        route.endpoint(
+            make_test_request(f"/terminal/cards/{card_id}/finish-review"),
+            card_id,
+            loaded_version=str(loaded_version),
+        )
+    )
 
 
 def save_rewinding_count(card_id: int, loaded_version: str, raw_count: str):
@@ -1031,6 +1093,300 @@ def test_finish_does_not_require_pallet_assignment_for_any_lifecycle_branch(
     assert all(roll["pallet_number"] is None for roll in final_card["roll_entries"])
 
 
+@pytest.mark.parametrize(
+    ("transition", "expected_ok", "expected_status"),
+    [
+        ("active_complete", False, STATUS_RUNNING),
+        ("active_wait", True, STATUS_AWAITING_REWINDING),
+        ("paused_complete", False, STATUS_PAUSED),
+        ("paused_wait", True, STATUS_AWAITING_REWINDING),
+        ("waiting_complete", False, STATUS_AWAITING_REWINDING),
+    ],
+)
+@pytest.mark.parametrize(
+    ("partial_kind", "expected_messages"),
+    [
+        ("missing_number", ("Липсва тегло за палет №2.",)),
+        ("unassigned", ("Има 1 ролка без номер на палет.",)),
+        (
+            "combined",
+            (
+                "Липсва тегло за палет №2.",
+                "Има 1 ролка без номер на палет.",
+            ),
+        ),
+    ],
+)
+def test_partial_physical_pallet_weights_only_allow_entry_into_rewinding(
+    connection,
+    active_test_shift,
+    transition,
+    expected_ok,
+    expected_status,
+    partial_kind,
+    expected_messages,
+):
+    card_id = release_ready_card(f"partial-pallet-{transition}-{partial_kind}")
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    if transition in {"active_wait", "paused_wait", "waiting_complete"}:
+        set_rewinding_marker(card_id, 2)
+    if transition.startswith("paused"):
+        assert db.pause_production_timing(
+            card_id,
+            int(stored_card(card_id)["version"]),
+        ).ok
+    insert_roll(card_id, "partial-pallet", 1, 25, 1, 24, 1)
+    if partial_kind == "missing_number":
+        insert_roll(card_id, "partial-pallet", 2, 30, 1, 29, 2)
+    elif partial_kind == "unassigned":
+        insert_roll(card_id, "partial-pallet", 2, 30, 1, 29)
+    else:
+        insert_roll(card_id, "partial-pallet", 2, 30, 1, 29, 2)
+        insert_roll(card_id, "partial-pallet", 3, 20, 1, 19)
+    insert_pallet_weight(card_id, 1, 1250)
+
+    with db.connect() as summary_connection:
+        summary = db.load_card_pallet_summary(summary_connection, card_id)
+    assert summary["weight_state"] == "partial"
+    assert db.pallet_weight_completion_messages(summary) == expected_messages
+
+    if transition == "waiting_complete":
+        assert db.finish_card(card_id, int(stored_card(card_id)["version"])).ok
+
+    before = finish_atomicity_snapshot(card_id)
+    result = db.finish_card(card_id, int(before["card"]["version"]))
+
+    assert result.ok is expected_ok
+    assert stored_card(card_id)["status"] == expected_status
+    if expected_ok:
+        assert any("преди окончателното приключване" in message for message in result.messages)
+    else:
+        assert result.messages == expected_messages
+        assert finish_atomicity_snapshot(card_id) == before
+
+
+@pytest.mark.parametrize(
+    ("transition", "expected_status"),
+    [
+        ("active_complete", STATUS_COMPLETED),
+        ("active_wait", STATUS_AWAITING_REWINDING),
+        ("paused_complete", STATUS_COMPLETED),
+        ("paused_wait", STATUS_AWAITING_REWINDING),
+        ("waiting_complete", STATUS_COMPLETED),
+    ],
+)
+def test_complete_physical_pallet_weights_allow_every_finish_transition(
+    connection,
+    active_test_shift,
+    transition,
+    expected_status,
+):
+    card_id = release_ready_card(f"complete-pallet-{transition}")
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    if transition in {"active_wait", "paused_wait", "waiting_complete"}:
+        set_rewinding_marker(card_id, 2)
+    if transition.startswith("paused"):
+        assert db.pause_production_timing(
+            card_id,
+            int(stored_card(card_id)["version"]),
+        ).ok
+    insert_roll(card_id, "complete-pallet", 1, 25, 1, 24, 1)
+    insert_pallet_weight(card_id, 1, 1250)
+
+    assert db.finish_card(card_id, int(stored_card(card_id)["version"])).ok
+    if transition == "waiting_complete":
+        assert db.finish_card(card_id, int(stored_card(card_id)["version"])).ok
+
+    assert stored_card(card_id)["status"] == expected_status
+
+
+@pytest.mark.parametrize(
+    "transition",
+    (
+        "active_complete",
+        "active_wait",
+        "paused_complete",
+        "paused_wait",
+        "waiting_complete",
+    ),
+)
+def test_orphaned_physical_pallet_weight_blocks_every_direct_finish_without_writes(
+    connection,
+    active_test_shift,
+    transition,
+):
+    card_id = release_ready_card(f"orphan-pallet-{transition}")
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    if transition in {"active_wait", "paused_wait", "waiting_complete"}:
+        set_rewinding_marker(card_id, 2)
+    if transition.startswith("paused"):
+        assert db.pause_production_timing(
+            card_id,
+            int(stored_card(card_id)["version"]),
+        ).ok
+    insert_roll(card_id, "orphan-pallet", 1, 25, 1, 24, 1)
+
+    if transition == "waiting_complete":
+        assert db.finish_card(card_id, int(stored_card(card_id)["version"])).ok
+    insert_pallet_weight(card_id, 9, 1250)
+    before = finish_atomicity_snapshot(card_id)
+
+    result = db.finish_card(card_id, int(before["card"]["version"]))
+
+    assert not result.ok
+    assert any("палети" in message and "презаредете" in message for message in result.messages)
+    assert finish_atomicity_snapshot(card_id) == before
+
+
+@pytest.mark.parametrize("mode", ("complete", "enter_rewinding"))
+def test_reviewed_finish_rejects_orphaned_weight_and_rolls_back_timing(
+    connection,
+    active_test_shift,
+    mode,
+):
+    card_id = release_ready_card(f"orphan-pallet-reviewed-{mode}")
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    if mode == "enter_rewinding":
+        set_rewinding_marker(card_id, 2)
+    insert_roll(card_id, "orphan-pallet-reviewed-finish", 1, 25, 1, 24, 1)
+    with db.connect() as setup_connection:
+        segment_id = int(setup_connection.execute(
+            "SELECT id FROM production_time_segments WHERE card_id = ?",
+            (card_id,),
+        ).fetchone()["id"])
+    insert_pallet_weight(card_id, 9, 1250)
+    before = finish_atomicity_snapshot(card_id)
+
+    outcome = db.finish_card_with_timing_ledger(
+        card_id,
+        int(before["card"]["version"]),
+        [db.TimingDraftRow(
+            segment_id,
+            "2026-01-15",
+            "08:00",
+            "2026-01-15",
+            "09:00",
+        )],
+        "2026-01-15 09:00:00",
+        require_active_shift=True,
+    )
+
+    assert not outcome.result.ok
+    assert any("палети" in message and "презаредете" in message for message in outcome.result.messages)
+    assert finish_atomicity_snapshot(card_id) == before
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_can_confirm", "warning_expected"),
+    [
+        ("complete", False, False),
+        ("enter_rewinding", True, True),
+        ("finalize_rewinding", False, False),
+    ],
+)
+def test_finish_review_payload_applies_partial_weight_policy_by_lifecycle(
+    connection,
+    active_test_shift,
+    mode,
+    expected_can_confirm,
+    warning_expected,
+):
+    card_id = release_ready_card(f"partial-review-{mode}")
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    set_open_timing_start(card_id)
+    if mode != "complete":
+        set_rewinding_marker(card_id, 2)
+    insert_roll(card_id, "partial-review", 1, 25, 1, 24, 1)
+    insert_roll(card_id, "partial-review", 2, 30, 1, 29, 2)
+    insert_pallet_weight(card_id, 1, 1250)
+    if mode == "finalize_rewinding":
+        assert db.finish_card(card_id, int(stored_card(card_id)["version"])).ok
+
+    before = finish_atomicity_snapshot(card_id)
+    response = finish_review_payload_for_version(
+        card_id,
+        int(before["card"]["version"]),
+    )
+
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+    review = payload["finish_review"]
+    assert review["mode"] == mode
+    assert review["card_version"] == before["card"]["version"]
+    assert review["pallet_summary"]["weight_state"] == "partial"
+    assert review["pallet_summary"]["rows"][1]["pallet_weight_display"] == "-"
+    assert review["can_confirm"] is expected_can_confirm
+    assert bool(review["warning_message"]) is warning_expected
+    assert bool(review["messages"]) is (not expected_can_confirm)
+    if mode == "finalize_rewinding":
+        assert "review_token" not in review
+        assert "review_token" not in payload
+        assert "preview" not in payload
+    else:
+        assert isinstance(review["review_token"], str) and review["review_token"]
+    assert finish_atomicity_snapshot(card_id) == before
+
+
+@pytest.mark.parametrize("mode", ("complete", "enter_rewinding", "finalize_rewinding"))
+def test_every_finish_review_open_reads_fresh_weight_rows_and_version_without_reload(
+    connection,
+    active_test_shift,
+    mode,
+):
+    card_id = release_ready_card(f"fresh-review-{mode}")
+    card = db.fetch_terminal_card_detail(card_id)
+    assert card is not None
+    assert db.start_production_timing(card_id, int(card["version"])).ok
+    set_open_timing_start(card_id)
+    if mode != "complete":
+        set_rewinding_marker(card_id, 2)
+    insert_roll(card_id, "fresh-review", 1, 25, 1, 24, 1)
+    if mode == "finalize_rewinding":
+        initial_weight = db.update_terminal_pallet_weight(
+            card_id,
+            1,
+            int(stored_card(card_id)["version"]),
+            "12.5",
+            require_active_shift=True,
+        )
+        assert initial_weight.result.ok
+        assert db.finish_card(card_id, int(stored_card(card_id)["version"])).ok
+
+    page_model = terminal_context(card_id)["pallet_modal"]
+    expected_page_weight = "12.50" if mode == "finalize_rewinding" else "-"
+    assert page_model["rows"][0]["pallet_weight_display"] == expected_page_weight
+    saved = db.update_terminal_pallet_weight(
+        card_id,
+        1,
+        int(page_model["loaded_version"]),
+        "" if mode == "finalize_rewinding" else "12.5",
+        require_active_shift=True,
+    )
+    assert saved.result.ok and saved.card_version is not None
+
+    response = finish_review_payload_for_version(card_id, saved.card_version)
+
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+    review = payload["finish_review"]
+    assert review["mode"] == mode
+    assert review["card_version"] == saved.card_version
+    expected_review_weight = "-" if mode == "finalize_rewinding" else "12.50"
+    expected_review_gross = "-" if mode == "finalize_rewinding" else "37.50"
+    assert review["pallet_summary"]["rows"][0]["pallet_weight_display"] == expected_review_weight
+    assert review["pallet_summary"]["rows"][0]["gross_with_pallet_display"] == expected_review_gross
+
+
 def test_active_to_waiting_requires_timing_to_have_started(
     connection,
     active_test_shift,
@@ -1173,6 +1529,33 @@ def test_active_card_cannot_enter_rewinding_wait_without_active_shift(connection
     assert result.messages == (db.NO_ACTIVE_SHIFT_MESSAGE,)
     assert stored_card(card_id) == before_card
     assert timing_snapshot(card_id) == before_segments
+
+
+@pytest.mark.parametrize(
+    "finalize",
+    (db.finish_card, db.finalize_awaiting_rewinding_card),
+    ids=("finish-card", "finalize-awaiting-rewinding-card"),
+)
+def test_direct_waiting_finalization_requires_active_shift_without_side_effects(
+    connection,
+    active_test_shift,
+    finalize,
+):
+    card_id = release_ready_card(f"62602-{finalize.__name__}")
+    enter_rewinding_wait(card_id)
+    insert_roll(card_id, "62602", 1, 25, 1, 24, 1)
+    insert_pallet_weight(card_id, 1, 1250)
+    assert db.end_shift(
+        int(active_test_shift["id"]),
+        int(active_test_shift["version"]),
+    ).ok
+    before = finish_atomicity_snapshot(card_id)
+
+    result = finalize(card_id, int(before["card"]["version"]))
+
+    assert not result.ok
+    assert result.messages == (db.NO_ACTIVE_SHIFT_MESSAGE,)
+    assert finish_atomicity_snapshot(card_id) == before
 
 
 @pytest.mark.parametrize("rewinding_roll_count", [None, 5])

@@ -104,6 +104,32 @@ def insert_shift_occurrence(
     return occurrence_id
 
 
+def insert_physical_pallet_weight(connection, card_id, pallet_number, weight_hundredths=1250):
+    connection.execute(
+        """
+        INSERT INTO card_pallet_weights (card_id, pallet_number, weight_hundredths)
+        VALUES (?, ?, ?)
+        """,
+        (card_id, pallet_number, weight_hundredths),
+    )
+    connection.commit()
+
+
+def stored_physical_pallet_weights(connection, card_id):
+    return {
+        int(row["pallet_number"]): int(row["weight_hundredths"])
+        for row in connection.execute(
+            """
+            SELECT pallet_number, weight_hundredths
+            FROM card_pallet_weights
+            WHERE card_id = ?
+            ORDER BY pallet_number
+            """,
+            (card_id,),
+        ).fetchall()
+    }
+
+
 def test_running_roll_requires_active_shift_and_links_occurrence(
     connection,
     start_test_shift,
@@ -1867,3 +1893,194 @@ def test_completed_card_cannot_clear_final_gross_roll(connection, active_test_sh
     assert updated_card["status"] == "completed"
     assert updated_card["roll_count"] == 1
     assert updated_card["roll_entries"][0]["gross_weight"] == 25
+
+
+def test_deleting_last_roll_removes_unused_pallet_weight(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("PW-CLEANUP-DELETE-LAST")
+    start_card(card_id)
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "20.00",
+        tare_weight="1.00",
+        pallet_number="4",
+    ).ok
+    insert_physical_pallet_weight(connection, card_id, 4)
+    card = db.fetch_terminal_card_detail(card_id)
+
+    result = db.delete_roll_entry(
+        card_id,
+        card["roll_entries"][0]["id"],
+        card["version"],
+    )
+
+    assert result.ok
+    assert stored_physical_pallet_weights(connection, card_id) == {}
+    assert "№4" in " ".join(result.messages)
+    assert db.fetch_terminal_card_detail(card_id)["version"] == card["version"] + 1
+
+
+def test_deleting_one_of_two_rolls_preserves_used_pallet_weight(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("PW-CLEANUP-DELETE-ONE")
+    start_card(card_id)
+    for gross in ("20.00", "21.00"):
+        assert db.add_roll_gross_weight(
+            card_id,
+            db.fetch_terminal_card_detail(card_id)["version"],
+            gross,
+            tare_weight="1.00",
+            pallet_number="4",
+        ).ok
+    insert_physical_pallet_weight(connection, card_id, 4)
+    card = db.fetch_terminal_card_detail(card_id)
+
+    result = db.delete_roll_entry(
+        card_id,
+        card["roll_entries"][0]["id"],
+        card["version"],
+    )
+
+    assert result.ok
+    assert stored_physical_pallet_weights(connection, card_id) == {4: 1250}
+    assert all("неизползван" not in message for message in result.messages)
+    assert db.fetch_terminal_card_detail(card_id)["version"] == card["version"] + 1
+
+
+def test_moving_last_roll_removes_unused_pallet_weight(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("PW-CLEANUP-MOVE")
+    start_card(card_id)
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "20.00",
+        tare_weight="1.00",
+        pallet_number="4",
+    ).ok
+    insert_physical_pallet_weight(connection, card_id, 4)
+    card = db.fetch_terminal_card_detail(card_id)
+    roll = card["roll_entries"][0]
+
+    result = db.update_roll_weight(
+        card_id,
+        roll["id"],
+        card["version"],
+        "20.00",
+        "1.00",
+        "5",
+    )
+
+    assert result.ok
+    assert stored_physical_pallet_weights(connection, card_id) == {}
+    assert "№4" in " ".join(result.messages)
+    assert db.fetch_terminal_card_detail(card_id)["version"] == card["version"] + 1
+
+
+def test_clearing_last_gross_roll_removes_unused_pallet_weight(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("PW-CLEANUP-CLEAR")
+    start_card(card_id)
+    assert db.add_roll_gross_weight(
+        card_id,
+        db.fetch_terminal_card_detail(card_id)["version"],
+        "20.00",
+        tare_weight="1.00",
+        pallet_number="4",
+    ).ok
+    insert_physical_pallet_weight(connection, card_id, 4)
+    card = db.fetch_terminal_card_detail(card_id)
+    roll = card["roll_entries"][0]
+
+    result = db.update_roll_weight(
+        card_id,
+        roll["id"],
+        card["version"],
+        "",
+        "1.00",
+        "4",
+    )
+
+    assert result.ok
+    assert stored_physical_pallet_weights(connection, card_id) == {}
+    assert "№4" in " ".join(result.messages)
+    assert db.fetch_terminal_card_detail(card_id)["version"] == card["version"] + 1
+
+
+def test_terminal_multi_roll_pallet_weight_cleanup_runs_after_all_mutations(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("PW-CLEANUP-TERMINAL-SWAP")
+    start_card(card_id)
+    for gross, pallet in (("20.00", "4"), ("21.00", "5")):
+        assert db.add_roll_gross_weight(
+            card_id,
+            db.fetch_terminal_card_detail(card_id)["version"],
+            gross,
+            tare_weight="1.00",
+            pallet_number=pallet,
+        ).ok
+    insert_physical_pallet_weight(connection, card_id, 4, 1400)
+    insert_physical_pallet_weight(connection, card_id, 5, 1500)
+    card = db.fetch_terminal_card_detail(card_id)
+    first, second = card["roll_entries"]
+
+    result = db.update_terminal_roll_corrections(
+        card_id,
+        card["version"],
+        {
+            first["id"]: {"pallet_number": "5"},
+            second["id"]: {"pallet_number": "4"},
+        },
+    )
+
+    assert result.ok
+    assert stored_physical_pallet_weights(connection, card_id) == {4: 1400, 5: 1500}
+    assert db.fetch_terminal_card_detail(card_id)["version"] == card["version"] + 1
+
+
+def test_unused_pallet_weight_cleanup_message_orders_numbers_numerically(
+    connection,
+    active_test_shift,
+):
+    card_id = import_and_release_card("PW-CLEANUP-ORDERED-MESSAGE")
+    start_card(card_id)
+    for gross, pallet in (("20.00", "10"), ("21.00", "4"), ("22.00", "7")):
+        assert db.add_roll_gross_weight(
+            card_id,
+            db.fetch_terminal_card_detail(card_id)["version"],
+            gross,
+            tare_weight="1.00",
+            pallet_number=pallet,
+        ).ok
+    for pallet in (10, 4, 7):
+        insert_physical_pallet_weight(connection, card_id, pallet)
+    card = db.fetch_terminal_card_detail(card_id)
+    first, second, _ = card["roll_entries"]
+
+    result = db.update_terminal_roll_corrections(
+        card_id,
+        card["version"],
+        {
+            first["id"]: {"pallet_number": "7"},
+            second["id"]: {"pallet_number": "7"},
+        },
+    )
+
+    assert result.ok
+    assert stored_physical_pallet_weights(connection, card_id) == {7: 1250}
+    assert db.fetch_terminal_card_detail(card_id)["version"] == card["version"] + 1
+    cleanup_message = next(
+        message for message in result.messages if "неизползван" in message
+    )
+    assert cleanup_message.index("№4") < cleanup_message.index("№10")

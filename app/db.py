@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from datetime import datetime
-from typing import Any
+from typing import Any, Mapping
 
 from .constants import (
     ACTIVE_TERMINAL_STATUSES,
@@ -27,6 +27,11 @@ from .constants import (
 from .migrations import (
     apply_startup_migrations,
     ensure_foreign_keys_valid,
+)
+from .pallet_summary import (
+    PalletSummaryDataError,
+    build_pallet_summary,
+    parse_physical_pallet_weight,
 )
 from .recipe_parser import (
     RECIPE_SOURCE_FIELDS,
@@ -55,6 +60,14 @@ TIMING_END_REASONS = ("pause", "finish", "correction")
 TIMING_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 INVALID_TERMINAL_TIMING_DRAFT_MESSAGE = (
     "Данните за производственото време са невалидни."
+)
+PALLET_SUMMARY_REPAIR_MESSAGE = (
+    "Обобщението по палети е невалидно. Проверете записаните ролки и тегла "
+    "на палети, след което презаредете."
+)
+PALLET_WEIGHT_PARTIAL_REWINDING_WARNING = (
+    "Теглата на палетите са непълни и трябва да бъдат коригирани преди "
+    "окончателното приключване."
 )
 _TRUSTED_END_REASON_UNSET = object()
 
@@ -92,6 +105,38 @@ class TimingLedgerOutcome:
     result: RuleResult
     preview: TimingLedgerPreview | None = None
     issues: tuple[TimingValidationIssue, ...] = ()
+
+
+@dataclass(frozen=True)
+class FinishReviewSnapshot:
+    card: dict[str, Any]
+    pallet_summary: dict[str, Any]
+    timing_preview: TimingLedgerPreview | None
+    reviewed_at: str
+    mode: str
+
+
+@dataclass(frozen=True)
+class FinishReviewOutcome:
+    result: RuleResult
+    snapshot: FinishReviewSnapshot | None = None
+    issues: tuple[TimingValidationIssue, ...] = ()
+
+
+@dataclass(frozen=True)
+class PalletWeightIssue:
+    pallet_number: int | None
+    field: str
+    message: str
+
+
+@dataclass(frozen=True)
+class PalletWeightSaveOutcome:
+    result: RuleResult
+    issues: tuple[PalletWeightIssue, ...] = ()
+    card_version: int | None = None
+    saved_weight_hundredths: int | None = None
+    summary: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -1447,12 +1492,323 @@ def fetch_roll_entries_and_totals(
 
     return {
         "roll_entries": roll_entries,
+        "pallet_weights": fetch_card_pallet_weights(connection, card_id),
         "roll_count": roll_count,
         "next_roll_number": next_roll_number,
         "total_gross_weight": decimal_to_display(total_gross) if total_gross is not None else None,
         "total_net_weight": decimal_to_display(total_net) if total_net is not None else None,
         "tare_summary_display": roll_tare_summary_display(roll_entries),
     }
+
+
+def fetch_card_pallet_weights(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> dict[int, int]:
+    rows = connection.execute(
+        """
+        SELECT pallet_number, weight_hundredths
+        FROM card_pallet_weights
+        WHERE card_id = ?
+        ORDER BY pallet_number
+        """,
+        (card_id,),
+    ).fetchall()
+    return {
+        int(row["pallet_number"]): int(row["weight_hundredths"])
+        for row in rows
+    }
+
+
+def load_card_pallet_summary(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> dict[str, Any]:
+    roll_data = fetch_roll_entries_and_totals(connection, card_id)
+    return build_pallet_summary(
+        roll_data["roll_entries"],
+        roll_data["pallet_weights"],
+    )
+
+
+def pallet_weight_completion_messages(
+    summary: Mapping[str, Any],
+) -> tuple[str, ...]:
+    messages: list[str] = []
+    missing_numbers = tuple(
+        sorted(int(value) for value in summary["missing_weight_pallet_numbers"])
+    )
+    if len(missing_numbers) == 1:
+        messages.append(f"Липсва тегло за палет №{missing_numbers[0]}.")
+    elif missing_numbers:
+        labels = ", ".join(f"№{number}" for number in missing_numbers)
+        messages.append(f"Липсват тегла за палети {labels}.")
+
+    unassigned_count = int(summary["unassigned_roll_count"])
+    if unassigned_count:
+        roll_label = "ролка" if unassigned_count == 1 else "ролки"
+        messages.append(
+            f"Има {unassigned_count} {roll_label} без номер на палет."
+        )
+    return tuple(messages)
+
+
+def validate_final_pallet_weight_completeness(
+    summary: Mapping[str, Any],
+) -> RuleResult:
+    if summary["weight_state"] in {"none", "complete"}:
+        return RuleResult(True)
+    return RuleResult(False, pallet_weight_completion_messages(summary))
+
+
+def _pallet_weight_failure(
+    result: RuleResult,
+    *,
+    pallet_number: int | None,
+    field: str,
+) -> PalletWeightSaveOutcome:
+    return PalletWeightSaveOutcome(
+        result=result,
+        issues=tuple(
+            PalletWeightIssue(pallet_number, field, message)
+            for message in result.messages
+        ),
+    )
+
+
+def _update_card_pallet_weight(
+    card_id: int,
+    pallet_number: int,
+    loaded_version: int,
+    raw_weight: str,
+    *,
+    allowed_statuses: tuple[str, ...],
+    require_active_shift: bool,
+) -> PalletWeightSaveOutcome:
+    try:
+        with connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            shift_result = validate_active_shift_for_terminal_write(
+                connection,
+                require_active_shift,
+            )
+            if not shift_result.ok:
+                return _pallet_weight_failure(
+                    shift_result,
+                    pallet_number=None,
+                    field="form",
+                )
+
+            card = connection.execute(
+                "SELECT id, status, version FROM cards WHERE id = ?",
+                (card_id,),
+            ).fetchone()
+            version_result = validate_loaded_card_version(card, loaded_version)
+            if not version_result.ok:
+                return _pallet_weight_failure(
+                    version_result,
+                    pallet_number=None,
+                    field="form",
+                )
+            assert card is not None
+
+            if str(card["status"]) not in allowed_statuses:
+                status_result = RuleResult(
+                    False,
+                    (
+                        "Теглото на палет не може да се променя при текущия "
+                        "статус на картата.",
+                    ),
+                )
+                return _pallet_weight_failure(
+                    status_result,
+                    pallet_number=None,
+                    field="form",
+                )
+
+            if type(pallet_number) is not int or not 1 <= pallet_number <= 999:
+                target_result = RuleResult(False, (PALLET_NUMBER_ERROR,))
+                return _pallet_weight_failure(
+                    target_result,
+                    pallet_number=pallet_number,
+                    field="pallet_weight",
+                )
+
+            target_is_used = connection.execute(
+                """
+                SELECT 1
+                FROM roll_entries
+                WHERE card_id = ?
+                  AND pallet_number = ?
+                  AND gross_weight IS NOT NULL
+                LIMIT 1
+                """,
+                (card_id, pallet_number),
+            ).fetchone()
+            if target_is_used is None:
+                target_result = RuleResult(
+                    False,
+                    (
+                        f"Палет №{pallet_number} няма записана ролка с бруто "
+                        "тегло за тази карта.",
+                    ),
+                )
+                return _pallet_weight_failure(
+                    target_result,
+                    pallet_number=pallet_number,
+                    field="pallet_weight",
+                )
+
+            weight_hundredths, parse_error = parse_physical_pallet_weight(
+                raw_weight,
+                pallet_number,
+            )
+            if parse_error is not None:
+                parse_result = RuleResult(False, (parse_error,))
+                return _pallet_weight_failure(
+                    parse_result,
+                    pallet_number=pallet_number,
+                    field="pallet_weight",
+                )
+
+            if weight_hundredths is None:
+                connection.execute(
+                    """
+                    DELETE FROM card_pallet_weights
+                    WHERE card_id = ? AND pallet_number = ?
+                    """,
+                    (card_id, pallet_number),
+                )
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO card_pallet_weights (
+                        card_id, pallet_number, weight_hundredths
+                    )
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(card_id, pallet_number) DO UPDATE SET
+                        weight_hundredths = excluded.weight_hundredths,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (card_id, pallet_number, weight_hundredths),
+                )
+
+            updated_card = connection.execute(
+                """
+                UPDATE cards
+                SET version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND version = ?
+                RETURNING version
+                """,
+                (card_id, loaded_version),
+            ).fetchone()
+            if updated_card is None:
+                connection.rollback()
+                return _pallet_weight_failure(
+                    RuleResult(False, (STALE_CARD_MESSAGE,)),
+                    pallet_number=None,
+                    field="form",
+                )
+
+            summary = load_card_pallet_summary(connection, card_id)
+            action = "изчистено" if weight_hundredths is None else "записано"
+            return PalletWeightSaveOutcome(
+                result=RuleResult(
+                    True,
+                    (f"Теглото за палет №{pallet_number} е {action}.",),
+                ),
+                card_version=int(updated_card["version"]),
+                saved_weight_hundredths=weight_hundredths,
+                summary=summary,
+            )
+    except PalletSummaryDataError as error:
+        message = str(error)
+        return _pallet_weight_failure(
+            RuleResult(False, (message,)),
+            pallet_number=pallet_number,
+            field="pallet_weight",
+        )
+
+
+def update_terminal_pallet_weight(
+    card_id: int,
+    pallet_number: int,
+    loaded_version: int,
+    raw_weight: str,
+    *,
+    require_active_shift: bool = True,
+) -> PalletWeightSaveOutcome:
+    return _update_card_pallet_weight(
+        card_id,
+        pallet_number,
+        loaded_version,
+        raw_weight,
+        allowed_statuses=TERMINAL_VISIBLE_STATUSES,
+        require_active_shift=require_active_shift,
+    )
+
+
+def update_admin_pallet_weight(
+    card_id: int,
+    pallet_number: int,
+    loaded_version: int,
+    raw_weight: str,
+) -> PalletWeightSaveOutcome:
+    return _update_card_pallet_weight(
+        card_id,
+        pallet_number,
+        loaded_version,
+        raw_weight,
+        allowed_statuses=PRODUCTION_COMPLETE_STATUSES,
+        require_active_shift=False,
+    )
+
+
+def delete_unused_card_pallet_weights(
+    connection: sqlite3.Connection,
+    card_id: int,
+) -> tuple[int, ...]:
+    rows = connection.execute(
+        """
+        SELECT pallet_weights.pallet_number
+        FROM card_pallet_weights AS pallet_weights
+        WHERE pallet_weights.card_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM roll_entries AS rolls
+              WHERE rolls.card_id = pallet_weights.card_id
+                AND rolls.pallet_number = pallet_weights.pallet_number
+                AND rolls.gross_weight IS NOT NULL
+          )
+        ORDER BY pallet_weights.pallet_number
+        """,
+        (card_id,),
+    ).fetchall()
+    removed_pallets = tuple(int(row["pallet_number"]) for row in rows)
+    if removed_pallets:
+        connection.executemany(
+            """
+            DELETE FROM card_pallet_weights
+            WHERE card_id = ? AND pallet_number = ?
+            """,
+            ((card_id, pallet_number) for pallet_number in removed_pallets),
+        )
+    return removed_pallets
+
+
+def _unused_pallet_weight_cleanup_message(
+    removed_pallets: tuple[int, ...],
+) -> str | None:
+    if not removed_pallets:
+        return None
+    if len(removed_pallets) == 1:
+        return (
+            "Премахнато е теглото за неизползвания палет "
+            f"№{removed_pallets[0]}."
+        )
+    labels = ", ".join(f"№{number}" for number in removed_pallets)
+    return f"Премахнати са теглата за неизползваните палети {labels}."
 
 
 def decimal_from_roll_value(value: Any) -> Decimal | None:
@@ -1813,6 +2169,24 @@ def _finish_card_with_connection(
             ),
         )
 
+    try:
+        pallet_summary = load_card_pallet_summary(connection, card_id)
+    except PalletSummaryDataError:
+        # Preserve the established roll/tare/net/gap validation message when
+        # that older finish invariant is also what made the shared summary
+        # structurally unreadable.  The summary was still constructed inside
+        # this transaction; genuine pallet-only corruption falls through to
+        # the repair/reload blocker below.
+        if not needs_rewinding:
+            finish_result = validate_card_ready_to_finish(
+                connection,
+                card_id,
+                card,
+            )
+            if not finish_result.ok:
+                return finish_result
+        return RuleResult(False, (PALLET_SUMMARY_REPAIR_MESSAGE,))
+
     if is_waiting:
         finish_result = validate_card_ready_to_finish(connection, card_id, card)
     elif needs_rewinding:
@@ -1821,6 +2195,17 @@ def _finish_card_with_connection(
         finish_result = validate_card_ready_to_finish(connection, card_id, card)
     if not finish_result.ok:
         return finish_result
+    if is_waiting or not needs_rewinding:
+        completeness_result = validate_final_pallet_weight_completeness(
+            pallet_summary
+        )
+        if not completeness_result.ok:
+            return completeness_result
+
+    if active_shift is None and not active_shift_checked:
+        active_shift = fetch_active_shift_row(connection)
+    if active_shift is None:
+        return RuleResult(False, (NO_ACTIVE_SHIFT_MESSAGE,))
 
     open_segment = fetch_open_timing_segment(connection, card_id)
     if is_waiting:
@@ -1854,10 +2239,6 @@ def _finish_card_with_connection(
             return RuleResult(False, (STALE_CARD_MESSAGE,))
         return RuleResult(True, (f"Поръчка {card['order_number']} е приключена.",))
 
-    if active_shift is None and not active_shift_checked:
-        active_shift = fetch_active_shift_row(connection)
-    if active_shift is None:
-        return RuleResult(False, (NO_ACTIVE_SHIFT_MESSAGE,))
     if reviewed_timing_applied:
         if open_segment:
             return RuleResult(
@@ -1925,7 +2306,10 @@ def _finish_card_with_connection(
         return RuleResult(False, (STALE_CARD_MESSAGE,))
     if card["machine_id"] is not None:
         normalize_machine_queue(connection, int(card["machine_id"]))
-    return RuleResult(True, (f"Поръчка {card['order_number']} е приключена.",))
+    messages = [f"Поръчка {card['order_number']} е приключена."]
+    if needs_rewinding and pallet_summary["weight_state"] == "partial":
+        messages.append(PALLET_WEIGHT_PARTIAL_REWINDING_WARNING)
+    return RuleResult(True, tuple(messages))
 
 
 def archive_completed_card(card_id: int, loaded_version: int) -> RuleResult:
@@ -2350,22 +2734,133 @@ def preview_terminal_timing_ledger(
     return TimingLedgerOutcome(RuleResult(True), preview=preview)
 
 
-def preview_terminal_finish_review(
+def _finish_review_card_snapshot(
+    connection: sqlite3.Connection,
+    card: sqlite3.Row,
+) -> dict[str, Any]:
+    card_id = int(card["id"])
+    snapshot = dict(card)
+    snapshot["timing_segments"] = fetch_timing_segments_for_card(
+        connection,
+        card_id,
+    )
+    snapshot["total_production_seconds"] = calculate_total_production_seconds(
+        connection,
+        card_id,
+    )
+    return snapshot
+
+
+def preview_terminal_finish_review_snapshot(
     card_id: int,
     loaded_version: int,
     *,
+    timing_draft: list[TimingDraftRow] | None = None,
+    reviewed_at: str | None = None,
     require_active_shift: bool = True,
-) -> TimingLedgerOutcome:
+) -> FinishReviewOutcome:
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
-        reviewed_at = current_database_timestamp(connection)
-        draft_rows = _terminal_timing_draft_rows(connection, card_id)
-        status_row = connection.execute(
-            "SELECT status FROM cards WHERE id = ?",
-            (card_id,),
-        ).fetchone()
-        if status_row is not None and str(status_row["status"]) == STATUS_RUNNING:
-            reviewed_local = format_sofia_input(reviewed_at)
+        transaction_time = current_database_timestamp(connection)
+        frozen_reviewed_at = reviewed_at or transaction_time
+        if not _is_canonical_timing_timestamp(frozen_reviewed_at):
+            issue = TimingValidationIssue(
+                None,
+                "form",
+                INVALID_TERMINAL_TIMING_DRAFT_MESSAGE,
+            )
+            return FinishReviewOutcome(
+                RuleResult(False, (issue.message,)),
+                issues=(issue,),
+            )
+        if frozen_reviewed_at > transaction_time:
+            issue = TimingValidationIssue(
+                None,
+                "form",
+                "Времето не може да бъде в бъдещето.",
+            )
+            return FinishReviewOutcome(
+                RuleResult(False, (issue.message,)),
+                issues=(issue,),
+            )
+
+        card = fetch_finish_review_action_card(connection, card_id)
+        version_result = validate_loaded_card_version(card, loaded_version)
+        if not version_result.ok:
+            return FinishReviewOutcome(version_result)
+        assert card is not None
+        if require_active_shift and fetch_active_shift_row(connection) is None:
+            return FinishReviewOutcome(
+                RuleResult(False, (NO_ACTIVE_SHIFT_MESSAGE,))
+            )
+
+        status = str(card["status"])
+        if status in {STATUS_RUNNING, STATUS_PAUSED}:
+            mode = (
+                "enter_rewinding"
+                if int(card["rewinding_roll_count"] or 0) > 0
+                else "complete"
+            )
+        elif status == STATUS_AWAITING_REWINDING:
+            mode = "finalize_rewinding"
+        else:
+            return FinishReviewOutcome(
+                RuleResult(
+                    False,
+                    (
+                        "Прегледът за приключване е достъпен само за карта в "
+                        "изработване, на пауза или изчакваща пренавиване.",
+                    ),
+                )
+            )
+
+        try:
+            pallet_summary = load_card_pallet_summary(connection, card_id)
+        except PalletSummaryDataError:
+            return FinishReviewOutcome(
+                RuleResult(False, (PALLET_SUMMARY_REPAIR_MESSAGE,))
+            )
+
+        if mode == "finalize_rewinding":
+            timing_result = validate_card_timing_started(connection, card_id)
+            if not timing_result.ok:
+                return FinishReviewOutcome(timing_result)
+            if fetch_open_timing_segment(connection, card_id) is not None:
+                return FinishReviewOutcome(
+                    RuleResult(
+                        False,
+                        (
+                            "Карта, изчакваща пренавиване, не трябва да има "
+                            "активен времеви сегмент. Презаредете картата.",
+                        ),
+                    )
+                )
+            ready_result = validate_card_ready_to_finish(
+                connection,
+                card_id,
+                card,
+            )
+            return FinishReviewOutcome(
+                RuleResult(
+                    True,
+                    () if ready_result.ok else ready_result.messages,
+                ),
+                snapshot=FinishReviewSnapshot(
+                    card=_finish_review_card_snapshot(connection, card),
+                    pallet_summary=pallet_summary,
+                    timing_preview=None,
+                    reviewed_at=frozen_reviewed_at,
+                    mode=mode,
+                ),
+            )
+
+        draft_rows = (
+            list(timing_draft)
+            if timing_draft is not None
+            else _terminal_timing_draft_rows(connection, card_id)
+        )
+        if timing_draft is None and status == STATUS_RUNNING:
+            reviewed_local = format_sofia_input(frozen_reviewed_at)
             open_indices = [
                 index
                 for index, row in enumerate(draft_rows)
@@ -2378,27 +2873,70 @@ def preview_terminal_finish_review(
                     stop_date=reviewed_local[:10],
                     stop_time=reviewed_local[11:16],
                 )
-        card, proposal, preparation_error = _prepare_terminal_timing_ledger(
+        prepared_card, proposal, preparation_error = _prepare_terminal_timing_ledger(
             connection,
             card_id,
             loaded_version,
             draft_rows,
-            transaction_time=reviewed_at,
+            transaction_time=frozen_reviewed_at,
             require_active_shift=require_active_shift,
             finish_mode=True,
         )
         if preparation_error is not None:
-            return preparation_error
-        assert card is not None
+            return FinishReviewOutcome(
+                preparation_error.result,
+                issues=preparation_error.issues,
+            )
+        assert prepared_card is not None
         assert proposal is not None
         preview = _build_terminal_timing_preview(
             connection,
             proposal,
             draft_rows,
             status=STATUS_PAUSED,
-            reviewed_at=reviewed_at,
+            reviewed_at=frozen_reviewed_at,
         )
-    return TimingLedgerOutcome(RuleResult(True), preview=preview)
+        ready_result = (
+            RuleResult(True)
+            if mode == "enter_rewinding"
+            else validate_card_ready_to_finish(connection, card_id, card)
+        )
+        return FinishReviewOutcome(
+            RuleResult(
+                True,
+                () if ready_result.ok else ready_result.messages,
+            ),
+            snapshot=FinishReviewSnapshot(
+                card=_finish_review_card_snapshot(connection, card),
+                pallet_summary=pallet_summary,
+                timing_preview=preview,
+                reviewed_at=frozen_reviewed_at,
+                mode=mode,
+            ),
+        )
+
+
+def preview_terminal_finish_review(
+    card_id: int,
+    loaded_version: int,
+    *,
+    require_active_shift: bool = True,
+) -> TimingLedgerOutcome:
+    """Compatibility adapter for timing-only callers of the old preview API."""
+    outcome = preview_terminal_finish_review_snapshot(
+        card_id,
+        loaded_version,
+        require_active_shift=require_active_shift,
+    )
+    return TimingLedgerOutcome(
+        outcome.result,
+        preview=(
+            outcome.snapshot.timing_preview
+            if outcome.snapshot is not None
+            else None
+        ),
+        issues=outcome.issues,
+    )
 
 
 def finish_card_with_timing_ledger(
@@ -4304,8 +4842,13 @@ def update_roll_weight(
             """,
             (card_id,),
         )
+        removed_pallets = delete_unused_card_pallet_weights(connection, card_id)
+        messages = [f"Ролка {roll['roll_number']} е записана."]
+        cleanup_message = _unused_pallet_weight_cleanup_message(removed_pallets)
+        if cleanup_message is not None:
+            messages.append(cleanup_message)
 
-    return RuleResult(True, (f"Ролка {roll['roll_number']} е записана.",))
+    return RuleResult(True, tuple(messages))
 
 
 def update_terminal_roll_corrections(
@@ -4315,6 +4858,7 @@ def update_terminal_roll_corrections(
     *,
     require_active_shift: bool = False,
 ) -> RuleResult:
+    messages = ["Ролките са записани."]
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
         shift_result = validate_active_shift_for_terminal_write(
@@ -4445,8 +4989,12 @@ def update_terminal_roll_corrections(
                 """,
                 (card_id,),
             )
+            removed_pallets = delete_unused_card_pallet_weights(connection, card_id)
+            cleanup_message = _unused_pallet_weight_cleanup_message(removed_pallets)
+            if cleanup_message is not None:
+                messages.append(cleanup_message)
 
-    return RuleResult(True, ("Ролките са записани.",))
+    return RuleResult(True, tuple(messages))
 
 
 def update_roll_gross_weight(
@@ -4584,8 +5132,16 @@ def delete_roll_entry(
             """,
             (card_id,),
         )
+        removed_pallets = delete_unused_card_pallet_weights(connection, card_id)
+        messages = [
+            f"Ролка {deleted_roll_number} е изтрита. "
+            "Оставащите ролки са преномерирани."
+        ]
+        cleanup_message = _unused_pallet_weight_cleanup_message(removed_pallets)
+        if cleanup_message is not None:
+            messages.append(cleanup_message)
 
-    return RuleResult(True, (f"Ролка {deleted_roll_number} е изтрита. Оставащите ролки са преномерирани.",))
+    return RuleResult(True, tuple(messages))
 
 
 def update_admin_roll_ledger(
@@ -4926,7 +5482,13 @@ def _update_admin_roll_ledger(
             (roll_number, int(roll["id"])),
         )
 
-    return RuleResult(True, ("Ролките са записани.",))
+    messages = ["Ролките са записани."]
+    if roll_mutation_requested:
+        removed_pallets = delete_unused_card_pallet_weights(connection, card_id)
+        cleanup_message = _unused_pallet_weight_cleanup_message(removed_pallets)
+        if cleanup_message is not None:
+            messages.append(cleanup_message)
+    return RuleResult(True, tuple(messages))
 
 
 def fetch_roll_action_card(

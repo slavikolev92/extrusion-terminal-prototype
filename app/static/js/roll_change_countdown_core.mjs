@@ -10,6 +10,23 @@ const DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
 const TIME_PATTERN = /^(\d{2}):(\d{2})$/;
 const DIGITS_PATTERN = /^\d+$/;
 
+
+export function adoptLocalCardVersion(context, detail) {
+  if (
+    !context
+    || !detail
+    || !Number.isSafeInteger(context.cardId)
+    || context.cardId <= 0
+    || !Number.isSafeInteger(context.cardVersion)
+    || context.cardVersion < 0
+    || detail.cardId !== context.cardId
+    || detail.oldVersion !== context.cardVersion
+    || !Number.isSafeInteger(detail.newVersion)
+    || detail.newVersion <= detail.oldVersion
+  ) return null;
+  return { ...context, cardVersion: detail.newVersion };
+}
+
 export function storageKey(machineId) {
   if (!Number.isSafeInteger(machineId) || machineId <= 0) throw new TypeError("Invalid machine ID");
   return `${STORAGE_KEY_PREFIX}${machineId}`;

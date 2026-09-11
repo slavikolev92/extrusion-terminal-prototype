@@ -1,3 +1,4 @@
+import re
 from collections.abc import Iterable, Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -5,11 +6,62 @@ from typing import Any
 
 ExactDecimal = tuple[int, int]
 ZERO: ExactDecimal = (0, 0)
-PALLET_WEIGHT_PLACEHOLDER: ExactDecimal = ZERO
+PHYSICAL_PALLET_WEIGHT_PATTERN = re.compile(
+    r"(?P<sign>-?)(?P<whole>[0-9]+)(?:[.,](?P<fraction>[0-9]{1,2}))?"
+)
 
 
 class PalletSummaryDataError(ValueError):
     """A saved roll cannot be represented safely in a pallet summary."""
+
+
+def parse_physical_pallet_weight(
+    raw: str,
+    pallet_number: int,
+) -> tuple[int | None, str | None]:
+    """Parse an optional physical-pallet weight into exact integer hundredths."""
+    value = raw.strip()
+    if not value:
+        return None, None
+
+    match = PHYSICAL_PALLET_WEIGHT_PATTERN.fullmatch(value)
+    if match is None:
+        return (
+            None,
+            f"Теглото за палет №{pallet_number} трябва да бъде число "
+            "с най-много два десетични знака.",
+        )
+
+    if match.group("sign"):
+        return (
+            None,
+            f"Теглото за палет №{pallet_number} трябва да бъде поне 0.01 кг.",
+        )
+
+    whole_text = match.group("whole")
+    bounded_whole = whole_text.lstrip("0") or "0"
+    if len(bounded_whole) > 3 or (
+        len(bounded_whole) == 3 and bounded_whole > "100"
+    ):
+        return (
+            None,
+            f"Теглото за палет №{pallet_number} не може да бъде повече от 100.00 кг.",
+        )
+
+    whole = int(bounded_whole)
+    fraction_hundredths = int((match.group("fraction") or "0").ljust(2, "0"))
+    raw_hundredths = whole * 100 + fraction_hundredths
+    if raw_hundredths > 10000:
+        return (
+            None,
+            f"Теглото за палет №{pallet_number} не може да бъде повече от 100.00 кг.",
+        )
+    if raw_hundredths < 1:
+        return (
+            None,
+            f"Теглото за палет №{pallet_number} трябва да бъде поне 0.01 кг.",
+        )
+    return raw_hundredths, None
 
 
 def _saved_weight(value: Any, *, field: str, index: int) -> Decimal:
@@ -107,26 +159,65 @@ def _weight_display(value: ExactDecimal) -> str:
     return format(displayed, "f")
 
 
+def _pallet_derived_weight_display(value: ExactDecimal) -> str:
+    return format(_parts_to_decimal(value).quantize(Decimal("0.01")), "f")
+
+
+def _physical_pallet_weight(
+    pallet_number: Any,
+    weight_hundredths: Any,
+) -> ExactDecimal:
+    if (
+        type(pallet_number) is not int
+        or not 1 <= pallet_number <= 999
+        or type(weight_hundredths) is not int
+        or not 1 <= weight_hundredths <= 10000
+    ):
+        raise PalletSummaryDataError("Saved pallet weight is invalid.")
+    return _normalize_exact((weight_hundredths, -2))
+
+
 def _summary_row(
     *,
     roll_count: int,
     gross_weight: ExactDecimal,
     net_weight: ExactDecimal,
-    pallet_weight: ExactDecimal = PALLET_WEIGHT_PLACEHOLDER,
+    pallet_weight: ExactDecimal | None,
     pallet_number: int | None = None,
     include_pallet: bool = False,
 ) -> dict[str, Any]:
     gross_decimal = _parts_to_decimal(gross_weight)
     net_decimal = _parts_to_decimal(net_weight)
-    pallet_decimal = _parts_to_decimal(pallet_weight)
+    pallet_decimal = (
+        _parts_to_decimal(pallet_weight) if pallet_weight is not None else None
+    )
+    gross_with_pallet = (
+        _exact_add(gross_weight, pallet_weight)
+        if pallet_weight is not None
+        else None
+    )
     row = {
         "roll_count": roll_count,
-        "gross_weight": gross_decimal,
+        "gross_without_pallet": gross_decimal,
         "net_weight": net_decimal,
         "pallet_weight": pallet_decimal,
-        "gross_display": _weight_display(gross_weight),
+        "gross_with_pallet": (
+            _parts_to_decimal(gross_with_pallet)
+            if gross_with_pallet is not None
+            else None
+        ),
+        "gross_without_pallet_display": _weight_display(gross_weight),
         "net_display": _weight_display(net_weight),
-        "pallet_weight_display": _weight_display(pallet_weight),
+        "pallet_weight_display": (
+            _pallet_derived_weight_display(pallet_weight)
+            if pallet_weight is not None
+            else "-"
+        ),
+        "gross_with_pallet_display": (
+            _pallet_derived_weight_display(gross_with_pallet)
+            if gross_with_pallet is not None
+            else "-"
+        ),
     }
     if include_pallet:
         row.update({
@@ -134,18 +225,28 @@ def _summary_row(
             "pallet_label": (
                 str(pallet_number) if pallet_number is not None else "Без палет"
             ),
+            "pallet_weight_input": (
+                _pallet_derived_weight_display(pallet_weight)
+                if pallet_weight is not None
+                else ""
+            ),
         })
     return row
 
 
-def build_terminal_pallet_summary(
+def build_pallet_summary(
     roll_entries: Iterable[Mapping[str, Any]],
+    pallet_weights: Mapping[int, int],
 ) -> dict[str, Any]:
     """Return an empty or ready pallet-summary view model.
 
     Raises PalletSummaryDataError when any entered roll has unusable saved data.
     Unexpected programming errors are intentionally not caught here.
     """
+    validated_pallet_weights = {
+        pallet_number: _physical_pallet_weight(pallet_number, weight_hundredths)
+        for pallet_number, weight_hundredths in pallet_weights.items()
+    }
     buckets: dict[int | None, tuple[int, ExactDecimal, ExactDecimal]] = {}
     total_count = 0
     total_gross = ZERO
@@ -186,18 +287,41 @@ def build_terminal_pallet_summary(
         total_gross = _exact_add(total_gross, gross_exact)
         total_net = _exact_add(total_net, net_exact)
 
+    numbered = sorted(key for key in buckets if key is not None)
+    orphaned = sorted(set(validated_pallet_weights) - set(numbered))
+    if orphaned:
+        raise PalletSummaryDataError(
+            f"Saved pallet weight for unused pallet {orphaned[0]} is invalid."
+        )
+
+    missing_numbers = tuple(
+        pallet_number
+        for pallet_number in numbered
+        if pallet_number not in validated_pallet_weights
+    )
+    unassigned_roll_count = buckets.get(None, (0, ZERO, ZERO))[0]
+    weight_state = (
+        "none" if not validated_pallet_weights
+        else "complete" if not missing_numbers and unassigned_roll_count == 0
+        else "partial"
+    )
+
     if total_count == 0:
         return {
             "state": "empty",
+            "weight_state": weight_state,
             "rows": [],
             "total": _summary_row(
                 roll_count=0,
                 gross_weight=ZERO,
                 net_weight=ZERO,
+                pallet_weight=None,
             ),
+            "used_pallet_numbers": (),
+            "missing_weight_pallet_numbers": (),
+            "unassigned_roll_count": 0,
         }
 
-    numbered = sorted(key for key in buckets if key is not None)
     ordered_keys: list[int | None] = [*numbered]
     if None in buckets:
         ordered_keys.append(None)
@@ -211,14 +335,26 @@ def build_terminal_pallet_summary(
             roll_count=roll_count,
             gross_weight=gross_weight,
             net_weight=net_weight,
+            pallet_weight=validated_pallet_weights.get(pallet_number),
         ))
+
+    total_pallet_weight: ExactDecimal | None = None
+    if weight_state == "complete":
+        total_pallet_weight = ZERO
+        for pallet_weight in validated_pallet_weights.values():
+            total_pallet_weight = _exact_add(total_pallet_weight, pallet_weight)
 
     return {
         "state": "ready",
+        "weight_state": weight_state,
         "rows": rows,
         "total": _summary_row(
             roll_count=total_count,
             gross_weight=total_gross,
             net_weight=total_net,
+            pallet_weight=total_pallet_weight,
         ),
+        "used_pallet_numbers": tuple(numbered),
+        "missing_weight_pallet_numbers": missing_numbers,
+        "unassigned_roll_count": unassigned_roll_count,
     }

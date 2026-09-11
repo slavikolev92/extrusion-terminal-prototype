@@ -1,0 +1,127 @@
+<div class="pallet-summary-overlay" id="pallet-summary-overlay"
+     data-pallet-summary-overlay data-card-id="{{ pallet_modal.card_id }}"
+     data-card-version="{{ pallet_modal.loaded_version }}"
+     data-page-kind="{{ 'terminal' if pallet_modal.action_url.startswith('/terminal/') else 'admin' }}"
+     hidden aria-hidden="true">
+  <section class="pallet-summary-dialog" role="dialog" aria-modal="true"
+           aria-labelledby="pallet-summary-title"
+           aria-describedby="pallet-summary-context" tabindex="-1"
+           data-pallet-summary-dialog>
+    <div class="pallet-summary-topbar">
+      <button class="pallet-summary-icon-close" type="button"
+              aria-label="Затвори обобщението"
+              data-pallet-summary-close="icon">
+        <img src="{{ url_for('static', path='/images/terminal-ui/finish-review-close.svg') }}"
+             alt="" aria-hidden="true">
+      </button>
+    </div>
+
+    <div class="pallet-summary-content">
+      <section class="pallet-summary-card">
+        <header class="pallet-summary-heading">
+          <span class="pallet-summary-icon-tile" aria-hidden="true">
+            <img src="{{ url_for('static', path='/images/terminal-ui/finish-review-clipboard-list.svg') }}"
+                 alt="">
+          </span>
+          <div>
+            <h2 class="pallet-summary-title" id="pallet-summary-title">Обобщение по палети</h2>
+            <p class="pallet-summary-context" id="pallet-summary-context">{{ pallet_modal.customer }} (№ {{ pallet_modal.order_number }})</p>
+          </div>
+        </header>
+
+        {% if pallet_modal.state == "ready" %}
+          {% if pallet_modal.rows and pallet_modal.rows|selectattr("pallet_number", "none")|list|length == pallet_modal.rows|length %}
+            <p class="pallet-summary-guidance" data-pallet-summary-unassigned-note>
+              Първо задайте номер на палет за ролките, за да въведете физическо тегло на палета.
+            </p>
+          {% endif %}
+          <div class="pallet-summary-table-frame">
+            <div class="pallet-summary-table-shell" tabindex="0"
+                 aria-label="Палети; таблицата се превърта вертикално"
+                 data-pallet-summary-scroll>
+              <table class="pallet-summary-table">
+                <colgroup>
+                  <col class="pallet-summary-col-pallet">
+                  <col class="pallet-summary-col-equal">
+                  <col class="pallet-summary-col-equal">
+                  <col class="pallet-summary-col-equal">
+                  <col class="pallet-summary-col-equal">
+                  <col class="pallet-summary-col-equal">
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th scope="col">Палет №</th>
+                    <th scope="col">Брой ролки</th>
+                    <th scope="col">Бруто без палет, кг</th>
+                    <th scope="col">Тегло палет, кг</th>
+                    <th scope="col">Бруто с палет, кг</th>
+                    <th scope="col">Нето, кг</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in pallet_modal.rows %}
+                    <tr data-pallet-summary-row="{{ row.pallet_number if row.pallet_number is not none else 'unassigned' }}">
+                      <th scope="row">{{ row.pallet_label }}</th>
+                      <td>{{ row.roll_count }}</td>
+                      <td>{{ row.gross_without_pallet_display }}</td>
+                      <td>
+                        {% if row.pallet_number is not none %}
+                          <form method="post"
+                                action="{{ pallet_modal.action_url }}/{{ row.pallet_number }}"
+                                data-pallet-weight-form="{{ row.pallet_number }}">
+                            <input type="hidden" name="loaded_version" value="{{ pallet_modal.loaded_version }}">
+                            <span class="pallet-weight-input-wrap">
+                              <input type="text" inputmode="decimal"
+                                     name="pallet_weight"
+                                     value="{{ row.pallet_weight_input }}"
+                                     aria-label="Тегло за палет №{{ row.pallet_number }}, кг"
+                                     aria-errormessage="pallet-weight-status-message"
+                                     autocomplete="off"
+                                     data-pallet-weight-input="{{ row.pallet_number }}">
+                            </span>
+                          </form>
+                        {% else %}
+                          -
+                        {% endif %}
+                      </td>
+                      <td data-pallet-gross-with="{{ row.pallet_number if row.pallet_number is not none else 'unassigned' }}">{{ row.gross_with_pallet_display }}</td>
+                      <td>{{ row.net_display }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+                <tfoot>
+                  <tr class="pallet-summary-total" data-pallet-summary-total>
+                    <th scope="row">Общо</th>
+                    <td data-pallet-roll-count-total>{{ pallet_modal.total.roll_count }}</td>
+                    <td data-pallet-gross-without-total>{{ pallet_modal.total.gross_without_pallet_display }}</td>
+                    <td data-pallet-weight-total>{{ pallet_modal.total.pallet_weight_display }}</td>
+                    <td data-pallet-gross-with-total>{{ pallet_modal.total.gross_with_pallet_display }}</td>
+                    <td data-pallet-net-total>{{ pallet_modal.total.net_display }}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        {% elif pallet_modal.state == "empty" %}
+          <p class="pallet-summary-message" data-pallet-summary-empty>Няма въведени ролки.</p>
+        {% else %}
+          <p class="pallet-summary-message" role="alert" data-pallet-summary-error>
+            Обобщението по палети не може да бъде показано. Проверете данните за ролките.
+          </p>
+        {% endif %}
+      </section>
+    </div>
+
+    <footer class="pallet-summary-footer">
+      <div class="semantic-status-banner pallet-summary-status" role="status" aria-live="polite"
+           data-pallet-weight-status="{{ pallet_modal.weight_state }}">
+        <span id="pallet-weight-status-message" data-pallet-weight-status-message></span>
+        <a class="pallet-summary-reload" href="" data-pallet-weight-reload hidden>Презареди</a>
+      </div>
+      <div class="pallet-summary-actions">
+        <button class="pallet-summary-close" type="button"
+                data-pallet-summary-close="footer">Затвори</button>
+      </div>
+    </footer>
+  </section>
+</div>

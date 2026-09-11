@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import json
 import re
 
 import pytest
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from app import db
+from app import db, main
 from app.constants import (
     CARD_STATUSES,
     STATUS_ARCHIVED,
@@ -20,6 +21,7 @@ from app.main import (
     add_time_presentation,
     admin_card_detail_context,
     roll_ledger_from_form,
+    save_all_admin_card_changes,
     save_admin_card_changes,
     save_admin_imported_fields,
     save_admin_roll_ledger,
@@ -112,6 +114,21 @@ def import_ready_card(order_number: str, **overrides: str) -> int:
                 (order_number,),
             ).fetchone()["id"]
         )
+
+
+def stored_physical_pallet_weights(connection, card_id: int) -> dict[int, int]:
+    return {
+        int(row["pallet_number"]): int(row["weight_hundredths"])
+        for row in connection.execute(
+            """
+            SELECT pallet_number, weight_hundredths
+            FROM card_pallet_weights
+            WHERE card_id = ?
+            ORDER BY pallet_number
+            """,
+            (card_id,),
+        ).fetchall()
+    }
 
 
 def prepare_dense_completed_card(order_number: str = "27000", roll_count: int = 12) -> int:
@@ -219,6 +236,131 @@ def render_admin_cards_list(**extra: object) -> str:
     }
     context.update(extra)
     return env.get_template("admin_cards.html").render(**context)
+
+
+def test_admin_pallet_weight_route_saves_and_recovers_without_redirect(
+    connection,
+):
+    card_id = prepare_dense_completed_card(
+        "ADMIN-PALLET-WEIGHT-ROUTE",
+        roll_count=1,
+    )
+    connection.execute(
+        "UPDATE roll_entries SET pallet_number = 2 WHERE card_id = ?",
+        (card_id,),
+    )
+    connection.commit()
+    loaded_version = card_version(card_id)
+
+    success = asyncio.run(
+        main.save_admin_pallet_weight(
+            FormRequest(
+                MultiItemForm([
+                    ("loaded_version", str(loaded_version)),
+                    ("pallet_weight", "20"),
+                ])
+            ),
+            card_id,
+            2,
+        )
+    )
+
+    assert success.status_code == 200
+    assert json.loads(success.body) == {
+        "ok": True,
+        "card_version": loaded_version + 1,
+        "pallet_number": 2,
+        "normalized_weight": "20.00",
+        "row": {
+            "pallet_number": 2,
+            "pallet_label": "2",
+            "roll_count": 1,
+            "gross_without_pallet_display": "51.0",
+            "pallet_weight_display": "20.00",
+            "gross_with_pallet_display": "71.00",
+            "net_display": "49.8",
+        },
+        "total": {
+            "roll_count": 1,
+            "gross_without_pallet_display": "51.0",
+            "pallet_weight_display": "20.00",
+            "gross_with_pallet_display": "71.00",
+            "net_display": "49.8",
+        },
+        "weight_state": "complete",
+        "messages": ["Теглото за палет №2 е записано."],
+        "reload_required": False,
+    }
+    assert stored_physical_pallet_weights(connection, card_id) == {2: 2000}
+
+    invalid = asyncio.run(
+        main.save_admin_pallet_weight(
+            FormRequest(
+                MultiItemForm([
+                    ("loaded_version", str(loaded_version + 1)),
+                    ("pallet_weight", " 20.555 "),
+                ])
+            ),
+            card_id,
+            2,
+        )
+    )
+    invalid_payload = json.loads(invalid.body)
+    assert invalid.status_code == 422
+    assert invalid_payload["submitted_weight"] == " 20.555 "
+    assert invalid_payload["field_errors"] == [{
+        "pallet_number": 2,
+        "field": "pallet_weight",
+        "message": invalid_payload["messages"][0],
+    }]
+    assert invalid_payload["reload_required"] is False
+    assert stored_physical_pallet_weights(connection, card_id) == {2: 2000}
+
+    stale = asyncio.run(
+        main.save_admin_pallet_weight(
+            FormRequest(
+                MultiItemForm([
+                    ("loaded_version", str(loaded_version)),
+                    ("pallet_weight", " 21.5 "),
+                ])
+            ),
+            card_id,
+            2,
+        )
+    )
+    assert stale.status_code == 409
+    assert json.loads(stale.body) == {
+        "ok": False,
+        "submitted_weight": " 21.5 ",
+        "messages": [db.STALE_CARD_MESSAGE],
+        "field_errors": [{
+            "pallet_number": None,
+            "field": "form",
+            "message": db.STALE_CARD_MESSAGE,
+        }],
+        "reload_required": True,
+    }
+    assert stored_physical_pallet_weights(connection, card_id) == {2: 2000}
+
+    unused = asyncio.run(
+        main.save_admin_pallet_weight(
+            FormRequest(
+                MultiItemForm([
+                    ("loaded_version", str(loaded_version + 1)),
+                    ("pallet_weight", "22.5"),
+                ])
+            ),
+            card_id,
+            3,
+        )
+    )
+    unused_payload = json.loads(unused.body)
+    assert unused.status_code == 422
+    assert unused_payload["submitted_weight"] == "22.5"
+    assert unused_payload["field_errors"][0]["pallet_number"] == 3
+    assert unused_payload["field_errors"][0]["field"] == "pallet_weight"
+    assert unused_payload["reload_required"] is False
+    assert stored_physical_pallet_weights(connection, card_id) == {2: 2000}
 
 
 def test_admin_detail_enriches_utc_timestamps_without_changing_raw_values(connection):
@@ -388,6 +530,87 @@ def test_admin_detail_print_link_is_available_only_for_completed_cards(connectio
     assert "Печат / препечат" not in completed_html
     assert f"/cards/{cancelled_id}/print" not in cancelled_html
     assert "Принтирай" not in cancelled_html
+
+
+def test_admin_pallet_summary_trigger_and_modal_are_limited_to_completed_and_archived(
+    connection,
+):
+    completed_id = prepare_dense_completed_card("ADMIN-PALLET-MODAL", roll_count=1)
+    connection.execute(
+        "UPDATE roll_entries SET pallet_number = 4 WHERE card_id = ?",
+        (completed_id,),
+    )
+    connection.commit()
+    archived_id = prepare_dense_completed_card("ADMIN-PALLET-ARCHIVED", roll_count=1)
+    connection.execute(
+        "UPDATE roll_entries SET pallet_number = 4 WHERE card_id = ?",
+        (archived_id,),
+    )
+    connection.commit()
+    assert db.archive_completed_card(archived_id, card_version(archived_id)).ok
+    pending_id = import_ready_card("ADMIN-PALLET-PENDING")
+    assert db.release_card(
+        pending_id,
+        machine_id=2,
+        machine_sequence=1,
+        loaded_version=card_version(pending_id),
+    ).ok
+
+    completed_html = render_admin_detail(completed_id)
+    archived_html = render_admin_detail(archived_id)
+    pending_html = render_admin_detail(pending_id)
+
+    for html, card_id in ((completed_html, completed_id), (archived_html, archived_id)):
+        assert len(re.findall(r"<button[^>]+data-pallet-summary-open", html)) == 1
+        assert len(re.findall(r"<div[^>]+data-pallet-summary-overlay", html)) == 1
+        assert f'action="/admin/cards/{card_id}/pallet-weights/4"' in html
+        rolls_heading = html.split('<section class="section operational-panel" id="rolls">', 1)[1]
+        rolls_heading = rolls_heading.split('<div class="admin-roll-toolbar">', 1)[0]
+        assert "data-pallet-summary-open" in rolls_heading
+        assert html.index("</main>") < html.index("data-pallet-summary-overlay")
+        outer_form_end = html.index("</form>", html.index('id="admin-card-save-form"'))
+        assert outer_form_end < html.index("data-pallet-summary-overlay")
+
+    assert not re.search(r"<button[^>]+data-pallet-summary-open", pending_html)
+    assert not re.search(r"<div[^>]+data-pallet-summary-overlay", pending_html)
+
+
+def test_admin_pallet_summary_open_is_cancelable_when_outer_form_is_dirty(connection):
+    card_id = prepare_dense_completed_card("ADMIN-PALLET-DIRTY", roll_count=1)
+
+    html = render_admin_detail(card_id)
+
+    assert 'new CustomEvent("pallet-summary:before-open", { cancelable: true })' in html
+    assert 'globalFormDirty' in html
+    assert "Запазете промените във формата или презаредете страницата, за да ги отхвърлите." in html
+    assert "data-pallet-summary-open-error" in html
+
+
+def test_admin_pallet_summary_loads_shared_assets_and_has_no_modal_save_action(connection):
+    card_id = prepare_dense_completed_card("ADMIN-PALLET-ASSETS", roll_count=1)
+    connection.execute(
+        "UPDATE roll_entries SET pallet_number = 1 WHERE card_id = ?",
+        (card_id,),
+    )
+    connection.commit()
+
+    html = render_admin_detail(card_id)
+    modal_start = html.index('<div class="pallet-summary-overlay"')
+    modal_end = html.index('<script', modal_start)
+    modal = html[modal_start:modal_end]
+
+    assert '/static/css/pallet_summary.css' in html
+    assert '/static/js/pallet_weight_autosave.mjs' in html
+    assert "/static/images/terminal-ui/finish-review-clipboard-list.svg" in modal
+    assert "/static/images/terminal-ui/finish-review-close.svg" in modal
+    assert modal.count('data-pallet-summary-close="icon"') == 1
+    assert modal.count('data-pallet-summary-close="footer"') == 1
+    assert 'data-pallet-weight-reload hidden' in modal
+    footer = re.search(r'<footer class="pallet-summary-footer">(.*?)</footer>', modal, flags=re.S)
+    assert footer
+    assert footer.group(1).count("<button") == 1
+    for forbidden_action in ("Добави тегла", "Отказ", "Запази"):
+        assert forbidden_action not in modal
 
 
 def test_admin_detail_suppresses_unrelease_for_started_restored_pending_card(connection):
@@ -686,6 +909,10 @@ def test_admin_roll_ledger_renders_current_and_per_roll_pallets(connection):
 
     html = render_admin_detail(card_id)
     roll_ledger_html = html.split('<div class="admin-ledger-table roll-ledger">', 1)[1]
+    roll_ledger_html = roll_ledger_html.split(
+        '<section class="section operational-panel" id="timing">',
+        1,
+    )[0]
     header_html = roll_ledger_html.split('<div class="admin-ledger-head">', 1)[1].split(
         '<div class="admin-ledger-row admin-roll-ledger-row">',
         1,
@@ -2526,3 +2753,107 @@ def test_admin_timing_ledger_blocks_stale_version(connection):
 
     assert not result.ok
     assert result.messages == (db.STALE_CARD_MESSAGE,)
+
+
+def test_admin_multi_roll_pallet_weight_cleanup_runs_after_all_mutations(
+    connection,
+    monkeypatch,
+):
+    card_id = import_ready_card("PW-CLEANUP-ADMIN-SWAP")
+    connection.execute(
+        """
+        UPDATE cards
+        SET status = 'completed', tare_weight = '1.00'
+        WHERE id = ?
+        """,
+        (card_id,),
+    )
+    connection.executemany(
+        """
+        INSERT INTO roll_entries (
+            card_id, order_number, roll_number, gross_weight, tare_weight,
+            net_weight, pallet_number
+        )
+        VALUES (?, 'PW-CLEANUP-ADMIN-SWAP', ?, ?, '1.00', ?, ?)
+        """,
+        (
+            (card_id, 1, "20.00", "19.00", 4),
+            (card_id, 2, "21.00", "20.00", 5),
+            (card_id, 3, "22.00", "21.00", 9),
+        ),
+    )
+    connection.executemany(
+        """
+        INSERT INTO card_pallet_weights (card_id, pallet_number, weight_hundredths)
+        VALUES (?, ?, ?)
+        """,
+        ((card_id, 4, 1400), (card_id, 5, 1500), (card_id, 9, 1900)),
+    )
+    connection.commit()
+    card = db.fetch_admin_card_detail(card_id)
+    first, second, third = card["roll_entries"]
+    cleanup_calls = []
+    real_cleanup = db.delete_unused_card_pallet_weights
+
+    def count_real_cleanup(cleanup_connection, cleanup_card_id):
+        cleanup_calls.append(cleanup_card_id)
+        return real_cleanup(cleanup_connection, cleanup_card_id)
+
+    monkeypatch.setattr(db, "delete_unused_card_pallet_weights", count_real_cleanup)
+
+    result = db.update_admin_roll_ledger(
+        card_id=card_id,
+        loaded_version=int(card["version"]),
+        tare_weight="1.00",
+        roll_updates={
+            int(first["id"]): {"pallet_number": "5"},
+            int(second["id"]): {"pallet_number": "4"},
+            int(third["id"]): {"pallet_number": "4"},
+        },
+        delete_roll_ids=set(),
+        new_gross_weights=[],
+    )
+
+    assert result.ok
+    assert cleanup_calls == [card_id]
+    assert stored_physical_pallet_weights(connection, card_id) == {4: 1400, 5: 1500}
+    assert result.messages == (
+        "Ролките са записани.",
+        "Премахнато е теглото за неизползвания палет №9.",
+    )
+    assert db.fetch_admin_card_detail(card_id)["version"] == int(card["version"]) + 1
+
+
+def test_admin_save_all_preserves_orphaned_pallet_weight_cleanup_notice(connection):
+    card_id = prepare_dense_completed_card("PW-CLEANUP-ADMIN-SAVE-ALL", roll_count=1)
+    card = db.fetch_admin_card_detail(card_id)
+    roll = card["roll_entries"][0]
+    connection.execute(
+        "UPDATE roll_entries SET pallet_number = 9 WHERE id = ?",
+        (roll["id"],),
+    )
+    connection.execute(
+        """
+        INSERT INTO card_pallet_weights (card_id, pallet_number, weight_hundredths)
+        VALUES (?, 9, 1900)
+        """,
+        (card_id,),
+    )
+    connection.commit()
+    card = db.fetch_admin_card_detail(card_id)
+    form = MultiItemForm(
+        [
+            *admin_material_form_items(card_id),
+            ("tare_weight", str(card["tare_weight"])),
+            (f"pallet_number__{roll['id']}", ""),
+        ]
+    )
+
+    result = save_all_admin_card_changes(card_id, int(card["version"]), form)
+
+    assert result.ok
+    assert result.messages == (
+        "Промените са записани.",
+        "Премахнато е теглото за неизползвания палет №9.",
+    )
+    assert stored_physical_pallet_weights(connection, card_id) == {}

@@ -1,7 +1,97 @@
 import {
+  canOpenWaitingFinishReviewPayload,
   canEnableWaitingFinishTrigger,
   isValidWaitingFinishReviewModel,
 } from "./waiting_finish_review_core.mjs";
+import {
+  applyFinishReviewPalletState,
+  validateFinishReviewPalletState,
+} from "./finish_review_pallet_state.mjs";
+
+
+const INVALID_RESPONSE_MESSAGES = Object.freeze([
+  "Отговорът на сървъра е невалиден. Презаредете страницата.",
+]);
+const NETWORK_FAILURE_MESSAGES = Object.freeze([
+  "Връзката със сървъра прекъсна. Презаредете страницата.",
+]);
+
+
+function isValidWaitingFinishFailurePayload(payload) {
+  return Boolean(
+    payload?.ok === false
+    && Array.isArray(payload.messages)
+    && payload.messages.length > 0
+    && payload.messages.every((message) => (
+      typeof message === "string" && message.trim().length > 0
+    ))
+    && Array.isArray(payload.field_errors)
+    && payload.field_errors.every((issue) => (
+      issue
+      && (issue.source_index === null || Number.isSafeInteger(issue.source_index))
+      && typeof issue.field === "string"
+      && typeof issue.message === "string"
+    ))
+  );
+}
+
+
+function fatalRequestResult(reason, messages) {
+  return {
+    kind: "fatal",
+    reason,
+    messages: [...messages],
+    reload_required: true,
+  };
+}
+
+
+export async function resolveWaitingFinishReviewRequest({ request, loadedVersion }) {
+  let response;
+  try {
+    response = await request();
+  } catch {
+    return fatalRequestResult("network", NETWORK_FAILURE_MESSAGES);
+  }
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    return fatalRequestResult("malformed-response", INVALID_RESPONSE_MESSAGES);
+  }
+
+  if (response.status === 422) {
+    if (!response.ok && isValidWaitingFinishFailurePayload(payload)) {
+      return {
+        kind: "validation",
+        messages: [...payload.messages],
+        reload_required: false,
+      };
+    }
+    return fatalRequestResult("malformed-response", INVALID_RESPONSE_MESSAGES);
+  }
+  if (!response.ok) {
+    if (response.status === 409 && isValidWaitingFinishFailurePayload(payload)) {
+      return fatalRequestResult("stale", payload.messages);
+    }
+    return fatalRequestResult("malformed-response", INVALID_RESPONSE_MESSAGES);
+  }
+
+  const review = validateFinishReviewPalletState(payload?.finish_review);
+  if (
+    payload?.ok !== true
+    || !review
+    || !canOpenWaitingFinishReviewPayload(review, loadedVersion)
+  ) {
+    return fatalRequestResult("malformed-response", INVALID_RESPONSE_MESSAGES);
+  }
+  return {
+    kind: "review",
+    review,
+    reload_required: false,
+  };
+}
 
 
 const waitingForm = document.querySelector(
@@ -51,6 +141,7 @@ if (
   let returnFocus = trigger;
   let nativeSubmit = false;
   let submitting = false;
+  let loading = false;
   let suspended = shiftWindow?.dataset.shiftBlocking === "true";
   let controllerReady = false;
 
@@ -58,7 +149,7 @@ if (
     const enabled = controllerReady && canEnableWaitingFinishTrigger(
       model,
       { suspended },
-    );
+    ) && !loading;
     trigger.disabled = !enabled;
     trigger.setAttribute("aria-disabled", String(!enabled));
   }
@@ -158,6 +249,10 @@ if (
     if (submitting) {
       return;
     }
+    if (model.locked) {
+      window.requestAnimationFrame(() => reloadLink.focus());
+      return;
+    }
     overlay.hidden = true;
     overlay.setAttribute("aria-hidden", "true");
     dialog.setAttribute("aria-busy", "false");
@@ -182,10 +277,67 @@ if (
     model.locked = true;
     model.can_confirm = false;
     model.reload_required = true;
+    closeButton.disabled = true;
+    cancelButton.disabled = true;
     confirmButton.disabled = true;
     reloadLink.hidden = false;
     showAlert(messages);
     window.requestAnimationFrame(() => alertBox.focus());
+  }
+
+  function showFatalReview(messages, opener) {
+    model.can_confirm = false;
+    model.locked = false;
+    model.reload_required = false;
+    openReview(opener);
+    suspended = true;
+    lockReview(messages);
+  }
+
+  async function beginReview(opener = trigger) {
+    if (loading || submitting || suspended || model.locked) {
+      return;
+    }
+    loading = true;
+    syncTriggerAvailability();
+    try {
+      const body = new FormData();
+      body.set("loaded_version", loadedVersionInput.value);
+      const result = await resolveWaitingFinishReviewRequest({
+        request: () => fetch(`${waitingForm.action}-review`, {
+          method: "POST",
+          headers: { "Accept": "application/json" },
+          body,
+        }),
+        loadedVersion: loadedVersionInput.value,
+      });
+      if (result.kind === "validation") {
+        model.can_confirm = false;
+        model.locked = false;
+        model.reload_required = false;
+        showAlert(result.messages);
+        openReview(opener);
+        return;
+      }
+      if (result.kind === "fatal") {
+        showFatalReview(result.messages, opener);
+        return;
+      }
+      const review = result.review;
+      if (!applyFinishReviewPalletState(dialog, review)) {
+        showFatalReview(INVALID_RESPONSE_MESSAGES, opener);
+        return;
+      }
+      model.can_confirm = review.can_confirm;
+      model.locked = false;
+      model.reload_required = false;
+      openReview(opener);
+    } catch {
+      showFatalReview(INVALID_RESPONSE_MESSAGES, opener);
+    } finally {
+      loading = false;
+      syncTriggerAvailability();
+    }
   }
 
   function setSubmitting() {
@@ -209,14 +361,11 @@ if (
     if (submitting || suspended) {
       return;
     }
-    openReview(event.submitter || trigger);
+    void beginReview(event.submitter || trigger);
   });
 
   trigger.addEventListener("click", () => {
-    if (!controllerReady || submitting || suspended || model.locked) {
-      return;
-    }
-    openReview(trigger);
+    void beginReview(trigger);
   });
 
   closeButton.addEventListener("click", closeReview);
@@ -279,6 +428,6 @@ if (
     overlay.setAttribute("aria-hidden", "true");
     dialog.setAttribute("aria-modal", "false");
   } else if (model.open === true) {
-    openReview(trigger);
+    void beginReview(trigger);
   }
 }

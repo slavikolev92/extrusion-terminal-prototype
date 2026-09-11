@@ -66,7 +66,7 @@ body {
   grid-template-rows: auto 1fr;
   align-content: start;
   align-items: start;
-  gap: 5mm;
+  gap: 4mm;
   padding: 14mm 18mm 10mm;
 }
 
@@ -535,7 +535,7 @@ body {
 
 .print-summary {
   display: grid;
-  grid-template-columns: 63mm 53.5mm 53.5mm;
+  grid-template-columns: 63mm 109mm;
   align-items: start;
   justify-content: space-between;
   gap: 2mm;
@@ -596,12 +596,32 @@ body {
   height: 4.6mm;
   border: 1px solid #222;
   padding: 0.3mm 0.35mm;
-  text-align: center;
+  text-align: right;
   vertical-align: middle;
   white-space: nowrap;
 }
 
 .print-pallet-summary th {
+  font-weight: 700;
+}
+
+.print-pallet-summary thead th {
+  height: 9.2mm;
+  font-size: 6.2pt;
+  line-height: 1.1;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: normal;
+}
+
+.print-pallet-summary tbody td:first-child,
+.print-pallet-summary-total th:first-child {
+  text-align: left;
+}
+
+.print-pallet-summary-total th,
+.print-pallet-summary-total td {
+  background: #e8edf2;
   font-weight: 700;
 }
 
@@ -611,16 +631,18 @@ body {
 }
 
 .print-pallet-summary th:nth-child(1) {
-  width: 28%;
+  width: 10%;
 }
 
 .print-pallet-summary th:nth-child(2) {
-  width: 17%;
+  width: 12%;
 }
 
 .print-pallet-summary th:nth-child(3),
-.print-pallet-summary th:nth-child(4) {
-  width: 27.5%;
+.print-pallet-summary th:nth-child(4),
+.print-pallet-summary th:nth-child(5),
+.print-pallet-summary th:nth-child(6) {
+  width: 19.5%;
 }
 
 .print-pallet-overflow-table {
@@ -631,6 +653,10 @@ body {
 .print-pallet-overflow-table td {
   height: 5mm;
   padding: 0.5mm 1mm;
+}
+
+.print-pallet-overflow-table thead th {
+  height: 9.2mm;
 }
 
 .print-blocked {

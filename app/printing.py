@@ -8,12 +8,20 @@ from .presentation import next_operation_display
 
 from . import db
 from .constants import PRINTABLE_STATUSES
+from .pallet_summary import (
+    PalletSummaryDataError,
+    build_pallet_summary,
+)
 from .recipe_parser import parse_recipe_cell
 from .timekeeping import StoredTimestampError, format_print_datetime, parse_stored_utc
 
 MAX_PRINT_ROLLS = 120
-PALLET_BACK_COLUMN_CAPACITY = 8
-PALLET_OVERFLOW_PAGE_CAPACITY = 48
+PALLET_BACK_TABLE_CAPACITY = 8
+# Retain the public name used by the older roll/pallet verification fixture.
+# The value still means total body-row slots; Task 7 no longer treats it as
+# capacity for each of two visual columns.
+PALLET_BACK_COLUMN_CAPACITY = PALLET_BACK_TABLE_CAPACITY
+PALLET_OVERFLOW_PAGE_CAPACITY = 47
 
 
 @dataclass(frozen=True)
@@ -39,7 +47,11 @@ def build_print_readiness(card_id: int) -> PrintReadiness:
     if messages:
         return PrintReadiness(False, messages, None)
 
-    return PrintReadiness(True, [], assemble_print_data(card))
+    try:
+        print_data = assemble_print_data(card)
+    except PalletSummaryDataError:
+        return PrintReadiness(False, [db.PALLET_SUMMARY_REPAIR_MESSAGE], None)
+    return PrintReadiness(True, [], print_data)
 
 
 def validate_print_readiness(card: dict[str, Any]) -> list[str]:
@@ -96,7 +108,21 @@ def validate_print_readiness(card: dict[str, Any]) -> list[str]:
         messages.append("Печатът поддържа най-много 120 ролки.")
 
     if gross_rolls:
-        messages.extend(validate_print_weight_values(card, gross_rolls))
+        weight_messages = validate_print_weight_values(card, gross_rolls)
+        messages.extend(weight_messages)
+        if not weight_messages:
+            try:
+                pallet_summary = build_pallet_summary(
+                    card.get("roll_entries", ()),
+                    card.get("pallet_weights", {}),
+                )
+            except PalletSummaryDataError:
+                messages.append(db.PALLET_SUMMARY_REPAIR_MESSAGE)
+            else:
+                if pallet_summary["weight_state"] == "partial":
+                    messages.extend(
+                        db.pallet_weight_completion_messages(pallet_summary)
+                    )
 
     if int(card.get("total_production_seconds") or 0) < 0:
         messages.append("Времето за изработка не може да бъде изчислено за печат.")
@@ -136,7 +162,11 @@ def validate_print_weight_values(
 def assemble_print_data(card: dict[str, Any]) -> dict[str, Any]:
     gross_rolls = gross_roll_entries(card)
     recipe_actual_entries = card.get("recipe_actual_entries") or {}
-    pallet_summary = build_pallet_summary(gross_rolls)
+    shared_pallet_summary = build_pallet_summary(
+        card.get("roll_entries", ()),
+        card.get("pallet_weights", {}),
+    )
+    pallet_summary = build_print_pallet_summary(shared_pallet_summary)
 
     front = {
         "order_number": text_value(card.get("order_number")),
@@ -194,8 +224,9 @@ def assemble_print_data(card: dict[str, Any]) -> dict[str, Any]:
         "roll_slots": build_roll_slots(gross_rolls),
         "pallet_summary": pallet_summary,
         "pallet_summary_layout": split_pallet_summary(
-            pallet_summary,
-            back_column_capacity=PALLET_BACK_COLUMN_CAPACITY,
+            pallet_summary["rows"] if pallet_summary is not None else [],
+            pallet_summary["total"] if pallet_summary is not None else None,
+            back_table_capacity=PALLET_BACK_TABLE_CAPACITY,
             overflow_page_capacity=PALLET_OVERFLOW_PAGE_CAPACITY,
         ),
     }
@@ -281,79 +312,69 @@ def gross_roll_entries(card: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def build_pallet_summary(gross_rolls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    buckets: dict[int | None, tuple[int, Decimal, Decimal]] = {}
-    for roll in gross_rolls:
-        gross_weight = decimal_from_value(roll.get("gross_weight"))
-        if gross_weight is None:
-            continue
+def build_print_pallet_summary(
+    shared_summary: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Adapt the shared pallet calculation to the operational-card print model."""
+    if not shared_summary["used_pallet_numbers"]:
+        return None
 
-        net_weight = decimal_from_value(roll.get("net_weight"))
-        if net_weight is None:
-            raise ValueError("Saved gross rolls need a valid net weight for pallet printing.")
+    def print_row(row: dict[str, Any], *, label: str | None = None) -> dict[str, Any]:
+        return {
+            "pallet_label": label if label is not None else row["pallet_label"],
+            "roll_count": row["roll_count"],
+            "gross_without_pallet_display": row["gross_without_pallet_display"],
+            "pallet_weight_display": row["pallet_weight_display"],
+            "gross_with_pallet_display": row["gross_with_pallet_display"],
+            "net_display": row["net_display"],
+        }
 
-        pallet_value = roll.get("pallet_number")
-        pallet_number = int(pallet_value) if pallet_value is not None else None
-        roll_count, gross_total, net_total = buckets.get(
-            pallet_number,
-            (0, Decimal("0"), Decimal("0")),
-        )
-        buckets[pallet_number] = (
-            roll_count + 1,
-            gross_total + gross_weight,
-            net_total + net_weight,
-        )
-
-    numbered_pallets = sorted(
-        pallet_number for pallet_number in buckets if pallet_number is not None
-    )
-    if not numbered_pallets:
-        return []
-
-    summary_rows = [
-        pallet_summary_row(pallet_number, buckets[pallet_number])
-        for pallet_number in numbered_pallets
-    ]
-    if None in buckets:
-        summary_rows.append(pallet_summary_row(None, buckets[None]))
-    return summary_rows
-
-
-def pallet_summary_row(
-    pallet_number: int | None,
-    bucket: tuple[int, Decimal, Decimal],
-) -> dict[str, Any]:
-    roll_count, gross_weight, net_weight = bucket
     return {
-        "pallet_label": str(pallet_number) if pallet_number is not None else "Без палет",
-        "roll_count": roll_count,
-        "gross_display": format_weight(gross_weight),
-        "net_display": format_weight(net_weight),
+        "rows": [print_row(row) for row in shared_summary["rows"]],
+        "total": print_row(shared_summary["total"], label="Общо"),
     }
 
 
 def split_pallet_summary(
     rows: list[dict[str, Any]],
+    total: dict[str, Any] | None,
     *,
-    back_column_capacity: int,
+    back_table_capacity: int,
     overflow_page_capacity: int,
-) -> dict[str, list[Any]]:
-    if back_column_capacity <= 0 or overflow_page_capacity <= 0:
-        raise ValueError("Pallet summary capacities must be positive.")
-
-    if len(rows) <= 2 * back_column_capacity:
+) -> dict[str, Any]:
+    if back_table_capacity < 2 or overflow_page_capacity < 2:
+        raise ValueError("Pallet summary capacities must be at least two.")
+    if not rows:
         return {
-            "middle_rows": rows[:back_column_capacity],
-            "right_rows": rows[back_column_capacity:],
-            "overflow_pages": [],
+            "page2_table": None,
+            "overflow_tables": [],
+        }
+    if total is None:
+        raise ValueError("A non-empty pallet summary requires a total row.")
+    if len(rows) + 1 <= back_table_capacity:
+        return {
+            "page2_table": {"rows": list(rows), "total": total},
+            "overflow_tables": [],
         }
 
+    items = [("row", row) for row in rows] + [("total", total)]
+    pages = [
+        items[index : index + overflow_page_capacity]
+        for index in range(0, len(items), overflow_page_capacity)
+    ]
+    if len(pages) > 1 and pages[-1] == [("total", total)]:
+        pages[-1].insert(0, pages[-2].pop())
     return {
-        "middle_rows": [],
-        "right_rows": [],
-        "overflow_pages": [
-            rows[index : index + overflow_page_capacity]
-            for index in range(0, len(rows), overflow_page_capacity)
+        "page2_table": None,
+        "overflow_tables": [
+            {
+                "rows": [value for kind, value in page if kind == "row"],
+                "total": next(
+                    (value for kind, value in page if kind == "total"),
+                    None,
+                ),
+            }
+            for page in pages
         ],
     }
 

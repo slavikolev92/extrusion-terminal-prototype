@@ -11,8 +11,11 @@ import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import get_type_hints
 
 import pytest
+
+from scripts import audit_terminal_pallet_summary_db as audit_script
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -27,14 +30,45 @@ AUDIT_RESULT_KEYS = {
     "ready",
     "empty",
     "error",
+    "weight_none",
+    "weight_partial",
+    "weight_complete",
+    "mutation_audit",
+    "audited_fields",
+    "expected_saves",
+    "unexpected_mutations",
+    "hash_algorithm",
+    "pre_hashes",
+    "post_hashes",
 }
 SCENARIOS = {
-    "pending_empty",
-    "running_mixed",
-    "paused_all_unassigned",
-    "awaiting_many_pallets",
-    "completed_numbered",
+    "empty",
+    "all_unassigned",
+    "no_weights",
+    "partial_weights",
+    "complete_weights",
+    "mixed_unassigned",
+    "awaiting_partial",
+    "completed_complete",
+    "archived_complete",
+    "many_pallets",
 }
+AUDITED_TABLES = {
+    "cards",
+    "roll_entries",
+    "production_time_segments",
+    "recipe_actual_entries",
+    "recipe_components",
+    "shift_occurrences",
+    "terminal_configuration",
+}
+
+
+def test_audit_result_annotations_allow_nested_hash_objects():
+    assert get_type_hints(audit_script.empty_result)["return"] == dict[str, object]
+    assert get_type_hints(audit_script.audit_database)["return"] == tuple[
+        dict[str, object], bool
+    ]
 
 
 def verifier_environment(**overrides: str) -> dict[str, str]:
@@ -92,9 +126,89 @@ def run_fixture(database_path: Path, output_path: Path) -> subprocess.CompletedP
     )
 
 
-def run_auditor(database_path: Path) -> subprocess.CompletedProcess[str]:
+def authoritative_finish_previews(
+    database_path: Path,
+    fixture_path: Path,
+) -> dict[str, dict[str, object]]:
+    program = """
+import json
+import sys
+from pathlib import Path
+
+from app import db
+
+db.DB_PATH = Path(sys.argv[1]).resolve()
+db.DATA_DIR = db.DB_PATH.parent
+
+from app import main
+
+fixture = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+previews = {}
+for name, scenario in fixture["scenarios"].items():
+    card = (
+        db.fetch_terminal_card_detail(scenario["card_id"])
+        or db.fetch_admin_card_detail(scenario["card_id"])
+    )
+    outcome = db.preview_terminal_finish_review_snapshot(
+        scenario["card_id"],
+        int(card["version"]),
+    )
+    if outcome.snapshot is None:
+        previews[name] = {"mode": None, "can_confirm": False}
+        continue
+    response = main.terminal_finish_review_json_response(
+        outcome.snapshot,
+        review_token="fixture-authority",
+        base_messages=outcome.result.messages,
+    )
+    review = json.loads(response.body)["finish_review"]
+    previews[name] = {
+        "mode": review["mode"],
+        "can_confirm": review["can_confirm"],
+    }
+print(json.dumps(previews))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program, str(database_path), str(fixture_path)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def independent_row_hashes(rows: list[list[object]]) -> dict[str, object]:
+    serialized = [
+        json.dumps(row, ensure_ascii=False, separators=(",", ":"))
+        for row in rows
+    ]
+    return {
+        "row_hashes": [
+            hashlib.sha256(row.encode("utf-8")).hexdigest()
+            for row in serialized
+        ],
+        "table_hash": hashlib.sha256(
+            "\n".join(serialized).encode("utf-8")
+        ).hexdigest(),
+    }
+
+
+def run_auditor(
+    database_path: Path,
+    *,
+    fixture_path: Path | None = None,
+    expected_saves: tuple[str, ...] = (),
+) -> subprocess.CompletedProcess[str]:
+    command = [sys.executable, str(AUDITOR_SCRIPT), "--db-path", str(database_path)]
+    if fixture_path is not None:
+        command.extend(["--fixture-json", str(fixture_path)])
+    for expected in expected_saves:
+        command.extend(["--expect-save", expected])
     return subprocess.run(
-        [sys.executable, str(AUDITOR_SCRIPT), "--db-path", str(database_path)],
+        command,
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -138,6 +252,14 @@ def create_id_incompatible_audit_database(database_path: Path) -> None:
                 tare_weight NUMERIC,
                 net_weight NUMERIC,
                 pallet_number INTEGER
+            );
+            CREATE TABLE card_pallet_weights (
+                card_id TEXT NOT NULL,
+                pallet_number INTEGER NOT NULL,
+                weight_hundredths INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (card_id, pallet_number)
             );
             INSERT INTO cards (id, status) VALUES ('CARD-ID-SENTINEL', 'running');
             INSERT INTO roll_entries (
@@ -221,10 +343,20 @@ def test_audit_reports_only_redacted_counts_and_never_mutates_backup(tmp_path: P
         "database": ".test-runtime/" + runtime_dir.name + "/copied-safe-backup.sqlite3",
         "integrity": "ok",
         "foreign_key_violations": 0,
-        "visible_cards": 5,
-        "ready": 4,
+        "visible_cards": 9,
+        "ready": 8,
         "empty": 1,
         "error": 0,
+        "weight_none": 3,
+        "weight_partial": 3,
+        "weight_complete": 3,
+        "mutation_audit": "not_requested",
+        "audited_fields": 0,
+        "expected_saves": 0,
+        "unexpected_mutations": 0,
+        "hash_algorithm": "sha256",
+        "pre_hashes": {},
+        "post_hashes": {},
     }
     assert after_hash == before_hash
     assert after_mtime_ns == before_mtime_ns
@@ -275,6 +407,126 @@ def test_audit_malformed_roll_data_fails_without_disclosing_saved_values(tmp_pat
     for secret in secrets.values():
         assert secret not in emitted
     assert "invalid tare_weight" not in emitted
+
+
+def test_audit_accepts_only_expected_weight_and_parent_version_mutation(tmp_path: Path):
+    runtime_dir, database_path = create_audit_fixture(tmp_path)
+    fixture_path = runtime_dir / "fixture.json"
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    card_id = fixture["scenarios"]["no_weights"]["card_id"]
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO card_pallet_weights (card_id, pallet_number, weight_hundredths) "
+            "VALUES (?, 2, 1250)",
+            (card_id,),
+        )
+        connection.execute(
+            "UPDATE cards SET version = version + 1, updated_at = '2026-09-10 07:00:00' "
+            "WHERE id = ?",
+            (card_id,),
+        )
+
+    try:
+        accepted = run_auditor(
+            database_path,
+            fixture_path=fixture_path,
+            expected_saves=(f"{card_id}:2:1250",),
+        )
+        accepted_again = run_auditor(
+            database_path,
+            fixture_path=fixture_path,
+            expected_saves=(f"{card_id}:2:1250",),
+        )
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                "UPDATE roll_entries SET net_weight = net_weight - 1 "
+                "WHERE card_id = ? AND roll_number = 1",
+                (card_id,),
+            )
+        rejected = run_auditor(
+            database_path,
+            fixture_path=fixture_path,
+            expected_saves=(f"{card_id}:2:1250",),
+        )
+    finally:
+        shutil.rmtree(runtime_dir, ignore_errors=True)
+
+    assert accepted.returncode == 0, accepted.stderr
+    accepted_payload = json.loads(accepted.stdout)
+    assert accepted_payload["mutation_audit"] == "passed"
+    assert accepted_payload["expected_saves"] == 1
+    assert accepted_payload["unexpected_mutations"] == 0
+    assert accepted_payload["audited_fields"] > 100
+    assert accepted_payload["hash_algorithm"] == "sha256"
+    expected_hash_tables = AUDITED_TABLES | {"card_pallet_weights"}
+    assert set(accepted_payload["pre_hashes"]) == expected_hash_tables
+    assert set(accepted_payload["post_hashes"]) == expected_hash_tables
+    for phase in ("pre_hashes", "post_hashes"):
+        for hashed_table in accepted_payload[phase].values():
+            assert set(hashed_table) == {"row_hashes", "table_hash"}
+            assert len(hashed_table["table_hash"]) == 64
+            assert all(len(row_hash) == 64 for row_hash in hashed_table["row_hashes"])
+    expected_pre_hashes = {
+        table: {
+            "row_hashes": fixture["audit_baseline"]["tables"][table]["row_hashes"],
+            "table_hash": fixture["audit_baseline"]["tables"][table]["table_hash"],
+        }
+        for table in AUDITED_TABLES
+    }
+    expected_pre_hashes["card_pallet_weights"] = independent_row_hashes(
+        fixture["audit_baseline"]["pallet_weight_rows"]
+    )
+    assert accepted_payload["pre_hashes"] == expected_pre_hashes
+    assert json.loads(accepted_again.stdout)["pre_hashes"] == accepted_payload["pre_hashes"]
+    assert json.loads(accepted_again.stdout)["post_hashes"] == accepted_payload["post_hashes"]
+    unchanged_tables = AUDITED_TABLES - {"cards"}
+    for table in unchanged_tables:
+        assert accepted_payload["post_hashes"][table] == accepted_payload["pre_hashes"][table]
+    assert accepted_payload["post_hashes"]["cards"] != accepted_payload["pre_hashes"]["cards"]
+    assert (
+        accepted_payload["post_hashes"]["card_pallet_weights"]
+        != accepted_payload["pre_hashes"]["card_pallet_weights"]
+    )
+    changed_card_hashes = sum(
+        before != after
+        for before, after in zip(
+            accepted_payload["pre_hashes"]["cards"]["row_hashes"],
+            accepted_payload["post_hashes"]["cards"]["row_hashes"],
+            strict=True,
+        )
+    )
+    assert changed_card_hashes == 1
+
+    rejected_payload = json.loads(rejected.stdout)
+    assert rejected.returncode != 0
+    assert rejected_payload["mutation_audit"] == "failed"
+    assert rejected_payload["unexpected_mutations"] == 1
+    assert rejected_payload["pre_hashes"] == accepted_payload["pre_hashes"]
+    assert (
+        rejected_payload["post_hashes"]["roll_entries"]
+        != rejected_payload["pre_hashes"]["roll_entries"]
+    )
+    assert "PALLET-UI-03" not in rejected.stdout + rejected.stderr
+
+
+def test_audit_fixture_path_uses_same_runtime_symlink_and_hardlink_guards(tmp_path: Path):
+    runtime_dir, database_path = create_audit_fixture(tmp_path)
+    fixture_path = runtime_dir / "fixture.json"
+    outside = tmp_path / "outside-fixture.json"
+    shutil.copy2(fixture_path, outside)
+    hardlink = runtime_dir / "fixture-hardlink.json"
+    os.link(outside, hardlink)
+
+    try:
+        outside_result = run_auditor(database_path, fixture_path=outside)
+        hardlink_result = run_auditor(database_path, fixture_path=hardlink)
+    finally:
+        shutil.rmtree(runtime_dir, ignore_errors=True)
+
+    assert outside_result.returncode != 0
+    assert "must be under .test-runtime" in outside_result.stderr
+    assert hardlink_result.returncode != 0
+    assert "must not be hard-linked" in hardlink_result.stderr
 
 
 def test_audit_integrity_and_foreign_key_failures_short_circuit_summaries(
@@ -617,39 +869,163 @@ def test_fixture_recreates_exact_deterministic_scenarios_and_preserves_runtime_d
 
         assert Path(first_payload["db_path"]).resolve() == database_path.resolve()
         assert set(first_payload["scenarios"]) == SCENARIOS
-        assert [first_payload["scenarios"][name]["order_number"] for name in (
-            "pending_empty",
-            "running_mixed",
-            "paused_all_unassigned",
-            "awaiting_many_pallets",
-            "completed_numbered",
-        )] == [
-            "PALLET-UI-01",
-            "PALLET-UI-02",
-            "PALLET-UI-03",
-            "PALLET-UI-04",
-            "PALLET-UI-05",
+        assert first_payload["scenario_order"] == [
+            "empty",
+            "all_unassigned",
+            "no_weights",
+            "partial_weights",
+            "complete_weights",
+            "mixed_unassigned",
+            "awaiting_partial",
+            "completed_complete",
+            "archived_complete",
+            "many_pallets",
         ]
-        assert first_payload["scenarios"]["running_mixed"]["expected_rows"] == [
-            ["2", "2", "200.1", "198.1"],
-            ["10", "1", "120.0", "119.0"],
-            ["Без палет", "1", "80.0", "79.0"],
+        assert [
+            first_payload["scenarios"][name]["order_number"]
+            for name in first_payload["scenario_order"]
+        ] == [f"PALLET-UI-{index:02d}" for index in range(1, 11)]
+
+        assert first_payload["scenarios"]["empty"] == {
+            "card_id": 1,
+            "machine_id": 1,
+            "order_number": "PALLET-UI-01",
+            "status": "pending",
+            "summary_state": "empty",
+            "weight_state": "none",
+            "expected_rows": [],
+            "expected_total": None,
+            "expected_inputs": {},
+            "editable": {"terminal": True, "admin": False},
+            "finish_eligibility": {
+                "normal": None,
+                "waiting_entry": None,
+                "waiting_final": None,
+            },
+        }
+        assert first_payload["scenarios"]["all_unassigned"]["expected_rows"] == [
+            ["Без палет", "2", "125.5", "-", "-", "123.5"]
         ]
-        assert first_payload["scenarios"]["running_mixed"]["expected_total"] == [
-            "Общо", "4", "400.1", "396.1"
+        assert first_payload["scenarios"]["all_unassigned"]["expected_inputs"] == {}
+        assert first_payload["scenarios"]["no_weights"]["expected_rows"] == [
+            ["2", "2", "200.1", "", "-", "198.1"],
+            ["10", "1", "120.0", "", "-", "119.0"],
         ]
-        assert first_payload["scenarios"]["paused_all_unassigned"]["expected_rows"] == [
-            ["Без палет", "2", "125.5", "123.5"]
+        assert first_payload["scenarios"]["no_weights"]["expected_total"] == [
+            "Общо", "3", "320.1", "-", "-", "317.1"
         ]
-        assert len(
-            first_payload["scenarios"]["awaiting_many_pallets"]["expected_rows"]
-        ) == 24
-        assert first_payload["scenarios"]["completed_numbered"]["expected_rows"] == [
-            ["3", "1", "60.0", "59.0"],
-            ["12", "1", "40.5", "39.5"],
+        assert first_payload["scenarios"]["no_weights"]["expected_inputs"] == {
+            "2": "",
+            "10": "",
+        }
+        assert first_payload["scenarios"]["partial_weights"]["expected_rows"] == [
+            ["2", "1", "60.0", "10.35", "70.35", "59.0"],
+            ["7", "1", "40.5", "", "-", "39.5"],
+        ]
+        assert first_payload["scenarios"]["partial_weights"]["finish_eligibility"]["normal"] is False
+        assert first_payload["scenarios"]["complete_weights"]["expected_total"] == [
+            "Общо", "2", "100.5", "22.50", "123.00", "98.5"
+        ]
+        assert first_payload["scenarios"]["complete_weights"]["finish_eligibility"]["normal"] is True
+        assert first_payload["scenarios"]["mixed_unassigned"]["expected_rows"] == [
+            ["3", "1", "60.0", "10.00", "70.00", "59.0"],
+            ["Без палет", "1", "40.5", "-", "-", "39.5"],
+        ]
+        expected_finish_eligibility = {
+            "empty": {"normal": None, "waiting_entry": None, "waiting_final": None},
+            "all_unassigned": {
+                "normal": None,
+                "waiting_entry": None,
+                "waiting_final": None,
+            },
+            "no_weights": {"normal": True, "waiting_entry": None, "waiting_final": None},
+            "partial_weights": {
+                "normal": False,
+                "waiting_entry": None,
+                "waiting_final": None,
+            },
+            "complete_weights": {
+                "normal": True,
+                "waiting_entry": None,
+                "waiting_final": None,
+            },
+            "mixed_unassigned": {
+                "normal": None,
+                "waiting_entry": True,
+                "waiting_final": None,
+            },
+            "awaiting_partial": {
+                "normal": None,
+                "waiting_entry": None,
+                "waiting_final": False,
+            },
+            "completed_complete": {
+                "normal": None,
+                "waiting_entry": None,
+                "waiting_final": None,
+            },
+            "archived_complete": {
+                "normal": None,
+                "waiting_entry": None,
+                "waiting_final": None,
+            },
+            "many_pallets": {
+                "normal": None,
+                "waiting_entry": None,
+                "waiting_final": True,
+            },
+        }
+        assert {
+            name: first_payload["scenarios"][name]["finish_eligibility"]
+            for name in first_payload["scenario_order"]
+        } == expected_finish_eligibility
+        authoritative = authoritative_finish_previews(database_path, output_path)
+        eligibility_key_by_mode = {
+            "complete": "normal",
+            "enter_rewinding": "waiting_entry",
+            "finalize_rewinding": "waiting_final",
+        }
+        for name in first_payload["scenario_order"]:
+            preview = authoritative[name]
+            if preview["mode"] is None:
+                assert all(
+                    value is None
+                    for value in expected_finish_eligibility[name].values()
+                )
+                continue
+            eligibility_key = eligibility_key_by_mode[preview["mode"]]
+            eligibility = first_payload["scenarios"][name]["finish_eligibility"]
+            assert eligibility[eligibility_key] is preview["can_confirm"]
+            assert all(
+                value is None
+                for key, value in eligibility.items()
+                if key != eligibility_key
+            )
+        assert first_payload["scenarios"]["awaiting_partial"]["finish_eligibility"] == {
+            "normal": None,
+            "waiting_entry": None,
+            "waiting_final": False,
+        }
+        assert first_payload["scenarios"]["completed_complete"]["editable"] == {
+            "terminal": True,
+            "admin": True,
+        }
+        assert first_payload["scenarios"]["archived_complete"]["editable"] == {
+            "terminal": False,
+            "admin": True,
+        }
+        assert len(first_payload["scenarios"]["many_pallets"]["expected_rows"]) == 24
+        assert first_payload["scenarios"]["many_pallets"]["expected_total"] == [
+            "Общо", "24", "540.0", "300.00", "840.00", "516.0"
         ]
         assert first_payload["active_shift"]["shift_number"] == 1
         assert first_payload["active_shift"]["alternate_number"] == 2
+        assert set(first_payload["audit_baseline"]["tables"]) == AUDITED_TABLES
+        for table in AUDITED_TABLES:
+            snapshot = first_payload["audit_baseline"]["tables"][table]
+            assert snapshot["columns"]
+            assert len(snapshot["row_hashes"]) == len(snapshot["rows"])
+            assert len(snapshot["table_hash"]) == 64
 
         with sqlite3.connect(database_path) as connection:
             cards = {
@@ -662,7 +1038,7 @@ def test_fixture_recreates_exact_deterministic_scenarios_and_preserves_runtime_d
             running_rolls = connection.execute(
                 "SELECT pallet_number, gross_weight, tare_weight, net_weight "
                 "FROM roll_entries WHERE card_id = ? ORDER BY roll_number",
-                (first_payload["scenarios"]["running_mixed"]["card_id"],),
+                (first_payload["scenarios"]["no_weights"]["card_id"],),
             ).fetchall()
             counts = {
                 "cards": connection.execute("SELECT COUNT(*) FROM cards").fetchone()[0],
@@ -678,24 +1054,18 @@ def test_fixture_recreates_exact_deterministic_scenarios_and_preserves_runtime_d
                 "SELECT shift_count FROM terminal_configuration WHERE id = 1"
             ).fetchone()[0]
 
-        assert cards == {
-            "PALLET-UI-01": ("pending", 1, None),
-            "PALLET-UI-02": ("running", 1, 2),
-            "PALLET-UI-03": ("paused", 2, None),
-            "PALLET-UI-04": ("awaiting_rewinding", 3, 24),
-            "PALLET-UI-05": ("completed", 4, 12),
-        }
+        assert len(cards) == 10
+        assert cards["PALLET-UI-09"][0] == "archived"
         assert running_rolls == [
             (10, 120, 1, 119),
-            (None, 80, 1, 79),
             (2, 100, 1, 99),
             (2, 100.1, 1, 99.1),
         ]
         assert counts == {
-            "cards": 5,
-            "rolls": 32,
-            "timing_rows": 4,
-            "pallet_assignments": 29,
+            "cards": 10,
+            "rolls": 41,
+            "timing_rows": 9,
+            "pallet_assignments": 38,
         }
         assert shift_count == 2
         assert first_payload["production_snapshot"]["counts"] == counts
@@ -890,7 +1260,7 @@ def test_verifier_rejects_hard_link_fixture_without_touching_outside_sentinel(
     "relative_artifact",
     [
         Path("verification-summary.json"),
-        Path("desktop-1366") / "running-mixed-open.png",
+        Path("desktop-1366") / "no-weights-open.png",
     ],
 )
 def test_verifier_rejects_hard_link_artifact_without_touching_outside_sentinel(
@@ -997,14 +1367,26 @@ def test_verifier_has_complete_guarded_browser_contract_and_valid_node_syntax():
     required_contract_markers = (
         'createRequire(import.meta.url)',
         'require("@playwright/test")',
+        '{ name: "desktop-1440", width: 1440, height: 900 }',
         '{ name: "desktop-1366", width: 1366, height: 768 }',
-        '{ name: "desktop-1920", width: 1920, height: 1080 }',
-        '"Пренавиване"',
+        '{ name: "short-1093", width: 1093, height: 614 }',
+        '"empty"',
+        '"all_unassigned"',
+        '"no_weights"',
+        '"partial_weights"',
+        '"complete_weights"',
+        '"mixed_unassigned"',
+        '"awaiting_partial"',
+        '"completed_complete"',
+        '"archived_complete"',
+        '"many_pallets"',
         '"Палети"',
         '"Обобщение по палети"',
-        '"Палет"',
+        '"Палет №"',
         '"Брой ролки"',
-        '"Бруто, кг"',
+        '"Бруто без палет, кг"',
+        '"Тегло палет, кг"',
+        '"Бруто с палет, кг"',
         '"Нето, кг"',
         '"Няма въведени ролки."',
         '"Обобщението по палети не може да бъде показано. Проверете данните за ролките."',
@@ -1018,10 +1400,30 @@ def test_verifier_has_complete_guarded_browser_contract_and_valid_node_syntax():
         'fetch_active_shift()',
         'update_active_shift_number(',
         'scrollHeight > clientHeight',
-        'running-mixed-open.png',
-        'pending-empty-open.png',
-        'awaiting-many-scrolled.png',
+        'no-weights-open.png',
+        'empty-open.png',
+        'many-pallets-scrolled.png',
+        'autosave-complete.png',
+        'admin-archived.png',
+        'finish-blocked.png',
+        'finish-review.png',
+        'fatal-recovery.png',
+        'admin-modal.png',
+        'audit_terminal_pallet_summary_db.py',
+        '"--expect-save"',
+        'state.postSequence.push',
+        'resetFixtureDatabase();',
+        'assertNoHorizontalOverflow',
         'verification-summary.json',
+        'queueIdleReconciliations',
+        'pendingFailedRequestExpectations',
+        'pendingResponseErrorExpectations',
+        'pendingDialogExpectations',
+        'queue membership change at idle',
+        'dirty dismissal network failure',
+        'finish and timing overlays exclude the pallet summary',
+        'payload.pre_hashes',
+        'payload.post_hashes',
     )
     for marker in required_contract_markers:
         assert marker in source
@@ -1029,6 +1431,8 @@ def test_verifier_has_complete_guarded_browser_contract_and_valid_node_syntax():
     assert "npm install" not in source
     assert "npx" not in source
     assert "window.setInterval" not in source
+    assert "expectedDialogResponse" not in source
+    assert "expectedFailedRequests: 0" not in source
     assert source.index('`${baseURL}/health`') < source.index('require("@playwright/test")')
 
 
@@ -1041,3 +1445,12 @@ def test_verifier_modal_network_contract_requires_base_url_origin_and_summary_ev
     assert 'request.method, "GET"' in source
     assert "allowedOrigin: baseOrigin" in source
     assert "observedOrigins" in source
+
+
+def test_verifier_distinguishes_deliberate_console_failures_from_unexpected_errors():
+    source = VERIFIER_SCRIPT.read_text(encoding="utf-8")
+
+    assert "expectedConsoleErrors: []" in source
+    assert "pendingConsoleErrors" in source
+    assert "expected console error was not observed" in source
+    assert "unexpected browser console message" in source

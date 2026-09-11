@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="bg">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Обобщение по палети — прототип</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page-bg: #e8edf2;
+      --surface: #ffffff;
+      --surface-soft: #f7f9fb;
+      --line: #c9d6e1;
+      --line-soft: #dce5ec;
+      --text: #1d2732;
+      --muted: #52697b;
+      --blue: #0b6bcb;
+      --blue-dark: #07549f;
+      --blue-soft: #e5f1fb;
+      --blue-total: #dcecf8;
+      --warning-bg: #fff7d6;
+      --warning-line: #e0b953;
+      --warning-text: #694800;
+      --error-bg: #fff0f0;
+      --error-line: #dc6b6b;
+      --error-text: #8a2026;
+      --success-bg: #ecf8ef;
+      --success-line: #75b386;
+      --success-text: #245e34;
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      min-height: 100%;
+      margin: 0;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      padding: 28px;
+      overflow: hidden;
+      background: var(--page-bg);
+      color: var(--text);
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(37, 49, 61, 0.22);
+      backdrop-filter: blur(2px);
+    }
+
+    .dialog {
+      position: relative;
+      z-index: 1;
+      width: min(1100px, calc(100vw - 56px));
+      max-height: min(720px, calc(100vh - 56px));
+      display: grid;
+      grid-template-rows: 54px minmax(0, 1fr) auto;
+      overflow: hidden;
+      border: 1px solid #d7e0e8;
+      border-radius: 15px;
+      background: var(--surface);
+      box-shadow: 0 26px 70px rgba(26, 39, 52, 0.26);
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 8px 16px 0;
+    }
+
+    .close-icon {
+      width: 40px;
+      height: 40px;
+      display: inline-grid;
+      place-items: center;
+      padding: 0;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+    }
+
+    .close-icon:hover {
+      background: #f2f6f9;
+    }
+
+    .close-icon:focus-visible,
+    .button:focus-visible,
+    .weight-input:focus-visible {
+      outline: 3px solid rgba(11, 107, 203, 0.24);
+      outline-offset: 2px;
+    }
+
+    .table-frame:has(.table-shell:focus-visible) {
+      outline: 3px solid rgba(11, 107, 203, 0.24);
+      outline-offset: 2px;
+    }
+
+    .close-icon img {
+      width: 24px;
+      height: 24px;
+    }
+
+    .content {
+      min-height: 0;
+      padding: 0 24px 24px;
+    }
+
+    .summary-card {
+      height: 100%;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--surface);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-height: 48px;
+      margin-bottom: 16px;
+    }
+
+    .icon-tile {
+      width: 44px;
+      height: 44px;
+      flex: 0 0 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      background: var(--blue-soft);
+    }
+
+    .icon-tile img {
+      width: 24px;
+      height: 24px;
+    }
+
+    .heading-copy {
+      min-width: 0;
+    }
+
+    .title {
+      margin: 0;
+      color: #172330;
+      font-size: 23px;
+      line-height: 1.18;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+    }
+
+    .context {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.3;
+      font-weight: 650;
+    }
+
+    .table-frame {
+      min-height: 0;
+      flex: 1 1 auto;
+      padding-right: 5px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #edf2f6;
+    }
+
+    .table-shell {
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      overflow-y: scroll;
+      overflow-x: hidden;
+      border: 0;
+      background: var(--surface);
+      scrollbar-gutter: stable;
+      scrollbar-color: #8799a9 #edf2f6;
+    }
+
+    .table-shell::-webkit-scrollbar {
+      width: 14px;
+    }
+
+    .table-shell::-webkit-scrollbar-track {
+      border-left: 1px solid var(--line-soft);
+      background: #edf2f6;
+    }
+
+    .table-shell::-webkit-scrollbar-thumb {
+      min-height: 54px;
+      border: 3px solid #edf2f6;
+      border-radius: 8px;
+      background: #8799a9;
+    }
+
+    table {
+      width: 100%;
+      table-layout: fixed;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 16px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    col.pallet { width: 10%; }
+    col.rolls,
+    col.gross-without,
+    col.pallet-weight,
+    col.gross-with,
+    col.net { width: 18%; }
+
+    th,
+    td {
+      height: 48px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line-soft);
+      text-align: center;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    th:not(:last-child),
+    td:not(:last-child) {
+      border-right: 1px solid var(--line-soft);
+    }
+
+    thead {
+      position: sticky;
+      z-index: 3;
+      top: 0;
+    }
+
+    thead th {
+      height: 54px;
+      padding: 7px 6px;
+      background: #edf4f9;
+      color: #334b5e;
+      font-size: 14px;
+      line-height: 1.2;
+      font-weight: 800;
+      white-space: normal;
+      box-shadow: 0 1px 0 var(--line);
+    }
+
+    thead th span {
+      display: block;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #f6f9fb;
+    }
+
+    tbody tr:nth-child(odd) {
+      background: var(--surface);
+    }
+
+    tbody th {
+      font-weight: 800;
+    }
+
+    tfoot {
+      position: sticky;
+      z-index: 3;
+      bottom: 0;
+    }
+
+    tfoot th,
+    tfoot td {
+      height: 52px;
+      border-top: 1px solid #aac0d1;
+      border-bottom: 0;
+      background: var(--blue-total);
+      color: #142b3f;
+      font-weight: 850;
+      box-shadow: 0 -1px 0 rgba(169, 190, 208, 0.3);
+    }
+
+    .weight-input-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .weight-input {
+      width: min(94px, 100%);
+      height: 36px;
+      padding: 5px 8px;
+      border: 1px solid #9fb1c2;
+      border-radius: 7px;
+      background: #fff;
+      color: var(--text);
+      text-align: center;
+      font-weight: 750;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .weight-input[aria-invalid="true"] {
+      border-color: #c83f47;
+      background: #fff7f7;
+      box-shadow: 0 0 0 2px rgba(200, 63, 71, 0.12);
+    }
+
+    .footer {
+      min-height: 78px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 15px 24px 18px;
+      border-top: 1px solid #d8e1e8;
+      background: #fbfcfd;
+    }
+
+    .status {
+      min-height: 42px;
+      flex: 1 1 auto;
+      display: flex;
+      align-items: center;
+      margin: 0;
+      padding: 9px 12px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.35;
+      font-weight: 700;
+    }
+
+    .status:empty {
+      visibility: hidden;
+    }
+
+    .status[data-kind="warning"] {
+      border-color: var(--warning-line);
+      background: var(--warning-bg);
+      color: var(--warning-text);
+    }
+
+    .status[data-kind="error"] {
+      border-color: var(--error-line);
+      background: var(--error-bg);
+      color: var(--error-text);
+    }
+
+    .status[data-kind="success"] {
+      border-color: var(--success-line);
+      background: var(--success-bg);
+      color: var(--success-text);
+    }
+
+    .actions {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+
+    .button {
+      min-width: 118px;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 18px;
+      border: 1px solid #aebfd0;
+      border-radius: 8px;
+      background: #fff;
+      color: #17334e;
+      font-size: 15px;
+      line-height: 1;
+      font-weight: 800;
+    }
+
+    .button:hover {
+      background: #f4f8fb;
+    }
+
+    @media (max-height: 820px) {
+      body {
+        padding: 18px;
+      }
+
+      .dialog {
+        width: min(1100px, calc(100vw - 36px));
+        max-height: min(720px, calc(100vh - 36px));
+        grid-template-rows: 46px minmax(0, 1fr) auto;
+      }
+
+      .topbar {
+        padding-top: 4px;
+      }
+
+      .content {
+        padding: 0 20px 18px;
+      }
+
+      .summary-card {
+        padding: 14px;
+      }
+
+      .card-header {
+        min-height: 42px;
+        margin-bottom: 12px;
+      }
+
+      .icon-tile {
+        width: 40px;
+        height: 40px;
+        flex-basis: 40px;
+      }
+
+      .title {
+        font-size: 21px;
+      }
+
+      th,
+      td {
+        height: 44px;
+      }
+
+      thead th {
+        height: 48px;
+        font-size: 13px;
+      }
+
+      tfoot th,
+      tfoot td {
+        height: 46px;
+      }
+
+      .footer {
+        min-height: 68px;
+        padding: 11px 20px 13px;
+      }
+    }
+
+    @media (max-width: 900px) {
+      body {
+        padding: 12px;
+      }
+
+      .dialog {
+        width: calc(100vw - 24px);
+        max-height: calc(100vh - 24px);
+      }
+
+      .content {
+        padding-right: 14px;
+        padding-left: 14px;
+      }
+
+      th,
+      td {
+        padding-right: 6px;
+        padding-left: 6px;
+        font-size: 14px;
+      }
+
+      thead th {
+        font-size: 12px;
+      }
+
+      .footer {
+        padding-right: 14px;
+        padding-left: 14px;
+      }
+
+    }
+  </style>
+</head>
+<body>
+  <div class="backdrop" aria-hidden="true"></div>
+
+  <section class="dialog" role="dialog" aria-modal="true"
+           aria-labelledby="dialog-title" aria-describedby="dialog-context"
+           tabindex="-1">
+    <div class="topbar">
+      <button class="close-icon" type="button" aria-label="Затвори обобщението" data-close>
+        <img src="../app/static/images/terminal-ui/finish-review-close.svg" alt="" aria-hidden="true">
+      </button>
+    </div>
+
+    <main class="content">
+      <section class="summary-card">
+        <header class="card-header">
+          <span class="icon-tile" aria-hidden="true">
+            <img src="../app/static/images/terminal-ui/finish-review-clipboard-list.svg" alt="">
+          </span>
+          <div class="heading-copy">
+            <h1 class="title" id="dialog-title">Обобщение по палети</h1>
+            <p class="context" id="dialog-context">Пирин Пелет (№ 25000)</p>
+          </div>
+        </header>
+
+        <div class="table-frame">
+          <div class="table-shell" tabindex="0" aria-label="Палети; таблицата се превърта вертикално">
+            <table>
+              <colgroup>
+                <col class="pallet">
+                <col class="rolls">
+                <col class="gross-without">
+                <col class="pallet-weight">
+                <col class="gross-with">
+                <col class="net">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col"><span>Палет №</span></th>
+                  <th scope="col"><span>Брой ролки</span></th>
+                  <th scope="col"><span>Бруто без палет, кг</span></th>
+                  <th scope="col"><span>Тегло палет, кг</span></th>
+                  <th scope="col"><span>Бруто с палет, кг</span></th>
+                  <th scope="col"><span>Нето, кг</span></th>
+                </tr>
+              </thead>
+              <tbody data-rows></tbody>
+              <tfoot>
+                <tr>
+                  <th scope="row">Общо</th>
+                  <td data-total-rolls></td>
+                  <td data-total-gross-without></td>
+                  <td data-total-pallet-weight></td>
+                  <td data-total-gross-with></td>
+                  <td data-total-net></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p class="status" role="status" aria-live="polite" data-status></p>
+
+      <div class="actions">
+        <button class="button" type="button" data-close>Затвори</button>
+      </div>
+    </footer>
+  </section>
+
+  <script>
+    (() => {
+      const rowsHost = document.querySelector("[data-rows]");
+      const status = document.querySelector("[data-status]");
+
+      const pallets = [
+        { number: 1, rolls: 3, grossHundredths: 11840, netHundredths: 11480, weightTenths: 185 },
+        { number: 2, rolls: 3, grossHundredths: 11680, netHundredths: 11320, weightTenths: 190 },
+        { number: 3, rolls: 4, grossHundredths: 15220, netHundredths: 14740, weightTenths: 182 },
+        { number: 4, rolls: 3, grossHundredths: 11760, netHundredths: 11400, weightTenths: 200 },
+        { number: 5, rolls: 3, grossHundredths: 11910, netHundredths: 11550, weightTenths: 175 },
+        { number: 6, rolls: 4, grossHundredths: 15340, netHundredths: 14860, weightTenths: 195 },
+        { number: 7, rolls: 3, grossHundredths: 11620, netHundredths: 11260, weightTenths: 180 },
+        { number: 8, rolls: 4, grossHundredths: 15100, netHundredths: 14620, weightTenths: 205 },
+        { number: 9, rolls: 3, grossHundredths: 11890, netHundredths: 11530, weightTenths: 178 },
+        { number: 10, rolls: 3, grossHundredths: 12050, netHundredths: 11690, weightTenths: 192 },
+      ];
+
+      let savedWeights = new Map();
+
+      const oneDecimalFromHundredths = (hundredths) => {
+        const tenths = Math.floor((hundredths + 5) / 10);
+        return `${Math.floor(tenths / 10)}.${tenths % 10}`;
+      };
+
+      const oneDecimalFromTenths = (tenths) =>
+        `${Math.floor(tenths / 10)}.${tenths % 10}`;
+
+      const parseWeight = (raw) => {
+        const trimmed = String(raw ?? "").trim();
+        if (!trimmed) return { kind: "blank" };
+        if (!/^\d+(?:[.,]\d)?$/.test(trimmed)) {
+          return { kind: "invalid", message: "Използвайте число с най-много един десетичен знак." };
+        }
+        const [whole, fraction = "0"] = trimmed.replace(",", ".").split(".");
+        const tenthsBig = BigInt(whole) * 10n + BigInt(fraction);
+        if (tenthsBig < 1n) {
+          return { kind: "invalid", message: "Теглото трябва да бъде поне 0.1 кг." };
+        }
+        if (tenthsBig > 1000n) {
+          return { kind: "invalid", message: "Теглото не може да бъде повече от 100.0 кг." };
+        }
+        return { kind: "valid", tenths: Number(tenthsBig) };
+      };
+
+      const setStatus = (message = "", kind = "") => {
+        status.textContent = message;
+        if (kind) status.dataset.kind = kind;
+        else delete status.dataset.kind;
+      };
+
+      const renderRows = () => {
+        rowsHost.innerHTML = pallets.map((row) => {
+          const weight = savedWeights.get(row.number);
+          const grossWith = weight == null
+            ? "-"
+            : oneDecimalFromHundredths(row.grossHundredths + weight * 10);
+          return `
+            <tr>
+              <th scope="row">${row.number}</th>
+              <td>${row.rolls}</td>
+              <td>${oneDecimalFromHundredths(row.grossHundredths)}</td>
+              <td>
+                <span class="weight-input-wrap">
+                  <input class="weight-input" type="text" inputmode="decimal"
+                         value="${weight == null ? "" : oneDecimalFromTenths(weight)}"
+                         aria-label="Тегло за палет №${row.number}, кг"
+                         data-weight-input="${row.number}">
+                </span>
+              </td>
+              <td data-gross-with="${row.number}">${grossWith}</td>
+              <td>${oneDecimalFromHundredths(row.netHundredths)}</td>
+            </tr>`;
+        }).join("");
+
+        rowsHost.querySelectorAll("[data-weight-input]").forEach((input) => {
+          input.dataset.savedValue = input.value;
+          input.addEventListener("input", () => {
+            input.removeAttribute("aria-invalid");
+            if (status.dataset.kind === "error") setStatus();
+          });
+          input.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            saveInput(input);
+          });
+          input.addEventListener("blur", () => saveInput(input));
+        });
+        updateTotals();
+      };
+
+      const updateTotals = () => {
+        const totalRolls = pallets.reduce((sum, row) => sum + row.rolls, 0);
+        const totalGross = pallets.reduce((sum, row) => sum + row.grossHundredths, 0);
+        const totalNet = pallets.reduce((sum, row) => sum + row.netHundredths, 0);
+        const complete = pallets.every((row) => savedWeights.has(row.number));
+        const weightTenths = complete
+          ? pallets.reduce((sum, row) => sum + savedWeights.get(row.number), 0)
+          : null;
+
+        document.querySelector("[data-total-rolls]").textContent = totalRolls;
+        document.querySelector("[data-total-gross-without]").textContent = oneDecimalFromHundredths(totalGross);
+        document.querySelector("[data-total-net]").textContent = oneDecimalFromHundredths(totalNet);
+        document.querySelector("[data-total-pallet-weight]").textContent = complete
+          ? oneDecimalFromTenths(weightTenths)
+          : "-";
+        document.querySelector("[data-total-gross-with]").textContent = complete
+          ? oneDecimalFromHundredths(totalGross + weightTenths * 10)
+          : "-";
+      };
+
+      const updateRowFromSaved = (palletNumber) => {
+        const row = pallets.find((candidate) => candidate.number === palletNumber);
+        const weight = savedWeights.get(palletNumber);
+        document.querySelector(`[data-gross-with="${palletNumber}"]`).textContent = weight == null
+          ? "-"
+          : oneDecimalFromHundredths(row.grossHundredths + weight * 10);
+        updateTotals();
+      };
+
+      const saveInput = (input) => {
+        const palletNumber = Number(input.dataset.weightInput);
+        const parsed = parseWeight(input.value);
+
+        if (parsed.kind === "invalid") {
+          input.setAttribute("aria-invalid", "true");
+          setStatus(`Проверете теглото за палет №${palletNumber}. ${parsed.message}`, "error");
+          return false;
+        }
+
+        input.removeAttribute("aria-invalid");
+        const normalized = parsed.kind === "valid" ? oneDecimalFromTenths(parsed.tenths) : "";
+        const changed = normalized !== input.dataset.savedValue;
+        input.value = normalized;
+
+        if (!changed) return true;
+
+        if (parsed.kind === "blank") {
+          savedWeights.delete(palletNumber);
+          setStatus(`Теглото за палет №${palletNumber} е изчистено.`, "success");
+        } else {
+          savedWeights.set(palletNumber, parsed.tenths);
+          setStatus(`Теглото за палет №${palletNumber} е записано.`, "success");
+        }
+
+        input.dataset.savedValue = normalized;
+        updateRowFromSaved(palletNumber);
+        return true;
+      };
+
+      document.querySelectorAll("[data-close]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const invalidInput = Array.from(rowsHost.querySelectorAll("[data-weight-input]"))
+            .find((input) => parseWeight(input.value).kind === "invalid");
+          if (invalidInput) {
+            saveInput(invalidInput);
+            invalidInput.focus();
+            return;
+          }
+          setStatus("Прототип: прозорецът би се затворил. Въведените стойности вече са записани.", "success");
+        });
+      });
+
+      renderRows();
+    })();
+  </script>
+</body>
+</html>
