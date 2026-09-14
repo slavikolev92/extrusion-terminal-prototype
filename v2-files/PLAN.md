@@ -61,13 +61,12 @@ complete. Persist the completed status and any remaining work here.
 - The previously discussed fixed-height pallet rows on the bottom print
   summary are implemented and verified in the current source release. They are
   no longer an open task.
-- Task 25's first shared-pipeline/database-backup source slice was implemented
-  and verified on the dedicated `task-25-production-artifact-delivery` branch
-  on September 14. The outbox, create-only WebDAV worker, Discord notifier,
-  backup producer, tracked units, installer, and deploy lock now exist in
-  source. Nothing has been merged, installed, enabled, externally accepted, or
-  deployed. Task 24's shift-report logic is a future producer; Task 18 remains
-  completely independent.
+- Task 25's first shared-pipeline/database-backup source slice was implemented,
+  verified, and merged into the current source on September 14. The outbox,
+  create-only WebDAV worker, Discord notifier, backup producer, tracked units,
+  installer, and deploy lock now exist in source. Nothing has been installed,
+  enabled, externally accepted, or deployed. Task 24's shift-report logic is a
+  future producer; Task 18 remains completely independent.
 - Task 13 is closed and archived. Its narrow ten-minute cloud-backup need is
   owned by Task 25; the broader USB, standby, UPS, failover, and disaster-
   recovery discussion was not absorbed as active scope.
@@ -466,9 +465,9 @@ deferred status. It is grouped by affected surface and rough complexity.
      Discord webhook notifications.
    - Complexity: medium; no application UI or production SQLite migration is
      expected for the first slice.
-   - Status: first shared-pipeline/database-backup source slice implemented and
-     verified on its dedicated branch on September 14, 2026. Merge,
-     external-service acceptance, production installation, timer enablement,
+   - Status: first shared-pipeline/database-backup source slice implemented,
+     verified, and merged into the current source on September 14, 2026.
+     External-service acceptance, production installation, timer enablement,
      and deployment have not occurred.
    - Goal: implement one fixed-category append-only delivery outbox once, then
      let automatic database backups and later PDF producers reuse its routing,
@@ -650,10 +649,10 @@ deferred status. It is grouped by affected surface and rough complexity.
    production procedure. Source publication is not deployment.
 2. Physical pallet-weight entry is source-complete and accepted. Its production
    deployment remains a separate explicitly authorized maintenance operation.
-3. Task 25's first source slice is implemented and verified on its dedicated
-   branch. Review and accept that branch next. Merging/deploying the app source
-   and later installing/enabling its timers remain separate explicit decisions;
-   source completion does not authorize either production operation.
+3. Task 25's first source slice is implemented, verified, and merged into the
+   current source. Publishing/deploying that source and later
+   installing/enabling its timers remain separate explicit decisions; source
+   completion does not authorize either production operation.
 4. Task 20 remains the next application-feature workstream after the current
    explicitly selected operational work. Its initial,
    forward-looking executed-recipe and material-catalogue workstream. Begin by

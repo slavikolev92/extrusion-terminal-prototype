@@ -101,12 +101,12 @@ are recorded in `v2-files/archive/TASK-21-ORDER-FINISH-REVIEW.md` and
 
 ## Completed Source Slice — Task 25 (Not Yet Deployed)
 
-Task 25's first source slice is implemented and verified on the dedicated
-`task-25-production-artifact-delivery` branch. It supplies the shared outbox,
-create-only Hetzner worker, Discord failure/recovery notifier, SQLite-safe
-backup producer, tracked timers, transactional disabled-by-default installer,
-and protected maintenance/operation locks. It has not been merged, installed,
-enabled, externally accepted, or deployed in production.
+Task 25's first source slice is implemented, verified, and merged into the
+current source. It supplies the shared outbox, create-only Hetzner worker,
+Discord failure/recovery notifier, SQLite-safe backup producer, tracked timers,
+transactional disabled-by-default installer, and protected
+maintenance/operation locks. It has not been installed, enabled, externally
+accepted, or deployed in production.
 
 When separately installed, the first slice runs the existing SQLite-safe backup
 behavior every ten minutes, retains the newest 144 local backups, queues
@@ -1107,7 +1107,7 @@ Create a SQLite-safe backup:
 .\.test-runtime\codex-venv\Scripts\python.exe -m app.backups backup
 ```
 
-The backup command uses SQLite's backup API, creates the backup directory if needed, and requires both a successful SQLite integrity check and an empty foreign-key check before retaining the new image or pruning older backups. It keeps the newest `144` matching backup files by default. Restore applies the same checks to a temporary image before replacing the target database. Task 25 now supplies the source-controlled recurring producer and append-only Hetzner delivery, but neither runs until the branch is accepted, merged, deployed, and separately installed in production. To change retention for a run:
+The backup command uses SQLite's backup API, creates the backup directory if needed, and requires both a successful SQLite integrity check and an empty foreign-key check before retaining the new image or pruning older backups. It keeps the newest `144` matching backup files by default. Restore applies the same checks to a temporary image before replacing the target database. Task 25 now supplies the source-controlled recurring producer and append-only Hetzner delivery, but neither runs until the current source is deployed and the units are separately installed, accepted, and enabled in production. To change retention for a run:
 
 ```powershell
 .\.test-runtime\codex-venv\Scripts\python.exe -m app.backups backup --keep 288

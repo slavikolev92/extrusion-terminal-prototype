@@ -1,8 +1,8 @@
 # Production Artifact Delivery — Implementation Note
 
-Status: implemented and source-verified on branch
-`task-25-production-artifact-delivery` on 2026-09-14. Not installed, enabled,
-merged, externally accepted, or deployed in production.
+Status: implemented, source-verified, and merged into the current source on
+2026-09-14. Not installed, enabled, externally accepted, or deployed in
+production.
 
 ## Implemented Boundary
 
@@ -164,9 +164,9 @@ record for this branch state.
 Migration: **No migration.** This slice changes no production SQLite schema,
 stored-data meaning, or application UI.
 
-Deployment: **Not deployed.** Source review, commit/merge, app deployment,
-protected Discord configuration, root-staged installer execution, disposable
-real-service acceptance, timer enablement, and the first observed production
-cycle are distinct approval gates. The operational authority is
-`docs/production-artifact-delivery.md`; this note authorizes none of those
-actions.
+Deployment: **Not deployed.** Source review and merge are complete. Source
+publication, app deployment, protected Discord configuration, root-staged
+installer execution, disposable real-service acceptance, timer enablement, and
+the first observed production cycle remain distinct approval gates. The
+operational authority is `docs/production-artifact-delivery.md`; this note
+authorizes none of those actions.

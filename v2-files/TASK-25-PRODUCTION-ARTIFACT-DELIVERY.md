@@ -1,11 +1,10 @@
 # Task 25: Production Artifact Delivery And Cloud Backup
 
-Status: the first source slice was implemented and verified on the dedicated
-`task-25-production-artifact-delivery` branch on September 14, 2026. It covers
-only the shared delivery pipeline, Discord pipeline alerts, automatic database
-backups, tracked one-shot units, transactional disabled-by-default installer,
-and deployment/restore locks. It has not been merged, installed, enabled,
-externally accepted, or deployed.
+Status: the first source slice was implemented, verified, and merged into the
+current source on September 14, 2026. It covers only the shared delivery
+pipeline, Discord pipeline alerts, automatic database backups, tracked one-shot
+units, transactional disabled-by-default installer, and deployment/restore
+locks. It has not been installed, enabled, externally accepted, or deployed.
 
 Authoritative design:
 `docs/superpowers/specs/2026-09-14-production-artifact-delivery-design.md`

@@ -26,11 +26,10 @@ paths, Discord incoming webhook.
 **Spec:**
 `docs/superpowers/specs/2026-09-14-production-artifact-delivery-design.md`
 
-**Plan status:** Initial source implementation and verification completed on
-the dedicated branch on 2026-09-14. The approved post-review hardening tasks
-below are now in progress. This plan does not authorize production
-installation, external test uploads, Discord webhook creation, timer
-enablement, or deployment.
+**Plan status:** Source implementation, adversarial hardening, verification,
+review, and merge into the current source completed on 2026-09-14. This plan
+does not authorize source publication, production installation, external test
+uploads, Discord webhook creation, timer enablement, or deployment.
 
 ## Branch Boundary
 

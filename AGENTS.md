@@ -33,8 +33,8 @@ Confirmed scope:
 - HTML/CSS print output for completed and archived cards, matching the existing
   Excel front/back operational card as closely as possible.
 - SQLite-safe backups and documented recovery before pilot use.
-- Task 25's first production-artifact-delivery source slice is implemented and
-  verified on its dedicated branch but is not merged, installed, enabled,
+- Task 25's first production-artifact-delivery source slice is implemented,
+  verified, and merged into the current source, but is not installed, enabled,
   externally accepted, or deployed. It provides one fixed-category filesystem
   outbox, create-only Hetzner WebDAV delivery, Discord pipeline
   failure/recovery notification, and automatic ten-minute SQLite-safe backups

@@ -496,9 +496,9 @@ Notes:
 
 ## Phase 7 - Configure Backups
 
-Status: Task 25 source implementation and adversarial hardening are in progress
-on its dedicated branch on 2026-09-14; not installed, enabled, externally
-accepted, or deployed.
+Status: Task 25 source implementation and adversarial hardening are complete
+and merged into the current source as of 2026-09-14; not installed, enabled,
+externally accepted, or deployed.
 
 The former local-only timer sketch remains superseded. Task 25 now supplies the
 source-controlled shared outbox, create-only Hetzner delivery, Discord pipeline
