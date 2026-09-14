@@ -9,6 +9,7 @@ source-files/*
 data/
 backups/
 extracts/
+artifact-delivery/
 .deploy/
 
 # Python/runtime noise.

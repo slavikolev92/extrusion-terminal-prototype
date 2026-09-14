@@ -1,8 +1,19 @@
 # Task 13: Production Backup And Recovery Resilience
 
-Status: discussion paused on July 26, 2026. This document preserves the
-decisions, recommended direction, failure scenarios, and open questions so the
-backup design can resume later without repeating the full conversation.
+Status: closed as a standalone task and archived on September 14, 2026. The
+narrow approved work for recurring SQLite-safe backups, append-only Hetzner
+delivery, retry, and pipeline alerts is superseded by Task 25. This file
+preserves the earlier, materially broader resilience discussion as historical
+context only.
+
+The USB target, warm standby, automatic or semi-automatic failover, UPS work,
+emergency-server preparation, broad recovery-time target, and scenario-specific
+disaster runbooks below were not absorbed into Task 25. They are not active
+requirements or prerequisites for the approved cloud-backup slice. Any of them
+requires a separately reopened and approved task.
+
+All remaining present-tense or imperative language below belongs to that
+archived proposal. It is not current execution guidance.
 
 ## Purpose
 
@@ -30,7 +41,7 @@ The app already has a repo-local SQLite-safe backup primitive:
   missing backup refusal, failed restore safety, and avoiding mutation of the
   runtime database.
 
-The remaining work is operational hardening:
+The earlier discussion identified these broader operational-hardening ideas:
 
 - unattended scheduling;
 - backup validation immediately after creation;
@@ -42,7 +53,7 @@ The remaining work is operational hardening:
 - restore drills;
 - scenario-specific recovery procedures.
 
-## Decisions Reached
+## Historical Decisions Reached
 
 ### Backup Frequency
 
@@ -61,9 +72,10 @@ Use multiple places:
    unavailable.
 4. **Optional standby server over Tailscale** if later approved.
 
-The cloud provider is not yet chosen. It may be Dropbox, Google Drive, OneDrive,
-or similar. The design should treat cloud storage as a replaceable sync target
-instead of baking one vendor into the application.
+At the time of this archived discussion, the cloud provider had not yet been
+chosen. Task 25 later selected the Hetzner Storage Share for its narrower cloud-
+backup slice; that decision does not reactivate the other destinations proposed
+here.
 
 ### Recovery Speed
 
@@ -108,7 +120,7 @@ Fully automatic failover is not currently approved because it adds split-brain
 risk: two servers could accept production writes at the same time. The preferred
 future direction is manager-approved failover with clear checks.
 
-## Recommended Architecture
+## Historical Recommended Architecture
 
 ### Normal Production Path
 
@@ -146,9 +158,9 @@ Each backup should have:
 - retained/pruned status;
 - final health state.
 
-### Scheduling
+### Historical Scheduling Proposal
 
-Use systemd timers on the app VM for the first implementation:
+The archived proposal would have used systemd timers on the app VM:
 
 - app backup service every 10 minutes;
 - copy/sync service after successful local backup;
@@ -171,7 +183,7 @@ The exact retention policy remains open, but the likely pilot policy is:
 Retention must delete only known backup files in known backup directories and
 must not remove unrelated files.
 
-## Failure Scenarios To Cover
+## Historical Failure Scenarios
 
 ### App Process Fails
 
@@ -258,7 +270,7 @@ Expected response:
 4. inspect expected cards/totals;
 5. only then restore production or recover manually from the scratch copy.
 
-## Open Questions
+## Archived Open Questions
 
 - Which cloud provider and sync tool will be used?
 - Will the USB drive be mounted on Proxmox and passed through to the VM, or
@@ -283,9 +295,10 @@ Expected response:
   and Windows?
 - What UPS hardware is available or should be purchased?
 
-## Future Design Work
+## Historical Reopening Checklist
 
-When this task resumes, the next design pass should decide:
+If a separate broader-resilience task is ever reopened and approved, its design
+pass should reconsider:
 
 1. concrete backup destinations and mount paths;
 2. cloud sync tool and account model;
@@ -297,4 +310,5 @@ When this task resumes, the next design pass should decide:
 8. optional Tailscale standby procedure;
 9. exact runbook for every failure scenario above.
 
-No app implementation should begin until those choices are approved.
+These historical choices do not block Task 25. They authorize no implementation
+unless the broader resilience scope is separately reopened and approved.

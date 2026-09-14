@@ -11,6 +11,27 @@ HEALTH_URL="${EXTRUSION_DEPLOY_HEALTH_URL:-http://127.0.0.1:8000/health}"
 DB_PATH="${EXTRUSION_DB_PATH:-/opt/extrusion-terminal/data/extrusion_terminal.sqlite3}"
 BACKUP_DIR="${EXTRUSION_BACKUP_DIR:-/opt/extrusion-terminal/backups}"
 BACKUP_KEEP="${EXTRUSION_BACKUP_KEEP_COUNT:-144}"
+MAINTENANCE_BASE="/opt/extrusion-terminal"
+MAINTENANCE_LOCK="/opt/extrusion-terminal/maintenance.lock"
+OPERATION_LOCK="/opt/extrusion-terminal/artifact-delivery/operation.lock"
+MAINTENANCE_LOCK_WAIT_SECONDS="600"
+OPERATION_LOCK_WAIT_SECONDS="600"
+TASK25_BACKUP_UNIT="/etc/systemd/system/extrusion-terminal-backup.service"
+TASK25_DELIVERY_UNIT="/etc/systemd/system/extrusion-terminal-delivery.service"
+TASK25_BACKUP_TIMER_UNIT="/etc/systemd/system/extrusion-terminal-backup.timer"
+TASK25_DELIVERY_TIMER_UNIT="/etc/systemd/system/extrusion-terminal-delivery.timer"
+TASK25_UNIT_PATHS=(
+    "$TASK25_BACKUP_UNIT"
+    "$TASK25_BACKUP_TIMER_UNIT"
+    "$TASK25_DELIVERY_UNIT"
+    "$TASK25_DELIVERY_TIMER_UNIT"
+)
+TASK25_TIMER_NAMES=(
+    extrusion-terminal-backup.timer
+    extrusion-terminal-delivery.timer
+)
+PREVIOUSLY_ENABLED_TIMERS=()
+TASK25_TIMERS_STOPPED=0
 
 DRY_RUN=0
 SKIP_TESTS=0
@@ -70,6 +91,26 @@ require_command() {
     command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
 }
 
+git_trusted() {
+    /usr/bin/env \
+        -u GIT_DIR \
+        -u GIT_WORK_TREE \
+        -u GIT_INDEX_FILE \
+        -u GIT_OBJECT_DIRECTORY \
+        -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+        -u GIT_COMMON_DIR \
+        -u GIT_NAMESPACE \
+        -u GIT_REPLACE_REF_BASE \
+        -u GIT_CONFIG_GLOBAL \
+        -u GIT_CONFIG_SYSTEM \
+        -u GIT_CONFIG_NOSYSTEM \
+        -u GIT_CONFIG_COUNT \
+        -u GIT_CONFIG_PARAMETERS \
+        GIT_NO_REPLACE_OBJECTS=1 \
+        /usr/bin/git --no-replace-objects \
+        -c safe.directory="$APP_DIR" -C "$APP_DIR" "$@"
+}
+
 systemctl_with_privilege() {
     if [ "$(id -u)" -eq 0 ]; then
         systemctl "$@"
@@ -80,6 +121,118 @@ systemctl_with_privilege() {
 
 systemctl_read() {
     systemctl "$@" --no-pager
+}
+
+validate_protected_directory() {
+    local path="$1"
+    local owner="$2"
+    local group="$3"
+    local mode="$4"
+
+    [ -d "$path" ] && [ ! -L "$path" ] \
+        || die "Protected directory is missing or unsafe: $path"
+    [ "$(stat -c '%U' "$path")" = "$owner" ] \
+        || die "Protected directory has wrong owner: $path"
+    [ "$(stat -c '%G' "$path")" = "$group" ] \
+        || die "Protected directory has wrong group: $path"
+    [ "$(stat -c '%a' "$path")" = "$mode" ] \
+        || die "Protected directory has wrong mode: $path"
+}
+
+validate_coordination_lock() {
+    local path="$1"
+    local label="$2"
+
+    [ -f "$path" ] && [ ! -L "$path" ] \
+        || die "$label lock is missing or unsafe: $path"
+    [ "$(stat -c '%U' "$path")" = "root" ] \
+        || die "$label lock must be owned by root: $path"
+    [ "$(stat -c '%G' "$path")" = "sk" ] \
+        || die "$label lock must have group sk: $path"
+    [ "$(stat -c '%a' "$path")" = "640" ] \
+        || die "$label lock must have mode 640: $path"
+}
+
+inspect_task25_installation() {
+    local installed_count=0
+    local unit_path
+
+    for unit_path in "${TASK25_UNIT_PATHS[@]}"; do
+        if [ -e "$unit_path" ] || [ -L "$unit_path" ]; then
+            [ -f "$unit_path" ] && [ ! -L "$unit_path" ] \
+                || die "Task 25 installed unit is unsafe: $unit_path"
+            [ "$(stat -c '%U' "$unit_path")" = "root" ] \
+                || die "Task 25 installed unit must be owned by root: $unit_path"
+            [ "$(stat -c '%G' "$unit_path")" = "root" ] \
+                || die "Task 25 installed unit must have group root: $unit_path"
+            [ "$(stat -c '%a' "$unit_path")" = "644" ] \
+                || die "Task 25 installed unit must have mode 644: $unit_path"
+            installed_count=$((installed_count + 1))
+        fi
+    done
+
+    if [ "$installed_count" -eq 0 ]; then
+        TASK25_COORDINATION="not-installed"
+    elif [ "$installed_count" -eq "${#TASK25_UNIT_PATHS[@]}" ]; then
+        validate_coordination_lock "$OPERATION_LOCK" "Task 25 operation"
+        TASK25_COORDINATION="installed-lock-ready"
+    else
+        die "Task 25 installation is incomplete ($installed_count/${#TASK25_UNIT_PATHS[@]} units)"
+    fi
+}
+
+task25_timers_are_disabled() {
+    local timer_name
+    local enabled_state
+    local active_state
+
+    for timer_name in "${TASK25_TIMER_NAMES[@]}"; do
+        enabled_state="$(systemctl is-enabled "$timer_name" 2>/dev/null || true)"
+        active_state="$(systemctl is-active "$timer_name" 2>/dev/null || true)"
+        [ "$enabled_state" = "disabled" ] && [ "$active_state" = "inactive" ] \
+            || return 1
+    done
+}
+
+task25_timers_are_enabled() {
+    local timer_name
+    local enabled_state
+    local active_state
+
+    for timer_name in "$@"; do
+        enabled_state="$(systemctl is-enabled "$timer_name" 2>/dev/null || true)"
+        active_state="$(systemctl is-active "$timer_name" 2>/dev/null || true)"
+        [ "$enabled_state" = "enabled" ] && [ "$active_state" = "active" ] \
+            || return 1
+    done
+}
+
+task25_units_match_checkout() {
+    local unit_path
+    local source_path
+
+    for unit_path in "${TASK25_UNIT_PATHS[@]}"; do
+        source_path="$APP_DIR/deployment/systemd/${unit_path##*/}"
+        [ -f "$source_path" ] && [ ! -L "$source_path" ] || return 1
+        cmp --silent "$source_path" "$unit_path" || return 1
+    done
+}
+
+deployment_exit() {
+    local status=$?
+    trap - EXIT
+    if [ "$status" -ne 0 ] && [ "$TASK25_TIMERS_STOPPED" -eq 1 ]; then
+        set +e
+        if systemctl_with_privilege disable --now "${TASK25_TIMER_NAMES[@]}" \
+            >/dev/null 2>&1 && task25_timers_are_disabled; then
+            printf '\nERROR: deployment failed; Task 25 timers remain disabled.\n' >&2
+            printf 'Complete a successful deployment before re-enabling them.\n' >&2
+        else
+            printf '\nERROR: deployment failed and timer disablement could not be confirmed.\n' >&2
+            printf 'Treat both Task 25 schedules as unsafe and intervene immediately.\n' >&2
+        fi
+    fi
+    exit "$status"
 }
 
 json_field() {
@@ -170,6 +323,10 @@ require_command git
 require_command curl
 require_command systemctl
 require_command ss
+require_command stat
+require_command cmp
+require_command systemd-analyze
+[ -x /usr/bin/flock ] || die "Required command not found: /usr/bin/flock"
 
 [ -d "$APP_DIR" ] || die "App directory does not exist: $APP_DIR"
 APP_DIR="$(cd "$APP_DIR" && pwd -P)"
@@ -185,6 +342,11 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/deploy_$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
+TASK25_COORDINATION="not-inspected"
+if [ -e "$TASK25_BACKUP_UNIT" ] || [ -e "$TASK25_DELIVERY_UNIT" ]; then
+    TASK25_COORDINATION="installed-unverified"
+fi
+
 log "configuration"
 cat <<EOF
 app_dir=$APP_DIR
@@ -197,12 +359,15 @@ health_url=$HEALTH_URL
 db_path=$DB_PATH
 backup_dir=$BACKUP_DIR
 backup_keep=$BACKUP_KEEP
+task25_coordination=$TASK25_COORDINATION
+maintenance_lock=$MAINTENANCE_LOCK
+operation_lock=$OPERATION_LOCK
 log_file=$LOG_FILE
 EOF
 
 if [ "$DRY_RUN" -eq 1 ]; then
     log "dry run"
-    git status --short
+    git_trusted status --short
     systemctl_read show "$SERVICE" -p ActiveState -p MainPID -p ExecMainStartTimestamp -p WorkingDirectory -p ExecStart || true
     echo "Dry run complete. No backup, Git update, dependency install, revision write, or restart was performed."
     exit 0
@@ -212,17 +377,27 @@ log "preflight"
 [ -f requirements.txt ] || die "requirements.txt not found in $APP_DIR"
 [ -f app/main.py ] || die "app/main.py not found in $APP_DIR"
 [ -f "$DB_PATH" ] || die "Production database not found: $DB_PATH"
+validate_protected_directory "$MAINTENANCE_BASE" root root 755
+validate_coordination_lock "$MAINTENANCE_LOCK" "Maintenance"
 
-current_branch="$(git branch --show-current)"
+log "acquire exclusive maintenance lock"
+exec {MAINTENANCE_LOCK_FD}<"$MAINTENANCE_LOCK"
+/usr/bin/flock --exclusive --timeout "$MAINTENANCE_LOCK_WAIT_SECONDS" "$MAINTENANCE_LOCK_FD" \
+    || die "Timed out waiting for maintenance lock: $MAINTENANCE_LOCK"
+
+inspect_task25_installation
+echo "task25_coordination_locked=$TASK25_COORDINATION"
+
+current_branch="$(git_trusted branch --show-current)"
 [ "$current_branch" = "$BRANCH" ] || die "Current branch is '$current_branch', expected '$BRANCH'."
 
-dirty_status="$(git status --porcelain=v1 --untracked-files=normal)"
+dirty_status="$(git_trusted status --porcelain=v1 --untracked-files=normal)"
 if [ -n "$dirty_status" ]; then
     printf '%s\n' "$dirty_status"
     die "Working tree is not clean. Refusing to deploy until local drift is reviewed."
 fi
 
-before_commit="$(git rev-parse HEAD)"
+before_commit="$(git_trusted rev-parse HEAD)"
 old_pid="$(systemctl show "$SERVICE" -p MainPID --value || true)"
 old_started="$(systemctl show "$SERVICE" -p ExecMainStartTimestamp --value || true)"
 
@@ -231,10 +406,28 @@ echo "commit_before=$before_commit"
 echo "old_pid=${old_pid:-unknown}"
 echo "old_started=${old_started:-unknown}"
 
+if [ "$TASK25_COORDINATION" = "installed-lock-ready" ]; then
+    log "acquire exclusive Task 25 operation lock"
+    exec {OPERATION_LOCK_FD}<"$OPERATION_LOCK"
+    /usr/bin/flock --exclusive --timeout "$OPERATION_LOCK_WAIT_SECONDS" "$OPERATION_LOCK_FD" \
+        || die "Timed out waiting for Task 25 operation lock: $OPERATION_LOCK"
+
+    for timer_name in "${TASK25_TIMER_NAMES[@]}"; do
+        if [ "$(systemctl is-enabled "$timer_name" 2>/dev/null || true)" = "enabled" ]; then
+            PREVIOUSLY_ENABLED_TIMERS+=("$timer_name")
+        fi
+    done
+    trap deployment_exit EXIT
+    TASK25_TIMERS_STOPPED=1
+    systemctl_with_privilege disable --now "${TASK25_TIMER_NAMES[@]}"
+    task25_timers_are_disabled \
+        || die "Could not confirm both Task 25 timers are disabled"
+fi
+
 log "fetch latest GitHub branch"
-git fetch --prune "$REMOTE" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH"
+git_trusted fetch --prune "$REMOTE" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH"
 target_ref="$REMOTE/$BRANCH"
-target_commit="$(git rev-parse "$target_ref^{commit}")"
+target_commit="$(git_trusted rev-parse "$target_ref^{commit}")"
 echo "target_ref=$target_ref"
 echo "target_commit=$target_commit"
 
@@ -243,13 +436,13 @@ log "SQLite-safe backup before code activation"
 
 log "fast-forward checkout"
 if [ "$before_commit" != "$target_commit" ]; then
-    git merge --ff-only "$target_ref"
+    git_trusted merge --ff-only "$target_ref"
 fi
-after_commit="$(git rev-parse HEAD)"
+after_commit="$(git_trusted rev-parse HEAD)"
 [ "$after_commit" = "$target_commit" ] || die "Checkout is $after_commit, expected $target_commit."
 echo "commit_after=$after_commit"
 
-post_merge_status="$(git status --porcelain=v1 --untracked-files=normal)"
+post_merge_status="$(git_trusted status --porcelain=v1 --untracked-files=normal)"
 if [ -n "$post_merge_status" ]; then
     printf '%s\n' "$post_merge_status"
     die "Working tree became dirty after update. Refusing to restart production."
@@ -354,8 +547,26 @@ health_revision="$(printf '%s\n' "$health_json" | json_field app_revision)"
 [ "$health_revision" = "$target_commit" ] || die "Health revision is '$health_revision', expected '$target_commit'."
 
 log "verify checkout remains exact target"
-final_commit="$(git rev-parse HEAD)"
+final_commit="$(git_trusted rev-parse HEAD)"
 [ "$final_commit" = "$target_commit" ] || die "Final checkout is $final_commit, expected $target_commit."
+
+if [ "$TASK25_COORDINATION" = "installed-lock-ready" ]; then
+    task25_units_match_checkout \
+        || die "Installed Task 25 units differ from the deployed checkout; run the guarded installer and re-verify before enablement"
+    systemd-analyze verify "${TASK25_UNIT_PATHS[@]}"
+fi
+
+if [ "$TASK25_TIMERS_STOPPED" -eq 1 ]; then
+    log "restore previously enabled Task 25 timers"
+    if [ "${#PREVIOUSLY_ENABLED_TIMERS[@]}" -gt 0 ]; then
+        systemctl_with_privilege enable --now "${PREVIOUSLY_ENABLED_TIMERS[@]}"
+        task25_timers_are_enabled "${PREVIOUSLY_ENABLED_TIMERS[@]}" \
+            || die "Could not confirm previously enabled Task 25 timers resumed"
+    else
+        echo "Task 25 timers were disabled before deployment and remain disabled."
+    fi
+    TASK25_TIMERS_STOPPED=0
+fi
 
 cat <<EOF
 

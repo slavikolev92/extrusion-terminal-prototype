@@ -33,6 +33,16 @@ Confirmed scope:
 - HTML/CSS print output for completed and archived cards, matching the existing
   Excel front/back operational card as closely as possible.
 - SQLite-safe backups and documented recovery before pilot use.
+- Task 25's first production-artifact-delivery source slice is implemented and
+  verified on its dedicated branch but is not merged, installed, enabled,
+  externally accepted, or deployed. It provides one fixed-category filesystem
+  outbox, create-only Hetzner WebDAV delivery, Discord pipeline
+  failure/recovery notification, and automatic ten-minute SQLite-safe backups
+  with the newest 144 images retained locally. Task 24's shift PDF and the
+  completed-order PDF are future producers that must reuse this pipeline but
+  retain separate feature designs. Task 18 is completely independent. Do not
+  infer authorization for production service installation or external
+  activation from source completion.
 - Physical pallet-weight entry is source-complete, verified, and accepted under
   `docs/superpowers/specs/2026-09-09-physical-pallet-weight-design.md`; it is
   not yet deployed. Operators and shift managers can save an optional positive
@@ -99,6 +109,13 @@ For each feature slice:
 7. Prepare the change for review. Stage or commit only when the user explicitly asks.
 
 Do not leave large uncommitted feature piles. Do not mix unrelated refactors into a feature slice.
+
+For Task 25's first slice, do not implement shift-report roster/content logic,
+completed-order PDF generation, email, external dead-server monitoring, remote
+download/restore, remote overwrite/deletion, or the archived Task 13 USB,
+standby, UPS, and disaster-recovery proposals. Production timer installation,
+real Hetzner/Discord tests, and enablement remain a separate explicitly
+authorized operation.
 
 Until Task 20 is implemented, treat README's existing third-column
 `Използван материал` plus independent `Партида` behavior as the current

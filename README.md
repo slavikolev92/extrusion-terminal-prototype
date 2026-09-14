@@ -99,7 +99,36 @@ The completed unified order-finish review and its current placeholder contract
 are recorded in `v2-files/archive/TASK-21-ORDER-FINISH-REVIEW.md` and
 `docs/implementation-notes/order-finish-review.md`.
 
-## Following Approved Pilot Slice — Task 20 (Not Yet Implemented)
+## Completed Source Slice — Task 25 (Not Yet Deployed)
+
+Task 25's first source slice is implemented and verified on the dedicated
+`task-25-production-artifact-delivery` branch. It supplies the shared outbox,
+create-only Hetzner worker, Discord failure/recovery notifier, SQLite-safe
+backup producer, tracked timers, transactional disabled-by-default installer,
+and protected maintenance/operation locks. It has not been merged, installed,
+enabled, externally accepted, or deployed in production.
+
+When separately installed, the first slice runs the existing SQLite-safe backup
+behavior every ten minutes, retains the newest 144 local backups, queues
+immutable copies locally, and delivers them through an independent create-only
+WebDAV worker to the configured Hetzner Storage Share. Failed files remain
+queued for retry. The application performs no remote download, overwrite,
+automatic deletion, restore, or failover.
+
+Future shift-report and completed-order PDF producers will reuse the same
+delivery pipeline but retain separate feature designs. Task 24 owns the future
+shift-report business logic. Task 18 remains independent. Task 13 is closed and
+archived; only its narrow cloud-backup need was absorbed, not its broader USB,
+standby, UPS, or disaster-recovery proposals. See
+`v2-files/TASK-25-PRODUCTION-ARTIFACT-DELIVERY.md`,
+`v2-files/TASK-24-SHIFT-CREW-PRODUCTION-REPORTS.md`,
+`v2-files/archive/TASK-13-BACKUP-RESILIENCE.md`, and
+`docs/superpowers/specs/2026-09-14-production-artifact-delivery-design.md`. The
+first-slice executable plan is
+`docs/superpowers/plans/2026-09-14-production-artifact-delivery-and-backup.md`;
+the production authority is `docs/production-artifact-delivery.md`.
+
+## Following Application Feature Slice — Task 20 (Not Yet Implemented)
 
 Task 20 follows the physical pallet-weight slice. It is not current application
 behavior, no implementation has started, and it has not been deployed. Its
@@ -995,7 +1024,10 @@ Backup approach:
 - Support timestamped backups through the documented SQLite-safe backup command.
 - A 10-minute backup interval is acceptable because the database will be small and storage space is available.
 - Backups should use SQLite-safe backup behavior rather than unsafe raw copying while writes may be active.
-- Retention policy can be simple, for example frequent backups for recent days and fewer older backups.
+- Retain the newest 144 validated backups locally.
+- The completed-but-undeployed Task 25 source can send immutable backup copies
+  to the Hetzner Storage Share after separate installation, retains failed
+  deliveries locally for retry, and performs no automatic remote cleanup.
 
 ## Time handling
 
@@ -1031,6 +1063,10 @@ Invoke-WebRequest -Uri http://127.0.0.1:8000/health -UseBasicParsing -TimeoutSec
 Production deployment:
 
 - Use `docs/production-deployment.md` for the production VM update procedure.
+- Use `docs/production-artifact-delivery.md` for the separate Task 25 protected
+  configuration, dry-run, disabled installation, disposable real-service
+  acceptance, separate enablement, observation, disablement, and quiescent
+  restore boundary.
 - The reusable command is `bash scripts/deploy_production.sh` from `/opt/extrusion-terminal/app`.
 - A successful deploy backs up SQLite, fetches the latest GitHub `main`, restarts `extrusion-terminal.service`, and verifies `/health` reports the deployed Git revision.
 - Before rollout, take the normal SQLite-safe backup, then compare one known completed card's admin detail and print output in Sofia time.
@@ -1071,7 +1107,7 @@ Create a SQLite-safe backup:
 .\.test-runtime\codex-venv\Scripts\python.exe -m app.backups backup
 ```
 
-The backup command uses SQLite's backup API, creates the backup directory if needed, and requires both a successful SQLite integrity check and an empty foreign-key check before retaining the new image or pruning older backups. It keeps the newest `144` matching backup files by default. Restore applies the same checks to a temporary image before replacing the target database. Milestone 8 does not install a scheduler; if recurring 10-minute backups are needed before pilot use, run this command from the deployment's approved scheduler. To change retention for a run:
+The backup command uses SQLite's backup API, creates the backup directory if needed, and requires both a successful SQLite integrity check and an empty foreign-key check before retaining the new image or pruning older backups. It keeps the newest `144` matching backup files by default. Restore applies the same checks to a temporary image before replacing the target database. Task 25 now supplies the source-controlled recurring producer and append-only Hetzner delivery, but neither runs until the branch is accepted, merged, deployed, and separately installed in production. To change retention for a run:
 
 ```powershell
 .\.test-runtime\codex-venv\Scripts\python.exe -m app.backups backup --keep 288

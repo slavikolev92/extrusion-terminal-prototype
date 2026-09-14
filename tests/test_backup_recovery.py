@@ -219,6 +219,64 @@ def test_foreign_key_invalid_backup_is_removed_before_retention(temp_db_path: Pa
     )
 
 
+def test_abrupt_backup_interruption_never_publishes_into_validated_retention(
+    temp_db_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    backup_dir = temp_db_path.parent / "backups"
+    first = create_backup(
+        temp_db_path,
+        backup_dir,
+        keep_count=3,
+        timestamp=datetime(2026, 6, 13, 8, 0, 0),
+    ).backup_path
+    second = create_backup(
+        temp_db_path,
+        backup_dir,
+        keep_count=3,
+        timestamp=datetime(2026, 6, 13, 8, 10, 0),
+    ).backup_path
+
+    class SimulatedAbruptStop(BaseException):
+        pass
+
+    def leave_partial_image(_source: Path, target: Path) -> None:
+        target.write_bytes(b"partial and unvalidated")
+        raise SimulatedAbruptStop
+
+    with monkeypatch.context() as patch:
+        patch.setattr("app.backups.backup_sqlite_database", leave_partial_image)
+        with pytest.raises(SimulatedAbruptStop):
+            create_backup(
+                temp_db_path,
+                backup_dir,
+                keep_count=2,
+                timestamp=datetime(2026, 6, 13, 8, 20, 0),
+            )
+
+    matching_final_images = tuple(
+        backup_dir.glob(f"{BACKUP_FILENAME_PREFIX}*{BACKUP_FILENAME_SUFFIX}")
+    )
+    assert set(matching_final_images) == {first, second}
+    stale_staging = tuple(backup_dir.glob(".extrusion_terminal_staging_*"))
+    assert len(stale_staging) == 1
+
+    result = create_backup(
+        temp_db_path,
+        backup_dir,
+        keep_count=2,
+        timestamp=datetime(2026, 6, 13, 8, 30, 0),
+    )
+
+    assert result.backup_path.exists()
+    assert result.stale_staging_paths == stale_staging
+    assert len(result.retained_paths) == 2
+    assert second in result.retained_paths
+    assert first in result.removed_paths
+    for retained in result.retained_paths:
+        with sqlite3.connect(retained) as connection:
+            assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+
+
 def test_foreign_key_invalid_restore_leaves_target_and_removes_temporary_image(
     temp_db_path: Path,
 ):

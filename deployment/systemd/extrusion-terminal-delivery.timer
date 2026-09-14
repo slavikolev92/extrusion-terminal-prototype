@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry pending Extrusion Terminal artifact delivery every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+AccuracySec=10s
+Unit=extrusion-terminal-delivery.service
+
+[Install]
+WantedBy=timers.target

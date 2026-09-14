@@ -343,8 +343,17 @@ Steps:
 sudo mkdir -p /opt/extrusion-terminal/app
 sudo mkdir -p /opt/extrusion-terminal/data
 sudo mkdir -p /opt/extrusion-terminal/backups
-sudo chown -R "$USER":"$USER" /opt/extrusion-terminal
+sudo chown root:root /opt/extrusion-terminal
+sudo chmod 0755 /opt/extrusion-terminal
+sudo chown -R sk:sk \
+  /opt/extrusion-terminal/app \
+  /opt/extrusion-terminal/data \
+  /opt/extrusion-terminal/backups
 ```
+
+Keep `/opt/extrusion-terminal` itself root-owned. Task 25 uses it as the stable
+maintenance boundary and gives `sk` ownership only to application-writable
+children. Do not later run a recursive `chown` against the base.
 
 2. Copy or clone the repository into:
 
@@ -487,102 +496,21 @@ Notes:
 
 ## Phase 7 - Configure Backups
 
-Status: pending
+Status: Task 25 source implementation and adversarial hardening are in progress
+on its dedicated branch on 2026-09-14; not installed, enabled, externally
+accepted, or deployed.
 
-Goal: schedule SQLite-safe backups.
+The former local-only timer sketch remains superseded. Task 25 now supplies the
+source-controlled shared outbox, create-only Hetzner delivery, Discord pipeline
+notifications, local retry, ten-minute SQLite-safe backup producer, independent
+delivery timer, guarded installer, and deployment operation lock.
 
-Existing app backup command:
-
-```bash
-cd /opt/extrusion-terminal/app
-EXTRUSION_DB_PATH=/opt/extrusion-terminal/data/extrusion_terminal.sqlite3 \
-EXTRUSION_BACKUP_DIR=/opt/extrusion-terminal/backups \
-.venv/bin/python -m app.backups backup
-```
-
-Recommended: systemd timer every 10 minutes.
-
-Create service:
-
-```bash
-sudo nano /etc/systemd/system/extrusion-terminal-backup.service
-```
-
-Suggested content:
-
-```ini
-[Unit]
-Description=Create SQLite-safe backup for Extrusion Terminal
-
-[Service]
-Type=oneshot
-WorkingDirectory=/opt/extrusion-terminal/app
-Environment=EXTRUSION_DB_PATH=/opt/extrusion-terminal/data/extrusion_terminal.sqlite3
-Environment=EXTRUSION_BACKUP_DIR=/opt/extrusion-terminal/backups
-ExecStart=/opt/extrusion-terminal/app/.venv/bin/python -m app.backups backup
-```
-
-Create timer:
-
-```bash
-sudo nano /etc/systemd/system/extrusion-terminal-backup.timer
-```
-
-Suggested content:
-
-```ini
-[Unit]
-Description=Run Extrusion Terminal backup every 10 minutes
-
-[Timer]
-OnBootSec=5min
-OnUnitActiveSec=10min
-Unit=extrusion-terminal-backup.service
-
-[Install]
-WantedBy=timers.target
-```
-
-Enable timer:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now extrusion-terminal-backup.timer
-```
-
-Check timer:
-
-```bash
-systemctl list-timers extrusion-terminal-backup.timer
-```
-
-Run manual backup:
-
-```bash
-sudo systemctl start extrusion-terminal-backup.service
-ls -lh /opt/extrusion-terminal/backups
-```
-
-Acceptance:
-
-- Manual backup creates a timestamped SQLite backup.
-- Timer is active.
-- Backup files appear after scheduled interval.
-
-Record:
-
-```text
-Backup timer enabled:
-First backup file:
-Backup interval:
-Retention behavior:
-```
-
-Notes:
-
-```text
-
-```
+Do not create an ad hoc timer from this infrastructure plan. The complete
+configuration, dry-run, separate authorization gate, installation, observation,
+disablement, and manual-restore boundary is
+`docs/production-artifact-delivery.md`. Implementation rationale and the
+no-migration/not-deployed assessment are recorded in
+`docs/implementation-notes/production-artifact-delivery.md`.
 
 ## Phase 8 - Restore Rehearsal
 
@@ -592,19 +520,14 @@ Goal: verify recovery before pilot use.
 
 Steps:
 
-1. Stop app:
-
-```bash
-sudo systemctl stop extrusion-terminal.service
-```
-
-2. Choose a backup file:
+1. Choose a backup file:
 
 ```bash
 ls -lh /opt/extrusion-terminal/backups
 ```
 
-3. Restore to a test target first:
+2. Restore to a separate test target; a scratch rehearsal does not replace or
+   stop the live database:
 
 ```bash
 cd /opt/extrusion-terminal/app
@@ -613,14 +536,8 @@ cd /opt/extrusion-terminal/app
   --target /opt/extrusion-terminal/data/restore-test.sqlite3
 ```
 
-4. If test restore succeeds, document the result.
-5. Start app again:
-
-```bash
-sudo systemctl start extrusion-terminal.service
-```
-
-6. Confirm app works:
+3. If the test restore succeeds, document the result.
+4. Confirm the still-running app is healthy:
 
 ```text
 http://APP-VM-IP:8000/health
@@ -631,7 +548,11 @@ Acceptance:
 - Restore helper can restore a backup to a target file.
 - App resumes normally after stop/start.
 
-Do not restore over the production database while the app is running.
+For an actual production replacement, follow the complete quiescence procedure
+in `docs/production-artifact-delivery.md`: disable both timers, stop and prove
+both one-shot services inactive, stop the app, and hold the exclusive operation
+lock across restore validation. Do not infer the actual-restore sequence from
+this scratch rehearsal.
 
 Record:
 
@@ -930,8 +851,11 @@ Steps:
 2. Confirm app VM starts.
 3. Confirm app service starts.
 4. Confirm `/health`, `/admin`, and `/terminal`.
-5. Confirm backup timer still active.
-6. Create a backup.
+5. If Task 25 has been separately installed, confirm both its backup and
+   delivery timers remain active and its operation lock exists.
+6. Create a SQLite-safe backup and, when Task 25 is active, confirm the local
+   source, queue drain, Hetzner object, and notification state described by its
+   production runbook.
 7. Run restore rehearsal to test target.
 8. Confirm Tailscale access.
 9. Confirm shift-manager PC can import and release.
@@ -940,7 +864,8 @@ Steps:
 Acceptance:
 
 - Full restart and recovery path is understood.
-- Backups exist and restore helper works.
+- Backups exist and the restore helper works; if Task 25 is active, both
+  scheduled jobs and the fixed cloud-delivery path are verified.
 - Shift manager and workstation can access their intended views.
 - No public internet exposure is required.
 
@@ -975,10 +900,18 @@ journalctl -u extrusion-terminal.service -n 100 --no-pager
 Backup:
 
 ```bash
-sudo systemctl start extrusion-terminal-backup.service
-systemctl list-timers extrusion-terminal-backup.timer
+cd /opt/extrusion-terminal/app
+EXTRUSION_DB_PATH=/opt/extrusion-terminal/data/extrusion_terminal.sqlite3 \
+EXTRUSION_BACKUP_DIR=/opt/extrusion-terminal/backups \
+.venv/bin/python -m app.backups backup
 ls -lh /opt/extrusion-terminal/backups
 ```
+
+This remains the manual command before Task 25 activation. Do not create or
+invoke Task 25 units from this infrastructure plan. After the separately
+authorized installer has run, use `docs/production-artifact-delivery.md` as the
+only command authority for installation, acceptance, backup/delivery service
+operation, and restore quiescence.
 
 App health:
 
@@ -1005,6 +938,8 @@ Record answers as they are decided.
 ```text
 Will the app VM use Debian or Ubuntu Server?
 Will Proxmox/app VM use static IPs or DHCP reservations?
-Where should backups be copied outside the VM?
+Approved first off-VM destination: Hetzner Storage Share through Task 25. Any
+additional USB, standby, or disaster-recovery destination requires a separate
+reopened resilience task.
 Will Tailscale be installed on Proxmox host, app VM, or both?
 ```

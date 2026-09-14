@@ -9,7 +9,7 @@ When a workstream starts, explore it with the user and create a temporary task
 tracker only if needed. Delete that temporary tracker after the workstream is
 complete. Persist the completed status and any remaining work here.
 
-## Current Production Status — September 9, 2026
+## Current Production Status — September 14, 2026
 
 - The production VM remains on the last confirmed deployed revision,
   `95093c0`. No later production deployment is recorded or authorized by this
@@ -61,7 +61,17 @@ complete. Persist the completed status and any remaining work here.
 - The previously discussed fixed-height pallet rows on the bottom print
   summary are implemented and verified in the current source release. They are
   no longer an open task.
-- Tasks 4, 7, 13, 15, and 17 below are deferred or optional future work.
+- Task 25's first shared-pipeline/database-backup source slice was implemented
+  and verified on the dedicated `task-25-production-artifact-delivery` branch
+  on September 14. The outbox, create-only WebDAV worker, Discord notifier,
+  backup producer, tracked units, installer, and deploy lock now exist in
+  source. Nothing has been merged, installed, enabled, externally accepted, or
+  deployed. Task 24's shift-report logic is a future producer; Task 18 remains
+  completely independent.
+- Task 13 is closed and archived. Its narrow ten-minute cloud-backup need is
+  owned by Task 25; the broader USB, standby, UPS, failover, and disaster-
+  recovery discussion was not absorbed as active scope.
+- Tasks 4, 7, 15, and 17 below are deferred or optional future work.
   They are not missing requirements for the current production release.
 
 The Shift Manager downstream application cleanup caused by the V14.04
@@ -94,13 +104,14 @@ from the repository-root `README.md` or this tracker's historical notes.
 - The terminal should not allow production roll entry unless an active shift is selected/open.
 - Shift tracking contains a unique occurrence identity, shift number, start
   timestamp, and end timestamp. People count, notes, and named worker assignment
-  are not part of this workstream.
+  are not part of the completed Task 01 workstream; the separate deferred Task
+  24 records the later crew-attribution and end-of-shift report discussion.
 - Each normal new roll should persist the active shift occurrence that produced
   it. A roll added later to a completed or archived order inherits the latest
   known shift occurrence already linked to a roll on that order.
 - The relationship should permit future crew data to reference a shift
-  occurrence without rewriting roll production history, but crew functionality
-  is not currently planned.
+  occurrence without rewriting roll production history. Task 24 retains that
+  relationship and must not reinterpret or replace existing roll attribution.
 - Existing roll data must be migrated safely. Old rolls should not receive guessed shift assignments unless the user explicitly approves an approximate backfill.
 - Per-roll pallet attribution is separate from shift tracking. A shift produces
   rolls; each roll may snapshot an optional pallet number scoped to its card.
@@ -146,7 +157,9 @@ migration chain.
 
 Future worker or crew data could reference the permanent shift-occurrence
 identity without changing existing roll history. No worker, roster, or crew
-interface or import is included in the current workstream.
+interface or import is included in the completed Task 01 workstream. The
+discussion and current default direction for that future functionality are now
+preserved in `v2-files/TASK-24-SHIFT-CREW-PRODUCTION-REPORTS.md`.
 
 ## Workstream 2: Roll Pallet Assignment And Operational-Card Summary
 
@@ -290,6 +303,35 @@ deferred status. It is grouped by affected surface and rough complexity.
    - Migration decision: no migration required; the feature uses existing
      planning, roll, timing, tare, and material-actual fields only.
 
+24. **Shift crew attribution and end-of-shift production reports**
+   - Surface: existing shift lifecycle, `/admin`, roster import/review,
+     shift-history reporting, PDF generation, and new SQLite roster/report
+     metadata.
+   - Complexity: large because it combines dated crew data, actual shift
+     occurrences, legacy attribution limits, durable report generation, and
+     late roll corrections.
+   - Status: discussion captured on 2026-09-13 and deferred. Recording this
+     task does not authorize implementation, migration, production-data
+     backfill, or deployment. Task 25 is the current approved operational
+     workstream, and Task 20 remains the next application-feature workstream.
+   - Goal: associate the named day/night crew with the permanent occurrence of
+     each extrusion shift and produce a repeatable PDF showing the shift's
+     workers, rolls, per-roll weights, per-order subtotals, and shift totals.
+   - Default direction: retain Task 01's shift occurrence and per-roll ownership;
+     add separate scheduled-roster/worker records; use one worker per CSV row;
+     and trigger a versioned, retryable report after a shift ends without
+     allowing report failure or a missing roster to undo the shift end.
+   - Historical boundary: the 653 rolls predating M002 have no shift link. A
+     worker roster alone cannot attribute those rolls. Any historical recovery
+     requires explicit per-roll order/roll-to-shift evidence and a separately
+     approved migration; timestamps or shift numbers must not be used to guess.
+   - Correction boundary: completed-shift summaries are live, and returned
+     rewinding rolls can be assigned back to the ended extrusion shift. An
+     initial PDF therefore cannot silently become the permanent final record;
+     later changes require visible stale/revision behavior.
+   - Durable discussion record:
+     `v2-files/TASK-24-SHIFT-CREW-PRODUCTION-REPORTS.md`.
+
 ### Terminal / Workstation
 
 6. **Editable executed recipes and material catalogue — consolidated into Task 20**
@@ -411,16 +453,39 @@ deferred status. It is grouped by affected surface and rough complexity.
 ### Operations / Infrastructure
 
 13. **Production backup and recovery resilience**
-   - Surface: app VM, Proxmox host, USB backup storage, cloud backup target, optional Tailscale standby server, emergency recovery workstation.
-   - Complexity: large.
-   - Status: deferred operational-resilience work persisted in
-     `v2-files/TASK-13-BACKUP-RESILIENCE.md`. It is not an unresolved
-     application-functionality defect, although future backup/restore hardening
-     remains operationally valuable.
-   - Goal: make the terminal production data recoverable if the app, VM, Proxmox host, physical server, disk, USB drive, cloud sync, network, or power fails.
-   - Decided direction: target `0-10 minutes` maximum data loss, tolerate roughly `1-4 hours` recovery time with paper fallback during outage, use two backup destinations beyond the VM (`USB attached to the Proxmox server` plus `cloud storage chosen later`), and keep recovery portable enough that another LAN PC or Linux/Windows machine can temporarily run the app if the main server is unavailable.
-   - Possible extension: a warm standby server over Tailscale may receive validated backup copies and remain ready for manager-approved failover. It should run the approved app release rather than emergency `git pull` from the latest branch.
-   - Needs design: exact cloud provider/tool, USB mount and monitoring approach, retention policy, checksum/metadata format, backup-health visibility, operator/admin alerting, restore drills, standby activation rules, terminal URL/failover behavior, UPS behavior, and scenario-specific runbooks.
+   - Status: closed as a standalone task and archived on September 14, 2026 at
+     `v2-files/archive/TASK-13-BACKUP-RESILIENCE.md`.
+   - Supersession: Task 25 owns the approved narrow SQLite-safe cloud-backup
+     work. The archived USB, standby, UPS, failover, emergency-server, and
+     broad disaster-recovery proposals are historical context, not Task 25
+     requirements.
+
+25. **Production artifact delivery and cloud backup**
+   - Surface: operational filesystem state, SQLite-safe backup command,
+     source-controlled systemd one-shot jobs, Hetzner Storage Share WebDAV, and
+     Discord webhook notifications.
+   - Complexity: medium; no application UI or production SQLite migration is
+     expected for the first slice.
+   - Status: first shared-pipeline/database-backup source slice implemented and
+     verified on its dedicated branch on September 14, 2026. Merge,
+     external-service acceptance, production installation, timer enablement,
+     and deployment have not occurred.
+   - Goal: implement one fixed-category append-only delivery outbox once, then
+     let automatic database backups and later PDF producers reuse its routing,
+     retry, and notification behavior.
+   - First slice: ten-minute validated SQLite backups, newest-144 local
+     retention, local pending retry, create-only delivery to
+     `database-backups/`, and one Discord failure/recovery notification per
+     component state transition.
+   - Future producers: Task 24 owns shift-report business logic and later uses
+     `shift-reports/`; a separately designed completed-order producer converts
+     the accepted operational-card print output into immutable editions under
+     `completed-order-pdfs/`.
+   - Boundaries: Task 18 is independent; email and external dead-server
+     heartbeat are later/separate; no remote download, overwrite, automatic
+     deletion, restore, failover, or bidirectional sync is authorized.
+   - Durable task record:
+     `v2-files/TASK-25-PRODUCTION-ARTIFACT-DELIVERY.md`.
 
 ### Terminal / Workstation UI Follow-Up
 
@@ -585,17 +650,26 @@ deferred status. It is grouped by affected surface and rough complexity.
    production procedure. Source publication is not deployment.
 2. Physical pallet-weight entry is source-complete and accepted. Its production
    deployment remains a separate explicitly authorized maintenance operation.
-3. The next development workstream is Task 20's initial,
+3. Task 25's first source slice is implemented and verified on its dedicated
+   branch. Review and accept that branch next. Merging/deploying the app source
+   and later installing/enabling its timers remain separate explicit decisions;
+   source completion does not authorize either production operation.
+4. Task 20 remains the next application-feature workstream after the current
+   explicitly selected operational work. Its initial,
    forward-looking executed-recipe and material-catalogue workstream. Begin by
    reconciling its specification and implementation plan to the SKU-based
    published Item Master snapshot/projection and historical-snapshot safety
    rules. Confirm the remaining Item Master v1 contract decisions before
    approving a revised plan; do not execute the current documents as code.
-4. Do not pull later historical normalization, notifications/acknowledgements,
+5. Do not pull later historical normalization, notifications/acknowledgements,
    inventory posting or ownership, material/item research, or successor-MES
    scope into Task 20's initial phase.
-5. Task 18 remains paused discovery. Task 17 and the other documented deferred
+6. Task 24 preserves the deferred shift-crew/report discussion and its current
+   default direction. It will consume Task 25 delivery when separately designed
+   and approved; do not treat the recorded task as implementation or migration
+   authorization.
+7. Task 18 remains paused discovery. Task 17 and the other documented deferred
    work remain separate and require fresh authorization.
-6. The upstream Excel workbook/export issue remains operational context outside
+8. The upstream Excel workbook/export issue remains operational context outside
    this application change. Relevant export-side design context is preserved in
    `docs/implementation-notes/oi-003-step-8-export-validation-interim.md`.

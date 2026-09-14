@@ -1,0 +1,19 @@
+[Unit]
+Description=Create and queue an Extrusion Terminal SQLite backup
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=sk
+Group=sk
+UMask=0027
+TimeoutStartSec=5min
+SuccessExitStatus=75
+WorkingDirectory=/opt/extrusion-terminal/app
+Environment=EXTRUSION_DB_PATH=/opt/extrusion-terminal/data/extrusion_terminal.sqlite3
+Environment=EXTRUSION_BACKUP_DIR=/opt/extrusion-terminal/backups
+Environment=EXTRUSION_BACKUP_KEEP_COUNT=144
+Environment=EXTRUSION_ARTIFACT_OUTBOX_DIR=/opt/extrusion-terminal/artifact-delivery/outbox
+Environment=EXTRUSION_ARTIFACT_STATE_DIR=/opt/extrusion-terminal/artifact-delivery/state
+Environment=EXTRUSION_DISCORD_CURL_CONFIG=/etc/extrusion-terminal/discord-webhook.conf
+ExecStart=/usr/bin/flock --shared --nonblock --conflict-exit-code 75 /opt/extrusion-terminal/artifact-delivery/operation.lock /opt/extrusion-terminal/app/.venv/bin/python -m app.backup_job

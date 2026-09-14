@@ -1,0 +1,18 @@
+[Unit]
+Description=Deliver pending Extrusion Terminal artifacts to protected storage
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sk
+Group=sk
+UMask=0027
+TimeoutStartSec=10min
+SuccessExitStatus=75
+WorkingDirectory=/opt/extrusion-terminal/app
+Environment=EXTRUSION_ARTIFACT_OUTBOX_DIR=/opt/extrusion-terminal/artifact-delivery/outbox
+Environment=EXTRUSION_ARTIFACT_STATE_DIR=/opt/extrusion-terminal/artifact-delivery/state
+Environment=EXTRUSION_DISCORD_CURL_CONFIG=/etc/extrusion-terminal/discord-webhook.conf
+Environment=EXTRUSION_WEBDAV_CURL_CONFIG=/etc/extrusion-terminal/hetzner-webdav.conf
+ExecStart=/usr/bin/flock --shared --nonblock --conflict-exit-code 75 /opt/extrusion-terminal/artifact-delivery/operation.lock /opt/extrusion-terminal/app/.venv/bin/python -m app.artifact_delivery deliver

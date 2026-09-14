@@ -12,6 +12,7 @@ from . import db
 
 BACKUP_FILENAME_PREFIX = "extrusion_terminal_"
 BACKUP_FILENAME_SUFFIX = ".sqlite3"
+BACKUP_STAGING_PREFIX = ".extrusion_terminal_staging_"
 DEFAULT_BACKUP_DIR = Path(os.getenv("EXTRUSION_BACKUP_DIR", db.BASE_DIR / "backups"))
 DEFAULT_BACKUP_KEEP_COUNT = int(os.getenv("EXTRUSION_BACKUP_KEEP_COUNT", "144"))
 
@@ -22,6 +23,7 @@ class BackupResult:
     backup_path: Path
     retained_paths: tuple[Path, ...]
     removed_paths: tuple[Path, ...]
+    stale_staging_paths: tuple[Path, ...] = ()
 
 
 def create_backup(
@@ -37,15 +39,22 @@ def create_backup(
 
     resolved_backup_dir = resolve_backup_dir(backup_dir)
     resolved_backup_dir.mkdir(parents=True, exist_ok=True)
+    stale_staging_paths = _stale_staging_paths(resolved_backup_dir)
     backup_path = next_backup_path(resolved_backup_dir, timestamp)
+    staging_path = resolved_backup_dir / (
+        f"{BACKUP_STAGING_PREFIX}{backup_path.name}-{uuid4().hex}.tmp"
+    )
 
-    backup_sqlite_database(source_path, backup_path)
     try:
-        validate_sqlite_database(backup_path)
+        backup_sqlite_database(source_path, staging_path)
+        validate_sqlite_database(staging_path)
+        _fsync_file(staging_path)
+        os.replace(staging_path, backup_path)
+        _fsync_directory(resolved_backup_dir)
     except Exception:
-        assert_path_inside_directory(backup_path, resolved_backup_dir)
-        if backup_path.exists():
-            backup_path.unlink()
+        assert_path_inside_directory(staging_path, resolved_backup_dir)
+        if staging_path.exists():
+            staging_path.unlink()
         raise
     retained_paths, removed_paths = apply_retention(resolved_backup_dir, keep_count)
     return BackupResult(
@@ -53,6 +62,7 @@ def create_backup(
         backup_path=backup_path,
         retained_paths=retained_paths,
         removed_paths=removed_paths,
+        stale_staging_paths=stale_staging_paths,
     )
 
 
@@ -168,6 +178,35 @@ def next_backup_path(
 
 def resolve_backup_dir(backup_dir: Path | str | None = None) -> Path:
     return (Path(backup_dir) if backup_dir is not None else DEFAULT_BACKUP_DIR).resolve()
+
+
+def _stale_staging_paths(backup_dir: Path) -> tuple[Path, ...]:
+    return tuple(
+        sorted(
+            (
+                path
+                for path in backup_dir.glob(f"{BACKUP_STAGING_PREFIX}*")
+                if path.is_file()
+            ),
+            key=lambda path: path.name,
+        )
+    )
+
+
+def _fsync_file(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def assert_path_inside_directory(path: Path, directory: Path) -> None:
