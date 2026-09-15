@@ -56,13 +56,16 @@ The shared pipeline then:
 2. records bounded metadata including category, size, checksum, filename, and
    queued time;
 3. atomically publishes the queue item into the pending outbox;
-4. issues only a conditional create upload to the fixed remote category;
+4. ensures the exact UTC daily child for database backups and issues a
+   conditional create upload to the fixed remote category/day path;
 5. removes only the disposable local outbox copy after confirmed delivery; and
 6. leaves the producer's original local-retention policy unchanged.
 
 The delivery code must not contain remote download, delete, rename, move, copy,
-sync, or retention operations. A conditional create accepts only HTTP `201` as
-a new object; `200` or `204` is a failure because it does not prove creation.
+sync, or retention operations. Its only directory mutation is bounded `MKCOL`
+for `database-backups/<UTC YYYY-MM-DD>/`. A conditional create accepts only
+HTTP `201` as a new object; `200` or `204` is a failure because it does not
+prove creation.
 A checksum-named `412` is accepted only as an idempotent retry under the
 explicit assumption that Task 25 is the sole automated writer of those names.
 A conditional create must reject a pre-existing remote path, and every producer
@@ -83,18 +86,20 @@ https://nx106226.your-storageshare.de/remote.php/dav/files/extrusion-backup
 Task 25 uses this approved root:
 
 ```text
-system-backups/extrusion-terminal/production-data/
+system-backups/extrusion-terminal/
 ```
 
 The fixed child folders are:
 
 ```text
-database-backups/
+database-backups/YYYY-MM-DD/
 shift-reports/
 completed-order-pdfs/
 ```
 
-The separation is a business requirement. Hetzner sharing and permissions may
+The three category roots are provisioned manually. The worker creates only the
+database backup UTC daily child and never lists or deletes remote content. The
+separation is a business requirement. Hetzner sharing and permissions may
 be configured independently for each folder. The application does not manage
 Nextcloud users, groups, shares, or permissions.
 
@@ -122,8 +127,8 @@ Database backups retain their newest 144 final-name local images, approximately
 24 hours at ten-minute intervals. The current backup process publishes such a
 name only after validation and durability; the first-enable runbook audits any
 pre-existing matching files because steady-state retention does not reopen all
-144 on every run. The remote database-backup folder is append-only from the
-pipeline's perspective and has no automatic retention.
+144 on every run. The remote database-backup daily folders are append-only
+from the pipeline's perspective and have no automatic retention.
 
 ## Subtasks And Ownership
 
@@ -156,7 +161,7 @@ webhook is not configured or activated by source work.
 
 Run the existing SQLite backup API every ten minutes, retain the newest 144
 final-name local backups published after validation, enqueue every new image
-for `database-backups/`, and
+for `database-backups/<UTC YYYY-MM-DD>/`, and
 let the common delivery worker upload it. Unsafe raw copying of the live SQLite
 file remains forbidden.
 
@@ -252,12 +257,13 @@ capture, both timers disabled, both one-shot services stopped/inactive, the app
 stopped/inactive, and both locks held through restore validation and application
 restart checks.
 
-The WebDAV application-device connection was previously tested manually with a
-harmless connection-test file. Conditional-create behavior, retry, notifications,
-and scheduling are now implemented and verified against fake transports and
-temporary files. The real `database-backups/` folder check, Discord webhook,
-unit installation, timer enablement, and end-to-end production acceptance remain
-separately authorized operational work.
+The WebDAV application-device connection, conditional create/idempotent retry,
+Discord failure/recovery messages, UTC daily-folder creation, and one automatic
+backup/delivery cycle were accepted on September 15 with disposable
+development paths and timers. The development units were then removed.
+Production protected-config placement, unit installation, timer enablement,
+and end-to-end production acceptance remain separately authorized operational
+work.
 
 ## Explicitly Out Of Scope
 

@@ -74,22 +74,29 @@ locks through restore validation and application restart checks.
 The destination is fixed at the `extrusion-backup` WebDAV base and:
 
 ```text
-system-backups/extrusion-terminal/production-data/<category>/
+system-backups/extrusion-terminal/database-backups/<UTC YYYY-MM-DD>/
+system-backups/extrusion-terminal/shift-reports/
+system-backups/extrusion-terminal/completed-order-pdfs/
 ```
 
-Remote filenames carry the full lowercase SHA-256 digest. Delivery performs
-one `PUT` with `If-None-Match: *`. HTTP `201` means created. A checksum-named
-`412` means an idempotent prior delivery only under the approved sole-writer
-contract and the required real interrupted-PUT acceptance result. HTTP `200`,
-`204`, and all other statuses fail and retain the queue item.
+For a database backup, delivery derives the daily child from the queue item's
+UTC timestamp and issues one bounded `MKCOL` per child per batch. HTTP `201` or
+`405` permits the conditional upload to proceed; every other status retains the
+queue item. Remote filenames carry the full lowercase SHA-256 digest. Delivery
+then performs one `PUT` with `If-None-Match: *`. HTTP `201` means created. A
+checksum-named `412` means an idempotent prior delivery only under the approved
+sole-writer contract and the required real interrupted-PUT acceptance result.
+HTTP `200`, `204`, and all other statuses fail and retain the queue item.
 
 There is no source path for remote discovery, read, download, overwrite,
-directory creation, rename, move, copy, deletion, or retention.
+arbitrary directory creation, rename, move, copy, deletion, or retention. The
+single permitted directory mutation is the exact database-backup daily child.
 
 ## Bounds And Coordination
 
 - delivery snapshot: at most 25 active queue entries, oldest first;
-- WebDAV curl: 10-second connect and 120-second transfer bounds;
+- WebDAV daily-folder curl: 10-second connect and 30-second transfer bounds;
+- WebDAV upload curl: 10-second connect and 120-second transfer bounds;
 - Discord curl: 10-second connect and 30-second transfer bounds;
 - shared curl subprocess: 180-second outer bound;
 - latest WebDAV start: before 180 seconds, rechecked immediately before curl;
@@ -137,9 +144,8 @@ monitoring remains outside Task 25.
 
 ## Verification
 
-All automated work used temporary SQLite/filesystem paths, fake transports,
-and fake systemd commands. No test contacted Hetzner or Discord, installed a
-unit, changed a service, or mutated the runtime database.
+The automated suite uses temporary SQLite/filesystem paths and fake transports;
+it does not contact Hetzner or Discord or mutate the runtime database.
 
 Fresh source verification on 2026-09-14:
 
@@ -154,6 +160,29 @@ git diff --check:                         passed
 Full repository test suite:               1,671 passed in 264.89 seconds
 ```
 
+Development acceptance on 2026-09-15 used the protected disposable configs and
+the latest available production backup copy, never the runtime database:
+
+```text
+Real WebDAV create / identical retry:      created=1, then already_present=1
+Real Discord failure / recovery:          both messages received
+Dated-folder focused suite:               163 passed in 3.62 seconds
+Final full repository suite:              1,678 passed in 261.96 seconds
+Disposable user-systemd backup timer:     fired at 11:20:00 UTC
+Disposable user-systemd delivery timer:   created=1, failed=0, pending=0
+Automatic local backup integrity / FK:    ok / zero violations
+Scratch restore and logical hash match:   passed
+Original source-copy SHA-256 / mtime:      unchanged
+Disposable installed development units:   removed; zero remain
+```
+
+The automatic file was delivered to
+`database-backups/2026-09-15/` using an automatically created UTC daily child.
+Production systemd and the production database were untouched. The disposable
+systemd/runtime evidence was removed after verification. The two protected
+test curl configs remain under `artifacts/task-25-discord-test/` until the
+associated test webhook is retired.
+
 Independent post-hardening security, logic/data-integrity, and
 quality/operations reports are stored under
 `artifacts/task-25-post-hardening-review/`; their aggregate is the final review
@@ -164,9 +193,10 @@ record for this branch state.
 Migration: **No migration.** This slice changes no production SQLite schema,
 stored-data meaning, or application UI.
 
-Deployment: **Not deployed.** Source review and merge are complete. Source
-publication, app deployment, protected Discord configuration, root-staged
-installer execution, disposable real-service acceptance, timer enablement, and
-the first observed production cycle remain distinct approval gates. The
-operational authority is `docs/production-artifact-delivery.md`; this note
-authorizes none of those actions.
+Deployment: **Not deployed.** Source review and merge are complete and bounded
+development acceptance against real Hetzner/Discord endpoints has passed.
+Source publication, app deployment, production protected-config placement,
+root-staged installer execution, production acceptance, production timer
+enablement, and the first observed production cycle remain distinct approval
+gates. The operational authority is `docs/production-artifact-delivery.md`;
+this note authorizes none of those actions.

@@ -29,15 +29,19 @@ https://nx106226.your-storageshare.de/remote.php/dav/files/extrusion-backup
 The application writes only below this existing remote hierarchy:
 
 ```text
-system-backups/extrusion-terminal/production-data/
-├── database-backups/
+system-backups/extrusion-terminal/
+├── database-backups/YYYY-MM-DD/
 ├── shift-reports/
 └── completed-order-pdfs/
 ```
 
-Only `database-backups/` has a producer in this slice. Create that remote folder
-manually before acceptance. The application never manages Hetzner users,
-shares, directory creation, permissions, or remote retention.
+Only `database-backups/` has a producer in this slice. Create that category
+folder manually before acceptance. For each database backup, the worker issues
+one bounded `MKCOL` for the queue item's UTC `YYYY-MM-DD` child and accepts only
+`201` (created) or `405` (already exists or cannot be created); the following
+conditional upload is still the decisive success check. The application never
+manages Hetzner users, shares, permissions, or remote retention, and it creates
+no other remote directory.
 
 ## Protected Local Paths And Configuration
 
@@ -212,6 +216,7 @@ export EXTRUSION_ARTIFACT_OUTBOX_DIR="$TASK25_ACCEPTANCE_DIR/outbox"
 export EXTRUSION_ARTIFACT_STATE_DIR="$TASK25_ACCEPTANCE_DIR/state"
 export EXTRUSION_WEBDAV_CURL_CONFIG=/etc/extrusion-terminal/hetzner-webdav.conf
 export EXTRUSION_DISCORD_CURL_CONFIG=/etc/extrusion-terminal/discord-webhook.conf
+ACCEPTANCE_DAY="$(date -u +%F)"
 
 .venv/bin/python - <<'PY'
 import os
@@ -269,7 +274,7 @@ PY
 INTERRUPTED_SOURCE="$TASK25_ACCEPTANCE_DIR/task25-interrupted.sqlite3"
 INTERRUPTED_SHA="$(sha256sum "$INTERRUPTED_SOURCE" | awk '{print $1}')"
 INTERRUPTED_NAME="task25-interrupted-$(date -u +%Y%m%dT%H%M%SZ)__sha256-${INTERRUPTED_SHA}.sqlite3"
-INTERRUPTED_URL="https://nx106226.your-storageshare.de/remote.php/dav/files/extrusion-backup/system-backups/extrusion-terminal/production-data/database-backups/${INTERRUPTED_NAME}"
+INTERRUPTED_URL="https://nx106226.your-storageshare.de/remote.php/dav/files/extrusion-backup/system-backups/extrusion-terminal/database-backups/${ACCEPTANCE_DAY}/${INTERRUPTED_NAME}"
 
 curl --disable --config /etc/extrusion-terminal/hetzner-webdav.conf \
   --silent --show-error --output /dev/null --write-out '%{http_code}\n' \
@@ -330,9 +335,9 @@ systemctl list-timers \
 
 Verify one validated `extrusion_terminal_*.sqlite3` remains locally, its
 checksum-named queue copy drains, the remote object appears under
-`database-backups/`, and both timers remain scheduled. Then observe at least one
-automatic ten-minute backup and one delivery retry interval. Do not automate
-remote inspection or restoration.
+`database-backups/<UTC YYYY-MM-DD>/`, and both timers remain scheduled. Then
+observe at least one automatic ten-minute backup and one delivery retry
+interval. Do not automate remote inspection or restoration.
 
 ## Runtime Behavior And Failure Meaning
 
@@ -351,10 +356,12 @@ remote inspection or restoration.
   bounds; Discord uses 10-second connect and 30-second transfer bounds.
 - Backup and delivery services have five- and ten-minute ceilings respectively.
 
-Each WebDAV attempt is one conditional `PUT` with `If-None-Match: *`. HTTP `201`
-is a new object. Checksum-named `412` is accepted only under the tested
-sole-writer/idempotency contract. There is no remote read, listing, overwrite,
-rename, move, copy, deletion, or retention operation.
+For database backups, each delivery first ensures the exact UTC daily child
+with bounded `MKCOL`, once per child per batch, then sends a conditional `PUT`
+with `If-None-Match: *`. HTTP `201` is a new object. Checksum-named `412` is
+accepted only under the tested sole-writer/idempotency contract. There is no
+remote read, listing, file overwrite, rename, move, copy, deletion, or retention
+operation.
 
 Backup or enqueue failure fails the producer job. WebDAV transport,
 authentication, permission, unexpected response, local cleanup, or queue-health

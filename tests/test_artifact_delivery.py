@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -38,7 +39,17 @@ class RecordingCurlRunner:
         self.calls.append((list(command), input_bytes))
         if self.results is not None:
             return self.results.pop(0)
+        if command[command.index("--request") + 1] == "MKCOL":
+            return CurlResult(0, "405", "")
         return self.result
+
+
+def calls_for_method(runner: RecordingCurlRunner, method: str):
+    return [
+        call
+        for call in runner.calls
+        if call[0][call[0].index("--request") + 1] == method
+    ]
 
 
 class RecordingSender:
@@ -103,7 +114,12 @@ def test_upload_is_conditional_create_only(
     result = upload_create_only(queued, delivery_config, runner=runner)
 
     assert result.state == "created"
-    command, input_bytes = runner.calls[0]
+    assert len(calls_for_method(runner, "MKCOL")) == 1
+    command, input_bytes = calls_for_method(runner, "PUT")[0]
+    assert [
+        call[0][call[0].index("--request") + 1]
+        for call in runner.calls
+    ] == ["MKCOL", "PUT"]
     assert input_bytes is None
     assert command[0:2] == ["curl", "--disable"]
     assert command[command.index("--request") + 1] == "PUT"
@@ -132,11 +148,108 @@ def test_upload_quotes_filename_and_uses_only_fixed_remote_root(
 
     assert result.remote_url.startswith(
         DEFAULT_WEBDAV_BASE_URL
-        + "/system-backups/extrusion-terminal/production-data/shift-reports/"
+        + "/system-backups/extrusion-terminal/shift-reports/"
     )
     assert "%20" in result.remote_url
     assert "%E2%84%96" in result.remote_url
     assert " " not in result.remote_url
+    assert len(runner.calls) == 1
+    assert calls_for_method(runner, "PUT")
+
+
+def test_database_backup_creates_only_its_daily_collection_before_upload(
+    tmp_path: Path, delivery_config: DeliveryConfig
+):
+    source = tmp_path / "daily-backup.sqlite3"
+    source.write_bytes(b"daily backup payload")
+    queued = enqueue_artifact(
+        source,
+        "database-backups",
+        outbox_dir=delivery_config.outbox_dir,
+        now=datetime(2026, 9, 15, 12, 34, 56, tzinfo=timezone.utc),
+        item_id="daily-backup",
+    )
+    runner = RecordingCurlRunner(
+        results=[
+            CurlResult(0, "201", ""),
+            CurlResult(0, "201", ""),
+        ]
+    )
+
+    result = upload_create_only(queued, delivery_config, runner=runner)
+
+    assert result.state == "created"
+    assert len(runner.calls) == 2
+    collection_command = runner.calls[0][0]
+    upload_command = runner.calls[1][0]
+    assert (
+        collection_command[collection_command.index("--request") + 1] == "MKCOL"
+    )
+    assert collection_command[-1].endswith(
+        "/system-backups/extrusion-terminal/database-backups/2026-09-15"
+    )
+    assert upload_command[upload_command.index("--request") + 1] == "PUT"
+    assert upload_command[-1].startswith(collection_command[-1] + "/")
+
+
+def test_existing_database_backup_daily_collection_proceeds_to_upload(
+    tmp_path: Path, delivery_config: DeliveryConfig
+):
+    queued = queue_artifact(tmp_path, delivery_config)
+    runner = RecordingCurlRunner(
+        results=[
+            CurlResult(0, "405", ""),
+            CurlResult(0, "201", ""),
+        ]
+    )
+
+    result = upload_create_only(queued, delivery_config, runner=runner)
+
+    assert result.state == "created"
+    assert len(calls_for_method(runner, "MKCOL")) == 1
+    assert len(calls_for_method(runner, "PUT")) == 1
+
+
+def test_daily_collection_failure_retains_database_backup_without_upload(
+    tmp_path: Path, delivery_config: DeliveryConfig
+):
+    queued = queue_artifact(tmp_path, delivery_config)
+    runner = RecordingCurlRunner(
+        results=[CurlResult(0, "403", "")]
+    )
+
+    with pytest.raises(WebDAVDeliveryError, match="folder creation.*HTTP 403"):
+        upload_create_only(queued, delivery_config, runner=runner)
+
+    assert len(calls_for_method(runner, "MKCOL")) == 1
+    assert calls_for_method(runner, "PUT") == []
+    assert queued.item_dir.exists()
+
+
+@pytest.mark.parametrize(
+    ("curl_result", "expected_error"),
+    [
+        (CurlResult(28, "000", "timeout"), "curl exit 28"),
+        (CurlResult(0, "", ""), "invalid HTTP status"),
+        (CurlResult(0, "20x", ""), "invalid HTTP status"),
+        (CurlResult(0, "500", ""), "unexpected HTTP 500"),
+    ],
+)
+def test_daily_collection_transport_or_response_failure_retains_backup(
+    tmp_path: Path,
+    delivery_config: DeliveryConfig,
+    curl_result: CurlResult,
+    expected_error: str,
+):
+    queued = queue_artifact(tmp_path, delivery_config)
+    runner = RecordingCurlRunner(results=[curl_result])
+
+    with pytest.raises(WebDAVDeliveryError, match=expected_error):
+        upload_create_only(queued, delivery_config, runner=runner)
+
+    assert len(calls_for_method(runner, "MKCOL")) == 1
+    assert calls_for_method(runner, "PUT") == []
+    assert queued.item_dir.exists()
 
 
 def test_delivery_configuration_refuses_an_arbitrary_remote_root(
@@ -241,7 +354,7 @@ def test_upload_command_has_bounds_and_only_config_path_credentials(
 
     upload_create_only(queued, delivery_config, runner=runner)
 
-    command = runner.calls[0][0]
+    command = calls_for_method(runner, "PUT")[0][0]
     assert command[command.index("--config") + 1] == str(
         delivery_config.webdav_curl_config
     )
@@ -301,7 +414,8 @@ def test_batch_processes_only_25_oldest_items(
 
     result = deliver_pending(delivery_config, runner=runner, notifier=RecordingSender())
 
-    assert len(runner.calls) == 25
+    assert len(calls_for_method(runner, "MKCOL")) == 1
+    assert len(calls_for_method(runner, "PUT")) == 25
     assert result.created_count == 25
     assert result.failed_count == 0
     assert result.pending_count == 2
@@ -327,7 +441,7 @@ def test_malformed_item_is_retained_while_later_valid_item_is_delivered(
     result = deliver_pending(delivery_config, runner=runner, notifier=sender)
 
     assert result.failed_count == 1
-    assert len(runner.calls) == 1
+    assert len(calls_for_method(runner, "PUT")) == 1
     assert not malformed.item_dir.exists()
     assert (
         delivery_config.outbox_dir
@@ -364,7 +478,7 @@ def test_malformed_batch_does_not_permanently_starve_later_valid_work(
     assert first.pending_count == 1
     assert second.created_count == 1
     assert second.pending_count == 0
-    assert len(runner.calls) == 1
+    assert len(calls_for_method(runner, "PUT")) == 1
     assert not valid.item_dir.exists()
     quarantine = delivery_config.outbox_dir / "quarantine" / "database-backups"
     assert {path.name for path in quarantine.iterdir()} == {
@@ -409,7 +523,7 @@ def test_max_length_quarantine_collisions_do_not_starve_later_valid_work(
     assert first.pending_count == 1
     assert second.created_count == 1
     assert second.pending_count == 0
-    assert len(runner.calls) == 1
+    assert len(calls_for_method(runner, "PUT")) == 1
     assert not valid.item_dir.exists()
     quarantine_names = {path.name for path in quarantine.iterdir()}
     assert set(collision_names) <= quarantine_names
@@ -629,7 +743,7 @@ def test_cleanup_rename_failure_leaves_item_retryable_via_conditional_put(
     )
 
     assert result.already_present_count == 1
-    assert len(retry_runner.calls) == 1
+    assert len(calls_for_method(retry_runner, "PUT")) == 1
     assert not queued.item_dir.exists()
 
 
@@ -659,7 +773,7 @@ def test_delivery_stops_before_starting_upload_outside_internal_budget(
     for index in range(3):
         queue_artifact(tmp_path, delivery_config, item_id=f"budget-{index}")
     runner = RecordingCurlRunner(stdout="201")
-    clock_values = iter((0.0, 0.0, 0.0, 200.0, 200.0))
+    clock_values = iter((0.0, 0.0, 0.0, 0.0, 200.0, 200.0))
 
     result = deliver_pending(
         delivery_config,
@@ -671,7 +785,7 @@ def test_delivery_stops_before_starting_upload_outside_internal_budget(
     assert result.created_count == 1
     assert result.failed_count == 0
     assert result.pending_count == 2
-    assert len(runner.calls) == 1
+    assert len(calls_for_method(runner, "PUT")) == 1
 
 
 def test_delivery_rechecks_budget_immediately_before_curl(
@@ -695,7 +809,8 @@ def test_delivery_rechecks_budget_immediately_before_curl(
         "Delivery time budget expired before any WebDAV upload could start."
     )
     assert result.pending_count == 1
-    assert runner.calls == []
+    assert calls_for_method(runner, "MKCOL") == []
+    assert calls_for_method(runner, "PUT") == []
     assert sender.messages == []
     assert result.notification_pending is True
     state = json.loads(
@@ -746,7 +861,7 @@ def test_delivery_defers_network_notification_outside_internal_budget(
 ):
     queue_artifact(tmp_path, delivery_config, item_id="failed-attempt")
     sender = RecordingSender()
-    clock_values = iter((0.0, 0.0, 0.0, 500.0))
+    clock_values = iter((0.0, 0.0, 0.0, 0.0, 500.0))
 
     failed = deliver_pending(
         delivery_config,
@@ -788,7 +903,8 @@ def test_first_remote_failure_stops_later_upload_attempts(
         delivery_config, runner=runner, notifier=RecordingSender()
     )
 
-    assert len(runner.calls) == 1
+    assert len(calls_for_method(runner, "MKCOL")) == 1
+    assert len(calls_for_method(runner, "PUT")) == 1
     assert result.failed_count == 1
     assert result.pending_count == 3
     assert all(queued.item_dir.exists() for queued in items)

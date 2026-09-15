@@ -105,13 +105,15 @@ Task 25's first source slice is implemented, verified, and merged into the
 current source. It supplies the shared outbox, create-only Hetzner worker,
 Discord failure/recovery notifier, SQLite-safe backup producer, tracked timers,
 transactional disabled-by-default installer, and protected
-maintenance/operation locks. It has not been installed, enabled, externally
+maintenance/operation locks. Disposable development acceptance against the real
+Hetzner and Discord endpoints has passed; it has not been installed, enabled,
 accepted, or deployed in production.
 
 When separately installed, the first slice runs the existing SQLite-safe backup
 behavior every ten minutes, retains the newest 144 local backups, queues
 immutable copies locally, and delivers them through an independent create-only
-WebDAV worker to the configured Hetzner Storage Share. Failed files remain
+WebDAV worker to a UTC `database-backups/YYYY-MM-DD/` path on the configured
+Hetzner Storage Share. Failed files remain
 queued for retry. The application performs no remote download, overwrite,
 automatic deletion, restore, or failover.
 
@@ -1026,8 +1028,9 @@ Backup approach:
 - Backups should use SQLite-safe backup behavior rather than unsafe raw copying while writes may be active.
 - Retain the newest 144 validated backups locally.
 - The completed-but-undeployed Task 25 source can send immutable backup copies
-  to the Hetzner Storage Share after separate installation, retains failed
-  deliveries locally for retry, and performs no automatic remote cleanup.
+  to dated UTC folders on the Hetzner Storage Share after separate installation,
+  retains failed deliveries locally for retry, and performs no automatic remote
+  cleanup.
 
 ## Time handling
 

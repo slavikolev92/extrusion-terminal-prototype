@@ -13,8 +13,9 @@ newest 144 local backups.
 
 **Architecture:** Producers atomically copy finished immutable files into a
 fixed-category filesystem outbox outside the Git checkout. A one-shot delivery
-worker validates each queue item and uses the existing protected curl
-configuration to issue only conditional WebDAV `PUT` requests. Separate
+worker validates each queue item, ensures the exact UTC daily child for a
+database backup with bounded WebDAV `MKCOL`, and uses the existing protected
+curl configuration to issue conditional WebDAV `PUT` requests. Separate
 filesystem notification state suppresses Discord warning spam and records one
 recovery; the first producer wraps the existing `app.backups.create_backup()`
 primitive and is scheduled independently from the common delivery worker.
@@ -51,12 +52,13 @@ uploads, Discord webhook creation, timer enablement, or deployment.
 - Add no SQLite schema, migration, production-data field, or application UI.
 - Use exactly these categories: `database-backups`, `shift-reports`, and
   `completed-order-pdfs`.
-- Use remote root
-  `system-backups/extrusion-terminal/production-data/` and never expose a
+- Use remote root `system-backups/extrusion-terminal/` and never expose a
   configurable arbitrary remote destination to a producer.
-- The WebDAV worker may issue only conditional create `PUT`. It must not issue
-  `GET`, `PROPFIND`, `DELETE`, `MOVE`, `COPY`, unconditional overwrite, remote
-  directory creation, or remote retention operations.
+- The WebDAV worker may issue bounded `MKCOL` only for the exact
+  `database-backups/<UTC YYYY-MM-DD>/` child and conditional create `PUT`. It
+  must not issue `GET`, `PROPFIND`, `DELETE`, `MOVE`, `COPY`, unconditional
+  overwrite, arbitrary remote directory creation, or remote retention
+  operations.
 - Accept only HTTP `201` as a new remote object. Treat `200` and `204` as
   failures. Accept checksum-named `412` only as an idempotent retry under the
   explicit sole-automated-writer assumption recorded in the design.
@@ -679,7 +681,11 @@ def test_upload_is_conditional_create_only(queued_artifact, delivery_config):
     )
 
     assert result.state == "created"
-    command, input_bytes = runner.calls[0]
+    command, input_bytes = [
+        call
+        for call in runner.calls
+        if call[0][call[0].index("--request") + 1] == "PUT"
+    ][0]
     assert input_bytes is None
     assert command[command.index("--request") + 1] == "PUT"
     assert command[command.index("--header") + 1] == "If-None-Match: *"
@@ -693,6 +699,9 @@ def test_upload_is_conditional_create_only(queued_artifact, delivery_config):
 
 Add cases for:
 
+- database backups deriving a UTC `YYYY-MM-DD` child from queued metadata,
+  accepting `MKCOL` `201`/`405`, rejecting every other result, and ensuring one
+  shared daily child only once per batch;
 - URL quoting each fixed path segment and filename without accepting an
   arbitrary remote root;
 - HTTP `201` as the only confirmed creation response;
@@ -745,7 +754,6 @@ DEFAULT_WEBDAV_BASE_URL = (
 DEFAULT_WEBDAV_ROOT = (
     "system-backups",
     "extrusion-terminal",
-    "production-data",
 )
 DEFAULT_WEBDAV_CURL_CONFIG = Path(
     os.getenv(
@@ -1207,8 +1215,10 @@ the conditional commit message is
 
 Document these exact sections in `docs/production-artifact-delivery.md`:
 
-- fixed production paths, WebDAV base/root, and three category folders;
-- required `database-backups/` manual folder creation;
+- fixed production paths, WebDAV base/root, three category folders, and the
+  database backup UTC daily child;
+- required `database-backups/` category-root manual creation and bounded
+  automatic daily-child creation;
 - protected existing Hetzner curl config validation without displaying it;
 - Discord incoming-webhook creation and a mode-`0600` curl config whose URL
   includes `wait=true`;
@@ -1256,7 +1266,8 @@ In `docs/implementation-notes/production-artifact-delivery.md`, record:
 
 - implemented module and unit boundaries;
 - exact fixed categories and paths;
-- conditional PUT response/idempotence behavior and its sole-writer assumption;
+- bounded daily-folder creation, conditional PUT response/idempotence behavior,
+  and its sole-writer assumption;
 - transfer/process/service timeouts, batch bound, and deployment operation lock;
 - local source versus disposable queue-copy ownership;
 - notification state transitions;
@@ -1471,7 +1482,8 @@ This section is not part of ordinary source execution. Follow
 maintenance operation.
 
 1. Confirm the deployed revision contains the accepted Task 25 source.
-2. Confirm `database-backups/` exists under the fixed Hetzner root.
+2. Confirm `database-backups/` exists under the fixed Hetzner root; daily
+   children are created automatically.
 3. Create and protect the Discord curl config without displaying its URL.
 4. Run the installer in dry-run mode and review all resolved paths.
 5. Install and verify the four units while leaving both timers disabled.

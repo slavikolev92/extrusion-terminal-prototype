@@ -64,9 +64,11 @@ complete. Persist the completed status and any remaining work here.
 - Task 25's first shared-pipeline/database-backup source slice was implemented,
   verified, and merged into the current source on September 14. The outbox,
   create-only WebDAV worker, Discord notifier, backup producer, tracked units,
-  installer, and deploy lock now exist in source. Nothing has been installed,
-  enabled, externally accepted, or deployed. Task 24's shift-report logic is a
-  future producer; Task 18 remains completely independent.
+  installer, and deploy lock now exist in source. Disposable development
+  acceptance against real Hetzner/Discord endpoints passed on September 15.
+  Nothing has been installed, enabled, accepted, or deployed in production.
+  Task 24's shift-report logic is a future producer; Task 18 remains completely
+  independent.
 - Task 13 is closed and archived. Its narrow ten-minute cloud-backup need is
   owned by Task 25; the broader USB, standby, UPS, failover, and disaster-
   recovery discussion was not absorbed as active scope.
@@ -467,15 +469,16 @@ deferred status. It is grouped by affected surface and rough complexity.
      expected for the first slice.
    - Status: first shared-pipeline/database-backup source slice implemented,
      verified, and merged into the current source on September 14, 2026.
-     External-service acceptance, production installation, timer enablement,
-     and deployment have not occurred.
+     Disposable development acceptance against real Hetzner/Discord endpoints
+     passed on September 15. Production installation, acceptance, timer
+     enablement, and deployment have not occurred.
    - Goal: implement one fixed-category append-only delivery outbox once, then
      let automatic database backups and later PDF producers reuse its routing,
      retry, and notification behavior.
    - First slice: ten-minute validated SQLite backups, newest-144 local
      retention, local pending retry, create-only delivery to
-     `database-backups/`, and one Discord failure/recovery notification per
-     component state transition.
+     `database-backups/<UTC YYYY-MM-DD>/`, and one Discord failure/recovery
+     notification per component state transition.
    - Future producers: Task 24 owns shift-report business logic and later uses
      `shift-reports/`; a separately designed completed-order producer converts
      the accepted operational-card print output into immutable editions under

@@ -47,10 +47,11 @@ atomic local enqueue under an allowlisted category
 periodic one-shot delivery worker
        |                   |
        v                   v
-conditional WebDAV PUT   Discord state notification
+bounded daily-folder    Discord state notification
+ensure + conditional PUT
        |
        v
-fixed Hetzner category folder
+fixed Hetzner category/day path
 ```
 
 This was selected over two alternatives:
@@ -125,7 +126,7 @@ The exact category allowlist is:
 
 | Category | Remote child folder |
 | --- | --- |
-| `database-backups` | `database-backups/` |
+| `database-backups` | `database-backups/<UTC YYYY-MM-DD>/` |
 | `shift-reports` | `shift-reports/` |
 | `completed-order-pdfs` | `completed-order-pdfs/` |
 
@@ -133,11 +134,15 @@ The remote base is the tested `extrusion-backup` WebDAV endpoint. All category
 folders live beneath:
 
 ```text
-system-backups/extrusion-terminal/production-data/
+system-backups/extrusion-terminal/
 ```
 
-Remote directories are provisioned manually. The worker does not discover,
-create, rename, move, share, or delete remote directories.
+The three category roots are provisioned manually. For database backups only,
+the worker derives one UTC `YYYY-MM-DD` child from immutable queue metadata and
+issues bounded WebDAV `MKCOL` before upload. It accepts `201` or `405`, ensuring
+the same child only once per delivery batch. The worker does not discover,
+list, rename, move, share, or delete remote directories and cannot create an
+arbitrary path.
 
 ### Immutable Naming And Idempotence
 
@@ -149,7 +154,8 @@ and append the checksum before `.sqlite3`:
 extrusion_terminal_20260914_123456_123456__sha256-<64 hex>.sqlite3
 ```
 
-The worker sends one WebDAV `PUT` with `If-None-Match: *`. It accepts only HTTP
+After ensuring the database backup's daily child, the worker sends one WebDAV
+`PUT` with `If-None-Match: *`. It accepts only HTTP
 `201 Created` as a newly created remote object. HTTP `200` or `204` is treated
 as a failure because it does not prove that the server honored the create-only
 contract; the queue item remains pending and the condition is reported.
@@ -164,8 +170,9 @@ and the `412` handling must be redesigned. The worker never falls back to an
 unconditional upload.
 
 No Task 25 code path may issue WebDAV `GET`, `PROPFIND`, `DELETE`, `MOVE`,
-`COPY`, or an unconditional overwrite. The server never pulls a remote payload
-or restores one automatically.
+`COPY`, or an unconditional overwrite. `MKCOL` is restricted to the exact
+allowlisted database category and UTC day child. The server never pulls a
+remote payload or restores one automatically.
 
 ### Delivery Completion
 
@@ -407,8 +414,8 @@ cover:
   FIFO, symlink/device, and forced-short-read cases;
 - category, filename, metadata, size, and checksum validation;
 - source-file preservation;
-- conditional create command construction and the absence of every forbidden
-  WebDAV method;
+- bounded daily-folder command construction, conditional create command
+  construction, and the absence of every forbidden WebDAV method;
 - suppression of ambient curl configuration, finite command/service timeouts,
   `201` creation, checksum-named `412` idempotence, `204` rejection, HTTP
   failure, and transport failure;
@@ -435,7 +442,8 @@ never mutate the live runtime database.
 Source implementation does not authorize production installation. After code
 acceptance, an explicit maintenance operation must:
 
-1. create the fixed remote category folder if absent;
+1. create the fixed remote category folder if absent (daily database children
+   are created by the worker);
 2. create and protect the Discord webhook configuration;
 3. validate the already-protected WebDAV curl configuration without displaying
    its secret;

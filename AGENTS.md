@@ -34,9 +34,11 @@ Confirmed scope:
   Excel front/back operational card as closely as possible.
 - SQLite-safe backups and documented recovery before pilot use.
 - Task 25's first production-artifact-delivery source slice is implemented,
-  verified, and merged into the current source, but is not installed, enabled,
-  externally accepted, or deployed. It provides one fixed-category filesystem
-  outbox, create-only Hetzner WebDAV delivery, Discord pipeline
+  verified, merged into the current source, and accepted with disposable
+  development timers against the real endpoints, but is not installed,
+  enabled, accepted, or deployed in production. It provides one fixed-category
+  filesystem outbox, create-only Hetzner WebDAV delivery into UTC daily backup
+  folders, Discord pipeline
   failure/recovery notification, and automatic ten-minute SQLite-safe backups
   with the newest 144 images retained locally. Task 24's shift PDF and the
   completed-order PDF are future producers that must reuse this pipeline but

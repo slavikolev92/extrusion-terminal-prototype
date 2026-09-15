@@ -4,6 +4,7 @@ import argparse
 import os
 import time
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Callable, Literal
 from urllib.parse import quote
@@ -40,7 +41,6 @@ DEFAULT_WEBDAV_BASE_URL = (
 DEFAULT_WEBDAV_ROOT = (
     "system-backups",
     "extrusion-terminal",
-    "production-data",
 )
 DEFAULT_WEBDAV_CURL_CONFIG = Path(
     os.getenv(
@@ -54,6 +54,7 @@ MAX_DELIVERY_ITEMS_PER_RUN = 25
 # updates while ensuring that no second network operation can overrun systemd.
 LATEST_UPLOAD_START_SECONDS = 180
 LATEST_NOTIFICATION_START_SECONDS = 410
+DATABASE_BACKUP_COLLECTION_TIMEOUT_SECONDS = 30
 
 
 class WebDAVDeliveryError(RuntimeError):
@@ -134,6 +135,7 @@ def _upload_prevalidated_create_only(
     *,
     runner: CurlRunner,
     network_start_allowed: Callable[[], bool] | None = None,
+    ensured_collections: set[str] | None = None,
 ) -> UploadResult:
     _validate_fixed_destination(config)
     _validate_artifact_identity(artifact)
@@ -146,6 +148,13 @@ def _upload_prevalidated_create_only(
     except ValueError as error:
         raise WebDAVDeliveryError("Protected WebDAV curl configuration is invalid.") from error
 
+    _ensure_database_backup_daily_collection(
+        artifact,
+        config,
+        runner=runner,
+        network_start_allowed=network_start_allowed,
+        ensured_collections=ensured_collections,
+    )
     remote_url = _remote_url(artifact, config)
     command = [
         "curl",
@@ -200,6 +209,68 @@ def _upload_prevalidated_create_only(
     return UploadResult(state=state, http_status=http_status, remote_url=remote_url)
 
 
+def _ensure_database_backup_daily_collection(
+    artifact: QueuedArtifact,
+    config: DeliveryConfig,
+    *,
+    runner: CurlRunner,
+    network_start_allowed: Callable[[], bool] | None = None,
+    ensured_collections: set[str] | None = None,
+) -> None:
+    if artifact.category != "database-backups":
+        return
+    collection_url = _remote_collection_url(artifact, config)
+    if ensured_collections is not None and collection_url in ensured_collections:
+        return
+    command = [
+        "curl",
+        "--disable",
+        "--config",
+        str(config.webdav_curl_config),
+        "--silent",
+        "--show-error",
+        "--output",
+        "/dev/null",
+        "--write-out",
+        "%{http_code}",
+        "--connect-timeout",
+        "10",
+        "--max-time",
+        str(DATABASE_BACKUP_COLLECTION_TIMEOUT_SECONDS),
+        "--request",
+        "MKCOL",
+        collection_url,
+    ]
+    if network_start_allowed is not None and not network_start_allowed():
+        raise _DeliveryBudgetExpired(
+            "WebDAV upload deferred until the next run by the service time budget."
+        )
+    try:
+        curl_result = runner(command, input_bytes=None)
+    except Exception as error:
+        raise WebDAVDeliveryError(
+            "WebDAV daily backup folder process did not complete."
+        ) from error
+    if curl_result.returncode != 0:
+        raise WebDAVDeliveryError(
+            "WebDAV daily backup folder creation failed with "
+            f"curl exit {curl_result.returncode}."
+        )
+    status_text = curl_result.stdout.strip()
+    if len(status_text) != 3 or not status_text.isascii() or not status_text.isdigit():
+        raise WebDAVDeliveryError(
+            "WebDAV daily backup folder creation returned an invalid HTTP status."
+        )
+    http_status = int(status_text)
+    if http_status not in {201, 405}:
+        raise WebDAVDeliveryError(
+            "WebDAV daily backup folder creation returned unexpected "
+            f"HTTP {http_status}."
+        )
+    if ensured_collections is not None:
+        ensured_collections.add(collection_url)
+
+
 def deliver_pending(
     config: DeliveryConfig,
     *,
@@ -214,6 +285,7 @@ def deliver_pending(
     first_error: str | None = None
     failed_category: str | None = None
     budget_expired = False
+    ensured_collections: set[str] = set()
 
     try:
         cleanup_result = reap_delivered_cleanup(
@@ -274,6 +346,7 @@ def deliver_pending(
                 network_start_allowed=lambda: (
                     monotonic() - started_at < LATEST_UPLOAD_START_SECONDS
                 ),
+                ensured_collections=ensured_collections,
             )
         except _DeliveryBudgetExpired:
             budget_expired = True
@@ -431,12 +504,33 @@ def _has_complete_checksum_name(artifact: QueuedArtifact) -> bool:
 
 def _remote_url(artifact: QueuedArtifact, config: DeliveryConfig) -> str:
     segments = (
-        *config.webdav_root,
-        CATEGORY_REMOTE_FOLDERS[artifact.category],
+        *_remote_directory_segments(artifact, config),
         artifact.remote_filename,
     )
     quoted_path = "/".join(quote(segment, safe="") for segment in segments)
     return f"{config.webdav_base_url}/{quoted_path}"
+
+
+def _remote_collection_url(artifact: QueuedArtifact, config: DeliveryConfig) -> str:
+    quoted_path = "/".join(
+        quote(segment, safe="")
+        for segment in _remote_directory_segments(artifact, config)
+    )
+    return f"{config.webdav_base_url}/{quoted_path}"
+
+
+def _remote_directory_segments(
+    artifact: QueuedArtifact, config: DeliveryConfig
+) -> tuple[str, ...]:
+    segments = (*config.webdav_root, CATEGORY_REMOTE_FOLDERS[artifact.category])
+    if artifact.category != "database-backups":
+        return segments
+    daily_segment = artifact.queued_at_utc[:10]
+    try:
+        date.fromisoformat(daily_segment)
+    except ValueError as error:
+        raise ValueError("Database backup queue date is invalid.") from error
+    return (*segments, daily_segment)
 
 
 def _bounded_error(error: Exception) -> str:
