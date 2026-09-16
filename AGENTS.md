@@ -46,8 +46,9 @@ Confirmed scope:
   producer that has stopped checking for 30 minutes while delivery still runs,
   and uses durable producer/delivery handoffs so crash retries neither skip
   observations nor double-count confirmed uploads.
-  The refinement has not yet passed its separate disposable acceptance. Task
-  24's shift PDF and the
+  The refinement passed its separate disposable development acceptance against
+  the real test endpoints on September 16, 2026. It remains uninstalled,
+  disabled, and unaccepted in production. Task 24's shift PDF and the
   completed-order PDF are future producers that must reuse this pipeline but
   retain separate feature designs. Task 18 is completely independent. Do not
   infer authorization for production service installation or external

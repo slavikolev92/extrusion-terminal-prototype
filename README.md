@@ -109,10 +109,11 @@ maintenance/operation locks. Disposable development acceptance against the real
 Hetzner and Discord endpoints has passed; it has not been installed, enabled,
 accepted, or deployed in production.
 
-That endpoint exercise accepted the historical September 14 transport slice.
-It predates the refinement below and does not accept its upload-on-change,
-handoff, Sofia routing, grace/recovery, freshness, or summary behavior. The
-refinement-specific disposable acceptance gate remains pending.
+That first endpoint exercise accepted the historical September 14 transport
+slice. A separate September 16 disposable exercise accepted the refinement's
+upload-on-change, handoff, Sofia routing, grace/recovery, freshness, summary,
+remote-download verification, and scratch-restore behavior. Neither exercise
+installed, enabled, accepted, or deployed Task 25 in production.
 
 The September 15 refinement keeps the ten-minute schedule but uploads only when
 the complete validated database checksum changes. Each check still creates and

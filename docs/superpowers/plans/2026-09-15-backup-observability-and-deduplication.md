@@ -712,7 +712,7 @@ git status --short
 Expected: the complete suite passes; only this plan's tracked files plus the
 pre-existing untracked Task 20 file appear.
 
-- [ ] **Step 6: Perform disposable development acceptance**
+- [x] **Step 6: Perform disposable development acceptance**
 
 Using only the previously authorized test WebDAV/Discord configuration, a copy
 of the September 14 production database, disposable user units, disposable
@@ -740,6 +740,15 @@ state/outbox, and `TEST`-labelled summaries:
 Do not access or modify the production application database, production units,
 or production timer state.
 
+Completed on September 16, 2026. The user confirmed all three summaries, the
+single delayed warning, the single full-drain recovery, and all three readable
+remote files. The newest remote object was downloaded, matched its full local
+SHA-256 and 16-character filename identity, passed SQLite integrity and foreign
+key checks, and restored successfully into a scratch database. The one-minute
+bad-password retries triggered Nextcloud's temporary brute-force protection;
+the runbook now requires exactly two controlled bad-credential requests so the
+production acceptance does not repeat that avoidable test lockout.
+
 - [x] **Step 7: Prepare for user review without staging or committing**
 
 Report the changed files, exact automated results, exact disposable acceptance
@@ -750,6 +759,5 @@ pushing, merging, enabling production timers, or deleting accepted test evidence
 Completed on September 16, 2026: the final source review and independent scoped
 re-review found no remaining Critical or Important findings. Automated evidence
 is recorded in `docs/implementation-notes/production-artifact-delivery.md`.
-Refinement-specific disposable endpoint acceptance remains deliberately pending
-under Step 6; the user approved source commit and integration without authorizing
-production installation, endpoint activation, or timer enablement.
+The user later approved and confirmed Step 6 without authorizing production
+installation, endpoint activation, or timer enablement.

@@ -8,8 +8,8 @@ locks. The September 15 source refinement implements and automatically verifies
 upload-on-change behavior, Sofia-readable names and folders, quiet human
 alerts, scheduled summaries, same-server producer freshness checks, and
 crash-safe producer/delivery handoffs. Its separate disposable external
-acceptance is still pending. Neither slice has been installed, enabled,
-accepted, or deployed in production.
+acceptance passed against the real test endpoints on September 16, 2026.
+Neither slice has been installed, enabled, accepted, or deployed in production.
 
 Authoritative design:
 `docs/superpowers/specs/2026-09-14-production-artifact-delivery-design.md`
@@ -296,7 +296,8 @@ the original Discord failure/recovery messages, UTC daily-folder creation, and o
 backup/delivery cycle were accepted on September 15 with disposable
 development paths and timers. The development units were then removed.
 That historical acceptance predates the observability, deduplication,
-Sofia-routing, and summary refinement and does not accept the refined behavior.
+Sofia-routing, and summary refinement. A separate disposable exercise accepted
+the refined behavior on September 16, 2026.
 Production protected-config placement, unit installation, timer enablement,
 and end-to-end production acceptance remain separately authorized operational
 work.

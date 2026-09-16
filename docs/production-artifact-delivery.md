@@ -380,6 +380,13 @@ Use a syntactically valid curl config containing deliberately wrong credentials;
 an invalid config is a local configuration failure and correctly bypasses the
 cloud grace period.
 
+Make exactly two bad-credential requests: the initial failure and one controlled
+request when the grace expires. If this check is driven by real elapsed time,
+stop the disposable delivery timer immediately after the first failure, wait
+ten minutes, then run the second failure manually. Do not leave the one-minute
+timer retrying a wrong password: repeated bad authentication can trigger
+Nextcloud's temporary brute-force protection and delay the valid recovery.
+
 ```bash
 BAD_WEBDAV_CONFIG="$TASK25_ACCEPTANCE_DIR/bad-webdav.conf"
 SUMMARY_OFF_CONFIG="$TASK25_ACCEPTANCE_DIR/summary-off.conf"

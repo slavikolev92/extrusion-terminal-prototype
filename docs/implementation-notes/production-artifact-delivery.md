@@ -2,9 +2,9 @@
 
 Status: the September 14 base slice is merged into the current source. The
 September 15 observability and deduplication refinement is source-complete,
-verified, independently reviewed, and approved for source integration. Its
-separate disposable external acceptance remains pending. Neither version has
-been installed, enabled, externally accepted, or deployed in production.
+verified, independently reviewed, integrated, and accepted with a disposable
+copy of production data against the real test endpoints. Neither version has
+been installed, enabled, accepted, or deployed in production.
 
 ## Implemented Boundary
 
@@ -166,14 +166,43 @@ each correction. No Critical or Important finding remains open.
 
 Two boundaries remain deliberate rather than source defects: Discord delivery
 is at-least-once across an interruption after the remote service accepts a
-message but before local confirmation is durable, and the refined real-endpoint
-workflow still requires its separately authorized disposable acceptance.
+message but before local confirmation is durable, and production installation,
+acceptance, and enablement remain separate authorized operations.
+
+Disposable refinement acceptance on September 16, 2026 used the protected test
+Discord/WebDAV configuration and a copy of the September 14 database, never the
+runtime application database:
+
+```text
+Focused refinement integration cases:      7 passed
+Automatic validated database checks:       3 observed
+Unchanged-content duplicate uploads:       0
+Changed versions / initial uploads:         2 / 2
+Accelerated scheduled summaries:           3 confirmed by the user
+Delayed cloud warning:                     1 after the ten-minute grace
+Queued files during the incident:          1 preserved
+Recovery messages:                         1 after the queue drained
+Total confirmed test uploads:              3
+Remote objects confirmed by the user:      3 readable Sofia-named files
+Downloaded SHA-256:                        05e00e4f636a625a29ab956fa1ffbf62b0afb094d8020608dfcaa892d9c639ab
+Filename identity / local image match:      passed / passed
+Downloaded SQLite integrity / FK check:    ok / zero violations
+Scratch restore:                           passed, two test-event rows present
+Production database/services:              untouched
+```
+
+The deliberately wrong-password timer test also established a test-procedure
+constraint: do not leave the one-minute delivery timer running with bad
+credentials. Repeated bad authentication triggered Nextcloud's temporary
+brute-force protection and delayed the otherwise successful recovery. Future
+acceptance must make one initial bad-credential attempt, pause delivery for the
+grace period, make one controlled due attempt, then restore the valid config.
 
 Migration: **none**. This work changes no application SQLite schema or stored
 production meaning.
 
-Deployment: **not deployed**. Refinement-specific disposable acceptance,
-production source deployment, protected configuration, root-staged disabled
-installation, timer enablement, and the first observed production cycle remain
-separate gates. The operational authority is
+Deployment: **not deployed**. Production source deployment, protected
+configuration, root-staged disabled installation, production acceptance, timer
+enablement, and the first observed production cycle remain separate gates. The
+operational authority is
 `docs/production-artifact-delivery.md`; this note authorizes none of them.
