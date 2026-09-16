@@ -31,6 +31,8 @@ def create_backup(
     backup_dir: Path | str | None = None,
     keep_count: int = DEFAULT_BACKUP_KEEP_COUNT,
     timestamp: datetime | None = None,
+    *,
+    apply_retention_policy: bool = True,
 ) -> BackupResult:
     source_path = Path(source_db_path) if source_db_path is not None else db.DB_PATH
     source_path = source_path.resolve()
@@ -56,7 +58,10 @@ def create_backup(
         if staging_path.exists():
             staging_path.unlink()
         raise
-    retained_paths, removed_paths = apply_retention(resolved_backup_dir, keep_count)
+    if apply_retention_policy:
+        retained_paths, removed_paths = apply_retention(resolved_backup_dir, keep_count)
+    else:
+        retained_paths, removed_paths = (), ()
     return BackupResult(
         source_path=source_path,
         backup_path=backup_path,
@@ -112,10 +117,14 @@ def apply_retention(
 
     retained = tuple(backup_files[:keep_count])
     removed: list[Path] = []
-    for backup_file in backup_files[keep_count:]:
-        assert_path_inside_directory(backup_file, resolved_backup_dir)
-        backup_file.unlink()
-        removed.append(backup_file)
+    try:
+        for backup_file in backup_files[keep_count:]:
+            assert_path_inside_directory(backup_file, resolved_backup_dir)
+            backup_file.unlink()
+            removed.append(backup_file)
+    finally:
+        if removed:
+            _fsync_directory(resolved_backup_dir)
 
     return retained, tuple(removed)
 

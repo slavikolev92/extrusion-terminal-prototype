@@ -109,13 +109,25 @@ maintenance/operation locks. Disposable development acceptance against the real
 Hetzner and Discord endpoints has passed; it has not been installed, enabled,
 accepted, or deployed in production.
 
-When separately installed, the first slice runs the existing SQLite-safe backup
-behavior every ten minutes, retains the newest 144 local backups, queues
-immutable copies locally, and delivers them through an independent create-only
-WebDAV worker to a UTC `database-backups/YYYY-MM-DD/` path on the configured
-Hetzner Storage Share. Failed files remain
-queued for retry. The application performs no remote download, overwrite,
-automatic deletion, restore, or failover.
+That endpoint exercise accepted the historical September 14 transport slice.
+It predates the refinement below and does not accept its upload-on-change,
+handoff, Sofia routing, grace/recovery, freshness, or summary behavior. The
+refinement-specific disposable acceptance gate remains pending.
+
+The September 15 refinement keeps the ten-minute schedule but uploads only when
+the complete validated database checksum changes. Each check still creates and
+validates a local SQLite-safe image, and the newest 144 remain locally. Changed
+images use human-readable Sofia timestamps, a short checksum identity, and a
+Sofia-calendar `database-backups/YYYY-MM-DD/` folder. Legacy queued names remain
+compatible. Failed files stay queued for retry.
+
+Discord no longer receives routine ten-minute success spam. Producer failures
+alert immediately; cloud failures alert only after ten minutes and recover only
+after the complete backlog drains. The delivery worker also detects a producer
+that has stopped checking for 30 minutes. A human-readable Sofia-time summary
+defaults to `09:00` daily and supports `off`, one daily time, or two daily
+times. No extra daemon or timer was added. The application still performs no
+remote download, overwrite, automatic deletion, restore, or failover.
 
 Future shift-report and completed-order PDF producers will reuse the same
 delivery pipeline but retain separate feature designs. Task 24 owns the future
@@ -128,6 +140,10 @@ standby, UPS, or disaster-recovery proposals. See
 `docs/superpowers/specs/2026-09-14-production-artifact-delivery-design.md`. The
 first-slice executable plan is
 `docs/superpowers/plans/2026-09-14-production-artifact-delivery-and-backup.md`;
+the refinement design and plan are
+`docs/superpowers/specs/2026-09-15-backup-observability-and-deduplication-design.md`
+and
+`docs/superpowers/plans/2026-09-15-backup-observability-and-deduplication.md`;
 the production authority is `docs/production-artifact-delivery.md`.
 
 ## Following Application Feature Slice — Task 20 (Not Yet Implemented)
@@ -1024,13 +1040,16 @@ Backup approach:
 
 - Store the SQLite database on the app VM/server.
 - Support timestamped backups through the documented SQLite-safe backup command.
-- A 10-minute backup interval is acceptable because the database will be small and storage space is available.
+- The backup job checks the database every 10 minutes because the database is
+  small and storage space is available. Every check retains a validated local
+  image, but only content changed since the previous validated check is queued
+  for cloud delivery.
 - Backups should use SQLite-safe backup behavior rather than unsafe raw copying while writes may be active.
 - Retain the newest 144 validated backups locally.
-- The completed-but-undeployed Task 25 source can send immutable backup copies
-  to dated UTC folders on the Hetzner Storage Share after separate installation,
-  retains failed deliveries locally for retry, and performs no automatic remote
-  cleanup.
+- The completed-but-undeployed Task 25 source can send immutable changed backup
+  copies to Sofia-calendar folders on the Hetzner Storage Share after separate
+  installation. It retains failed deliveries locally for retry, never
+  overwrites or deletes remote files, and performs no automatic remote cleanup.
 
 ## Time handling
 

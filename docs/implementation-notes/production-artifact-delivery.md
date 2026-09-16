@@ -1,202 +1,179 @@
 # Production Artifact Delivery — Implementation Note
 
-Status: implemented, source-verified, and merged into the current source on
-2026-09-14. Not installed, enabled, externally accepted, or deployed in
-production.
+Status: the September 14 base slice is merged into the current source. The
+September 15 observability and deduplication refinement is source-complete,
+verified, independently reviewed, and approved for source integration. Its
+separate disposable external acceptance remains pending. Neither version has
+been installed, enabled, externally accepted, or deployed in production.
 
 ## Implemented Boundary
 
-- `app/bounded_files.py` owns no-follow, direct-regular-file, cap-plus-one
-  reads for curl configuration, queue metadata, and notification state. It
-  rejects oversized files before content allocation, rejects FIFOs/symlinks
-  and devices, and completes legal short reads only through EOF or the bound.
-- `app.backups` now creates each SQLite image under a non-retention staging
-  name, validates and fsyncs it, atomically publishes the final name, fsyncs the
-  directory, and only then applies local retention. Abrupt-process staging
-  residue is reported and never counted in the final-name set.
-- `app/artifact_outbox.py` owns fixed-category durable queue publication,
-  bounded discovery, metadata/checksum validation, malformed-evidence
-  quarantine, and crash-safe delivered-item cleanup.
-- `app/curl_transport.py` owns the no-shell bounded subprocess boundary and the
-  allowlisted curl-config parser.
-- `app/pipeline_notifications.py` owns bounded atomic per-component incident
-  state, pending-notification retry, and confirmed Discord webhook delivery.
-- `app/artifact_delivery.py` owns fixed URL construction, conditional WebDAV
-  creation, finite queue draining, internal network-start budgets, and separate
-  artifact/notification outcomes.
-- `app/backup_job.py` wraps the SQLite-safe backup primitive and enqueues the
-  validated result without calling WebDAV.
-- Four tracked systemd units schedule the backup producer and independent
-  delivery worker. Installation is a disabled-by-default transaction, while
-  normal deployment and actual restore coordinate through root-controlled
-  maintenance and operation locks.
+Task 25 is an operational subsystem in this repository; it does not add UI or
+database schema. Two one-shot jobs are launched by the existing four tracked
+systemd units: a ten-minute SQLite backup producer and an approximately
+one-minute delivery worker. Installing those units is a separate,
+disabled-by-default operation after source deployment.
 
-The only categories are:
+The shared pipeline consists of:
 
-```text
-database-backups
-shift-reports
-completed-order-pdfs
-```
+- `app.backups`: SQLite backup/validation, durable publication, local retention,
+  and manual restore primitives;
+- `app.backup_job`: producer handoff, upload-on-change decision, local image
+  retention, and outbox publication;
+- `app.artifact_outbox`: fixed-category durable queue, quarantine, and
+  crash-safe cleanup;
+- `app.artifact_delivery`: fixed-destination, create-only WebDAV delivery and
+  delivery/freshness/summary orchestration;
+- `app.backup_activity` and `app.backup_summary`: bounded atomic operational
+  evidence and schedule state;
+- `app.pipeline_notifications`: bounded incident state and confirmed Discord
+  delivery; and
+- `app.curl_transport` and `app.bounded_files`: no-shell subprocess and
+  no-follow bounded-file boundaries.
 
-Only `database-backups` has a producer in this slice. Task 24 and the future
-completed-order producer retain ownership of their PDF triggers, contents, and
-edition rules.
+The only artifact categories are `database-backups`, `shift-reports`, and
+`completed-order-pdfs`. Only database backups have a producer in this slice.
+Task 24 and the future completed-order feature own their PDF triggers, content,
+and edition rules.
 
-## Ownership, Persistence, And Recovery
+## Backup Producer And Local Durability
 
-The production database remains
-`/opt/extrusion-terminal/data/extrusion_terminal.sqlite3`. Validated images are
-published under `/opt/extrusion-terminal/backups`; the newest 144 matching
-final names are retained. The current producer creates a final name only after
-validation and durability. Steady-state retention treats that publication as
-evidence instead of reopening all 144 databases every ten minutes, so the
-first-enable runbook audits every pre-existing matching file.
+Every ten-minute producer run creates and validates a SQLite-safe local image.
+The newest 144 final images remain under `/opt/extrusion-terminal/backups`,
+including unchanged checks. Publication and retention directory mutations are
+fsynced. Retention does not reopen all retained databases on every run, so the
+first-enable runbook audits pre-existing matching files once.
 
-The producer-owned backup remains after enqueue. The outbox payload is a retry
-copy and is removed only after confirmed delivery. Queue publication copies to
-same-filesystem staging, fsyncs payload and bounded schema-version-1 metadata,
-and atomically renames the complete item into its allowlisted pending category.
-Confirmed deliveries move atomically to cleanup before idempotent reaping.
-Malformed or structurally unexpected evidence moves intact to quarantine so it
-cannot starve valid work. The same rule covers malformed cleanup tombstones;
-inspection stops after a third child and quarantine-name collisions fall back
-to a bounded opaque ID. Pending, quarantine, and stale staging have no silent
-automatic retention.
+Only a complete SHA-256 change from the last committed observation is queued.
+A bounded `database-backup-handoff.json` binds an in-progress observation to
+its local filename, human remote basename, stable queue item ID, digest, and
+changed decision. A retry completes that exact handoff before observing newer
+database state. Delivery will not consume the handoff's queue item while the
+handoff remains active, closing the producer/delivery crash race.
 
-Actual database replacement remains manual. The production runbook acquires
-the maintenance lock and then the operation lock before recording timer state
-or quiescing anything; it proves both jobs and the app inactive and holds both
-locks through restore validation and application restart checks.
+The local producer image remains after enqueue. The outbox owns a separate
+retry copy. Queue publication and state replacement use same-filesystem atomic
+renames plus file/directory fsync. Pending, staging, cleanup, and quarantine
+evidence is never silently expired.
 
-## Remote Operation Contract
+## Remote Contract
 
-The destination is fixed at the `extrusion-backup` WebDAV base and:
+The destination is fixed below:
 
 ```text
-system-backups/extrusion-terminal/database-backups/<UTC YYYY-MM-DD>/
+system-backups/extrusion-terminal/database-backups/<Sofia YYYY-MM-DD>/
 system-backups/extrusion-terminal/shift-reports/
 system-backups/extrusion-terminal/completed-order-pdfs/
 ```
 
-For a database backup, delivery derives the daily child from the queue item's
-UTC timestamp and issues one bounded `MKCOL` per child per batch. HTTP `201` or
-`405` permits the conditional upload to proceed; every other status retains the
-queue item. Remote filenames carry the full lowercase SHA-256 digest. Delivery
-then performs one `PUT` with `If-None-Match: *`. HTTP `201` means created. A
-checksum-named `412` means an idempotent prior delivery only under the approved
-sole-writer contract and the required real interrupted-PUT acceptance result.
-HTTP `200`, `204`, and all other statuses fail and retain the queue item.
+New database objects use a readable Sofia timestamp and a 16-character content
+identity, for example:
 
-There is no source path for remote discovery, read, download, overwrite,
-arbitrary directory creation, rename, move, copy, deletion, or retention. The
-single permitted directory mutation is the exact database-backup daily child.
+```text
+extrusion-terminal_2026-09-15_14-20-00_8a363dadd2680c91.sqlite3
+```
+
+The UTC offset is added during Sofia's repeated autumn hour so two real instants
+cannot receive the same readable basename. Legacy pending names containing the
+complete SHA-256 remain readable and retryable.
+
+Delivery issues only a bounded `MKCOL` for the exact daily child and a
+conditional `PUT` with `If-None-Match: *`. HTTP `201` means created. HTTP `412`
+is accepted only when the immutable filename matches the queued content
+identity, under Task 25's tested sole-writer contract. There is no remote read,
+listing, download, overwrite, rename, move, copy, deletion, or retention path.
+
+Remote confirmation is durably checkpointed before local cleanup. The
+invocation's final success/failure outcome is then recorded exactly once.
+Queue-item IDs prevent a cleanup retry or matching `412` from incrementing
+confirmed-upload counters twice. A recovery is green only after a failure-free
+run leaves no pending or quarantined work.
+
+## Alerts And Summaries
+
+Routine successful checks are silent. Producer failures alert immediately.
+Genuine WebDAV/transport incidents have a ten-minute grace period; local
+configuration, queue, quarantine, state, and cleanup failures alert
+immediately. Quarantine messages state that manual review is required and do
+not claim automatic retry. Recovery reports only after the complete backlog
+drains and includes the number of database uploads confirmed during the
+incident.
+
+The delivery worker also warns when the same server has recorded no validated
+backup check for 30 minutes. This cannot detect a dead VM or total site outage;
+external heartbeat monitoring remains outside Task 25.
+
+A Sofia civil-time summary defaults to `09:00` and may be set to `off`, one
+daily time, or two daily times through
+`/etc/extrusion-terminal/backup-summary.conf`. It reports check/change/failure
+counters, confirmed uploads, latest activity, and waiting work. Incident
+messages take priority, and a delivery invocation sends at most one Discord
+message. Ambiguous autumn slots belong to the first real occurrence; a skipped
+spring slot becomes due at the first valid local instant after the gap.
 
 ## Bounds And Coordination
 
-- delivery snapshot: at most 25 active queue entries, oldest first;
-- WebDAV daily-folder curl: 10-second connect and 30-second transfer bounds;
-- WebDAV upload curl: 10-second connect and 120-second transfer bounds;
-- Discord curl: 10-second connect and 30-second transfer bounds;
-- shared curl subprocess: 180-second outer bound;
-- latest WebDAV start: before 180 seconds, rechecked immediately before curl;
+- delivery snapshot: at most 25 active entries, oldest first;
+- latest WebDAV start: before 180 seconds;
 - latest Discord start: before 410 seconds, otherwise persisted for retry;
-- backup service: five-minute bound;
-- delivery service: ten-minute bound; and
-- schedules: backup every ten minutes, delivery approximately every minute.
+- WebDAV: 10-second connect and 30-second folder/120-second upload bounds;
+- Discord: 10-second connect and 30-second transfer bounds;
+- backup service: five-minute ceiling; delivery service: ten-minute ceiling;
+- backup schedule: every ten minutes; delivery schedule: approximately every
+  minute.
 
-A cutoff after confirmed upload progress defers only the remainder. A cutoff
-with zero upload progress records a delivery failure, preventing an expensive
-oldest item from silently starving every later item.
+Scheduled jobs share the operation lock non-blockingly. Installation,
+deployment, and restore acquire the maintenance lock and then the operation
+lock exclusively. The installer validates the exact clean accepted revision,
+both protected curl configs, and the optional summary config before installing
+the four units; success leaves both timers disabled. Deployment restores only
+timers that were previously enabled, and failure leaves both disabled.
 
-Scheduled services take the operation lock shared/non-blocking. Installation,
-deployment, and restore take the maintenance lock and then the operation lock
-exclusively. The installer validates an exact clean accepted revision again
-under the lock, stages the four unit blobs from that commit with Git replacement
-objects disabled, installs transactionally, and leaves timers disabled.
-Privileged execution uses a root-owned temporary installer extracted from that
-same commit rather than the `sk`-writable working-tree script.
+## Recovery And Deployment Status
 
-Deployment suppresses Git replacement/repository-selection overrides, disables
-both schedules during mutation, checks installed units against the deployed
-checkout, and restores only previously enabled timers. It confirms each
-restored timer is both enabled and active; failure leaves both disabled.
+Task 25 never downloads or restores a database. An authorized operator selects
+a backup and uses the existing guarded manual restore procedure while the jobs
+and application are quiescent under both locks.
 
-## Notification State
+The September 15 development endpoint exercise proved the historical base
+slice's WebDAV create/idempotent-retry path, Discord failure/recovery messages,
+and one automatic disposable backup/delivery cycle. That evidence predates the
+upload-on-change, Sofia naming/routing, freshness, summary, grace, and handoff
+refinement and therefore does not accept the refined behavior.
 
-The allowlisted components are `database-backup` and `webdav-delivery`.
-Discord success requires HTTP `200` and a bounded JSON saved-message response
-with a valid message ID. Redirects, malformed/empty responses, `204`, nonzero
-curl, and oversized output remain pending failures.
-
-One incident preserves its first and latest bounded errors. A sent failure is
-suppressed while the incident remains open. If the failure warning could not be
-sent before recovery, one `FAILED AND RECOVERED` message carries the evidence.
-If that combined message also fails and the component fails again, the original
-incident evidence remains open rather than being overwritten. A run that
-reaches its work budget without an upload does not claim recovery. Notification
-errors remain in bounded state and journal output without exposing URLs or
-credentials. Discord-owned transport/confirmation failures retain a safe
-actionable reason; arbitrary notifier exceptions remain class-only diagnostics.
-
-The server cannot report its own complete absence. External heartbeat
-monitoring remains outside Task 25.
-
-## Verification
-
-The automated suite uses temporary SQLite/filesystem paths and fake transports;
-it does not contact Hetzner or Discord or mutate the runtime database.
-
-Fresh source verification on 2026-09-14:
+Final refinement source verification on 2026-09-16 completed without external
+contacts or production mutation:
 
 ```text
-Focused Task 25 and backup/recovery tests: 161 passed in 3.55 seconds
-Python compile/import checks:             passed
-Bash syntax checks:                       passed
-systemd ten-minute calendar parse:        passed
-systemd-analyze verify (four units):       passed
-Forbidden WebDAV operation source scan:   passed, no matches
-git diff --check:                         passed
-Full repository test suite:               1,671 passed in 264.89 seconds
+Focused Task 25 suite:                 304 passed in 5.92 seconds
+Full repository suite:                 1,819 passed in 263.69 seconds
+Python compile/import checks:          passed
+Installer/deployment shell syntax:     passed
+systemd-analyze verify (four units):   passed
+git diff --check:                      passed
+Independent scoped re-review:          no Critical or Important findings
 ```
 
-Development acceptance on 2026-09-15 used the protected disposable configs and
-the latest available production backup copy, never the runtime database:
+The final refinement review covered security/credential boundaries,
+producer/delivery crash recovery, notification and summary state, operational
+installation, and code/test quality. Its last five Important findings were
+resolved before source acceptance: exact pending recount after confirmation
+checkpoint failure, immediate alerting for mixed quarantine and remote
+failures, complete durable incident evidence, bytecode-free installer
+validation, and a runbook acceptance example that exercises the real backup-job
+entry point and checks the Sofia timestamp prefix. Focused regressions cover
+each correction. No Critical or Important finding remains open.
 
-```text
-Real WebDAV create / identical retry:      created=1, then already_present=1
-Real Discord failure / recovery:          both messages received
-Dated-folder focused suite:               163 passed in 3.62 seconds
-Final full repository suite:              1,678 passed in 261.96 seconds
-Disposable user-systemd backup timer:     fired at 11:20:00 UTC
-Disposable user-systemd delivery timer:   created=1, failed=0, pending=0
-Automatic local backup integrity / FK:    ok / zero violations
-Scratch restore and logical hash match:   passed
-Original source-copy SHA-256 / mtime:      unchanged
-Disposable installed development units:   removed; zero remain
-```
+Two boundaries remain deliberate rather than source defects: Discord delivery
+is at-least-once across an interruption after the remote service accepts a
+message but before local confirmation is durable, and the refined real-endpoint
+workflow still requires its separately authorized disposable acceptance.
 
-The automatic file was delivered to
-`database-backups/2026-09-15/` using an automatically created UTC daily child.
-Production systemd and the production database were untouched. The disposable
-systemd/runtime evidence was removed after verification. The two protected
-test curl configs remain under `artifacts/task-25-discord-test/` until the
-associated test webhook is retired.
+Migration: **none**. This work changes no application SQLite schema or stored
+production meaning.
 
-Independent post-hardening security, logic/data-integrity, and
-quality/operations reports are stored under
-`artifacts/task-25-post-hardening-review/`; their aggregate is the final review
-record for this branch state.
-
-## Migration And Deployment Assessment
-
-Migration: **No migration.** This slice changes no production SQLite schema,
-stored-data meaning, or application UI.
-
-Deployment: **Not deployed.** Source review and merge are complete and bounded
-development acceptance against real Hetzner/Discord endpoints has passed.
-Source publication, app deployment, production protected-config placement,
-root-staged installer execution, production acceptance, production timer
-enablement, and the first observed production cycle remain distinct approval
-gates. The operational authority is `docs/production-artifact-delivery.md`;
-this note authorizes none of those actions.
+Deployment: **not deployed**. Refinement-specific disposable acceptance,
+production source deployment, protected configuration, root-staged disabled
+installation, timer enablement, and the first observed production cycle remain
+separate gates. The operational authority is
+`docs/production-artifact-delivery.md`; this note authorizes none of them.

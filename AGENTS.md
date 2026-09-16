@@ -37,10 +37,17 @@ Confirmed scope:
   verified, merged into the current source, and accepted with disposable
   development timers against the real endpoints, but is not installed,
   enabled, accepted, or deployed in production. It provides one fixed-category
-  filesystem outbox, create-only Hetzner WebDAV delivery into UTC daily backup
-  folders, Discord pipeline
-  failure/recovery notification, and automatic ten-minute SQLite-safe backups
-  with the newest 144 images retained locally. Task 24's shift PDF and the
+  filesystem outbox, create-only Hetzner WebDAV delivery into Sofia-calendar
+  daily backup folders, and automatic ten-minute SQLite-safe checks with the
+  newest 144 images retained locally. The current refinement enqueues/uploads
+  only changed content, uses readable Sofia names with short content identity,
+  sends human Discord incidents without routine success spam, provides an
+  optional once- or twice-daily Sofia summary (default `09:00`), detects a
+  producer that has stopped checking for 30 minutes while delivery still runs,
+  and uses durable producer/delivery handoffs so crash retries neither skip
+  observations nor double-count confirmed uploads.
+  The refinement has not yet passed its separate disposable acceptance. Task
+  24's shift PDF and the
   completed-order PDF are future producers that must reuse this pipeline but
   retain separate feature designs. Task 18 is completely independent. Do not
   infer authorization for production service installation or external

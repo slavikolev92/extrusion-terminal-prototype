@@ -21,8 +21,8 @@ from app.artifact_outbox import (
 )
 
 
-def test_enqueue_copies_source_and_uses_checksum_name(tmp_path: Path):
-    source = tmp_path / "extrusion_terminal_20260914_120000_000001.sqlite3"
+def test_enqueue_copies_source_and_uses_short_content_identity_name(tmp_path: Path):
+    source = tmp_path / "extrusion-terminal_2026-09-15_14-20-00.sqlite3"
     source.write_bytes(b"sqlite-safe-image")
     outbox = tmp_path / "outbox"
 
@@ -38,12 +38,69 @@ def test_enqueue_copies_source_and_uses_checksum_name(tmp_path: Path):
     assert source.read_bytes() == b"sqlite-safe-image"
     assert queued.payload_path.read_bytes() == b"sqlite-safe-image"
     assert queued.remote_filename == (
-        "extrusion_terminal_20260914_120000_000001"
-        f"__sha256-{digest}.sqlite3"
+        "extrusion-terminal_2026-09-15_14-20-00_"
+        f"{digest[:16]}.sqlite3"
     )
     assert queued.sha256 == digest
     assert queued.item_dir.parent == outbox / "pending" / "database-backups"
     assert tuple((outbox / "staging").iterdir()) == ()
+
+
+def test_loader_accepts_legacy_complete_checksum_name(tmp_path: Path):
+    source = tmp_path / "legacy.sqlite3"
+    source.write_bytes(b"legacy payload")
+    outbox = tmp_path / "outbox"
+    queued = enqueue_artifact(
+        source,
+        "database-backups",
+        outbox_dir=outbox,
+        item_id="legacy-item",
+    )
+    metadata = json.loads(queued.metadata_path.read_text(encoding="utf-8"))
+    legacy_name = f"legacy__sha256-{queued.sha256}.sqlite3"
+    metadata["remote_filename"] = legacy_name
+    queued.metadata_path.write_text(
+        json.dumps(metadata, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_queued_artifact(queued.item_dir, outbox_dir=outbox)
+
+    assert loaded.remote_filename == legacy_name
+    assert loaded.sha256 == queued.sha256
+
+
+@pytest.mark.parametrize(
+    "invalid_identity",
+    [
+        "0000000000000000",
+        "ABCDEFABCDEFABCD",
+        "1234567890abcde",
+        "1234567890abcdef0",
+    ],
+)
+def test_loader_rejects_nonmatching_short_content_identity(
+    tmp_path: Path,
+    invalid_identity: str,
+):
+    source = tmp_path / "backup.sqlite3"
+    source.write_bytes(b"payload")
+    outbox = tmp_path / "outbox"
+    queued = enqueue_artifact(
+        source,
+        "database-backups",
+        outbox_dir=outbox,
+        item_id=f"bad-short-{len(invalid_identity)}",
+    )
+    metadata = json.loads(queued.metadata_path.read_text(encoding="utf-8"))
+    metadata["remote_filename"] = f"backup_{invalid_identity}.sqlite3"
+    queued.metadata_path.write_text(
+        json.dumps(metadata, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="content identity"):
+        load_queued_artifact(queued.item_dir, outbox_dir=outbox)
 
 
 @pytest.mark.parametrize(
@@ -150,6 +207,16 @@ def test_pending_snapshot_is_oldest_first_across_categories(tmp_path: Path):
         second.item_dir,
     )
     assert load_queued_artifact(first.item_dir, outbox_dir=outbox) == first
+
+
+def test_queue_snapshot_reports_persisted_quarantine_evidence(tmp_path: Path):
+    outbox = tmp_path / "outbox"
+    quarantined = outbox / "quarantine" / "database-backups" / "broken-item"
+    quarantined.mkdir(parents=True)
+
+    snapshot = snapshot_queue_entries(outbox, max_entries=0)
+
+    assert snapshot.quarantine_count == 1
 
 
 @pytest.mark.parametrize("corruption", ["payload", "metadata", "extra-file"])

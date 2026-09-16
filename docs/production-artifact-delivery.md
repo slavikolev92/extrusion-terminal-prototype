@@ -18,6 +18,7 @@ Notification state:  /opt/extrusion-terminal/artifact-delivery/state
 Operation lock:       /opt/extrusion-terminal/artifact-delivery/operation.lock
 WebDAV curl config:   /etc/extrusion-terminal/hetzner-webdav.conf
 Discord curl config:  /etc/extrusion-terminal/discord-webhook.conf
+Summary schedule:     /etc/extrusion-terminal/backup-summary.conf (optional)
 ```
 
 The fixed WebDAV base is:
@@ -37,7 +38,7 @@ system-backups/extrusion-terminal/
 
 Only `database-backups/` has a producer in this slice. Create that category
 folder manually before acceptance. For each database backup, the worker issues
-one bounded `MKCOL` for the queue item's UTC `YYYY-MM-DD` child and accepts only
+one bounded `MKCOL` for the queue item's Sofia-calendar `YYYY-MM-DD` child and accepts only
 `201` (created) or `405` (already exists or cannot be created); the following
 conditional upload is still the decisive success check. The application never
 manages Hetzner users, shares, permissions, or remote retention, and it creates
@@ -94,6 +95,41 @@ Both must be regular, non-symlink files owned by `sk:sk`, readable by `sk`, and
 not accessible to group/other users (normally mode `600`). The installer also
 parses both configs: WebDAV permits only `user`; Discord permits only one valid
 `https://discord.com/api/webhooks/...?...wait=true` URL. It never prints values.
+
+The optional summary schedule defaults to one daily message at `09:00`. Times
+are always interpreted in Sofia; neither the file nor Discord messages repeat
+the timezone label. To disable summaries or select one or two daily times,
+create this non-secret configuration:
+
+```bash
+sudo install -o root -g sk -m 0640 /dev/null \
+  /etc/extrusion-terminal/backup-summary.conf
+sudoedit /etc/extrusion-terminal/backup-summary.conf
+```
+
+Enter exactly one of these forms:
+
+```text
+summary_times=off
+summary_times=09:00
+summary_times=09:00,21:00
+```
+
+Validate it without reading credentials or contacting Hetzner or Discord:
+
+```bash
+cd /opt/extrusion-terminal/app
+sudo -u sk .venv/bin/python -m app.backup_summary validate-config
+```
+
+The command prints the normalized value and exits nonzero for any other form.
+The installer performs the same parse automatically when this optional file
+exists and also requires it to be a direct `root:sk` mode-`640` regular file.
+Changing the schedule arms the next future slot; it does not send a historical
+summary immediately. It preserves the last confirmed summary counters, while a
+pending message belonging to the old schedule is discarded. During the
+repeated autumn hour, one configured civil-time slot is sent at most once and
+belongs to that hour's first occurrence.
 
 ## Install Units Disabled
 
@@ -200,7 +236,7 @@ systemctl is-active extrusion-terminal-delivery.timer || true
 
 All four results should be `disabled` or `inactive`, as appropriate.
 
-## Authorized Disposable Acceptance Before Enablement
+## Base Endpoint Acceptance Before Enablement
 
 These checks deliberately contact the real services. Run them only after the
 user separately authorizes acceptance. They use a temporary local outbox and a
@@ -216,7 +252,7 @@ export EXTRUSION_ARTIFACT_OUTBOX_DIR="$TASK25_ACCEPTANCE_DIR/outbox"
 export EXTRUSION_ARTIFACT_STATE_DIR="$TASK25_ACCEPTANCE_DIR/state"
 export EXTRUSION_WEBDAV_CURL_CONFIG=/etc/extrusion-terminal/hetzner-webdav.conf
 export EXTRUSION_DISCORD_CURL_CONFIG=/etc/extrusion-terminal/discord-webhook.conf
-ACCEPTANCE_DAY="$(date -u +%F)"
+ACCEPTANCE_DAY="$(TZ=Europe/Sofia date +%F)"
 
 .venv/bin/python - <<'PY'
 import os
@@ -311,9 +347,117 @@ saved message ID. Confirm the message appears in the intended channel. Preserve
 the command outputs in the maintenance record; do not preserve or print secret
 config contents.
 
+## Refinement Acceptance Before Enablement
+
+The September 15 development endpoint exercise accepted the original transport
+slice only. It did not accept upload-on-change, producer handoff coordination,
+Sofia routing, delayed cloud alerts, full-drain recovery, freshness, or
+summaries. Before production enablement, run these refinement checks from the
+exact accepted checkout while the production timers remain disabled.
+
+First execute the disposable integration cases. They use temporary SQLite and
+filesystem paths plus fake transports; they do not contact Hetzner or Discord:
+
+```bash
+cd /opt/extrusion-terminal/app
+source .venv/bin/activate
+python -m pytest -q \
+  tests/test_backup_job.py::test_unchanged_database_is_validated_but_not_queued_twice \
+  tests/test_artifact_delivery.py::test_delivery_waits_for_active_backup_handoff_before_uploading \
+  tests/test_artifact_delivery.py::test_recovery_waits_for_the_entire_multibatch_backlog \
+  tests/test_artifact_delivery.py::test_cleanup_retry_does_not_double_count_a_confirmed_upload \
+  tests/test_pipeline_notifications.py::test_webdav_failure_alerts_once_after_ten_minute_grace \
+  tests/test_backup_summary.py::test_daily_summary_sends_once_at_first_invocation_after_slot \
+  tests/test_backup_summary.py::test_never_run_freshness_waits_thirty_minutes_then_alerts
+```
+
+All seven must pass. This proves the accepted source's multi-check deduplication,
+unfinished-handoff gate, one-count confirmation checkpoint, full-backlog
+recovery, ten-minute grace, scheduled summary, and same-server freshness paths.
+
+Then exercise the grace/recovery path against the real disposable endpoints.
+Use a syntactically valid curl config containing deliberately wrong credentials;
+an invalid config is a local configuration failure and correctly bypasses the
+cloud grace period.
+
+```bash
+BAD_WEBDAV_CONFIG="$TASK25_ACCEPTANCE_DIR/bad-webdav.conf"
+SUMMARY_OFF_CONFIG="$TASK25_ACCEPTANCE_DIR/summary-off.conf"
+install -m 0600 /dev/null "$BAD_WEBDAV_CONFIG"
+printf '%s\n' 'user = "extrusion-backup:deliberately-wrong-acceptance-password"' \
+  > "$BAD_WEBDAV_CONFIG"
+printf '%s\n' 'summary_times=off' > "$SUMMARY_OFF_CONFIG"
+
+.venv/bin/python - <<'PY'
+import os
+import sqlite3
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from app.artifact_delivery import default_delivery_config, deliver_pending
+from app.backup_job import run_backup_job
+
+root = Path(os.environ["TASK25_ACCEPTANCE_DIR"])
+source = root / "task25-acceptance.sqlite3"
+with sqlite3.connect(source) as connection:
+    connection.execute(
+        "INSERT INTO acceptance VALUES ('refinement grace and recovery check')"
+    )
+started = datetime.now(timezone.utc).replace(microsecond=0)
+produced = run_backup_job(
+    source_db_path=source,
+    backup_dir=root / "backups",
+    outbox_dir=root / "outbox",
+    state_dir=root / "state",
+    now=started,
+)
+assert produced.queued_artifact is not None
+assert produced.queued_artifact.remote_filename.startswith(
+    "extrusion-terminal_"
+    f"{started.astimezone(ZoneInfo('Europe/Sofia')):%Y-%m-%d_%H-%M-%S}_"
+)
+
+base = replace(
+    default_delivery_config(),
+    outbox_dir=root / "outbox",
+    state_dir=root / "state",
+    discord_curl_config=Path(
+        "/etc/extrusion-terminal/discord-webhook.conf"
+    ),
+    summary_config_path=root / "summary-off.conf",
+)
+bad = replace(base, webdav_curl_config=root / "bad-webdav.conf")
+first = deliver_pending(bad, now=started)
+warned = deliver_pending(bad, now=started + timedelta(minutes=10))
+recovered = deliver_pending(
+    replace(
+        base,
+        webdav_curl_config=Path(
+            "/etc/extrusion-terminal/hetzner-webdav.conf"
+        ),
+    ),
+    now=started + timedelta(minutes=11),
+)
+assert first.failed_count == 1 and first.notification_pending
+assert warned.failed_count == 1 and not warned.notification_pending
+assert recovered.failed_count == 0 and recovered.pending_count == 0
+print("Refinement grace/full-drain recovery acceptance passed.")
+PY
+```
+
+Confirm exactly one readable delayed-cloud warning and one recovery message in
+Discord, and confirm the final readable Sofia-named object exists in the
+correct Sofia-date folder. Any early cloud warning, missing recovery, remaining
+queue item, duplicate recovery, or unreadable/incorrectly routed object blocks
+enablement. Remove only the disposable acceptance directory after recording
+and approving the results.
+
 ## Enable Timers And Check The First Production Backup
 
-Only after every disposable check passes and the user approves activation:
+Only after both endpoint and refinement acceptance pass and the user approves
+activation:
 
 ```bash
 run_accepted_task25_installer --enable --dry-run
@@ -334,17 +478,19 @@ systemctl list-timers \
 ```
 
 Verify one validated `extrusion_terminal_*.sqlite3` remains locally, its
-checksum-named queue copy drains, the remote object appears under
-`database-backups/<UTC YYYY-MM-DD>/`, and both timers remain scheduled. Then
+short-identity queue copy drains, the remote object appears under
+`database-backups/<Sofia YYYY-MM-DD>/`, and both timers remain scheduled. Then
 observe at least one automatic ten-minute backup and one delivery retry
 interval. Do not automate remote inspection or restoration.
 
 ## Runtime Behavior And Failure Meaning
 
-- The backup timer runs every ten minutes and retains the newest 144 validated
-  final-name images published by the current backup process (approximately 24
-  hours). The activation audit covers pre-existing matching files; retention
-  does not revalidate the entire historical set on every run.
+- The backup timer runs every ten minutes. Every run creates and validates a
+  SQLite-safe local image; only content whose complete SHA-256 differs from the
+  previous validated check is enqueued. The newest 144 validated local images
+  remain (approximately 24 hours), including unchanged checks. The activation
+  audit covers pre-existing matching files; retention does not revalidate the
+  entire historical set on every run.
 - The independent delivery timer runs approximately once per minute.
 - One run considers at most 25 active queue entries, starts no new upload at or
   after 180 seconds, rechecks that cutoff immediately before curl, and defers a
@@ -356,10 +502,11 @@ interval. Do not automate remote inspection or restoration.
   bounds; Discord uses 10-second connect and 30-second transfer bounds.
 - Backup and delivery services have five- and ten-minute ceilings respectively.
 
-For database backups, each delivery first ensures the exact UTC daily child
+For database backups, each delivery first ensures the exact Sofia-calendar daily child
 with bounded `MKCOL`, once per child per batch, then sends a conditional `PUT`
-with `If-None-Match: *`. HTTP `201` is a new object. Checksum-named `412` is
-accepted only under the tested sole-writer/idempotency contract. There is no
+with `If-None-Match: *`. HTTP `201` is a new object. A matching 16-character
+content identity—or a legacy matching full checksum—makes `412` an accepted
+idempotent retry under the tested sole-writer contract. There is no
 remote read, listing, file overwrite, rename, move, copy, deletion, or retention
 operation.
 
@@ -368,16 +515,45 @@ authentication, permission, unexpected response, local cleanup, or queue-health
 failure fails delivery and preserves evidence. Malformed entries are moved
 intact to local quarantine so they cannot starve later valid work, including
 malformed post-delivery cleanup tombstones. Quarantine collisions use a bounded
-opaque name so a maximum-length source name cannot block the move. Confirmed
-deliveries are atomically moved to local cleanup before idempotent reaping.
+opaque name so a maximum-length source name cannot block the move. Quarantined
+evidence blocks a green recovery until an operator inspects and resolves it;
+empty quarantine directories do not.
 
-Each component sends one Discord failure transition and one recovery. If the
-failure message itself could not be sent before recovery, one combined
-`FAILED AND RECOVERED` message preserves the incident. Notification errors and
-pending status remain in bounded local state/journal output. Discord-owned
-failures keep a safe actionable reason without retaining webhook secrets;
-unknown notifier failures remain generic. Pending outbox and quarantine
-evidence have no automatic retention.
+The producer writes a durable handoff before publishing a changed backup to the
+queue. Delivery skips that exact database item until the producer has committed
+activity/retention and cleared the handoff. If the handoff state is unreadable,
+delivery leaves database items untouched and reports a local failure; unrelated
+artifact categories may still proceed.
+
+For remotely confirmed uploads, the worker first records the queue-item ID and
+upload counters durably, then moves the active item to local cleanup, records
+the invocation's final success/failure outcome exactly once, and acknowledges
+the recorded ID. This ordering makes a retry after a crash or cleanup failure
+idempotent: a matching conditional `412` can finish cleanup but cannot increment
+the confirmed-upload total twice or count one failed invocation twice.
+
+Routine successful checks do not send Discord messages. A backup-producer
+failure alerts immediately. A remote WebDAV incident is silent if it recovers
+within ten minutes; otherwise it sends one warning and no repeats. Local
+configuration, queue, quarantine, activity-state, and cleanup failures alert
+immediately. Recovery is sent
+only after a failure-free delivery run leaves the exact queue empty, and says
+how many waiting database backups were uploaded. If the warning itself never
+reached Discord, one combined interruption-and-recovery message preserves the
+incident.
+
+While delivery still runs, it also warns if the producer has not recorded a
+validated check for 30 minutes. This same-server check cannot report a dead VM
+or total connectivity loss. The scheduled summary reports validated checks,
+failed checks, changed database versions, confirmed Hetzner uploads, the latest
+check/upload times, and exact waiting count. Incident notices take priority,
+and one delivery invocation sends at most one Discord message. Notification
+errors and pending status remain in bounded local state/journal output; pending
+outbox and quarantine evidence have no automatic retention.
+
+A summary counter that regresses below its last confirmed baseline is shown as
+unknown and does not lower that baseline. This avoids presenting restored or
+manually reset state as a healthy negative/zero interval.
 
 ## Deployment Coordination
 

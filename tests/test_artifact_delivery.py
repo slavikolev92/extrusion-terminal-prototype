@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -13,12 +14,19 @@ from app.artifact_delivery import (
     DEFAULT_WEBDAV_ROOT,
     DeliveryBatchResult,
     DeliveryConfig,
+    MAX_DELIVERY_ITEMS_PER_RUN,
     WebDAVDeliveryError,
     deliver_pending,
     main,
     upload_create_only,
 )
-from app.artifact_outbox import enqueue_artifact
+from app.backup_activity import (
+    BACKUP_ACTIVITY_FILENAME,
+    load_delivery_activity,
+    record_backup_success,
+)
+from app.backup_job import BackupJobError, run_backup_job
+from app.artifact_outbox import enqueue_artifact, load_queued_artifact
 from app.curl_transport import CurlResult
 
 
@@ -76,6 +84,14 @@ def delivery_config(tmp_path: Path) -> DeliveryConfig:
         'url = "https://discord.com/api/webhooks/123/fake-token?wait=true"\n',
         encoding="utf-8",
     )
+    summary_config = tmp_path / "summary.conf"
+    summary_config.write_text("summary_times=off\n", encoding="ascii")
+    record_backup_success(
+        "a" * 64,
+        changed=True,
+        state_dir=tmp_path / "state",
+        now=datetime.now(timezone.utc),
+    )
     return DeliveryConfig(
         outbox_dir=tmp_path / "outbox",
         state_dir=tmp_path / "state",
@@ -83,6 +99,7 @@ def delivery_config(tmp_path: Path) -> DeliveryConfig:
         webdav_root=DEFAULT_WEBDAV_ROOT,
         webdav_curl_config=webdav_config,
         discord_curl_config=discord_config,
+        summary_config_path=summary_config,
     )
 
 
@@ -192,6 +209,30 @@ def test_database_backup_creates_only_its_daily_collection_before_upload(
     assert upload_command[-1].startswith(collection_command[-1] + "/")
 
 
+def test_database_backup_daily_collection_uses_sofia_calendar_date(
+    tmp_path: Path, delivery_config: DeliveryConfig
+):
+    source = tmp_path / "sofia-day.sqlite3"
+    source.write_bytes(b"sofia day payload")
+    queued = enqueue_artifact(
+        source,
+        "database-backups",
+        outbox_dir=delivery_config.outbox_dir,
+        now=datetime(2026, 9, 15, 21, 30, tzinfo=timezone.utc),
+        item_id="sofia-day",
+    )
+    runner = RecordingCurlRunner(
+        results=[CurlResult(0, "201", ""), CurlResult(0, "201", "")]
+    )
+
+    upload_create_only(queued, delivery_config, runner=runner)
+
+    collection_command = calls_for_method(runner, "MKCOL")[0][0]
+    assert collection_command[-1].endswith(
+        "/system-backups/extrusion-terminal/database-backups/2026-09-16"
+    )
+
+
 def test_existing_database_backup_daily_collection_proceeds_to_upload(
     tmp_path: Path, delivery_config: DeliveryConfig
 ):
@@ -285,14 +326,41 @@ def test_success_status_removes_queue_item(
     assert not queued.item_dir.exists()
 
 
-def test_412_requires_the_complete_checksum_name(
+def test_412_accepts_a_matching_legacy_complete_checksum_name(
+    tmp_path: Path, delivery_config: DeliveryConfig
+):
+    queued = queue_artifact(tmp_path, delivery_config, item_id="legacy-412")
+    metadata = json.loads(queued.metadata_path.read_text(encoding="utf-8"))
+    metadata["remote_filename"] = (
+        f"backup__sha256-{queued.sha256}.sqlite3"
+    )
+    queued.metadata_path.write_text(
+        json.dumps(metadata, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    legacy = load_queued_artifact(
+        queued.item_dir,
+        outbox_dir=delivery_config.outbox_dir,
+    )
+
+    result = upload_create_only(
+        legacy,
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="412"),
+    )
+
+    assert result.state == "already-present"
+    assert not legacy.item_dir.exists()
+
+
+def test_412_requires_a_matching_content_identity(
     tmp_path: Path, delivery_config: DeliveryConfig
 ):
     queued = queue_artifact(tmp_path, delivery_config)
     unsafe = replace(queued, remote_filename="backup.sqlite3")
     runner = RecordingCurlRunner(stdout="412")
 
-    with pytest.raises(ValueError, match="checksum"):
+    with pytest.raises(ValueError, match="content identity"):
         upload_create_only(unsafe, delivery_config, runner=runner)
 
     assert runner.calls == []
@@ -379,7 +447,7 @@ def test_webdav_config_rejects_extra_directive_without_exposing_secret(
     assert queued.item_dir.exists()
 
 
-def test_batch_failure_retains_payload_and_records_warning(
+def test_first_remote_failure_retains_payload_during_notification_grace(
     tmp_path: Path, delivery_config: DeliveryConfig
 ):
     queued = queue_artifact(tmp_path, delivery_config)
@@ -394,8 +462,8 @@ def test_batch_failure_retains_payload_and_records_warning(
     assert result.failed_count == 1
     assert result.pending_count == 1
     assert queued.payload_path.exists()
-    assert len(sender.messages) == 1
-    assert "FAILED" in sender.messages[0]
+    assert sender.messages == []
+    assert result.notification_pending is True
 
 
 def test_batch_processes_only_25_oldest_items(
@@ -451,7 +519,7 @@ def test_malformed_item_is_retained_while_later_valid_item_is_delivered(
     ).exists()
     assert not valid.item_dir.exists()
     assert result.pending_count == 0
-    assert "FAILED" in sender.messages[0]
+    assert "Backup delivery problem" in sender.messages[0]
 
 
 def test_malformed_batch_does_not_permanently_starve_later_valid_work(
@@ -556,6 +624,7 @@ def test_structural_queue_corruption_is_quarantined_and_reported(
     assert result.failed_count == 3
     assert result.pending_count == 0
     assert len(sender.messages) == 1
+    assert "Backup delivery problem" in sender.messages[0]
     quarantine = delivery_config.outbox_dir / "quarantine"
     assert (quarantine / "database-backups" / "stray-file").read_text() == "retain"
     assert (quarantine / "unknown-categories" / "unknown-category" / "evidence").read_text() == "retain"
@@ -584,7 +653,7 @@ def test_non_directory_category_root_is_quarantined_instead_of_escaping_alerts(
         / "category-roots"
         / "database-backups"
     ).read_text() == "retain"
-    assert "FAILED" in sender.messages[0]
+    assert "Backup delivery problem" in sender.messages[0]
 
 
 def test_non_directory_staging_root_is_quarantined_and_reported(
@@ -608,7 +677,7 @@ def test_non_directory_staging_root_is_quarantined_and_reported(
         / "staging-root"
         / "staging"
     ).read_text(encoding="utf-8") == "retain"
-    assert "FAILED" in sender.messages[0]
+    assert "Backup delivery problem" in sender.messages[0]
 
 
 @pytest.mark.parametrize("broken_name", ["outbox", "cleanup"])
@@ -635,7 +704,7 @@ def test_non_directory_queue_or_cleanup_root_is_reported(
     assert result.failed_count >= 1
     assert result.first_error is not None
     assert "not a directory" in result.first_error.lower()
-    assert "FAILED" in sender.messages[0]
+    assert "Backup delivery problem" in sender.messages[0]
 
 
 @pytest.mark.parametrize(
@@ -764,7 +833,10 @@ def test_cleanup_enumeration_failure_is_reported_through_component_state(
 
     assert result.failed_count == 1
     assert result.first_error == "cleanup enumeration unavailable"
-    assert "FAILED" in sender.messages[0]
+    assert load_delivery_activity(
+        delivery_config.state_dir
+    ).failed_runs_total == 1
+    assert "Backup delivery problem" in sender.messages[0]
 
 
 def test_delivery_stops_before_starting_upload_outside_internal_budget(
@@ -852,7 +924,7 @@ def test_budget_only_run_keeps_incident_failing_without_delivery_evidence(
     assert "time budget expired" in deferred.first_error
     assert deferred.pending_count == 1
     assert len(sender.messages) == 1
-    assert "FAILED" in sender.messages[0]
+    assert "Backup delivery problem" in sender.messages[0]
     assert state["health"] == "failing"
 
 
@@ -861,6 +933,13 @@ def test_delivery_defers_network_notification_outside_internal_budget(
 ):
     queue_artifact(tmp_path, delivery_config, item_id="failed-attempt")
     sender = RecordingSender()
+    start = datetime(2026, 9, 15, 0, 0, tzinfo=timezone.utc)
+    initial = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="503"),
+        notifier=sender,
+        now=start,
+    )
     clock_values = iter((0.0, 0.0, 0.0, 0.0, 500.0))
 
     failed = deliver_pending(
@@ -868,8 +947,10 @@ def test_delivery_defers_network_notification_outside_internal_budget(
         runner=RecordingCurlRunner(stdout="503"),
         notifier=sender,
         monotonic=lambda: next(clock_values),
+        now=start + timedelta(minutes=10),
     )
 
+    assert initial.notification_pending is True
     assert failed.failed_count == 1
     assert failed.notification_pending is True
     assert failed.notification_error == "RuntimeError: notification delivery failed"
@@ -880,12 +961,13 @@ def test_delivery_defers_network_notification_outside_internal_budget(
         delivery_config,
         runner=RecordingCurlRunner(stdout="201"),
         notifier=retry_sender,
+        now=start + timedelta(minutes=11),
     )
 
     assert recovered.created_count == 1
     assert recovered.notification_pending is False
     assert len(retry_sender.messages) == 1
-    assert "FAILED AND RECOVERED" in retry_sender.messages[0]
+    assert "Cloud backup interruption resolved" in retry_sender.messages[0]
 
 
 def test_first_remote_failure_stops_later_upload_attempts(
@@ -934,24 +1016,88 @@ def test_clean_batch_records_one_recovery(
 ):
     sender = RecordingSender()
     queue_artifact(tmp_path, delivery_config, item_id="failed-attempt")
+    start = datetime(2026, 9, 15, 0, 0, tzinfo=timezone.utc)
     failed = deliver_pending(
         delivery_config,
         runner=RecordingCurlRunner(stdout="503"),
         notifier=sender,
+        now=start,
+    )
+    alerted = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="503"),
+        notifier=sender,
+        now=start + timedelta(minutes=10),
     )
     recovered = deliver_pending(
         delivery_config,
         runner=RecordingCurlRunner(stdout="201"),
         notifier=sender,
+        now=start + timedelta(minutes=11),
     )
 
     assert failed.failed_count == 1
+    assert alerted.failed_count == 1
     assert recovered.created_count == 1
     assert len(sender.messages) == 2
-    assert "RECOVERED" in sender.messages[1]
+    assert "Cloud backups recovered" in sender.messages[1]
 
 
-def test_clean_empty_run_recovers_a_quarantined_queue_incident(
+def test_recovery_waits_for_the_entire_multibatch_backlog(
+    tmp_path: Path, delivery_config: DeliveryConfig
+):
+    sender = RecordingSender()
+    start = datetime(2026, 9, 15, 0, 0, tzinfo=timezone.utc)
+    items = [
+        queue_artifact(
+            tmp_path,
+            delivery_config,
+            item_id=f"backlog-{index:02d}",
+        )
+        for index in range(MAX_DELIVERY_ITEMS_PER_RUN + 1)
+    ]
+    for index, queued in enumerate(items):
+        os.utime(queued.item_dir, ns=(index + 1, index + 1))
+
+    first_failure = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="503"),
+        notifier=sender,
+        now=start,
+    )
+    alerted_failure = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="503"),
+        notifier=sender,
+        now=start + timedelta(minutes=10),
+    )
+    partial = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="201"),
+        notifier=sender,
+        now=start + timedelta(minutes=11),
+    )
+    recovered = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="201"),
+        notifier=sender,
+        now=start + timedelta(minutes=12),
+    )
+
+    assert first_failure.pending_count == MAX_DELIVERY_ITEMS_PER_RUN + 1
+    assert alerted_failure.pending_count == MAX_DELIVERY_ITEMS_PER_RUN + 1
+    assert partial.created_count == MAX_DELIVERY_ITEMS_PER_RUN
+    assert partial.pending_count == 1
+    assert partial.notification_pending is False
+    assert recovered.created_count == 1
+    assert recovered.pending_count == 0
+    assert len(sender.messages) == 2
+    assert "Cloud backups delayed" in sender.messages[0]
+    assert "Cloud backups recovered" in sender.messages[1]
+    assert "26 waiting backups were uploaded" in sender.messages[1]
+
+
+def test_quarantined_queue_incident_does_not_claim_recovery_until_reviewed(
     delivery_config: DeliveryConfig,
 ):
     category = delivery_config.outbox_dir / "pending" / "database-backups"
@@ -964,32 +1110,293 @@ def test_clean_empty_run_recovers_a_quarantined_queue_incident(
         runner=RecordingCurlRunner(stdout="201"),
         notifier=sender,
     )
-    recovered = deliver_pending(
+    still_failing = deliver_pending(
         delivery_config,
         runner=RecordingCurlRunner(stdout="201"),
         notifier=sender,
     )
 
     assert failed.failed_count == 1
-    assert recovered.failed_count == 0
-    assert recovered.pending_count == 0
-    assert len(sender.messages) == 2
-    assert "RECOVERED" in sender.messages[1]
+    assert still_failing.failed_count == 1
+    assert still_failing.pending_count == 0
+    assert len(sender.messages) == 1
+    assert "recovered" not in sender.messages[0].lower()
+    assert "manual review is required" in sender.messages[0].lower()
+    assert "retrying automatically" not in sender.messages[0].lower()
+    assert "0 backups" not in sender.messages[0].lower()
+
+
+def test_final_delivery_activity_failure_preserves_confirmation_and_blocks_recovery(
+    tmp_path: Path,
+    delivery_config: DeliveryConfig,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    queued = queue_artifact(tmp_path, delivery_config, item_id="state-failure")
+    sender = RecordingSender()
+    start = datetime(2026, 9, 15, 0, 0, tzinfo=timezone.utc)
+    deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="503"),
+        notifier=sender,
+        now=start,
+    )
+    deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="503"),
+        notifier=sender,
+        now=start + timedelta(minutes=10),
+    )
+
+    def fail_activity(**_kwargs):
+        raise OSError("simulated delivery activity failure")
+
+    monkeypatch.setattr("app.artifact_delivery.record_delivery_run", fail_activity)
+    result = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="201"),
+        notifier=sender,
+        now=start + timedelta(minutes=11),
+    )
+
+    assert result.failed_count == 1
+    assert not queued.item_dir.exists()
+    activity = load_delivery_activity(delivery_config.state_dir)
+    assert activity.confirmed_uploads_total == 1
+    assert activity.unremoved_confirmed_item_ids == ("state-failure",)
+    assert "delivery activity failure" in (result.notification_state_error or "")
+    assert len(sender.messages) == 1
+    assert "recovered" not in sender.messages[-1].lower()
+
+
+def test_confirmation_checkpoint_failure_reports_retained_item_as_pending(
+    tmp_path: Path,
+    delivery_config: DeliveryConfig,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    queued = queue_artifact(
+        tmp_path,
+        delivery_config,
+        item_id="checkpoint-state-failure",
+    )
+
+    def fail_checkpoint(**_kwargs):
+        raise OSError("simulated confirmation checkpoint failure")
+
+    monkeypatch.setattr(
+        "app.artifact_delivery.record_delivery_confirmations",
+        fail_checkpoint,
+    )
+
+    result = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="201"),
+        notifier=RecordingSender(),
+    )
+
+    assert result.failed_count == 1
+    assert result.pending_count == 1
+    assert queued.item_dir.exists()
+
+
+def test_quarantine_alert_is_immediate_during_simultaneous_remote_failure(
+    tmp_path: Path,
+    delivery_config: DeliveryConfig,
+):
+    queue_artifact(tmp_path, delivery_config, item_id="remote-and-quarantine")
+    evidence = (
+        delivery_config.outbox_dir
+        / "quarantine"
+        / "database-backups"
+        / "requires-review"
+    )
+    evidence.mkdir(parents=True)
+    sender = RecordingSender()
+
+    result = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="503"),
+        notifier=sender,
+        now=datetime(2026, 9, 15, 6, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.failed_count == 1
+    assert len(sender.messages) == 1
+    assert "manual review is required" in sender.messages[0].lower()
+
+
+def test_delivery_waits_for_active_backup_handoff_before_uploading(
+    tmp_path: Path,
+    delivery_config: DeliveryConfig,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = tmp_path / "source.sqlite3"
+    with sqlite3.connect(source) as connection:
+        connection.execute("CREATE TABLE sample (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO sample VALUES ('preserved')")
+    backup_dir = tmp_path / "backups"
+    import app.backup_job as backup_job_module
+
+    real_record_success = backup_job_module.record_backup_success
+    failed_once = False
+
+    def fail_once(*args, **kwargs):
+        nonlocal failed_once
+        if not failed_once:
+            failed_once = True
+            raise OSError("simulated activity write failure")
+        return real_record_success(*args, **kwargs)
+
+    monkeypatch.setattr(backup_job_module, "record_backup_success", fail_once)
+    started = datetime(2026, 9, 15, 6, 0, tzinfo=timezone.utc)
+    with pytest.raises(BackupJobError, match="activity write failure"):
+        run_backup_job(
+            source_db_path=source,
+            backup_dir=backup_dir,
+            outbox_dir=delivery_config.outbox_dir,
+            state_dir=delivery_config.state_dir,
+            notifier=RecordingSender(),
+            now=started,
+        )
+
+    blocked_runner = RecordingCurlRunner(stdout="201")
+    blocked = deliver_pending(
+        delivery_config,
+        runner=blocked_runner,
+        notifier=RecordingSender(),
+        now=started + timedelta(minutes=1),
+    )
+
+    assert blocked.created_count == 0
+    assert blocked.pending_count == 1
+    assert calls_for_method(blocked_runner, "PUT") == []
+
+    run_backup_job(
+        source_db_path=source,
+        backup_dir=backup_dir,
+        outbox_dir=delivery_config.outbox_dir,
+        state_dir=delivery_config.state_dir,
+        notifier=RecordingSender(),
+        now=started + timedelta(minutes=2),
+    )
+    delivered = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="201"),
+        notifier=RecordingSender(),
+        now=started + timedelta(minutes=3),
+    )
+
+    assert delivered.created_count == 1
+    assert delivered.pending_count == 0
+    assert load_delivery_activity(
+        delivery_config.state_dir
+    ).confirmed_uploads_total == 1
+
+
+def test_cleanup_retry_does_not_double_count_a_confirmed_upload(
+    tmp_path: Path,
+    delivery_config: DeliveryConfig,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    queued = queue_artifact(tmp_path, delivery_config, item_id="cleanup-retry")
+    real_remove = __import__(
+        "app.artifact_delivery", fromlist=["remove_delivered_artifact"]
+    ).remove_delivered_artifact
+    failed_once = False
+
+    def fail_once(artifact):
+        nonlocal failed_once
+        if not failed_once:
+            failed_once = True
+            raise OSError("simulated post-confirmation cleanup failure")
+        return real_remove(artifact)
+
+    monkeypatch.setattr("app.artifact_delivery.remove_delivered_artifact", fail_once)
+    first = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="201"),
+        notifier=RecordingSender(),
+    )
+    assert first.created_count == 1
+    assert first.failed_count == 1
+    assert queued.item_dir.exists()
+    first_activity = load_delivery_activity(delivery_config.state_dir)
+    assert first_activity.confirmed_uploads_total == 1
+    assert first_activity.failed_runs_total == 1
+    assert first_activity.active_incident_upload_count == 1
+
+    second = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="412"),
+        notifier=RecordingSender(),
+    )
+
+    assert second.already_present_count == 1
+    assert not queued.item_dir.exists()
+    recovered_activity = load_delivery_activity(delivery_config.state_dir)
+    assert recovered_activity.confirmed_uploads_total == 1
+    assert recovered_activity.active_incident_upload_count == 0
+
+
+def test_next_run_clears_confirmation_left_after_post_cleanup_crash(
+    tmp_path: Path,
+    delivery_config: DeliveryConfig,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    queued = queue_artifact(tmp_path, delivery_config, item_id="post-cleanup-crash")
+
+    def crash_after_cleanup(*_args, **_kwargs):
+        raise SystemExit("simulated crash after cleanup")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "app.artifact_delivery.acknowledge_confirmed_delivery_items",
+            crash_after_cleanup,
+        )
+        with pytest.raises(SystemExit, match="crash after cleanup"):
+            deliver_pending(
+                delivery_config,
+                runner=RecordingCurlRunner(stdout="201"),
+                notifier=RecordingSender(),
+            )
+
+    assert not queued.item_dir.exists()
+    assert load_delivery_activity(
+        delivery_config.state_dir
+    ).unremoved_confirmed_item_ids == ("post-cleanup-crash",)
+
+    deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="201"),
+        notifier=RecordingSender(),
+    )
+
+    assert load_delivery_activity(
+        delivery_config.state_dir
+    ).unremoved_confirmed_item_ids == ()
 
 
 def test_empty_batch_retries_a_pending_recovery_notice(
     tmp_path: Path, delivery_config: DeliveryConfig
 ):
     queue_artifact(tmp_path, delivery_config, item_id="failed-attempt")
+    start = datetime(2026, 9, 15, 0, 0, tzinfo=timezone.utc)
     deliver_pending(
         delivery_config,
         runner=RecordingCurlRunner(stdout="503"),
         notifier=RecordingSender(),
+        now=start,
+    )
+    deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="503"),
+        notifier=RecordingSender(),
+        now=start + timedelta(minutes=10),
     )
     delivered = deliver_pending(
         delivery_config,
         runner=RecordingCurlRunner(stdout="201"),
         notifier=FailingSender(),
+        now=start + timedelta(minutes=11),
     )
     retry_sender = RecordingSender()
 
@@ -997,20 +1404,21 @@ def test_empty_batch_retries_a_pending_recovery_notice(
         delivery_config,
         runner=RecordingCurlRunner(stdout="201"),
         notifier=retry_sender,
+        now=start + timedelta(minutes=12),
     )
 
     assert delivered.notification_pending is True
     assert empty_retry.created_count == 0
     assert empty_retry.notification_pending is False
     assert len(retry_sender.messages) == 1
-    assert "RECOVERED" in retry_sender.messages[0]
+    assert "Cloud backups recovered" in retry_sender.messages[0]
 
 
 def test_notification_state_error_does_not_mask_webdav_failure(
     tmp_path: Path, delivery_config: DeliveryConfig
 ):
     queued = queue_artifact(tmp_path, delivery_config)
-    delivery_config.state_dir.mkdir(parents=True)
+    delivery_config.state_dir.mkdir(parents=True, exist_ok=True)
     (delivery_config.state_dir / "webdav-delivery.json").write_text(
         "{invalid", encoding="utf-8"
     )
@@ -1027,8 +1435,155 @@ def test_notification_state_error_does_not_mask_webdav_failure(
     assert queued.item_dir.exists()
 
 
-def test_cli_returns_nonzero_when_batch_has_a_failure(monkeypatch: pytest.MonkeyPatch):
+def test_delivery_worker_sends_due_summary_after_upload_work(
+    delivery_config: DeliveryConfig,
+):
+    summary_config = delivery_config.summary_config_path
+    assert summary_config is not None
+    summary_config.write_text("summary_times=09:00\n", encoding="ascii")
+    sender = RecordingSender()
+    initialized = datetime(2026, 9, 15, 5, 0, tzinfo=timezone.utc)
+    record_backup_success(
+        "b" * 64,
+        changed=True,
+        state_dir=delivery_config.state_dir,
+        now=initialized,
+    )
+    deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(),
+        notifier=sender,
+        now=initialized,
+    )
+    record_backup_success(
+        "b" * 64,
+        changed=False,
+        state_dir=delivery_config.state_dir,
+        now=datetime(2026, 9, 15, 5, 50, tzinfo=timezone.utc),
+    )
+
+    result = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(),
+        notifier=sender,
+        now=datetime(2026, 9, 15, 6, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.failed_count == 0
+    assert result.notification_pending is False
+    assert len(sender.messages) == 1
+    assert "Backup summary" in sender.messages[0]
+
+
+def test_freshness_warning_takes_priority_over_due_summary(
+    delivery_config: DeliveryConfig,
+):
+    summary_config = delivery_config.summary_config_path
+    assert summary_config is not None
+    summary_config.write_text("summary_times=08:00\n", encoding="ascii")
+    (delivery_config.state_dir / BACKUP_ACTIVITY_FILENAME).unlink()
+    sender = RecordingSender()
+    first_observation = datetime(2026, 9, 15, 4, 0, tzinfo=timezone.utc)
+    deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(),
+        notifier=sender,
+        now=first_observation,
+    )
+
+    priority_run = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(),
+        notifier=sender,
+        now=first_observation + timedelta(hours=1),
+    )
+    next_run = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(),
+        notifier=sender,
+        now=first_observation + timedelta(hours=1, minutes=1),
+    )
+
+    assert priority_run.notification_pending is True
+    assert len(sender.messages) == 2
+    assert "Database backup process appears stopped" in sender.messages[0]
+    assert "Backup summary" in sender.messages[1]
+    assert next_run.notification_pending is False
+
+
+def test_webdav_warning_takes_priority_over_due_summary(
+    tmp_path: Path,
+    delivery_config: DeliveryConfig,
+):
+    summary_config = delivery_config.summary_config_path
+    assert summary_config is not None
+    summary_config.write_text("summary_times=09:00\n", encoding="ascii")
+    sender = RecordingSender()
+    initialized = datetime(2026, 9, 15, 4, 0, tzinfo=timezone.utc)
+    record_backup_success(
+        "b" * 64,
+        changed=True,
+        state_dir=delivery_config.state_dir,
+        now=initialized,
+    )
+    deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(),
+        notifier=sender,
+        now=initialized,
+    )
+    queue_artifact(tmp_path, delivery_config, item_id="priority")
+    deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="503"),
+        notifier=sender,
+        now=datetime(2026, 9, 15, 5, 50, tzinfo=timezone.utc),
+    )
+    record_backup_success(
+        "b" * 64,
+        changed=False,
+        state_dir=delivery_config.state_dir,
+        now=datetime(2026, 9, 15, 5, 59, tzinfo=timezone.utc),
+    )
+
+    priority_run = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(stdout="503"),
+        notifier=sender,
+        now=datetime(2026, 9, 15, 6, 0, tzinfo=timezone.utc),
+    )
+
+    assert priority_run.notification_pending is True
+    assert len(sender.messages) == 1
+    assert "Cloud backups delayed" in sender.messages[0]
+
+
+def test_invalid_summary_configuration_preserves_delivery_result_and_fails_run(
+    delivery_config: DeliveryConfig,
+):
+    summary_config = delivery_config.summary_config_path
+    assert summary_config is not None
+    summary_config.write_text("summary_times=maybe\n", encoding="ascii")
+
+    result = deliver_pending(
+        delivery_config,
+        runner=RecordingCurlRunner(),
+        notifier=RecordingSender(),
+    )
+
+    assert result.created_count == 0
+    assert result.failed_count == 0
+    assert "summary configuration" in result.notification_state_error.lower()
+
+
+def test_cli_returns_nonzero_without_claiming_completion_when_batch_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
     result = DeliveryBatchResult(0, 0, 1, 1, first_error="simulated failure")
     monkeypatch.setattr("app.artifact_delivery.deliver_pending", lambda _config: result)
 
     assert main(["deliver"]) == 1
+    output = capsys.readouterr().out
+    assert output.startswith("Artifact delivery result:")
+    assert "complete" not in output.lower()

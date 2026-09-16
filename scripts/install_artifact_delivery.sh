@@ -148,6 +148,24 @@ validate_secret_config() {
     [ $((permissions & 0400)) -ne 0 ] || die "Protected curl config is not readable by $APP_OWNER: $path"
 }
 
+validate_optional_summary_config() {
+    local path="$1"
+
+    if path_is_symlink "$path"; then
+        die "Backup summary config must not be a symbolic link: $path"
+    fi
+    if [ ! -e "$path" ]; then
+        return
+    fi
+    [ -f "$path" ] || die "Backup summary config is not a regular file: $path"
+    [ "$(stat -c '%U' "$path")" = "$ANCHOR_OWNER" ] \
+        || die "Backup summary config has wrong owner: $path"
+    [ "$(stat -c '%G' "$path")" = "$APP_GROUP" ] \
+        || die "Backup summary config has wrong group: $path"
+    [ "$(stat -c '%a' "$path")" = "640" ] \
+        || die "Backup summary config must have mode 640: $path"
+}
+
 validate_lock() {
     local path="$1"
 
@@ -241,24 +259,26 @@ validate_configuration_contents() {
     local validation_code
     validation_code='from pathlib import Path
 import sys
+from app import backup_activity, backup_summary
 from app.curl_transport import validate_curl_config
 from app.pipeline_notifications import validate_discord_webhook_config
 validate_curl_config(Path(sys.argv[1]), required_options=frozenset({"user"}), allowed_options=frozenset({"user"}))
-validate_discord_webhook_config(Path(sys.argv[2]))'
+validate_discord_webhook_config(Path(sys.argv[2]))
+backup_summary.load_summary_times(Path(sys.argv[3]))'
 
     if [ -z "$TEST_ROOT" ] && [ "$(id -u)" -eq 0 ]; then
         (
             cd "$APP_DIR"
-            runuser -u "$APP_OWNER" -- "$PYTHON" -c "$validation_code" \
-                "$WEBDAV_CURL_CONFIG" "$DISCORD_CURL_CONFIG"
+            runuser -u "$APP_OWNER" -- "$PYTHON" -B -c "$validation_code" \
+                "$WEBDAV_CURL_CONFIG" "$DISCORD_CURL_CONFIG" "$SUMMARY_CONFIG"
         )
     else
         [ "$(id -un)" = "$APP_OWNER" ] \
             || die "Config validation must run as $APP_OWNER or root"
         (
             cd "$APP_DIR"
-            "$PYTHON" -c "$validation_code" \
-                "$WEBDAV_CURL_CONFIG" "$DISCORD_CURL_CONFIG"
+            "$PYTHON" -B -c "$validation_code" \
+                "$WEBDAV_CURL_CONFIG" "$DISCORD_CURL_CONFIG" "$SUMMARY_CONFIG"
         )
     fi
 }
@@ -412,6 +432,7 @@ MAINTENANCE_LOCK="$BASE_DIR/maintenance.lock"
 OPERATION_LOCK="$RUNTIME_DIR/operation.lock"
 WEBDAV_CURL_CONFIG="$CONFIG_DIR/hetzner-webdav.conf"
 DISCORD_CURL_CONFIG="$CONFIG_DIR/discord-webhook.conf"
+SUMMARY_CONFIG="$CONFIG_DIR/backup-summary.conf"
 PYTHON="$APP_DIR/.venv/bin/python"
 
 require_command git
@@ -442,12 +463,13 @@ if [ -z "$TEST_ROOT" ]; then
     validate_accepted_checkout
 fi
 [ -x "$PYTHON" ] || die "Production virtualenv Python is missing"
-for module in artifact_outbox curl_transport pipeline_notifications artifact_delivery backup_job; do
+for module in artifact_outbox curl_transport pipeline_notifications artifact_delivery backup_activity backup_job backup_summary; do
     [ -f "$APP_DIR/app/$module.py" ] || die "Required Task 25 module is missing: app/$module.py"
 done
 validate_directory "$BASE_DIR" "$ANCHOR_OWNER" "$ANCHOR_GROUP" 755
 validate_secret_config "$WEBDAV_CURL_CONFIG"
 validate_secret_config "$DISCORD_CURL_CONFIG"
+validate_optional_summary_config "$SUMMARY_CONFIG"
 for unit_name in "${UNIT_NAMES[@]}"; do
     validate_unit_source "$unit_name"
 done
@@ -470,6 +492,7 @@ printf 'maintenance_lock=%s\n' "$MAINTENANCE_LOCK"
 printf 'operation_lock=%s\n' "$OPERATION_LOCK"
 printf 'webdav_config=%s\n' "$WEBDAV_CURL_CONFIG"
 printf 'discord_config=%s\n' "$DISCORD_CURL_CONFIG"
+printf 'summary_config=%s\n' "$SUMMARY_CONFIG"
 printf 'units=%s\n' "${UNIT_NAMES[*]}"
 
 if [ "$DRY_RUN" -eq 1 ]; then
