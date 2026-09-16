@@ -4,13 +4,24 @@ Status: the first source slice was implemented, verified, and merged into the
 current source on September 14, 2026. It covers only the shared delivery
 pipeline, Discord pipeline alerts, automatic database backups, tracked one-shot
 units, transactional disabled-by-default installer, and deployment/restore
-locks. It has not been installed, enabled, externally accepted, or deployed.
+locks. The September 15 source refinement implements and automatically verifies
+upload-on-change behavior, Sofia-readable names and folders, quiet human
+alerts, scheduled summaries, same-server producer freshness checks, and
+crash-safe producer/delivery handoffs. Its separate disposable external
+acceptance is still pending. Neither slice has been installed, enabled,
+accepted, or deployed in production.
 
 Authoritative design:
 `docs/superpowers/specs/2026-09-14-production-artifact-delivery-design.md`
 
+Current refinement design:
+`docs/superpowers/specs/2026-09-15-backup-observability-and-deduplication-design.md`
+
 First executable plan:
 `docs/superpowers/plans/2026-09-14-production-artifact-delivery-and-backup.md`
+
+Current refinement plan:
+`docs/superpowers/plans/2026-09-15-backup-observability-and-deduplication.md`
 
 ## Purpose
 
@@ -56,18 +67,19 @@ The shared pipeline then:
 2. records bounded metadata including category, size, checksum, filename, and
    queued time;
 3. atomically publishes the queue item into the pending outbox;
-4. ensures the exact UTC daily child for database backups and issues a
+4. ensures the exact Sofia-calendar daily child for database backups and issues a
    conditional create upload to the fixed remote category/day path;
 5. removes only the disposable local outbox copy after confirmed delivery; and
 6. leaves the producer's original local-retention policy unchanged.
 
 The delivery code must not contain remote download, delete, rename, move, copy,
 sync, or retention operations. Its only directory mutation is bounded `MKCOL`
-for `database-backups/<UTC YYYY-MM-DD>/`. A conditional create accepts only
+for `database-backups/<Sofia YYYY-MM-DD>/`. A conditional create accepts only
 HTTP `201` as a new object; `200` or `204` is a failure because it does not
 prove creation.
-A checksum-named `412` is accepted only as an idempotent retry under the
-explicit assumption that Task 25 is the sole automated writer of those names.
+A matching short-identity or legacy full-checksum `412` is accepted only as an
+idempotent retry under the explicit assumption that Task 25 is the sole
+automated writer of those names.
 A conditional create must reject a pre-existing remote path, and every producer
 filename therefore remains immutable.
 
@@ -98,7 +110,8 @@ completed-order-pdfs/
 ```
 
 The three category roots are provisioned manually. The worker creates only the
-database backup UTC daily child and never lists or deletes remote content. The
+database backup Sofia-calendar daily child and never lists or deletes remote
+content. The
 separation is a business requirement. Hetzner sharing and permissions may
 be configured independently for each folder. The application does not manage
 Nextcloud users, groups, shares, or permissions.
@@ -124,11 +137,20 @@ a replacement for producer-specific local retention.
   the failure rather than deleting undelivered files to hide the condition.
 
 Database backups retain their newest 144 final-name local images, approximately
-24 hours at ten-minute intervals. The current backup process publishes such a
-name only after validation and durability; the first-enable runbook audits any
-pre-existing matching files because steady-state retention does not reopen all
-144 on every run. The remote database-backup daily folders are append-only
-from the pipeline's perspective and have no automatic retention.
+24 hours at ten-minute intervals. Every run creates and validates a local
+SQLite-safe image, then compares its complete SHA-256 with the immediately
+previous validated image. Only changed content is copied into the outbox and
+uploaded. The first-enable runbook audits any pre-existing matching files
+because steady-state retention does not reopen all 144 on every run. Remote
+database-backup daily folders are append-only from the pipeline's perspective
+and have no automatic retention.
+
+A bounded durable producer handoff makes the create/validate/enqueue/activity
+sequence resumable. A retry completes that exact observation, using the same
+queue-item ID and remote name, before inspecting newer database state. Local
+retention is applied only after the observation is committed. Delivery likewise
+records each remote confirmation before local cleanup, preventing crash retries
+from double-counting an upload.
 
 ## Subtasks And Ownership
 
@@ -145,11 +167,19 @@ installation and acceptance remain pending.
 
 ### 25.2 Discord pipeline notifications
 
-Send an external Discord message when a generation or delivery component first
-enters a failed state. Suppress repeat messages while the same component
-remains failed, retry a notification that could not be sent, and send one
-recovery message after the component succeeds again. Keep local journal/state
-evidence even when Discord itself is unavailable.
+Send human-readable Discord incident messages without routine ten-minute
+success spam. Producer failures alert immediately. WebDAV incidents are silent
+if they recover within ten minutes, alert once if they persist, and recover
+only after a failure-free run drains the exact queue to zero. A separate
+delivery-worker freshness check warns when validated producer checks stop for
+30 minutes. A Sofia-time summary defaults to `09:00`, and can be disabled or
+configured for one or two daily times. Keep local journal/state evidence and
+retry pending notifications when Discord itself is unavailable.
+
+The ten-minute grace applies only to remote WebDAV failures. Local
+configuration, queue-health, quarantine, activity-state, and cleanup failures
+are alertable immediately. Quarantined evidence blocks recovery until an
+operator resolves it.
 
 Email is a provisional later notification option. It is not part of the first
 implementation plan.
@@ -159,11 +189,15 @@ webhook is not configured or activated by source work.
 
 ### 25.3 Automatic production database backups
 
-Run the existing SQLite backup API every ten minutes, retain the newest 144
-final-name local backups published after validation, enqueue every new image
-for `database-backups/<UTC YYYY-MM-DD>/`, and
-let the common delivery worker upload it. Unsafe raw copying of the live SQLite
-file remains forbidden.
+Run the existing SQLite backup API every ten minutes and retain the newest 144
+final-name local backups published after validation. Enqueue only when the
+complete validated SHA-256 differs from the prior check, then let the common
+delivery worker upload it under `database-backups/<Sofia YYYY-MM-DD>/`. New
+remote names expose a readable Sofia timestamp and only the first 16 checksum
+characters; queue metadata retains the full checksum and legacy pending
+full-checksum names remain deliverable. During only the repeated autumn Sofia
+hour, the readable name adds its UTC offset to prevent two distinct instants
+from colliding. Unsafe raw copying of the live SQLite file remains forbidden.
 
 The manual restore command and human-selected restore procedure remain the
 recovery model. Task 25 does not automatically download or restore a database.
@@ -258,9 +292,11 @@ stopped/inactive, and both locks held through restore validation and application
 restart checks.
 
 The WebDAV application-device connection, conditional create/idempotent retry,
-Discord failure/recovery messages, UTC daily-folder creation, and one automatic
+the original Discord failure/recovery messages, UTC daily-folder creation, and one automatic
 backup/delivery cycle were accepted on September 15 with disposable
 development paths and timers. The development units were then removed.
+That historical acceptance predates the observability, deduplication,
+Sofia-routing, and summary refinement and does not accept the refined behavior.
 Production protected-config placement, unit installation, timer enablement,
 and end-to-end production acceptance remain separately authorized operational
 work.
@@ -290,7 +326,7 @@ The first slice is ready for source acceptance when:
 - the original backup remains under the configured local 144-file retention;
 - an immutable copy is queued under `database-backups`;
 - the fake WebDAV integration proves create-only requests, overwrite refusal,
-  `204` rejection, checksum-named `412` retry handling, successful removal of
+  `204` rejection, matching-content `412` retry handling, successful removal of
   only the disposable queue copy, and retry preservation on failure;
 - notification tests prove one failure message, suppression while still
   failing, retry after notification-send failure, and one recovery message;

@@ -4,6 +4,13 @@ Date: 2026-09-14
 
 Status: Approved and adversarially hardened on September 14, 2026
 
+The filename, calendar-folder, upload frequency, Discord wording/grace,
+activity-state, producer-freshness, and scheduled-summary parts of this design
+are superseded by
+`docs/superpowers/specs/2026-09-15-backup-observability-and-deduplication-design.md`.
+The create-only transport, fixed-category outbox, retention, restore, and
+production-authority boundaries remain in force.
+
 ## Goal
 
 Build one bounded file-delivery pipeline that current database backups and

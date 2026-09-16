@@ -11,6 +11,7 @@ import pytest
 
 from app.curl_transport import CurlResult, validate_curl_config
 from app.pipeline_notifications import (
+    DiscordNotificationError,
     DiscordWebhookSender,
     record_component_failure,
     record_component_success,
@@ -60,8 +61,228 @@ def test_failure_is_sent_once_and_recovery_is_sent_once(tmp_path: Path):
     assert recovered.notification_sent is True
     assert healthy.notification_sent is False
     assert len(sender.messages) == 2
-    assert "FAILED" in sender.messages[0]
-    assert "RECOVERED" in sender.messages[1]
+    assert "Cloud backups delayed" in sender.messages[0]
+    assert "Cloud backups recovered" in sender.messages[1]
+
+
+def test_webdav_failure_uses_ten_minute_grace_and_brief_recovery_is_silent(
+    tmp_path: Path,
+):
+    sender = RecordingSender()
+    grace = timedelta(minutes=10)
+    first = record_component_failure(
+        "webdav-delivery",
+        "temporary timeout",
+        state_dir=tmp_path,
+        notifier=sender,
+        now=datetime(2026, 9, 15, 0, 0, tzinfo=timezone.utc),
+        notification_grace=grace,
+        context={"pending_count": 1},
+    )
+    repeated = record_component_failure(
+        "webdav-delivery",
+        "temporary timeout",
+        state_dir=tmp_path,
+        notifier=sender,
+        now=datetime(2026, 9, 15, 0, 9, tzinfo=timezone.utc),
+        notification_grace=grace,
+        context={"pending_count": 1},
+    )
+    recovered = record_component_success(
+        "webdav-delivery",
+        state_dir=tmp_path,
+        notifier=sender,
+        now=datetime(2026, 9, 15, 0, 9, 30, tzinfo=timezone.utc),
+        notification_grace=grace,
+        context={"pending_count": 0},
+    )
+
+    assert first.notification_attempted is False
+    assert first.notification_pending is True
+    assert repeated.notification_attempted is False
+    assert recovered.notification_sent is False
+    assert recovered.notification_pending is False
+    assert sender.messages == []
+
+
+def test_webdav_failure_alerts_once_after_ten_minute_grace(tmp_path: Path):
+    sender = RecordingSender()
+    grace = timedelta(minutes=10)
+    start = datetime(2026, 9, 15, 0, 0, tzinfo=timezone.utc)
+    record_component_failure(
+        "webdav-delivery",
+        "HTTP 503",
+        state_dir=tmp_path,
+        notifier=sender,
+        now=start,
+        notification_grace=grace,
+        context={"pending_count": 1},
+    )
+    alerted = record_component_failure(
+        "webdav-delivery",
+        "HTTP 503",
+        state_dir=tmp_path,
+        notifier=sender,
+        now=start + grace,
+        notification_grace=grace,
+        context={"pending_count": 2},
+    )
+    repeated = record_component_failure(
+        "webdav-delivery",
+        "HTTP 503",
+        state_dir=tmp_path,
+        notifier=sender,
+        now=start + timedelta(minutes=11),
+        notification_grace=grace,
+        context={"pending_count": 2},
+    )
+
+    assert alerted.notification_sent is True
+    assert repeated.notification_sent is False
+    assert len(sender.messages) == 1
+    message = sender.messages[0]
+    assert "Cloud backups delayed" in message
+    assert "15 Sep 2026 at 03:00" in message
+    assert "2 backups are waiting" in message
+    assert "host=" not in message
+    assert "pending_count=" not in message
+    assert "webdav-delivery" not in message
+    assert "T00:" not in message
+    assert "Z" not in message
+
+
+def test_notification_state_rejects_boolean_schema_version(tmp_path: Path):
+    record_component_failure(
+        "webdav-delivery",
+        "HTTP 503",
+        state_dir=tmp_path,
+        notifier=RecordingSender(),
+    )
+    state_path = tmp_path / "webdav-delivery.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["schema_version"] = True
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="version"):
+        retry_pending_notification(
+            "webdav-delivery",
+            state_dir=tmp_path,
+            notifier=RecordingSender(),
+        )
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["first_failed_at_utc", "last_attempt_at_utc", "notification_attempted_at_utc"],
+)
+def test_notification_state_rejects_noncanonical_timestamps(
+    tmp_path: Path,
+    key: str,
+):
+    record_component_failure(
+        "webdav-delivery",
+        "HTTP 503",
+        state_dir=tmp_path,
+        notifier=RecordingSender(),
+        now=datetime(2026, 9, 15, 0, 0, tzinfo=timezone.utc),
+        notification_grace=timedelta(minutes=10),
+    )
+    state_path = tmp_path / "webdav-delivery.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state[key] = "2026-09-15 00:00"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="timestamp"):
+        retry_pending_notification(
+            "webdav-delivery",
+            state_dir=tmp_path,
+            notifier=RecordingSender(),
+        )
+
+
+def test_failure_state_from_the_future_is_rejected_without_rewriting_it(
+    tmp_path: Path,
+):
+    later = datetime(2026, 9, 15, 0, 10, tzinfo=timezone.utc)
+    record_component_failure(
+        "webdav-delivery",
+        "HTTP 503",
+        state_dir=tmp_path,
+        notifier=RecordingSender(),
+        now=later,
+        notification_grace=timedelta(minutes=10),
+    )
+    state_path = tmp_path / "webdav-delivery.json"
+    original = state_path.read_bytes()
+
+    with pytest.raises(ValueError, match="future"):
+        record_component_failure(
+            "webdav-delivery",
+            "HTTP 503",
+            state_dir=tmp_path,
+            notifier=RecordingSender(),
+            now=later - timedelta(minutes=1),
+            notification_grace=timedelta(minutes=10),
+        )
+
+    assert state_path.read_bytes() == original
+
+
+def test_webdav_recovery_after_unsent_qualified_failure_is_combined(
+    tmp_path: Path,
+):
+    grace = timedelta(minutes=10)
+    start = datetime(2026, 9, 15, 0, 0, tzinfo=timezone.utc)
+    record_component_failure(
+        "webdav-delivery",
+        "HTTP 503",
+        state_dir=tmp_path,
+        notifier=RecordingSender(),
+        now=start,
+        notification_grace=grace,
+    )
+    record_component_failure(
+        "webdav-delivery",
+        "HTTP 503",
+        state_dir=tmp_path,
+        notifier=RecordingSender(fail=True),
+        now=start + grace,
+        notification_grace=grace,
+    )
+    sender = RecordingSender()
+
+    recovered = record_component_success(
+        "webdav-delivery",
+        state_dir=tmp_path,
+        notifier=sender,
+        now=start + timedelta(minutes=12),
+        notification_grace=grace,
+        context={"recovered_upload_count": 18, "pending_count": 0},
+    )
+
+    assert recovered.notification_sent is True
+    assert len(sender.messages) == 1
+    assert "Cloud backup interruption resolved" in sender.messages[0]
+    assert "18 waiting backups were uploaded" in sender.messages[0]
+    assert "Nothing remains waiting" in sender.messages[0]
+
+
+def test_database_backup_failure_is_immediate_and_human_readable(tmp_path: Path):
+    sender = RecordingSender()
+
+    result = record_component_failure(
+        "database-backup",
+        "SQLite integrity check failed",
+        state_dir=tmp_path,
+        notifier=sender,
+        now=datetime(2026, 9, 15, 6, 10, tzinfo=timezone.utc),
+    )
+
+    assert result.notification_sent is True
+    assert len(sender.messages) == 1
+    assert "Database backup failed" in sender.messages[0]
+    assert "15 Sep 2026 at 09:10" in sender.messages[0]
+    assert "SQLite integrity check failed" in sender.messages[0]
 
 
 def test_failed_failure_notice_remains_pending_and_retries(tmp_path: Path):
@@ -111,7 +332,7 @@ def test_pending_failure_notice_can_retry_without_asserting_new_component_work(
     assert retried.notification_sent is True
     assert retried.notification_pending is False
     assert len(sender.messages) == 1
-    assert "FAILED" in sender.messages[0]
+    assert "Cloud backups delayed" in sender.messages[0]
     assert "initial outage" in sender.messages[0]
     assert state["health"] == "failing"
 
@@ -141,7 +362,7 @@ def test_failed_recovery_notice_remains_pending_and_retries(tmp_path: Path):
     assert first_recovery.notification_pending is True
     assert second_recovery.notification_sent is True
     assert second_recovery.notification_pending is False
-    assert "RECOVERED" in retry_sender.messages[0]
+    assert "Database backup recovered" in retry_sender.messages[0]
     recovered_state = json.loads(second_recovery.state_path.read_text(encoding="utf-8"))
     assert recovered_state["failure_notice_sent"] is True
 
@@ -168,8 +389,7 @@ def test_recovery_notice_closes_an_incident_whose_failure_notice_never_sent(
     assert recovered.notification_pending is False
     assert state["failure_notice_sent"] is True
     assert len(recovery_sender.messages) == 1
-    assert "FAILED AND RECOVERED" in recovery_sender.messages[0]
-    assert "brief failure" in recovery_sender.messages[0]
+    assert "Database backup interruption resolved" in recovery_sender.messages[0]
 
 
 def test_failure_after_unsent_combined_recovery_keeps_the_incident_evidence(
@@ -199,7 +419,6 @@ def test_failure_after_unsent_combined_recovery_keeps_the_incident_evidence(
     assert result.health == "failing"
     assert result.notification_sent is True
     assert len(sender.messages) == 1
-    assert "initial failure" in sender.messages[0]
     assert "failed again" in sender.messages[0]
     state = json.loads(result.state_path.read_text(encoding="utf-8"))
     assert state["first_error"] == "initial failure"
@@ -538,6 +757,58 @@ def test_notification_failure_is_recorded_and_reported_without_secret(
     assert "notification_pending=true" in stderr
     assert "fake-token" not in stderr
     assert "fake-token" not in result.state_path.read_text(encoding="utf-8")
+
+
+def test_long_discord_error_remains_loadable_for_a_later_retry(tmp_path: Path):
+    class LongFailureSender:
+        def send(self, _message: str) -> None:
+            raise DiscordNotificationError("x" * 500)
+
+    first = record_component_failure(
+        "database-backup",
+        "backup failed",
+        state_dir=tmp_path,
+        notifier=LongFailureSender(),
+    )
+
+    assert first.notification_pending is True
+    assert first.notification_error is not None
+    assert len(first.notification_error) <= 100
+
+    retried = retry_pending_notification(
+        "database-backup",
+        state_dir=tmp_path,
+        notifier=RecordingSender(),
+    )
+
+    assert retried.notification_sent is True
+
+
+def test_failing_notification_state_requires_complete_incident_evidence(
+    tmp_path: Path,
+):
+    started = datetime(2026, 9, 15, 6, 0, tzinfo=timezone.utc)
+    first = record_component_failure(
+        "webdav-delivery",
+        "HTTP 503",
+        state_dir=tmp_path,
+        notifier=RecordingSender(),
+        now=started,
+        notification_grace=timedelta(minutes=10),
+    )
+    state = json.loads(first.state_path.read_text(encoding="utf-8"))
+    state["first_failed_at_utc"] = None
+    first.state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="incident evidence is incomplete"):
+        record_component_failure(
+            "webdav-delivery",
+            "HTTP 503",
+            state_dir=tmp_path,
+            notifier=RecordingSender(),
+            now=started + timedelta(hours=1),
+            notification_grace=timedelta(minutes=10),
+        )
 
 
 def test_discord_confirmation_failure_keeps_a_safe_actionable_diagnostic(

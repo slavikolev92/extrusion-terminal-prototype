@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,78 @@ EXPECTED_UNITS = {
     "extrusion-terminal-delivery.service",
     "extrusion-terminal-delivery.timer",
 }
+
+
+def test_tracked_task25_systemd_topology_remains_exactly_four_units():
+    assert {
+        path.name for path in SYSTEMD_DIR.glob("extrusion-terminal-*")
+    } == EXPECTED_UNITS
+
+
+@pytest.mark.parametrize(
+    ("setting", "normalized"),
+    [
+        ("summary_times=off\n", "off"),
+        ("summary_times=09:00\n", "09:00"),
+        ("summary_times=09:00,21:00\n", "09:00,21:00"),
+    ],
+)
+def test_summary_configuration_validation_command_is_no_network_and_normalized(
+    tmp_path: Path,
+    setting: str,
+    normalized: str,
+):
+    config = tmp_path / "summary.conf"
+    config.write_text(setting, encoding="ascii")
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    network_marker = tmp_path / "network-called"
+    curl = fake_bin / "curl"
+    curl.write_text(
+        "#!/usr/bin/env bash\ntouch \"$NETWORK_MARKER\"\nexit 99\n",
+        encoding="utf-8",
+    )
+    curl.chmod(curl.stat().st_mode | stat.S_IXUSR)
+    environment = os.environ.copy()
+    environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+    environment["NETWORK_MARKER"] = str(network_marker)
+    environment["EXTRUSION_BACKUP_SUMMARY_CONFIG"] = str(config)
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "app.backup_summary", "validate-config"],
+        cwd=Path.cwd(),
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == normalized + "\n"
+    assert completed.stderr == ""
+    assert not network_marker.exists()
+
+
+def test_summary_configuration_validation_command_rejects_invalid_value(
+    tmp_path: Path,
+):
+    config = tmp_path / "summary.conf"
+    config.write_text("summary_times=whenever\n", encoding="ascii")
+    environment = os.environ.copy()
+    environment["EXTRUSION_BACKUP_SUMMARY_CONFIG"] = str(config)
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "app.backup_summary", "validate-config"],
+        cwd=Path.cwd(),
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert "configuration is invalid" in completed.stdout
+    assert str(config) not in completed.stdout
 
 
 def read_unit(name: str) -> str:
@@ -190,6 +264,8 @@ def test_installer_preflights_secrets_without_reading_or_creating_them():
     assert "group/world accessible" in installer
     assert "validate_curl_config" in installer
     assert "validate_discord_webhook_config" in installer
+    assert "backup_activity" in installer
+    assert "backup_summary" in installer
     assert "cat \"$WEBDAV_CURL_CONFIG\"" not in installer
     assert "cat \"$DISCORD_CURL_CONFIG\"" not in installer
     assert '> "$WEBDAV_CURL_CONFIG"' not in installer
@@ -489,6 +565,66 @@ def test_installer_dry_run_and_invalid_config_do_not_create_runtime(
     assert invalid.returncode != 0
     assert "invalid webhook URL" in invalid.stderr
     assert not runtime.exists()
+    assert not command_log.exists()
+
+
+def test_installer_preflights_optional_summary_configuration(tmp_path: Path):
+    root, environment, command_log = prepare_installer_harness(tmp_path)
+    summary = root / "etc" / "extrusion-terminal" / "backup-summary.conf"
+    summary.write_text("summary_times=whenever\n", encoding="ascii")
+    summary.chmod(0o640)
+
+    invalid = run_installer(root, environment, "--dry-run")
+
+    assert invalid.returncode != 0
+    assert "summary configuration is invalid" in invalid.stderr.lower()
+    assert not command_log.exists()
+
+    summary.write_text("summary_times=09:00,21:00\n", encoding="ascii")
+    summary.chmod(0o640)
+    valid = run_installer(root, environment, "--dry-run")
+
+    assert valid.returncode == 0, valid.stderr
+    assert not command_log.exists()
+
+
+def test_installer_dry_run_does_not_write_bytecode_into_a_cold_checkout(
+    tmp_path: Path,
+):
+    root, environment, command_log = prepare_installer_harness(tmp_path)
+    repository = tmp_path / "cold-checkout"
+    (repository / "scripts").mkdir(parents=True)
+    shutil.copy2(INSTALLER, repository / "scripts" / INSTALLER.name)
+    shutil.copytree(
+        "app",
+        repository / "app",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    shutil.copytree(
+        SYSTEMD_DIR,
+        repository / "deployment" / "systemd",
+    )
+    python_dir = repository / ".venv" / "bin"
+    python_dir.mkdir(parents=True)
+    (python_dir / "python").symlink_to(Path(sys.executable))
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(repository / "scripts" / INSTALLER.name),
+            "--test-root",
+            str(root),
+            "--dry-run",
+        ],
+        cwd=repository,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert list(repository.rglob("__pycache__")) == []
     assert not command_log.exists()
 
 

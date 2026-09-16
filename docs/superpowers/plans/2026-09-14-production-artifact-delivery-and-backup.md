@@ -27,6 +27,14 @@ paths, Discord incoming webhook.
 **Spec:**
 `docs/superpowers/specs/2026-09-14-production-artifact-delivery-design.md`
 
+**Superseded behavior:** The filename, Sofia-calendar routing, upload-on-change,
+human notification/grace, activity-state, producer-freshness, and scheduled
+summary work is implemented by
+`docs/superpowers/plans/2026-09-15-backup-observability-and-deduplication.md`.
+This completed September 14 plan remains the historical record for the shared
+outbox, create-only transport, units, installer, deployment coordination, and
+manual restore boundary.
+
 **Plan status:** Source implementation, adversarial hardening, verification,
 review, and merge into the current source completed on 2026-09-14. This plan
 does not authorize source publication, production installation, external test

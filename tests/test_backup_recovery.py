@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from app import db
+import app.backups as backups_module
 from app.backups import (
     BACKUP_FILENAME_PREFIX,
     BACKUP_FILENAME_SUFFIX,
@@ -323,6 +324,36 @@ def test_retention_keeps_newest_matching_backups_only(temp_db_path: Path):
     assert backup_paths[3].exists()
     assert not backup_paths[2].exists()
     assert unrelated.exists()
+
+
+def test_retention_fsyncs_directory_after_deleting_old_backup(
+    temp_db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    backup_dir = temp_db_path.parent / "retention-fsync"
+    backup_dir.mkdir()
+    older = backup_dir / (
+        f"{BACKUP_FILENAME_PREFIX}20260613_120000_000000{BACKUP_FILENAME_SUFFIX}"
+    )
+    newer = backup_dir / (
+        f"{BACKUP_FILENAME_PREFIX}20260613_120001_000000{BACKUP_FILENAME_SUFFIX}"
+    )
+    older.write_bytes(b"older")
+    newer.write_bytes(b"newer")
+    os.utime(older, (1, 1))
+    os.utime(newer, (2, 2))
+
+    def fail_directory_fsync(path: Path) -> None:
+        assert path == backup_dir.resolve()
+        raise OSError("simulated retention directory fsync failure")
+
+    monkeypatch.setattr(backups_module, "_fsync_directory", fail_directory_fsync)
+
+    with pytest.raises(OSError, match="retention directory fsync failure"):
+        apply_retention(backup_dir, keep_count=1)
+
+    assert not older.exists()
+    assert newer.exists()
 
 
 def test_backup_restore_tests_use_temp_database_not_runtime_database(temp_db_path: Path):

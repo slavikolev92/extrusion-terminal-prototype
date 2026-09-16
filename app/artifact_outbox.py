@@ -57,6 +57,7 @@ _UTC_TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 MAX_REMOTE_FILENAME_BYTES = 240
 MAX_METADATA_BYTES = 16 * 1024
 STALE_STAGING_AGE_SECONDS = 15 * 60
+CONTENT_ID_HEX_LENGTH = 16
 
 
 class ArtifactPublishedDurabilityError(RuntimeError):
@@ -86,6 +87,7 @@ class QueueSnapshot:
     entries: tuple[QueueEntry, ...]
     pending_count: int
     stale_staging_count: int
+    quarantine_count: int
 
 
 @dataclass(frozen=True)
@@ -147,7 +149,7 @@ def enqueue_artifact(
         shutil.copyfile(source, payload_path)
         _fsync_file(payload_path)
         digest, size_bytes = _hash_and_size(payload_path)
-        remote_filename = _checksum_filename(basename, suffix, digest)
+        remote_filename = content_identity_filename(basename, suffix, digest)
         queued_at_utc = _format_utc_timestamp(now)
         metadata = {
             "schema_version": OUTBOX_SCHEMA_VERSION,
@@ -259,7 +261,48 @@ def snapshot_queue_entries(
         entries=tuple(selected),
         pending_count=pending_count,
         stale_staging_count=stale_staging_count,
+        quarantine_count=_quarantine_evidence_count(outbox),
     )
+
+
+def _quarantine_evidence_count(outbox: Path) -> int:
+    quarantine_root = outbox / "quarantine"
+    root_stat = _lstat_or_none(quarantine_root)
+    if root_stat is None:
+        return 0
+    if not _is_directory_mode(root_stat.st_mode):
+        return 1
+
+    ordinary_groups = {
+        *CATEGORY_REMOTE_FOLDERS,
+        "unknown-categories",
+        "category-roots",
+        "pending-root",
+        "staging-root",
+        "staging",
+    }
+    with os.scandir(quarantine_root) as groups:
+        for group in groups:
+            if group.name in ordinary_groups and group.is_dir(follow_symlinks=False):
+                with os.scandir(group.path) as evidence:
+                    if next(evidence, None) is not None:
+                        return 1
+                continue
+            if group.name == "cleanup" and group.is_dir(follow_symlinks=False):
+                with os.scandir(group.path) as cleanup_categories:
+                    for category in cleanup_categories:
+                        if (
+                            category.name in CATEGORY_REMOTE_FOLDERS
+                            and category.is_dir(follow_symlinks=False)
+                        ):
+                            with os.scandir(category.path) as evidence:
+                                if next(evidence, None) is not None:
+                                    return 1
+                        else:
+                            return 1
+                continue
+            return 1
+    return 0
 
 
 def quarantine_queue_entry(
@@ -423,8 +466,14 @@ def load_queued_artifact(
     digest = metadata["sha256"]
     if not isinstance(digest, str) or _SHA256_PATTERN.fullmatch(digest) is None:
         raise ValueError(f"Queue metadata has an invalid SHA-256 digest: {item}")
-    if not remote_filename.endswith(f"__sha256-{digest}{suffix}"):
-        raise ValueError(f"Remote filename does not contain the recorded checksum: {item}")
+    if not _remote_filename_matches_identity(
+        remote_filename,
+        digest,
+        suffix,
+    ):
+        raise ValueError(
+            f"Remote filename does not contain its matching content identity: {item}"
+        )
     size_bytes = metadata["size_bytes"]
     if type(size_bytes) is not int or size_bytes < 0:
         raise ValueError(f"Queue metadata has an invalid payload size: {item}")
@@ -625,14 +674,37 @@ def _validate_plain_basename(name: str, suffix: str) -> None:
         raise ValueError("Artifact name is too long for the remote store.")
 
 
-def _checksum_filename(basename: str, suffix: str, digest: str) -> str:
+def content_identity_filename(basename: str, suffix: str, digest: str) -> str:
     stem = basename[: -len(suffix)]
-    remote_filename = f"{stem}__sha256-{digest}{suffix}"
+    remote_filename = f"{stem}_{digest[:CONTENT_ID_HEX_LENGTH]}{suffix}"
     if len(remote_filename.encode("utf-8")) > MAX_REMOTE_FILENAME_BYTES:
         raise ValueError(
-            "Checksum-bearing artifact name is too long for the remote store."
+            "Content-identity artifact name is too long for the remote store."
         )
     return remote_filename
+
+
+def has_matching_content_identity(artifact: QueuedArtifact) -> bool:
+    suffix = CATEGORY_SUFFIXES.get(artifact.category)
+    if suffix is None:
+        return False
+    return _remote_filename_matches_identity(
+        artifact.remote_filename,
+        artifact.sha256,
+        suffix,
+    )
+
+
+def _remote_filename_matches_identity(
+    remote_filename: str,
+    digest: str,
+    suffix: str,
+) -> bool:
+    if _SHA256_PATTERN.fullmatch(digest) is None:
+        return False
+    return remote_filename.endswith(
+        f"_{digest[:CONTENT_ID_HEX_LENGTH]}{suffix}"
+    ) or remote_filename.endswith(f"__sha256-{digest}{suffix}")
 
 
 def _format_utc_timestamp(value: datetime | None) -> str:
