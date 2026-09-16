@@ -320,6 +320,37 @@ def test_maintenance_mode_change_terminates_real_supported_browser_from_pid_reco
             process.wait(timeout=1)
 
 
+def test_on_accepts_debian_chromium_composite_process_title(tmp_path):
+    env, paths = controller_environment(tmp_path)
+    browser = paths["bin"] / "chromium"
+    shutil.copy2("/bin/sleep", browser)
+    process = subprocess.Popen(
+        [
+            f"{browser} --kiosk "
+            "http://192.168.88.10:8000/terminal",
+            "30",
+        ],
+        executable=str(browser),
+    )
+    try:
+        env["EXTRUSION_KIOSK_USER"] = pwd.getpwuid(os.getuid()).pw_name
+        write_browser_pid_record(paths["browser_pid_file"], process, "chromium")
+
+        result = run_script(CONTROLLER, "on", env=env)
+
+        assert result.returncode == 0, result.stderr
+        try:
+            returncode = process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pytest.fail("controller left Debian Chromium process running")
+        assert returncode == -signal.SIGTERM
+        assert (paths["state"] / "maintenance-enabled").exists()
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=1)
+
+
 def test_stale_browser_pid_record_cannot_terminate_reused_unrelated_process(tmp_path):
     env, paths = controller_environment(tmp_path)
     process = subprocess.Popen(["/bin/sleep", "30"])

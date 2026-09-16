@@ -118,7 +118,8 @@ read_browser_pid_record() {
 }
 
 stop_kiosk_browser() {
-    local current_start_time kiosk_uid process_command process_command_name
+    local current_start_time kiosk_uid process_command process_command_path
+    local process_command_name
     local process_executable process_executable_name process_uid status
 
     [ -e "$BROWSER_PID_FILE" ] || return 0
@@ -137,7 +138,8 @@ stop_kiosk_browser() {
         [ -n "$process_command" ] || return 0
     fi
     process_executable="$(readlink -e -- "/proc/${BROWSER_PID_VALUE}/exe" 2>/dev/null)" || return 0
-    process_command_name="${process_command##*/}"
+    process_command_path="${process_command%% *}"
+    process_command_name="${process_command_path##*/}"
     process_executable_name="${process_executable##*/}"
     case "$BROWSER_NAME_VALUE" in
         chromium)
