@@ -10,7 +10,7 @@ been installed, enabled, accepted, or deployed in production.
 
 Task 25 is an operational subsystem in this repository; it does not add UI or
 database schema. Two one-shot jobs are launched by the existing four tracked
-systemd units: a ten-minute SQLite backup producer and an approximately
+systemd units: a thirty-minute SQLite backup producer and an approximately
 one-minute delivery worker. Installing those units is a separate,
 disabled-by-default operation after source deployment.
 
@@ -38,11 +38,12 @@ and edition rules.
 
 ## Backup Producer And Local Durability
 
-Every ten-minute producer run creates and validates a SQLite-safe local image.
+Every thirty-minute producer run creates and validates a SQLite-safe local image.
 The newest 144 final images remain under `/opt/extrusion-terminal/backups`,
-including unchanged checks. Publication and retention directory mutations are
-fsynced. Retention does not reopen all retained databases on every run, so the
-first-enable runbook audits pre-existing matching files once.
+including unchanged checks and covering approximately three days. Publication
+and retention directory mutations are fsynced. Retention does not reopen all
+retained databases on every run, so the first-enable runbook audits pre-existing
+matching files once.
 
 Only a complete SHA-256 change from the last committed observation is queued.
 A bounded `database-backup-handoff.json` binds an in-progress observation to
@@ -100,7 +101,7 @@ drains and includes the number of database uploads confirmed during the
 incident.
 
 The delivery worker also warns when the same server has recorded no validated
-backup check for 30 minutes. This cannot detect a dead VM or total site outage;
+backup check for 90 minutes. This cannot detect a dead VM or total site outage;
 external heartbeat monitoring remains outside Task 25.
 
 A Sofia civil-time summary defaults to `09:00` and may be set to `off`, one
@@ -119,7 +120,7 @@ spring slot becomes due at the first valid local instant after the gap.
 - WebDAV: 10-second connect and 30-second folder/120-second upload bounds;
 - Discord: 10-second connect and 30-second transfer bounds;
 - backup service: five-minute ceiling; delivery service: ten-minute ceiling;
-- backup schedule: every ten minutes; delivery schedule: approximately every
+- backup schedule: every thirty minutes; delivery schedule: approximately every
   minute.
 
 Scheduled jobs share the operation lock non-blockingly. Installation,

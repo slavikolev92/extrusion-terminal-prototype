@@ -1483,7 +1483,7 @@ def test_freshness_warning_takes_priority_over_due_summary(
     summary_config.write_text("summary_times=08:00\n", encoding="ascii")
     (delivery_config.state_dir / BACKUP_ACTIVITY_FILENAME).unlink()
     sender = RecordingSender()
-    first_observation = datetime(2026, 9, 15, 4, 0, tzinfo=timezone.utc)
+    first_observation = datetime(2026, 9, 15, 3, 30, tzinfo=timezone.utc)
     deliver_pending(
         delivery_config,
         runner=RecordingCurlRunner(),
@@ -1495,13 +1495,13 @@ def test_freshness_warning_takes_priority_over_due_summary(
         delivery_config,
         runner=RecordingCurlRunner(),
         notifier=sender,
-        now=first_observation + timedelta(hours=1),
+        now=first_observation + timedelta(minutes=90),
     )
     next_run = deliver_pending(
         delivery_config,
         runner=RecordingCurlRunner(),
         notifier=sender,
-        now=first_observation + timedelta(hours=1, minutes=1),
+        now=first_observation + timedelta(minutes=91),
     )
 
     assert priority_run.notification_pending is True

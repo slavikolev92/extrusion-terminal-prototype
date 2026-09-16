@@ -38,12 +38,12 @@ Confirmed scope:
   development timers against the real endpoints, but is not installed,
   enabled, accepted, or deployed in production. It provides one fixed-category
   filesystem outbox, create-only Hetzner WebDAV delivery into Sofia-calendar
-  daily backup folders, and automatic ten-minute SQLite-safe checks with the
+  daily backup folders, and automatic thirty-minute SQLite-safe checks with the
   newest 144 images retained locally. The current refinement enqueues/uploads
   only changed content, uses readable Sofia names with short content identity,
   sends human Discord incidents without routine success spam, provides an
   optional once- or twice-daily Sofia summary (default `09:00`), detects a
-  producer that has stopped checking for 30 minutes while delivery still runs,
+  producer that has stopped checking for 90 minutes while delivery still runs,
   and uses durable producer/delivery handoffs so crash retries neither skip
   observations nor double-count confirmed uploads.
   The refinement passed its separate disposable development acceptance against

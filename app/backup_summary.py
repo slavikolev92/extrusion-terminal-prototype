@@ -34,7 +34,7 @@ DEFAULT_SUMMARY_CONFIG_PATH = Path(
 )
 BACKUP_SUMMARY_STATE_FILENAME = "database-backup-summary.json"
 BACKUP_SUMMARY_STATE_SCHEMA_VERSION = 1
-PRODUCER_STALE_AFTER = timedelta(minutes=30)
+PRODUCER_STALE_AFTER = timedelta(minutes=90)
 _DEFAULT_SUMMARY_TIMES = (time(9, 0),)
 _MAX_CONFIG_BYTES = 1024
 _MAX_STATE_BYTES = 16 * 1024
@@ -255,7 +255,7 @@ def check_backup_freshness(
     if _is_stale(activity.last_successful_check_at_utc, run_time):
         return record_component_failure(
             "database-backup-freshness",
-            "No validated database check has been recorded in the last 30 minutes.",
+            "No validated database check has been recorded in the last 90 minutes.",
             state_dir=state_dir,
             notifier=notifier,
             now=run_time,
@@ -518,7 +518,7 @@ def _build_summary_message(
     elif backup.status == "failing":
         warnings.append("The latest database backup check failed.")
     elif _is_stale(backup.last_successful_check_at_utc, now):
-        warnings.append("No validated database check was recorded in the last 30 minutes.")
+        warnings.append("No validated database check was recorded in the last 90 minutes.")
     if backup is not None and any(
         current < baseline
         for current, baseline in (

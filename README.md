@@ -115,17 +115,17 @@ upload-on-change, handoff, Sofia routing, grace/recovery, freshness, summary,
 remote-download verification, and scratch-restore behavior. Neither exercise
 installed, enabled, accepted, or deployed Task 25 in production.
 
-The September 15 refinement keeps the ten-minute schedule but uploads only when
-the complete validated database checksum changes. Each check still creates and
+The production schedule checks every thirty minutes and uploads only when the
+complete validated database checksum changes. Each check still creates and
 validates a local SQLite-safe image, and the newest 144 remain locally. Changed
 images use human-readable Sofia timestamps, a short checksum identity, and a
 Sofia-calendar `database-backups/YYYY-MM-DD/` folder. Legacy queued names remain
 compatible. Failed files stay queued for retry.
 
-Discord no longer receives routine ten-minute success spam. Producer failures
+Discord receives no routine per-check success spam. Producer failures
 alert immediately; cloud failures alert only after ten minutes and recover only
 after the complete backlog drains. The delivery worker also detects a producer
-that has stopped checking for 30 minutes. A human-readable Sofia-time summary
+that has stopped checking for 90 minutes. A human-readable Sofia-time summary
 defaults to `09:00` daily and supports `off`, one daily time, or two daily
 times. No extra daemon or timer was added. The application still performs no
 remote download, overwrite, automatic deletion, restore, or failover.
@@ -1041,7 +1041,7 @@ Backup approach:
 
 - Store the SQLite database on the app VM/server.
 - Support timestamped backups through the documented SQLite-safe backup command.
-- The backup job checks the database every 10 minutes because the database is
+- The backup job checks the database every 30 minutes because the database is
   small and storage space is available. Every check retains a validated local
   image, but only content changed since the previous validated check is queued
   for cloud delivery.

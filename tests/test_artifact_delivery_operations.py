@@ -176,10 +176,10 @@ def run_installer(
     )
 
 
-def test_backup_timer_is_ten_minutes_and_persistent():
+def test_backup_timer_is_thirty_minutes_and_persistent():
     timer = read_unit("extrusion-terminal-backup.timer")
 
-    assert "OnCalendar=*:0/10" in timer
+    assert "OnCalendar=*:0/30" in timer
     assert "Persistent=true" in timer
     assert "AccuracySec=1s" in timer
     assert "Unit=extrusion-terminal-backup.service" in timer

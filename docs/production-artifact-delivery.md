@@ -174,7 +174,7 @@ redefine the function and the same accepted revision before enablement.
 
 Before first enablement, audit every pre-existing matching final-name backup.
 The current backup code publishes a final name only after SQLite validation,
-but retention deliberately does not repeat up to 144 integrity checks every ten
+but retention deliberately does not repeat up to 144 integrity checks every thirty
 minutes. This one-time gate prevents a corrupt file left by older code or a
 manual copy from occupying a retention slot:
 
@@ -368,12 +368,13 @@ python -m pytest -q \
   tests/test_artifact_delivery.py::test_cleanup_retry_does_not_double_count_a_confirmed_upload \
   tests/test_pipeline_notifications.py::test_webdav_failure_alerts_once_after_ten_minute_grace \
   tests/test_backup_summary.py::test_daily_summary_sends_once_at_first_invocation_after_slot \
-  tests/test_backup_summary.py::test_never_run_freshness_waits_thirty_minutes_then_alerts
+  tests/test_backup_summary.py::test_never_run_freshness_waits_ninety_minutes_then_alerts
 ```
 
 All seven must pass. This proves the accepted source's multi-check deduplication,
 unfinished-handoff gate, one-count confirmation checkpoint, full-backlog
-recovery, ten-minute grace, scheduled summary, and same-server freshness paths.
+recovery, ten-minute grace, scheduled summary, and 90-minute same-server
+freshness paths.
 
 Then exercise the grace/recovery path against the real disposable endpoints.
 Use a syntactically valid curl config containing deliberately wrong credentials;
@@ -487,15 +488,15 @@ systemctl list-timers \
 Verify one validated `extrusion_terminal_*.sqlite3` remains locally, its
 short-identity queue copy drains, the remote object appears under
 `database-backups/<Sofia YYYY-MM-DD>/`, and both timers remain scheduled. Then
-observe at least one automatic ten-minute backup and one delivery retry
+observe at least one automatic thirty-minute backup and one delivery retry
 interval. Do not automate remote inspection or restoration.
 
 ## Runtime Behavior And Failure Meaning
 
-- The backup timer runs every ten minutes. Every run creates and validates a
+- The backup timer runs every thirty minutes. Every run creates and validates a
   SQLite-safe local image; only content whose complete SHA-256 differs from the
   previous validated check is enqueued. The newest 144 validated local images
-  remain (approximately 24 hours), including unchanged checks. The activation
+  remain (approximately three days), including unchanged checks. The activation
   audit covers pre-existing matching files; retention does not revalidate the
   entire historical set on every run.
 - The independent delivery timer runs approximately once per minute.
@@ -550,7 +551,7 @@ reached Discord, one combined interruption-and-recovery message preserves the
 incident.
 
 While delivery still runs, it also warns if the producer has not recorded a
-validated check for 30 minutes. This same-server check cannot report a dead VM
+validated check for 90 minutes. This same-server check cannot report a dead VM
 or total connectivity loss. The scheduled summary reports validated checks,
 failed checks, changed database versions, confirmed Hetzner uploads, the latest
 check/upload times, and exact waiting count. Incident notices take priority,

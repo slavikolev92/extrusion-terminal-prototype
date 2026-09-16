@@ -569,7 +569,7 @@ def test_unhealthy_or_unverifiable_summary_is_a_warning(
 ):
     config = write_config(tmp_path / "summary.conf", "09:00")
     sender = RecordingSender()
-    initialized = datetime(2026, 9, 15, 5, 0, tzinfo=timezone.utc)
+    initialized = datetime(2026, 9, 15, 4, 0, tzinfo=timezone.utc)
     if condition not in {"never", "malformed"}:
         seed_healthy_activity(tmp_path, initialized)
     if condition == "malformed":
@@ -725,7 +725,7 @@ def test_summary_rejects_untrusted_state(tmp_path: Path, kind: str):
         )
 
 
-def test_never_run_freshness_waits_thirty_minutes_then_alerts(tmp_path: Path):
+def test_never_run_freshness_waits_ninety_minutes_then_alerts(tmp_path: Path):
     sender = RecordingSender()
     first = check_backup_freshness(
         state_dir=tmp_path,
@@ -735,12 +735,12 @@ def test_never_run_freshness_waits_thirty_minutes_then_alerts(tmp_path: Path):
     early = check_backup_freshness(
         state_dir=tmp_path,
         notifier=sender,
-        now=datetime(2026, 9, 15, 5, 29, tzinfo=timezone.utc),
+        now=datetime(2026, 9, 15, 6, 29, tzinfo=timezone.utc),
     )
     due = check_backup_freshness(
         state_dir=tmp_path,
         notifier=sender,
-        now=datetime(2026, 9, 15, 5, 30, tzinfo=timezone.utc),
+        now=datetime(2026, 9, 15, 6, 30, tzinfo=timezone.utc),
     )
 
     assert first is not None and first.notification_attempted is False
@@ -750,7 +750,7 @@ def test_never_run_freshness_waits_thirty_minutes_then_alerts(tmp_path: Path):
     assert "Database backup process appears stopped" in sender.messages[0]
 
 
-def test_healthy_producer_stale_for_thirty_minutes_alerts_and_recovers(
+def test_healthy_producer_stale_for_ninety_minutes_alerts_and_recovers(
     tmp_path: Path,
 ):
     sender = RecordingSender()
@@ -762,23 +762,29 @@ def test_healthy_producer_stale_for_thirty_minutes_alerts_and_recovers(
         now=last_success,
     )
 
+    early = check_backup_freshness(
+        state_dir=tmp_path,
+        notifier=sender,
+        now=last_success + timedelta(minutes=89),
+    )
     warning = check_backup_freshness(
         state_dir=tmp_path,
         notifier=sender,
-        now=last_success + timedelta(minutes=31),
+        now=last_success + timedelta(minutes=90),
     )
     record_backup_success(
         "a" * 64,
         changed=False,
         state_dir=tmp_path,
-        now=last_success + timedelta(minutes=32),
+        now=last_success + timedelta(minutes=91),
     )
     recovery = check_backup_freshness(
         state_dir=tmp_path,
         notifier=sender,
-        now=last_success + timedelta(minutes=32),
+        now=last_success + timedelta(minutes=91),
     )
 
+    assert early is not None and early.notification_attempted is False
     assert warning is not None and warning.notification_sent is True
     assert recovery is not None and recovery.notification_sent is True
     assert len(sender.messages) == 2

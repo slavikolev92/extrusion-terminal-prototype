@@ -137,7 +137,7 @@ a replacement for producer-specific local retention.
   the failure rather than deleting undelivered files to hide the condition.
 
 Database backups retain their newest 144 final-name local images, approximately
-24 hours at ten-minute intervals. Every run creates and validates a local
+three days at thirty-minute intervals. Every run creates and validates a local
 SQLite-safe image, then compares its complete SHA-256 with the immediately
 previous validated image. Only changed content is copied into the outbox and
 uploaded. The first-enable runbook audits any pre-existing matching files
@@ -167,12 +167,12 @@ installation and acceptance remain pending.
 
 ### 25.2 Discord pipeline notifications
 
-Send human-readable Discord incident messages without routine ten-minute
+Send human-readable Discord incident messages without routine per-check
 success spam. Producer failures alert immediately. WebDAV incidents are silent
 if they recover within ten minutes, alert once if they persist, and recover
 only after a failure-free run drains the exact queue to zero. A separate
 delivery-worker freshness check warns when validated producer checks stop for
-30 minutes. A Sofia-time summary defaults to `09:00`, and can be disabled or
+90 minutes. A Sofia-time summary defaults to `09:00`, and can be disabled or
 configured for one or two daily times. Keep local journal/state evidence and
 retry pending notifications when Discord itself is unavailable.
 
@@ -189,7 +189,7 @@ webhook is not configured or activated by source work.
 
 ### 25.3 Automatic production database backups
 
-Run the existing SQLite backup API every ten minutes and retain the newest 144
+Run the existing SQLite backup API every thirty minutes and retain the newest 144
 final-name local backups published after validation. Enqueue only when the
 complete validated SHA-256 differs from the prior check, then let the common
 delivery worker upload it under `database-backups/<Sofia YYYY-MM-DD>/`. New
@@ -332,7 +332,7 @@ The first slice is ready for source acceptance when:
 - notification tests prove one failure message, suppression while still
   failing, retry after notification-send failure, and one recovery message;
 - source-controlled one-shot service/timer definitions schedule backups every
-  ten minutes and delivery independently, with finite runtimes and deployment
+  thirty minutes and delivery independently, with finite runtimes and deployment
   coordination;
 - tests never contact real external services or mutate the runtime database;
 - the production runbook documents configuration, installation, observation,
@@ -342,7 +342,7 @@ The first slice is ready for source acceptance when:
 
 ## Relationship To Earlier And Parallel Tasks
 
-- Task 13 is closed and archived. Only its SQLite-safe ten-minute cloud-backup
+- Task 13 is closed and archived. Only its SQLite-safe periodic cloud-backup
   need is absorbed here; its broader resilience program is not.
 - Task 18 remains completely independent.
 - Task 24 remains the detailed shift-crew/report producer record and later

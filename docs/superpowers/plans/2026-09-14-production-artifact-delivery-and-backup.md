@@ -7,7 +7,7 @@
 > tracking.
 
 **Goal:** Add one reusable append-only file-delivery outbox, Discord
-failure/recovery notifications, and a ten-minute job that sends validated
+failure/recovery notifications, and a thirty-minute job that sends validated
 SQLite backups to the configured Hetzner Storage Share while retaining the
 newest 144 local backups.
 
@@ -125,7 +125,7 @@ uploads, Discord webhook creation, timer enablement, or deployment.
   timer, installer, path, and secret-boundary tests.
 - `deployment/systemd/extrusion-terminal-backup.service` — one backup producer
   run.
-- `deployment/systemd/extrusion-terminal-backup.timer` — ten-minute calendar
+- `deployment/systemd/extrusion-terminal-backup.timer` — thirty-minute calendar
   schedule.
 - `deployment/systemd/extrusion-terminal-delivery.service` — one common outbox
   drain.
@@ -1022,7 +1022,7 @@ unless explicitly requested; the conditional commit message is
   app.backup_job` as `sk` under a non-blocking shared operation lock.
 - Delivery service invokes `/opt/extrusion-terminal/app/.venv/bin/python -m
   app.artifact_delivery deliver` as `sk` under the same shared lock.
-- Backup timer runs on `*:0/10`; delivery timer runs one minute after boot and
+- Backup timer runs on `*:0/30`; delivery timer runs one minute after boot and
   one minute after each inactive transition.
 - Backup and delivery services have five- and ten-minute runtime ceilings,
   respectively.
@@ -1037,11 +1037,11 @@ unless explicitly requested; the conditional commit message is
 Create tests that parse the tracked files as text and assert:
 
 ```python
-def test_backup_timer_is_ten_minutes_and_persistent():
+def test_backup_timer_is_thirty_minutes_and_persistent():
     timer = Path(
         "deployment/systemd/extrusion-terminal-backup.timer"
     ).read_text(encoding="utf-8")
-    assert "OnCalendar=*:0/10" in timer
+    assert "OnCalendar=*:0/30" in timer
     assert "Persistent=true" in timer
     assert "Unit=extrusion-terminal-backup.service" in timer
 
@@ -1113,7 +1113,7 @@ Use a calendar timer with:
 
 ```ini
 [Timer]
-OnCalendar=*:0/10
+OnCalendar=*:0/30
 Persistent=true
 AccuracySec=1s
 Unit=extrusion-terminal-backup.service
@@ -1181,12 +1181,12 @@ Run:
 ```bash
 bash -n scripts/install_artifact_delivery.sh
 bash -n scripts/deploy_production.sh
-systemd-analyze calendar '*:0/10'
+systemd-analyze calendar '*:0/30'
 python -m pytest tests/test_artifact_delivery_operations.py -q
 ```
 
 Expected: both Bash syntax checks pass; systemd normalizes the expression to
-every ten minutes; all source-contract tests pass. Do not install the units
+every thirty minutes; all source-contract tests pass. Do not install the units
 locally or in production during source verification.
 
 - [x] **Step 6: Review the Task 5 diff**
@@ -1330,7 +1330,7 @@ source .venv/bin/activate
 python -m compileall -q app tests
 bash -n scripts/install_artifact_delivery.sh
 bash -n scripts/deploy_production.sh
-systemd-analyze calendar '*:0/10'
+systemd-analyze calendar '*:0/30'
 rg -n 'PROPFIND|DELETE|MOVE|COPY|--request.*GET|--request.*HEAD' \
   app/artifact_outbox.py app/artifact_delivery.py app/backup_job.py
 git diff --check
@@ -1393,7 +1393,7 @@ bounded hardening pass before merge. The following rulings constrain the work:
   recovered incident.
 - A failed enqueue may leave one validated local image absent from the remote
   series. This is accepted because the failure is reported and the next
-  ten-minute run creates a newer snapshot. Do not add a historical backup
+  thirty-minute run creates a newer snapshot. Do not add a historical backup
   registry or reconciliation service.
 - Keep checksum-named `412` under the approved sole-writer assumption for source
   merge. An explicitly authorized disposable interrupted-upload check remains a
@@ -1504,7 +1504,7 @@ maintenance operation.
 7. Run the separate verified-unit enable command for the two timers.
 8. Start one production backup service and confirm SQLite validation, local
    retention, queue drain, remote filename, and journal state.
-9. Wait through at least one scheduled ten-minute backup and one retry-worker
+9. Wait through at least one scheduled thirty-minute backup and one retry-worker
    interval.
 10. Restore one manually downloaded backup only to a separate scratch database,
    validate it, and leave the running production database untouched.

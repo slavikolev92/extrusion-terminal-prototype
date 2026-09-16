@@ -502,7 +502,7 @@ externally accepted, or deployed.
 
 The former local-only timer sketch remains superseded. Task 25 now supplies the
 source-controlled shared outbox, create-only Hetzner delivery, Discord pipeline
-notifications, local retry, ten-minute SQLite-safe backup producer, independent
+notifications, local retry, thirty-minute SQLite-safe backup producer, independent
 delivery timer, guarded installer, and deployment operation lock.
 
 Do not create an ad hoc timer from this infrastructure plan. The complete

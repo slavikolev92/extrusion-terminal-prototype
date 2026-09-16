@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Keep ten-minute SQLite-safe checks, upload only changed database images, and provide quiet human-readable Discord incident and scheduled-summary behavior.
+**Goal:** Keep periodic SQLite-safe checks, upload only changed database images, and provide quiet human-readable Discord incident and scheduled-summary behavior.
 
 **Architecture:** Preserve the existing filesystem outbox, one-shot backup producer, one-shot delivery worker, protected curl transports, and create-only WebDAV boundary. Add separate single-writer operational activity files, a summary scheduler evaluated by the existing minute delivery worker, and backward-compatible short content identities for new remote names.
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Keep the backup timer at ten minutes and the delivery timer at approximately one minute.
+- Set the backup timer to thirty minutes and keep the delivery timer at approximately one minute.
 - Keep the existing newest-144 local SQLite backup retention.
 - Enqueue only a database image whose complete SHA-256 differs from the immediately previous validated image.
 - Keep complete SHA-256 in queue metadata; new remote names expose exactly the first 16 lowercase hex characters.
@@ -546,7 +546,7 @@ Cover:
 - missing/never-run activity renders warning/unknown, not healthy;
 - malformed or unreadable activity renders a warning with unknown counters and
   preserves the invalid evidence rather than producing a green summary;
-- failed or 30-minute-stale producer renders warning;
+- failed or 90-minute-stale producer renders warning;
 - active delivery incident or nonzero queue renders warning;
 - recent healthy check plus zero queue renders success;
 - counter deltas advance only after confirmed Discord delivery;
@@ -596,10 +596,10 @@ must never call `record_component_failure()` or `record_component_success()`.
 
 - [x] **Step 7: Implement producer freshness check**
 
-Use `PRODUCER_STALE_AFTER = timedelta(minutes=30)`. Known healthy activity
+Use `PRODUCER_STALE_AFTER = timedelta(minutes=90)`. Known healthy activity
 alerts when its last success reaches that threshold; the inactivity interval
 itself is the grace. Missing, never-run, or unreadable activity starts a
-30-minute observation grace on first observation. Recent healthy activity
+90-minute observation grace on first observation. Recent healthy activity
 closes the delivery-worker-owned `database-backup-freshness` incident. Explicit
 `last_status == "failing"` remains owned by the producer's immediate
 `database-backup` incident and must not create a second freshness warning.
@@ -682,13 +682,13 @@ prints a bounded error and exits nonzero.
 
 Record:
 
-- ten-minute validated checks and upload-on-change behavior;
+- thirty-minute validated checks and upload-on-change behavior;
 - newest-144 local retention;
 - Sofia day/name/message rendering with UTC internal state;
 - short content identity plus legacy pending-item compatibility;
 - immediate producer failure, ten-minute cloud grace, full-drain recovery;
 - default daily `09:00` summary and strict optional config file;
-- 30-minute same-server producer freshness check and external-monitor limit;
+- 90-minute same-server producer freshness check and external-monitor limit;
 - no extra daemon or systemd unit;
 - unchanged create-only/no-read/no-delete boundary;
 - development acceptance passed only after Task 5's live checks; and

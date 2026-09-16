@@ -11,13 +11,13 @@ that design remain in force.
 
 ## Goal
 
-Keep the ten-minute SQLite recovery-point check without uploading byte-for-byte
+Keep the thirty-minute SQLite recovery-point check without uploading byte-for-byte
 duplicate database images. Replace machine-oriented Discord output with quiet,
 human-readable incident transitions and a configurable Sofia-time summary.
 
 ## Backup Check And Deduplication
 
-The backup timer remains every ten minutes. Each run:
+The backup timer runs every thirty minutes. Each run:
 
 1. creates a new SQLite-safe local image through `app.backups.create_backup()`;
 2. validates SQLite integrity and foreign keys through the existing primitive;
@@ -123,7 +123,7 @@ cannot produce a false recovery.
 
 ## Incident Notifications
 
-Routine ten-minute success messages are disabled. Technical diagnostics remain
+Routine per-check success messages are disabled. Technical diagnostics remain
 in the local system journal. Discord uses separate human headings for:
 
 - `Database backup failed`;
@@ -169,10 +169,10 @@ a failure message; URLs and control characters remain sanitized.
 
 The delivery worker checks the producer activity after its normal upload work.
 If an otherwise healthy producer has not recorded a successful validated check,
-or its last success is at least 30 minutes old, the delivery worker owns a
+or its last success is at least 90 minutes old, the delivery worker owns a
 separate `database-backup-freshness` incident. A known last success becomes
-alertable when that 30-minute inactivity threshold is reached. Missing,
-never-run, or unreadable activity begins a 30-minute observation grace on the
+alertable when that 90-minute inactivity threshold is reached. Missing,
+never-run, or unreadable activity begins a 90-minute observation grace on the
 first delivery-worker observation. The delivery worker also
 closes that incident after it observes a recent successful check. The backup
 producer never writes the freshness incident file, avoiding a two-process state

@@ -15,7 +15,7 @@ production-authority boundaries remain in force.
 
 Build one bounded file-delivery pipeline that current database backups and
 future PDF producers can reuse. Implement its first production use as a
-ten-minute SQLite-safe backup copied to the Hetzner Storage Share, with local
+thirty-minute SQLite-safe backup copied to the Hetzner Storage Share, with local
 retry and Discord failure/recovery notification.
 
 The design deliberately separates producer logic from delivery logic. A
@@ -287,7 +287,7 @@ while it has no outbound path. External heartbeat monitoring is outside scope.
 
 Use source-controlled systemd definitions with `Type=oneshot`:
 
-- a database-backup timer invokes the backup producer every ten minutes; and
+- a database-backup timer invokes the backup producer every thirty minutes; and
 - an independent delivery timer invokes the common worker every minute.
 
 No continuously running delivery daemon is added. The minute worker makes
@@ -345,7 +345,7 @@ owns that later failure and retry state.
 
 The current backup primitive publishes a matching final name only after SQLite
 validation and directory durability. Retention treats those final names as
-publication evidence instead of reopening up to 144 databases every ten
+publication evidence instead of reopening up to 144 databases every thirty
 minutes. Before first enablement, the runbook therefore performs a one-time
 integrity/foreign-key audit of every pre-existing matching file; an invalid
 legacy/manual file must be reviewed and moved outside the matching set rather

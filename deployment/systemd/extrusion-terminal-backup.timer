@@ -1,8 +1,8 @@
 [Unit]
-Description=Create an Extrusion Terminal database backup every ten minutes
+Description=Create an Extrusion Terminal database backup every thirty minutes
 
 [Timer]
-OnCalendar=*:0/10
+OnCalendar=*:0/30
 Persistent=true
 AccuracySec=1s
 Unit=extrusion-terminal-backup.service
